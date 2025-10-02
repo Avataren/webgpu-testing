@@ -1,5 +1,6 @@
 use glam::{Mat4, Vec3};
 use std::mem;
+use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -172,13 +173,21 @@ impl Gpu {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
+        // Prefer PreMultiplied if available; otherwise fall back to first.
+        let alpha_mode = surface_caps
+            .alpha_modes
+            .iter()
+            .copied()
+            .find(|m| *m == wgpu::CompositeAlphaMode::PreMultiplied)
+            .unwrap_or(surface_caps.alpha_modes[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
+            present_mode: wgpu::PresentMode::Fifo, // safest cross-platform choice
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -208,11 +217,13 @@ impl Gpu {
             label: Some("BindLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::VERTEX, // restrict to vertex for tighter validation
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: Some(
+                        NonZeroU64::new(mem::size_of::<CameraUniform>() as u64).unwrap(),
+                    ),
                 },
                 count: None,
             }],
@@ -354,7 +365,7 @@ impl Gpu {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+                        store: wgpu::StoreOp::Discard, // don't preserve depth between frames
                     }),
                     stencil_ops: None,
                 }),
@@ -375,20 +386,23 @@ impl Gpu {
     }
 }
 
+// Put `gpu` before `window` so the surface drops before the window (important for some platforms).
 struct App {
+    gpu: Option<Gpu>,
     window: Option<Window>,
     window_id: Option<WindowId>,
-    gpu: Option<Gpu>,
     time: f32,
+    last_frame: std::time::Instant,
 }
 
 impl App {
     fn new() -> Self {
         Self {
+            gpu: None,
             window: None,
             window_id: None,
-            gpu: None,
             time: 0.0,
+            last_frame: std::time::Instant::now(),
         }
     }
 }
@@ -405,6 +419,11 @@ impl ApplicationHandler for App {
             self.window = Some(window);
             self.window_id = Some(id);
             self.gpu = Some(gpu);
+
+            // Kick off the first frame explicitly on platforms that don't auto-redraw
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
         }
     }
 
@@ -419,18 +438,31 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
-                // Quit the application when the OS close button is pressed
                 event_loop.exit();
             }
             WindowEvent::Destroyed => {
-                // Extra safety: if the window gets destroyed, quit the loop
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
                 gpu.resize(size);
             }
+            WindowEvent::ScaleFactorChanged {
+                scale_factor: _, ..
+            } => {
+                // On DPI change, reconfigure the surface using the window's current inner size.
+                if let Some(w) = &self.window {
+                    gpu.resize(w.inner_size());
+                }
+            }
             WindowEvent::RedrawRequested => {
-                self.time += 1.0 / 60.0;
+                // Variable timestep based on real time
+                let now = std::time::Instant::now();
+                let dt = (now - self.last_frame).as_secs_f32();
+                self.last_frame = now;
+
+                // Keep time bounded to avoid precision loss
+                self.time = (self.time + dt) % std::f32::consts::TAU;
+
                 gpu.update_camera(self.time);
                 match gpu.render() {
                     Ok(()) => {}
@@ -440,8 +472,11 @@ impl ApplicationHandler for App {
                         }
                     }
                     Err(wgpu::SurfaceError::OutOfMemory) => {
-                        // Fatal: exit the loop instead of just hiding
+                        // Fatal: exit the loop
                         event_loop.exit();
+                    }
+                    Err(wgpu::SurfaceError::Timeout) => {
+                        // Non-fatal: skip this frame
                     }
                     Err(_) => {}
                 }
