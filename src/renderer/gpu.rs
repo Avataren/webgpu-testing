@@ -7,6 +7,8 @@ use std::{mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
+const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
+
 pub struct Gpu {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -22,6 +24,7 @@ pub struct Gpu {
     objects_capacity: u32,
     objects_bind_group: wgpu::BindGroup,
     objects_bind_layout: wgpu::BindGroupLayout,
+    objects_scratch: Vec<renderer::ObjectData>,
 
     camera_buf: wgpu::Buffer,
 }
@@ -221,6 +224,7 @@ impl Gpu {
             objects_capacity,
             objects_bind_group,
             objects_bind_layout,
+            objects_scratch: Vec::with_capacity(INITIAL_OBJECTS_CAPACITY as usize),
             camera_buf,
         }
     }
@@ -236,7 +240,7 @@ impl Gpu {
     pub fn write_objects(&mut self, mats: &[glam::Mat4]) {
         let required = mats.len() as u32;
 
-        // Grow buffer if needed (double the size each time)
+        // Grow buffer if needed
         if required > self.objects_capacity {
             let new_capacity = required.max(self.objects_capacity * 2);
             log::info!(
@@ -267,9 +271,15 @@ impl Gpu {
             self.objects_capacity = new_capacity;
         }
 
-        let objs: Vec<renderer::ObjectData> = mats.iter().copied().map(Into::into).collect();
-        self.queue
-            .write_buffer(&self.objects_buf, 0, bytemuck::cast_slice(&objs));
+        // Reuse scratch buffer instead of allocating each frame
+        self.objects_scratch.clear();
+        self.objects_scratch
+            .extend(mats.iter().map(|&m| renderer::ObjectData::from(m)));
+        self.queue.write_buffer(
+            &self.objects_buf,
+            0,
+            bytemuck::cast_slice(&self.objects_scratch),
+        );
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
