@@ -96,13 +96,14 @@ impl Gpu {
         surface.configure(&device, &config);
 
         let depth = Depth::new(&device, size);
-
         let (verts, idx) = cube_mesh();
+
         let vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("VertexBuffer"),
             contents: bytemuck::cast_slice(&verts),
             usage: wgpu::BufferUsages::VERTEX,
         });
+
         let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("IndexBuffer"),
             contents: bytemuck::cast_slice(&idx),
@@ -224,23 +225,6 @@ impl Gpu {
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
     }
-
-    // fn update_camera(&self, angle: f32) {
-    //     let eye = Vec3::new(angle.cos() * 2.0, 1.2, angle.sin() * 2.0);
-    //     let target = Vec3::ZERO;
-    //     let up = Vec3::Y;
-    //     let view = Mat4::look_at_rh(eye, target, up);
-
-    //     let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
-    //     let proj = Mat4::perspective_rh(f32::to_radians(60.0), aspect, 0.01, 100.0);
-
-    //     let vp = proj * view;
-    //     let uni = CameraUniform {
-    //         view_proj: vp.to_cols_array_2d(),
-    //     };
-    //     self.queue
-    //         .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
-    // }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
