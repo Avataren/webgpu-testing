@@ -39,7 +39,7 @@ fn vs_main(in: VsIn) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // simple lambert-ish: light from +Z
-    let L = normalize(vec3<f32>(0.0, 0.0, 1.0));
+    let L = normalize(vec3<f32>(0.5, 0.3, 1.0));
     let ndotl = max(dot(normalize(in.normal), L), 0.2); // min ambient
     let base = vec3<f32>(0.8, 0.7, 0.9);
     return vec4(base * ndotl, 1.0);

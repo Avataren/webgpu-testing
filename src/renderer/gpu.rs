@@ -311,7 +311,12 @@ impl Gpu {
             rpass.set_bind_group(1, &self.objects_bind_group, &[]); // objects (models)
 
             for item in draws {
-                let mesh = assets.meshes.get(item.mesh); // Handle<T> is Copy, so passing by value is fine
+                // Skip items with invalid mesh handles
+                let Some(mesh) = assets.meshes.get(item.mesh) else {
+                    log::warn!("Skipping draw item with invalid mesh handle");
+                    continue;
+                };
+
                 rpass.set_vertex_buffer(0, mesh.vbuf.slice(..));
                 rpass.set_index_buffer(mesh.ibuf.slice(..), wgpu::IndexFormat::Uint16);
                 rpass.draw_indexed(0..mesh.index_count, 0, item.object_range.clone());
