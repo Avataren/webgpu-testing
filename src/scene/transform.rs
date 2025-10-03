@@ -49,4 +49,14 @@ mod tests {
         // (1,0,0) -> (2,0,0) -> (3,2,3)
         assert!(p.abs_diff_eq(Vec3::new(3.0, 2.0, 3.0), 1e-6));
     }
+
+    #[test]
+    fn trs_order_translation_then_rotation_matches() {
+        use glam::{Mat4, Vec3};
+        let m = Mat4::from_translation(Vec3::new(2.0, 0.0, 0.0))
+            * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        // point at +Z rotated 90deg around Y -> +X, then translated +2X => (3,0,0)
+        let p = m.transform_point3(Vec3::new(0.0, 0.0, 1.0));
+        assert!(p.abs_diff_eq(Vec3::new(3.0, 0.0, 0.0), 1e-5));
+    }
 }

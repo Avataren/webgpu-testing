@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use std::mem;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
@@ -27,6 +27,11 @@ struct Gpu {
 
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+
+    objects_buf: wgpu::Buffer,
+    objects_capacity: u32,
+    objects_bind_group: wgpu::BindGroup,
+    objects_bind_layout: wgpu::BindGroupLayout,
 
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,
@@ -140,6 +145,45 @@ impl Gpu {
             }],
         });
 
+        // --- objects bind group layout (group 1)
+        let objects_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("ObjectsBindLayout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX, // read in vertex stage
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        // runtime-sized array => no fixed min size
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // start with capacity for, say, 1024 objects
+        let objects_capacity: u32 = 1024;
+        let objects_buf_size = (objects_capacity as usize
+            * std::mem::size_of::<renderer::ObjectData>())
+            as wgpu::BufferAddress;
+
+        let objects_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ObjectsBuffer"),
+            size: objects_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let objects_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ObjectsBindGroup"),
+            layout: &objects_bind_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: objects_buf.as_entire_binding(),
+            }],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -147,7 +191,7 @@ impl Gpu {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PipelineLayout"),
-            bind_group_layouts: &[&bind_layout],
+            bind_group_layouts: &[&bind_layout, &objects_bind_layout], // group(0), group(1)
             push_constant_ranges: &[],
         });
 
@@ -200,11 +244,24 @@ impl Gpu {
             depth,
             pipeline,
             bind_group,
+            objects_buf,
+            objects_capacity,
+            objects_bind_group,
+            objects_bind_layout,
             vbuf,
             ibuf,
             index_count: idx.len() as u32,
             camera_buf,
         }
+    }
+
+    fn write_objects(&self, mats: &[glam::Mat4]) {
+        // Clamp to capacity (grow logic will come later)
+        let count = mats.len().min(self.objects_capacity as usize);
+        let objs: Vec<renderer::ObjectData> =
+            mats[..count].iter().copied().map(Into::into).collect();
+        self.queue
+            .write_buffer(&self.objects_buf, 0, bytemuck::cast_slice(&objs));
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -226,12 +283,11 @@ impl Gpu {
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, instance_count: u32) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -259,7 +315,7 @@ impl Gpu {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard, // don't preserve depth between frames
+                        store: wgpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
                 }),
@@ -269,9 +325,10 @@ impl Gpu {
 
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.bind_group, &[]);
+            rpass.set_bind_group(1, &self.objects_bind_group, &[]);
             rpass.set_vertex_buffer(0, self.vbuf.slice(..));
             rpass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint16);
-            rpass.draw_indexed(0..self.index_count, 0, 0..1);
+            rpass.draw_indexed(0..self.index_count, 0, 0..instance_count);
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -349,18 +406,15 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Variable timestep based on real time
+                // Variable timestep
                 let now = std::time::Instant::now();
                 let dt = (now - self.last_frame).as_secs_f32();
                 self.last_frame = now;
-
                 // Keep time bounded to avoid precision loss
                 self.time = (self.time + dt) % std::f32::consts::TAU;
 
-                //gpu.update_camera(self.time);
+                // --- Camera (CPU-side) ---
                 let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
-
-                // keep the same orbiting behavior
                 let eye = Vec3::new(self.time.cos() * 2.0, 1.2, self.time.sin() * 2.0);
                 let cam = Camera {
                     eye,
@@ -370,11 +424,25 @@ impl ApplicationHandler for App {
                     near: 0.01,
                     far: 100.0,
                 };
-
                 let vp = cam.view_proj(aspect);
                 gpu.set_view_proj(vp);
 
-                match gpu.render() {
+                // --- Objects (instance transforms) ---
+                let t = self.time;
+                let mats = [
+                    // center
+                    Mat4::from_rotation_y(t),
+                    // right
+                    Mat4::from_translation(Vec3::new(1.6, 0.0, 0.0))
+                        * Mat4::from_rotation_y(-t * 0.7),
+                    // left
+                    Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0))
+                        * Mat4::from_rotation_y(t * 1.2),
+                ];
+                gpu.write_objects(&mats);
+
+                // --- Render ---
+                match gpu.render(mats.len() as u32) {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost) => {
                         if let Some(w) = &self.window {
@@ -390,6 +458,8 @@ impl ApplicationHandler for App {
                     }
                     Err(_) => {}
                 }
+
+                // Request next frame (for platforms that don't auto-redraw)
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
