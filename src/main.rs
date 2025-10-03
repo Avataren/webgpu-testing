@@ -120,13 +120,15 @@ impl ApplicationHandler for App {
                 
                 let mats = [
                     // center
-                    Mat4::from_rotation_y(t),
+                        Mat4::from_rotation_x(t * 0.5)
+                        * Mat4::from_rotation_y(t * 1.2)
+                        * Mat4::from_rotation_z(-t * 0.2),
                     // right
                     Mat4::from_translation(Vec3::new(1.6, 0.0, 0.0))
-                        * Mat4::from_rotation_y(-t * 0.7),
+                        * Mat4::from_rotation_y(-t * 1.0),
                     // left
                     Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0))
-                        * Mat4::from_rotation_y(t * 1.2),
+                        * Mat4::from_rotation_y(t * 1.5),
                 ];
                 gpu.write_objects(&mats);
 
