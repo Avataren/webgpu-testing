@@ -21,7 +21,7 @@ struct App {
     gpu: Option<Gpu>,
     window: Option<Window>,
     window_id: Option<WindowId>,
-    time: f32,
+    time: f64,
     last_frame: std::time::Instant,
     assets: Assets,
     cube_mesh: Option<renderer::assets::Handle<Mesh>>,
@@ -95,15 +95,16 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 // Variable timestep
-                let now = std::time::Instant::now();
-                let dt = (now - self.last_frame).as_secs_f32();
-                self.last_frame = now;
-                // Keep time bounded to avoid precision loss
-                self.time = (self.time + dt) % std::f32::consts::TAU;
+            let now = std::time::Instant::now();
+            let dt = (now - self.last_frame).as_secs_f64();
+            self.last_frame = now;
 
+            // Monotonic time — no modulo here
+            self.time += dt;
+            let t = self.time as f32;
                 // --- Camera (CPU-side) ---
                 let aspect = gpu.get_config().width as f32 / gpu.get_config().height.max(1) as f32;
-                let eye = Vec3::new(self.time.cos() * 2.0, 1.2, self.time.sin() * 2.0);
+                let eye = Vec3::new(t.cos() * 2.0, 1.2, t.sin() * 2.0);
                 let cam = Camera {
                     eye,
                     target: Vec3::ZERO,
@@ -116,7 +117,7 @@ impl ApplicationHandler for App {
                 gpu.set_view_proj(vp);
 
                 // --- Objects (instance transforms) ---
-                let t = self.time;
+                
                 let mats = [
                     // center
                     Mat4::from_rotation_y(t),
