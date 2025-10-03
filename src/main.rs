@@ -53,7 +53,6 @@ impl ApplicationHandler for App {
             let (verts, idx) = renderer::cube_mesh();
             let cube = Mesh::from_vertices(gpu.get_device(), &verts, &idx);
             let cube_h = self.assets.meshes.insert(cube);
-            //let cube_h = *self.cube_mesh.as_ref().expect("cube mesh created");
             self.cube_mesh = Some(cube_h);
 
             self.window = Some(window);

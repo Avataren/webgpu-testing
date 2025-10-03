@@ -233,11 +233,41 @@ impl Gpu {
         &self.config
     }
 
-    pub fn write_objects(&self, mats: &[glam::Mat4]) {
-        // Clamp to capacity (grow logic will come later)
-        let count = mats.len().min(self.objects_capacity as usize);
-        let objs: Vec<renderer::ObjectData> =
-            mats[..count].iter().copied().map(Into::into).collect();
+    pub fn write_objects(&mut self, mats: &[glam::Mat4]) {
+        let required = mats.len() as u32;
+
+        // Grow buffer if needed (double the size each time)
+        if required > self.objects_capacity {
+            let new_capacity = required.max(self.objects_capacity * 2);
+            log::info!(
+                "Growing objects buffer: {} -> {}",
+                self.objects_capacity,
+                new_capacity
+            );
+
+            let buf_size = (new_capacity as usize * std::mem::size_of::<renderer::ObjectData>())
+                as wgpu::BufferAddress;
+
+            self.objects_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ObjectsBuffer"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            self.objects_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ObjectsBindGroup"),
+                layout: &self.objects_bind_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.objects_buf.as_entire_binding(),
+                }],
+            });
+
+            self.objects_capacity = new_capacity;
+        }
+
+        let objs: Vec<renderer::ObjectData> = mats.iter().copied().map(Into::into).collect();
         self.queue
             .write_buffer(&self.objects_buf, 0, bytemuck::cast_slice(&objs));
     }
