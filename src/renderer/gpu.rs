@@ -28,6 +28,10 @@ pub struct Gpu {
     objects_scratch: Vec<renderer::ObjectData>,
 
     camera_buf: wgpu::Buffer,
+    
+    // Texture array for bindless rendering
+    texture_array_bind_layout: wgpu::BindGroupLayout,
+    dummy_texture_bind_group: wgpu::BindGroup,
 }
 
 impl Gpu {
@@ -50,11 +54,30 @@ impl Gpu {
             .await
             .expect("adapter");
 
+        // Try to enable bindless texture features
+        let adapter_features = adapter.features();
+        //print adapter features
+        log::info!("{}", adapter_features);
+        
+        let mut required_features = wgpu::Features::empty();
+        
+        if adapter_features.contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING) {
+            required_features |= wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING | wgpu::Features::TEXTURE_BINDING_ARRAY;
+            log::info!("Bindless textures supported!");
+        } else {
+            log::warn!("Bindless textures not supported");
+        }
+
+        let limits = wgpu::Limits {
+            max_binding_array_elements_per_shader_stage: 256,
+            ..wgpu::Limits::default()
+        };
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_features,
+                required_limits: limits,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 trace: wgpu::Trace::Off,
@@ -159,6 +182,74 @@ impl Gpu {
             }],
         });
 
+        // Create texture array bind group layout (group 2)
+        let texture_array_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TextureArrayBindGroupLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: std::num::NonZero::new(256), // Array of 256 textures
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // Create a dummy texture for the bind group (until we add real textures)
+        let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("DummyTexture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let dummy_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("DummySampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        // Create dummy bind group with array of 256 dummy textures
+        let dummy_views = vec![&dummy_view; 256];
+        let dummy_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("DummyTextureBindGroup"),
+            layout: &texture_array_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&dummy_views),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&dummy_sampler),
+                },
+            ],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
@@ -166,7 +257,7 @@ impl Gpu {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PipelineLayout"),
-            bind_group_layouts: &[&bind_layout, &objects_bind_layout],
+            bind_group_layouts: &[&bind_layout, &objects_bind_layout, &texture_array_bind_layout], // Added group(2)
             push_constant_ranges: &[],
         });
 
@@ -225,6 +316,8 @@ impl Gpu {
             objects_bind_layout,
             objects_scratch: Vec::with_capacity(INITIAL_OBJECTS_CAPACITY as usize),
             camera_buf,
+            texture_array_bind_layout,
+            dummy_texture_bind_group,
         }
     }
 
@@ -272,11 +365,17 @@ impl Gpu {
                 label: Some("Encoder"),
             });
 
-        // Collect all transforms first to write them in one go
+        // Collect all transforms and materials to write them in one go
         self.objects_scratch.clear();
-        for (_, _, transforms) in batcher.iter() {
-            self.objects_scratch
-                .extend(transforms.iter().map(|&m| renderer::ObjectData::from(m)));
+        for (_, instances) in batcher.iter() {
+            self.objects_scratch.extend(instances.iter().map(|inst| {
+                renderer::ObjectData::new(
+                    inst.transform,
+                    inst.material.color_f32(),
+                    inst.material.texture_index,
+                    inst.material.flags_bits(),
+                )
+            }));
         }
 
         // Ensure buffer is large enough
@@ -352,19 +451,20 @@ impl Gpu {
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.bind_group, &[]);
             rpass.set_bind_group(1, &self.objects_bind_group, &[]);
+            rpass.set_bind_group(2, &self.dummy_texture_bind_group, &[]); // Bind texture array
 
             // Track offset into the objects buffer
             let mut object_offset = 0u32;
 
             // Draw each batch
-            for (mesh_handle, _material, transforms) in batcher.iter() {
+            for (mesh_handle, instances) in batcher.iter() {
                 let Some(mesh) = assets.meshes.get(mesh_handle) else {
                     log::warn!("Skipping batch with invalid mesh handle");
-                    object_offset += transforms.len() as u32;
+                    object_offset += instances.len() as u32;
                     continue;
                 };
 
-                let instance_count = transforms.len() as u32;
+                let instance_count = instances.len() as u32;
                 
                 rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 rpass.set_index_buffer(mesh.index_buffer().slice(..), wgpu::IndexFormat::Uint16);

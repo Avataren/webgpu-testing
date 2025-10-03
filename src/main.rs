@@ -146,9 +146,9 @@ impl ApplicationHandler for App {
                 });
 
                 // Add some extra cubes for demonstration - they'll batch automatically!
-                for i in 0..25 {
-                    let angle = (i as f32) * std::f32::consts::TAU / 25.0;
-                    let radius = 3.0;
+                for i in 0..50 {
+                    let angle = (i as f32) * std::f32::consts::TAU / 50.0;
+                    let radius = 2.5;
                     self.batcher.add(RenderObject {
                         mesh: cube_h,
                         material: Material::white(),

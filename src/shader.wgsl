@@ -5,8 +5,20 @@ struct Globals {
 
 struct Object {
     model: mat4x4<f32>,
+    color: vec4<f32>,
+    texture_index: u32,
+    material_flags: u32,
+    _padding: vec2<u32>,
 };
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
+
+// Bindless texture array - note: this requires the SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING feature
+@group(2) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
+@group(2) @binding(1) var tex_sampler: sampler;
+
+// Material flags
+const FLAG_USE_TEXTURE: u32 = 1u;
+const FLAG_ALPHA_BLEND: u32 = 2u;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -19,59 +31,64 @@ struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) @interpolate(flat) texture_index: u32,
+    @location(4) @interpolate(flat) material_flags: u32,
 };
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
-    let M = objects[in.instance].model;
+    let obj = objects[in.instance];
+    let M = obj.model;
     let world_pos = M * vec4(in.pos, 1.0);
-
-    // For correctness with non-uniform scales you'd use inverse-transpose
     let n = normalize((M * vec4(in.normal, 0.0)).xyz);
 
     var out: VsOut;
     out.pos = globals.view_proj * world_pos;
     out.normal = n;
-    out.uv = in.uv;           // use mesh UVs across all faces
+    out.uv = in.uv;
+    out.color = obj.color;
+    out.texture_index = obj.texture_index;
+    out.material_flags = obj.material_flags;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Simple lambert-ish: light from +Z
+    // Lighting
     let L = normalize(vec3<f32>(0.5, 0.3, 1.0));
-    let ndotl = max(dot(normalize(in.normal), L), 0.2); // min ambient
-
-    // ---------- Checker (UV-based) ----------
-    let tiles = 6.0;                          // number of squares per 0..1 UV range
-    let line_frac = 0.06;                     // grid line thickness as fraction of a tile
-    let colorA = vec3<f32>(0.08, 0.09, 0.11); // charcoal
-    let colorB = vec3<f32>(0.93, 0.93, 0.96); // soft ivory
-    let inlay  = vec3<f32>(0.92, 0.78, 0.36); // subtle gold
-
-    // Tile-space UV
-    let c = in.uv * tiles;
-
-    // Parity-based checker
-    let parity = (i32(floor(c.x) + floor(c.y)) & 1) == 0;
-    var base = select(colorA, colorB, parity);
-
-    // Analytic AA for crisp edges (use footprint in tile space)
-    let fw = max(fwidth(c.x), fwidth(c.y));
-    let aa = fw * 0.75;
-
-    // Distance to nearest gridline within current tile
-    let fx = abs(fract(c.x) - 0.5);
-    let fy = abs(fract(c.y) - 0.5);
-    let edge_proximity = 0.5 - min(fx, fy);   // higher near grid lines
-
-    // Decorative inlay lines
-    let line = smoothstep(line_frac + aa, line_frac - aa, edge_proximity);
-    base = mix(base, inlay, line * 0.7);
-
-    // Soft rim for a classy pop
-    let rim = pow(1.0 - max(dot(normalize(in.normal), normalize(-L)), 0.0), 3.0);
-    base = base + rim * 0.06;
-
-    return vec4(base * ndotl, 1.0);
+    let N = normalize(in.normal);
+    let ndotl = max(dot(N, L), 0.0);
+    let ambient = 0.2;
+    let diffuse = ndotl * 0.8;
+    let lighting = ambient + diffuse;
+    
+    // Rim light
+    let V = vec3<f32>(0.0, 0.0, 1.0);
+    let rim = pow(1.0 - max(dot(N, -V), 0.0), 3.0) * 0.15;
+    
+    var base_color: vec3<f32>;
+    
+    // Check if we should use texture
+    if ((in.material_flags & FLAG_USE_TEXTURE) != 0u && in.texture_index > 0u) {
+        // Sample from bindless texture array
+        let tex_idx = in.texture_index - 1u;
+        let tex_color = textureSample(textures[tex_idx], tex_sampler, in.uv);
+        base_color = tex_color.rgb * in.color.rgb;
+    } else {
+        // Solid color or checker pattern
+        if (in.color.a < 0.5) {
+            // Checker pattern
+            let tiles = 6.0;
+            let c = in.uv * tiles;
+            let parity = (i32(floor(c.x) + floor(c.y)) & 1) == 0;
+            let colorA = vec3<f32>(0.08, 0.09, 0.11);
+            let colorB = vec3<f32>(0.93, 0.93, 0.96);
+            base_color = select(colorA, colorB, parity);
+        } else {
+            base_color = in.color.rgb;
+        }
+    }
+    
+    return vec4(base_color * lighting + rim, 1.0);
 }

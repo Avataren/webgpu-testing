@@ -8,9 +8,10 @@ pub mod material;
 pub mod objects;
 pub mod primitives;
 pub mod vertex;
+pub mod texture;
 
 pub use assets::Assets;
-pub use batch::{RenderBatcher, RenderObject};
+pub use batch::{InstanceData, RenderBatcher, RenderObject};
 pub use camera::CameraUniform;
 pub use depth::Depth;
 pub use draw::DrawItem;
@@ -19,3 +20,4 @@ pub use material::Material;
 pub use objects::ObjectData;
 pub use primitives::cube_mesh;
 pub use vertex::Vertex;
+pub use texture::{Texture, TextureArray};

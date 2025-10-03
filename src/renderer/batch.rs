@@ -1,14 +1,13 @@
-// renderer/batch.rs
+// renderer/batch.rs (Smart version)
 use super::assets::{Handle, Mesh};
 use super::material::Material;
 use glam::Mat4;
 use std::collections::HashMap;
 
-/// Uniquely identifies a batch (mesh + material combination)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct BatchKey {
-    mesh: Handle<Mesh>,
-    material: Material,
+pub enum RenderPass {
+    Opaque,      // Normal opaque geometry
+    Transparent, // Alpha blended (needs sorting)
 }
 
 /// A single renderable object instance
@@ -18,9 +17,22 @@ pub struct RenderObject {
     pub transform: Mat4,
 }
 
-/// Collects objects and automatically batches them by mesh+material
+/// Stores transform + material for an instance
+pub struct InstanceData {
+    pub transform: Mat4,
+    pub material: Material,
+}
+
+/// Batching key - only splits by what ACTUALLY requires different draw calls
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct BatchKey {
+    mesh: Handle<Mesh>,
+    pass: RenderPass,  // Only split if different pipeline needed
+}
+
+/// Collects objects and batches by pipeline requirements
 pub struct RenderBatcher {
-    batches: HashMap<BatchKey, Vec<Mat4>>,
+    batches: HashMap<BatchKey, Vec<InstanceData>>,
 }
 
 impl RenderBatcher {
@@ -32,36 +44,62 @@ impl RenderBatcher {
 
     /// Add an object to be rendered
     pub fn add(&mut self, obj: RenderObject) {
+        // Determine which pass this object belongs to
+        let pass = if obj.material.requires_separate_pass() {
+            RenderPass::Transparent
+        } else {
+            RenderPass::Opaque
+        };
+
         let key = BatchKey {
             mesh: obj.mesh,
-            material: obj.material,
+            pass,
         };
+
         self.batches
             .entry(key)
             .or_insert_with(Vec::new)
-            .push(obj.transform);
+            .push(InstanceData {
+                transform: obj.transform,
+                material: obj.material,
+            });
     }
 
-    /// Clear all batches (call at start of each frame)
+    /// Clear all batches
     pub fn clear(&mut self) {
         for batch in self.batches.values_mut() {
             batch.clear();
         }
     }
 
-    /// Iterate over all batches
-    pub fn iter(&self) -> impl Iterator<Item = (Handle<Mesh>, Material, &[Mat4])> {
-        self.batches.iter().map(|(key, transforms)| {
-            (key.mesh, key.material, transforms.as_slice())
-        })
+    /// Iterate over all batches (for simple rendering without pass separation)
+    pub fn iter(&self) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
+        self.batches
+            .iter()
+            .map(|(key, instances)| (key.mesh, instances.as_slice()))
     }
 
-    /// Get the total number of instances across all batches
+    /// Iterate over batches for a specific pass
+    pub fn iter_pass(&self, pass: RenderPass) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
+        self.batches
+            .iter()
+            .filter(move |(key, _)| key.pass == pass)
+            .map(|(key, instances)| (key.mesh, instances.as_slice()))
+    }
+
+    /// Get all instances for a pass (useful for sorting transparent objects)
+    pub fn get_pass_instances(&self, pass: RenderPass) -> Vec<&InstanceData> {
+        self.batches
+            .iter()
+            .filter(|(key, _)| key.pass == pass)
+            .flat_map(|(_, instances)| instances.iter())
+            .collect()
+    }
+
     pub fn instance_count(&self) -> usize {
         self.batches.values().map(|v| v.len()).sum()
     }
 
-    /// Get the number of unique batches
     pub fn batch_count(&self) -> usize {
         self.batches.len()
     }
