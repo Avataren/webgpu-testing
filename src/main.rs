@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use std::mem;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
@@ -10,8 +10,12 @@ use winit::{
     keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
+
 mod renderer;
 use renderer::{cube_mesh, CameraUniform, Depth, Vertex};
+
+mod scene;
+use scene::Camera;
 
 struct Gpu {
     surface: wgpu::Surface<'static>,
@@ -213,22 +217,30 @@ impl Gpu {
         self.depth = Depth::new(&self.device, new_size);
     }
 
-    fn update_camera(&self, angle: f32) {
-        let eye = Vec3::new(angle.cos() * 2.0, 1.2, angle.sin() * 2.0);
-        let target = Vec3::ZERO;
-        let up = Vec3::Y;
-        let view = Mat4::look_at_rh(eye, target, up);
-
-        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
-        let proj = Mat4::perspective_rh(f32::to_radians(60.0), aspect, 0.01, 100.0);
-
-        let vp = proj * view;
-        let uni = CameraUniform {
+    fn set_view_proj(&self, vp: glam::Mat4) {
+        let uni = renderer::CameraUniform {
             view_proj: vp.to_cols_array_2d(),
         };
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
     }
+
+    // fn update_camera(&self, angle: f32) {
+    //     let eye = Vec3::new(angle.cos() * 2.0, 1.2, angle.sin() * 2.0);
+    //     let target = Vec3::ZERO;
+    //     let up = Vec3::Y;
+    //     let view = Mat4::look_at_rh(eye, target, up);
+
+    //     let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+    //     let proj = Mat4::perspective_rh(f32::to_radians(60.0), aspect, 0.01, 100.0);
+
+    //     let vp = proj * view;
+    //     let uni = CameraUniform {
+    //         view_proj: vp.to_cols_array_2d(),
+    //     };
+    //     self.queue
+    //         .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
+    // }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
@@ -361,7 +373,23 @@ impl ApplicationHandler for App {
                 // Keep time bounded to avoid precision loss
                 self.time = (self.time + dt) % std::f32::consts::TAU;
 
-                gpu.update_camera(self.time);
+                //gpu.update_camera(self.time);
+                let aspect = gpu.config.width as f32 / gpu.config.height.max(1) as f32;
+
+                // keep the same orbiting behavior
+                let eye = Vec3::new(self.time.cos() * 2.0, 1.2, self.time.sin() * 2.0);
+                let cam = Camera {
+                    eye,
+                    target: Vec3::ZERO,
+                    up: Vec3::Y,
+                    fov_y_radians: 60f32.to_radians(),
+                    near: 0.01,
+                    far: 100.0,
+                };
+
+                let vp = cam.view_proj(aspect);
+                gpu.set_view_proj(vp);
+
                 match gpu.render() {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost) => {
