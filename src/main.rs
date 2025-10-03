@@ -8,9 +8,9 @@ use winit::{
 };
 
 mod renderer;
-use renderer::assets::Mesh;
+use renderer::assets::{Handle, Mesh};
+use renderer::{Assets, Material, RenderBatcher, RenderObject};
 use renderer::Depth;
-use renderer::{Assets, DrawItem};
 
 mod scene;
 use scene::Camera;
@@ -24,7 +24,8 @@ struct App {
     time: f64,
     last_frame: std::time::Instant,
     assets: Assets,
-    cube_mesh: Option<renderer::assets::Handle<Mesh>>,
+    cube_mesh: Option<Handle<Mesh>>,
+    batcher: RenderBatcher,
 }
 
 impl App {
@@ -37,6 +38,7 @@ impl App {
             last_frame: std::time::Instant::now(),
             assets: Assets::default(),
             cube_mesh: None,
+            batcher: RenderBatcher::new(),
         }
     }
 }
@@ -59,7 +61,6 @@ impl ApplicationHandler for App {
             self.window_id = Some(id);
             self.gpu = Some(gpu);
 
-            // Kick off the first frame explicitly on platforms that don't auto-redraw
             if let Some(w) = &self.window {
                 w.request_redraw();
             }
@@ -88,23 +89,20 @@ impl ApplicationHandler for App {
             WindowEvent::ScaleFactorChanged {
                 scale_factor: _, ..
             } => {
-                // On DPI change, reconfigure the surface using the window's current inner size.
                 if let Some(w) = &self.window {
                     gpu.resize(w.inner_size());
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Variable timestep
-            let now = std::time::Instant::now();
-            let dt = (now - self.last_frame).as_secs_f64();
-            self.last_frame = now;
+                let now = std::time::Instant::now();
+                let dt = (now - self.last_frame).as_secs_f64();
+                self.last_frame = now;
+                self.time += dt;
+                let t = self.time as f32;
 
-            // Monotonic time — no modulo here
-            self.time += dt;
-            let t = self.time as f32;
-                // --- Camera (CPU-side) ---
+                // Camera setup
                 let aspect = gpu.get_config().width as f32 / gpu.get_config().height.max(1) as f32;
-                let eye = Vec3::new(t.cos() * 2.0, 1.2, t.sin() * 2.0);
+                let eye = Vec3::new(t.cos() * 3.0, 2.0, t.sin() * 3.0);
                 let cam = Camera {
                     eye,
                     target: Vec3::ZERO,
@@ -116,29 +114,53 @@ impl ApplicationHandler for App {
                 let vp = cam.view_proj(aspect);
                 gpu.set_view_proj(vp);
 
-                // --- Objects (instance transforms) ---
-                
-                let mats = [
-                    // center
-                        Mat4::from_rotation_x(t * 0.5)
-                        * Mat4::from_rotation_y(t * 1.2)
-                        * Mat4::from_rotation_z(-t * 0.2),
-                    // right
-                    Mat4::from_translation(Vec3::new(1.6, 0.0, 0.0))
-                        * Mat4::from_rotation_y(-t * 1.0),
-                    // left
-                    Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0))
-                        * Mat4::from_rotation_y(t * 1.5),
-                ];
-                gpu.write_objects(&mats);
+                // Clear batches from previous frame
+                self.batcher.clear();
 
                 let cube_h = *self.cube_mesh.as_ref().expect("cube mesh created");
-                let draws = [DrawItem {
-                    mesh: cube_h,
-                    object_range: 0..(mats.len() as u32),
-                }];
 
-                match gpu.render_draw_list(&self.assets, &draws) {
+                // Add multiple objects with different materials
+                // Center spinning cube - red
+                self.batcher.add(RenderObject {
+                    mesh: cube_h,
+                    material: Material::red(),
+                    transform: Mat4::from_rotation_x(t * 0.5)
+                        * Mat4::from_rotation_y(t * 1.2)
+                        * Mat4::from_rotation_z(-t * 0.2),
+                });
+
+                // Right cube - green
+                self.batcher.add(RenderObject {
+                    mesh: cube_h,
+                    material: Material::green(),
+                    transform: Mat4::from_translation(Vec3::new(1.6, 0.0, 0.0))
+                        * Mat4::from_rotation_y(-t * 1.0),
+                });
+
+                // Left cube - blue
+                self.batcher.add(RenderObject {
+                    mesh: cube_h,
+                    material: Material::blue(),
+                    transform: Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0))
+                        * Mat4::from_rotation_y(t * 1.5),
+                });
+
+                // Add some extra cubes for demonstration - they'll batch automatically!
+                for i in 0..25 {
+                    let angle = (i as f32) * std::f32::consts::TAU / 25.0;
+                    let radius = 3.0;
+                    self.batcher.add(RenderObject {
+                        mesh: cube_h,
+                        material: Material::white(),
+                        transform: Mat4::from_translation(Vec3::new(
+                            angle.cos() * radius,
+                            (t + i as f32).sin() * 0.5,
+                            angle.sin() * radius,
+                        )) * Mat4::from_scale(Vec3::splat(0.3)),
+                    });
+                }
+
+                match gpu.render_batched(&self.assets, &self.batcher) {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost) => {
                         if let Some(w) = &self.window {
@@ -152,7 +174,6 @@ impl ApplicationHandler for App {
                     Err(_) => {}
                 }
 
-                // Request next frame (for platforms that don't auto-redraw)
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
@@ -166,7 +187,6 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                // ESC to quit
                 event_loop.exit();
             }
             _ => {}

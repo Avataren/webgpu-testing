@@ -1,6 +1,7 @@
 use crate::renderer::Vertex;
 use wgpu::util::DeviceExt;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Mesh {
     vbuf: wgpu::Buffer,
     ibuf: wgpu::Buffer,

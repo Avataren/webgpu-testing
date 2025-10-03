@@ -1,5 +1,6 @@
+// renderer/gpu.rs (Complete Updated Version)
 use crate::{
-    renderer::{self, Assets, CameraUniform, DrawItem, Vertex},
+    renderer::{self, Assets, CameraUniform, RenderBatcher, Vertex},
     Depth,
 };
 
@@ -69,7 +70,6 @@ impl Gpu {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
-        // Prefer PreMultiplied if available; otherwise fall back to first.
         let alpha_mode = surface_caps
             .alpha_modes
             .iter()
@@ -82,7 +82,7 @@ impl Gpu {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo, // safest cross-platform choice
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -97,11 +97,12 @@ impl Gpu {
             contents: bytemuck::bytes_of(&camera),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BindLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX, // restrict to vertex for tighter validation
+                visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -112,6 +113,7 @@ impl Gpu {
                 count: None,
             }],
         });
+        
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("BindGroup"),
             layout: &bind_layout,
@@ -121,25 +123,22 @@ impl Gpu {
             }],
         });
 
-        // --- objects bind group layout (group 1)
         let objects_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("ObjectsBindLayout"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX, // read in vertex stage
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        // runtime-sized array => no fixed min size
                         min_binding_size: None,
                     },
                     count: None,
                 }],
             });
 
-        // start with capacity for, say, 1024 objects
-        let objects_capacity: u32 = 1024;
+        let objects_capacity: u32 = INITIAL_OBJECTS_CAPACITY;
         let objects_buf_size = (objects_capacity as usize
             * std::mem::size_of::<renderer::ObjectData>())
             as wgpu::BufferAddress;
@@ -167,7 +166,7 @@ impl Gpu {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PipelineLayout"),
-            bind_group_layouts: &[&bind_layout, &objects_bind_layout], // group(0), group(1)
+            bind_group_layouts: &[&bind_layout, &objects_bind_layout],
             push_constant_ranges: &[],
         });
 
@@ -237,10 +236,51 @@ impl Gpu {
         &self.config
     }
 
-    pub fn write_objects(&mut self, mats: &[glam::Mat4]) {
-        let required = mats.len() as u32;
+    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+        self.size = new_size;
+        self.config.width = new_size.width;
+        self.config.height = new_size.height;
+        self.surface.configure(&self.device, &self.config);
+        self.depth = Depth::new(&self.device, new_size);
+    }
 
-        // Grow buffer if needed
+    pub fn set_view_proj(&self, vp: glam::Mat4) {
+        let uni = renderer::CameraUniform {
+            view_proj: vp.to_cols_array_2d(),
+        };
+        self.queue
+            .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
+    }
+
+    /// Render using the new batching system
+    pub fn render_batched(
+        &mut self,
+        assets: &Assets,
+        batcher: &RenderBatcher,
+    ) -> Result<(), wgpu::SurfaceError> {
+        let frame = self.surface.get_current_texture()?;
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Encoder"),
+            });
+
+        // Collect all transforms first to write them in one go
+        self.objects_scratch.clear();
+        for (_, _, transforms) in batcher.iter() {
+            self.objects_scratch
+                .extend(transforms.iter().map(|&m| renderer::ObjectData::from(m)));
+        }
+
+        // Ensure buffer is large enough
+        let required = self.objects_scratch.len() as u32;
         if required > self.objects_capacity {
             let new_capacity = required.max(self.objects_capacity * 2);
             log::info!(
@@ -271,51 +311,14 @@ impl Gpu {
             self.objects_capacity = new_capacity;
         }
 
-        // Reuse scratch buffer instead of allocating each frame
-        self.objects_scratch.clear();
-        self.objects_scratch
-            .extend(mats.iter().map(|&m| renderer::ObjectData::from(m)));
-        self.queue.write_buffer(
-            &self.objects_buf,
-            0,
-            bytemuck::cast_slice(&self.objects_scratch),
-        );
-    }
-
-    pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
-        if new_size.width == 0 || new_size.height == 0 {
-            return;
+        // Write all transforms
+        if !self.objects_scratch.is_empty() {
+            self.queue.write_buffer(
+                &self.objects_buf,
+                0,
+                bytemuck::cast_slice(&self.objects_scratch),
+            );
         }
-        self.size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
-        self.surface.configure(&self.device, &self.config);
-        self.depth = Depth::new(&self.device, new_size);
-    }
-
-    pub fn set_view_proj(&self, vp: glam::Mat4) {
-        let uni = renderer::CameraUniform {
-            view_proj: vp.to_cols_array_2d(),
-        };
-        self.queue
-            .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
-    }
-
-    pub fn render_draw_list(
-        &mut self,
-        assets: &Assets,
-        draws: &[DrawItem],
-    ) -> Result<(), wgpu::SurfaceError> {
-        let frame = self.surface.get_current_texture()?;
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Encoder"),
-            });
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -347,19 +350,31 @@ impl Gpu {
             });
 
             rpass.set_pipeline(&self.pipeline);
-            rpass.set_bind_group(0, &self.bind_group, &[]); // globals (camera)
-            rpass.set_bind_group(1, &self.objects_bind_group, &[]); // objects (models)
+            rpass.set_bind_group(0, &self.bind_group, &[]);
+            rpass.set_bind_group(1, &self.objects_bind_group, &[]);
 
-            for item in draws {
-                // Skip items with invalid mesh handles
-                let Some(mesh) = assets.meshes.get(item.mesh) else {
-                    log::warn!("Skipping draw item with invalid mesh handle");
+            // Track offset into the objects buffer
+            let mut object_offset = 0u32;
+
+            // Draw each batch
+            for (mesh_handle, _material, transforms) in batcher.iter() {
+                let Some(mesh) = assets.meshes.get(mesh_handle) else {
+                    log::warn!("Skipping batch with invalid mesh handle");
+                    object_offset += transforms.len() as u32;
                     continue;
                 };
 
+                let instance_count = transforms.len() as u32;
+                
                 rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 rpass.set_index_buffer(mesh.index_buffer().slice(..), wgpu::IndexFormat::Uint16);
-                rpass.draw_indexed(0..mesh.index_count(), 0, item.object_range.clone())
+                rpass.draw_indexed(
+                    0..mesh.index_count(),
+                    0,
+                    object_offset..(object_offset + instance_count),
+                );
+
+                object_offset += instance_count;
             }
         }
 
