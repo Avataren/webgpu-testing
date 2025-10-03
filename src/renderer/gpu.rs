@@ -347,9 +347,9 @@ impl Gpu {
                     continue;
                 };
 
-                rpass.set_vertex_buffer(0, mesh.vbuf.slice(..));
-                rpass.set_index_buffer(mesh.ibuf.slice(..), wgpu::IndexFormat::Uint16);
-                rpass.draw_indexed(0..mesh.index_count, 0, item.object_range.clone());
+                rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                rpass.set_index_buffer(mesh.index_buffer().slice(..), wgpu::IndexFormat::Uint16);
+                rpass.draw_indexed(0..mesh.index_count(), 0, item.object_range.clone())
             }
         }
 

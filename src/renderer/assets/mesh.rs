@@ -2,9 +2,9 @@ use crate::renderer::Vertex;
 use wgpu::util::DeviceExt;
 
 pub struct Mesh {
-    pub vbuf: wgpu::Buffer,
-    pub ibuf: wgpu::Buffer,
-    pub index_count: u32,
+    vbuf: wgpu::Buffer,
+    ibuf: wgpu::Buffer,
+    index_count: u32,
 }
 
 impl Mesh {
@@ -24,5 +24,20 @@ impl Mesh {
             ibuf,
             index_count: indices.len() as u32,
         }
+    }
+
+    /// Get the vertex buffer for rendering
+    pub fn vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.vbuf
+    }
+
+    /// Get the index buffer for rendering
+    pub fn index_buffer(&self) -> &wgpu::Buffer {
+        &self.ibuf
+    }
+
+    /// Get the number of indices to draw
+    pub fn index_count(&self) -> u32 {
+        self.index_count
     }
 }
