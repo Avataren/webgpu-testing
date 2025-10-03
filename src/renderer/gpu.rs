@@ -1,5 +1,5 @@
 use crate::{
-    renderer::{self, cube_mesh, CameraUniform, Vertex},
+    renderer::{self, Assets, CameraUniform, DrawItem, Vertex},
     Depth,
 };
 
@@ -22,10 +22,6 @@ pub struct Gpu {
     objects_capacity: u32,
     objects_bind_group: wgpu::BindGroup,
     objects_bind_layout: wgpu::BindGroupLayout,
-
-    vbuf: wgpu::Buffer,
-    ibuf: wgpu::Buffer,
-    index_count: u32,
 
     camera_buf: wgpu::Buffer,
 }
@@ -91,19 +87,6 @@ impl Gpu {
         surface.configure(&device, &config);
 
         let depth = Depth::new(&device, size);
-        let (verts, idx) = cube_mesh();
-
-        let vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("VertexBuffer"),
-            contents: bytemuck::cast_slice(&verts),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("IndexBuffer"),
-            contents: bytemuck::cast_slice(&idx),
-            usage: wgpu::BufferUsages::INDEX,
-        });
 
         let camera = CameraUniform::new();
         let camera_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -238,11 +221,12 @@ impl Gpu {
             objects_capacity,
             objects_bind_group,
             objects_bind_layout,
-            vbuf,
-            ibuf,
-            index_count: idx.len() as u32,
             camera_buf,
         }
+    }
+
+    pub fn get_device(&self) -> &wgpu::Device {
+        &self.device
     }
 
     pub fn get_config(&self) -> &wgpu::SurfaceConfiguration {
@@ -277,11 +261,16 @@ impl Gpu {
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&uni));
     }
 
-    pub fn render(&mut self, instance_count: u32) -> Result<(), wgpu::SurfaceError> {
+    pub fn render_draw_list(
+        &mut self,
+        assets: &Assets,
+        draws: &[DrawItem],
+    ) -> Result<(), wgpu::SurfaceError> {
         let frame = self.surface.get_current_texture()?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -290,7 +279,7 @@ impl Gpu {
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("RenderPass"),
+                label: Some("MainPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -318,11 +307,15 @@ impl Gpu {
             });
 
             rpass.set_pipeline(&self.pipeline);
-            rpass.set_bind_group(0, &self.bind_group, &[]);
-            rpass.set_bind_group(1, &self.objects_bind_group, &[]);
-            rpass.set_vertex_buffer(0, self.vbuf.slice(..));
-            rpass.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint16);
-            rpass.draw_indexed(0..self.index_count, 0, 0..instance_count);
+            rpass.set_bind_group(0, &self.bind_group, &[]); // globals (camera)
+            rpass.set_bind_group(1, &self.objects_bind_group, &[]); // objects (models)
+
+            for item in draws {
+                let mesh = assets.meshes.get(item.mesh); // Handle<T> is Copy, so passing by value is fine
+                rpass.set_vertex_buffer(0, mesh.vbuf.slice(..));
+                rpass.set_index_buffer(mesh.ibuf.slice(..), wgpu::IndexFormat::Uint16);
+                rpass.draw_indexed(0..mesh.index_count, 0, item.object_range.clone());
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));

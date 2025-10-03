@@ -8,7 +8,9 @@ use winit::{
 };
 
 mod renderer;
+use renderer::assets::Mesh;
 use renderer::Depth;
+use renderer::{Assets, DrawItem};
 
 mod scene;
 use scene::Camera;
@@ -21,6 +23,8 @@ struct App {
     window_id: Option<WindowId>,
     time: f32,
     last_frame: std::time::Instant,
+    assets: Assets,
+    cube_mesh: Option<renderer::assets::Handle<Mesh>>,
 }
 
 impl App {
@@ -31,6 +35,8 @@ impl App {
             window_id: None,
             time: 0.0,
             last_frame: std::time::Instant::now(),
+            assets: Assets::default(),
+            cube_mesh: None,
         }
     }
 }
@@ -44,6 +50,12 @@ impl ApplicationHandler for App {
             let id = window.id();
 
             let gpu = pollster::block_on(Gpu::new(&window));
+            let (verts, idx) = renderer::cube_mesh();
+            let cube = Mesh::from_vertices(gpu.get_device(), &verts, &idx);
+            let cube_h = self.assets.meshes.insert(cube);
+            //let cube_h = *self.cube_mesh.as_ref().expect("cube mesh created");
+            self.cube_mesh = Some(cube_h);
+
             self.window = Some(window);
             self.window_id = Some(id);
             self.gpu = Some(gpu);
@@ -118,8 +130,13 @@ impl ApplicationHandler for App {
                 ];
                 gpu.write_objects(&mats);
 
-                // --- Render ---
-                match gpu.render(mats.len() as u32) {
+                let cube_h = *self.cube_mesh.as_ref().expect("cube mesh created");
+                let draws = [DrawItem {
+                    mesh: cube_h,
+                    object_range: 0..(mats.len() as u32),
+                }];
+
+                match gpu.render_draw_list(&self.assets, &draws) {
                     Ok(()) => {}
                     Err(wgpu::SurfaceError::Lost) => {
                         if let Some(w) = &self.window {
@@ -127,12 +144,9 @@ impl ApplicationHandler for App {
                         }
                     }
                     Err(wgpu::SurfaceError::OutOfMemory) => {
-                        // Fatal: exit the loop
                         event_loop.exit();
                     }
-                    Err(wgpu::SurfaceError::Timeout) => {
-                        // Non-fatal: skip this frame
-                    }
+                    Err(wgpu::SurfaceError::Timeout) => {}
                     Err(_) => {}
                 }
 
