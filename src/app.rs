@@ -36,8 +36,8 @@ impl ApplicationHandler for App {
                 .expect("create window");
             let id = window.id();
 
-            let renderer = pollster::block_on(Renderer::new(&window));
-            self.scene.setup(&renderer);
+            let mut renderer = pollster::block_on(Renderer::new(&window));
+            self.scene.setup(&mut renderer);
 
             self.window = Some(window);
             self.window_id = Some(id);
@@ -74,7 +74,7 @@ impl ApplicationHandler for App {
                 let now = std::time::Instant::now();
                 let dt = (now - self.scene.last_frame()).as_secs_f64();
                 self.scene.set_last_frame(now);
-                
+
                 self.scene.update(dt);
                 self.scene.render(renderer);
 

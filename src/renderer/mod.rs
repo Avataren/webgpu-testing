@@ -14,6 +14,6 @@ pub use material::Material;
 pub use objects::ObjectData;
 pub use primitives::cube_mesh;
 pub use vertex::Vertex;
-pub use texture::{Texture, TextureArray};
+pub use texture::Texture;
 pub use renderer::Renderer;
 pub use uniforms::CameraUniform;

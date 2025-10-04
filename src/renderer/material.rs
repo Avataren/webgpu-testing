@@ -6,6 +6,7 @@ use super::texture::Texture;
 pub struct Material {
     pub color: [u8; 4],
     pub flags: MaterialFlags,
+    pub texture_index: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +50,7 @@ impl Material {
         Self {
             color,
             flags: MaterialFlags::NONE,
+            texture_index: 0
         }
     }
 
@@ -77,10 +79,17 @@ impl Material {
         Self::rgb(255, 255, 255)
     }
 
-    pub fn checker() -> Self {
-        Self::new([255, 255, 255, 0])
+    pub fn with_texture(mut self, index: u32) -> Self {
+        self.texture_index = index;
+        self.flags |= MaterialFlags::USE_TEXTURE;
+        self
     }
 
+    pub fn checker() -> Self {
+        // Update this to use texture 0 by default
+        Self::new([255, 255, 255, 255]).with_texture(0)
+    }
+    
     pub fn color_f32(&self) -> [f32; 4] {
         [
             self.color[0] as f32 / 255.0,

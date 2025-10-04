@@ -70,9 +70,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var base_color: vec3<f32>;
     
     // Check if we should use texture
-    if ((in.material_flags & FLAG_USE_TEXTURE) != 0u && in.texture_index > 0u) {
+    if ((in.material_flags & FLAG_USE_TEXTURE) != 0u) {
         // Sample from bindless texture array
-        let tex_idx = in.texture_index - 1u;
+        let tex_idx = in.texture_index;
         let tex_color = textureSample(textures[tex_idx], tex_sampler, in.uv);
         base_color = tex_color.rgb * in.color.rgb;
     } else {

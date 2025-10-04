@@ -28,6 +28,7 @@ struct RenderContext {
 struct RenderPipeline {
     pipeline: wgpu::RenderPipeline,
     dummy_texture_bind_group: wgpu::BindGroup,
+    texture_bind_layout: wgpu::BindGroupLayout,
 }
 
 struct DynamicObjectsBuffer {
@@ -88,6 +89,56 @@ impl Renderer {
 
     pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u16]) -> crate::asset::Mesh {
         crate::asset::Mesh::from_vertices(&self.context.device, vertices, indices)
+    }
+
+    pub fn update_texture_bind_group(&mut self, assets: &Assets) {
+        let views: Vec<&wgpu::TextureView> = (0..256)
+            .map(|i| {
+                assets
+                    .textures
+                    .get(crate::asset::Handle::new(i))
+                    .map(|t| &t.view)
+                    .unwrap_or_else(|| {
+                        // Fallback to first texture or dummy
+                        assets
+                            .textures
+                            .get(crate::asset::Handle::new(0))
+                            .map(|t| &t.view)
+                            .expect("No textures available")
+                    })
+            })
+            .collect();
+
+        if views.is_empty() {
+            return; // Keep dummy bind group
+        }
+
+        // Get sampler from first texture
+        let sampler = assets
+            .textures
+            .get(crate::asset::Handle::new(0))
+            .map(|t| &t.sampler)
+            .expect("No textures available");
+
+        let new_bind_group = self
+            .context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("TextureArrayBindGroup"),
+                layout: &self.pipeline.texture_bind_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&views),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            });
+
+        self.pipeline.dummy_texture_bind_group = new_bind_group;
     }
 
     pub fn render(
@@ -362,7 +413,7 @@ impl DynamicObjectsBuffer {
                 crate::renderer::ObjectData::new(
                     inst.transform.matrix(),
                     inst.material.color_f32(),
-                    0, // texture_index - hardcode to 0 for now
+                    inst.material.texture_index,
                     inst.material.flags_bits(),
                 )
             }));
@@ -507,6 +558,7 @@ impl RenderPipeline {
         Self {
             pipeline,
             dummy_texture_bind_group,
+            texture_bind_layout: texture_array_bind_layout,
         }
     }
 

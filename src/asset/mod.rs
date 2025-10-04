@@ -6,15 +6,18 @@ pub use handle::Handle;
 pub use mesh::Mesh;
 pub use cache::AssetCache;
 
+use crate::renderer::Texture;
+
 pub struct Assets {
     pub meshes: AssetCache<Mesh>,
-    // Future: textures, materials, etc.
+    pub textures: AssetCache<Texture>,
 }
 
 impl Assets {
     pub fn new() -> Self {
         Self {
             meshes: AssetCache::new(),
+            textures: AssetCache::new(),
         }
     }
 }
