@@ -1,105 +1,40 @@
 // scene/scene.rs
+// Pure hecs ECS scene implementation
+
+use hecs::World;
 use glam::{Quat, Vec3};
 
 use crate::asset::Assets;
-use crate::renderer::{Material, RenderBatcher, RenderObject, Renderer, Texture};
-use crate::scene::transform::Transform;
-use crate::scene::Camera;
+use crate::renderer::{RenderBatcher, RenderObject, Renderer};
+use super::components::*;
 
 pub struct Scene {
-    time: f64,
-    last_frame: std::time::Instant,
+    /// hecs World - stores all entities and components
+    pub world: World,
+    
+    /// Asset storage (meshes, textures)
     pub assets: Assets,
-    pub batcher: RenderBatcher,
+    
+    /// Total elapsed time
+    time: f64,
+    
+    /// Last frame timestamp
+    last_frame: std::time::Instant,
 }
 
 impl Scene {
     pub fn new() -> Self {
         Self {
+            world: World::new(),
+            assets: Assets::default(),
             time: 0.0,
             last_frame: std::time::Instant::now(),
-            assets: Assets::default(),
-            batcher: RenderBatcher::new(),
         }
     }
 
-    pub fn setup(&mut self, renderer: &mut Renderer) {
-        // Load cube mesh
-        let (verts, idx) = crate::renderer::cube_mesh();
-        let cube_mesh = renderer.create_mesh(&verts, &idx);
-        self.assets.meshes.insert(cube_mesh);
-
-        // Create procedural test textures
-
-        // Texture 0: Black & white checkerboard
-        let checkerboard = Texture::checkerboard(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            32,
-            [255, 255, 255, 255],
-            [0, 0, 0, 255],
-            Some("Checkerboard"),
-        );
-        self.assets.textures.insert(checkerboard);
-
-        // Texture 1: Red to yellow gradient
-        let gradient_red = Texture::gradient(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            [255, 0, 0, 255],
-            [255, 255, 0, 255],
-            Some("Red-Yellow Gradient"),
-        );
-        self.assets.textures.insert(gradient_red);
-
-        // Texture 2: Blue radial
-        let radial_blue = Texture::radial(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            [255, 255, 255, 255],
-            [0, 0, 255, 255],
-            Some("Blue Radial"),
-        );
-        self.assets.textures.insert(radial_blue);
-
-        // Texture 3: Noise
-        let noise = Texture::noise(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            42,
-            Some("Noise"),
-        );
-        self.assets.textures.insert(noise);
-
-        // Texture 4: Green & magenta checkerboard
-        let checkerboard2 = Texture::checkerboard(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            16,
-            [0, 255, 0, 255],
-            [255, 0, 255, 255],
-            Some("Green-Magenta Checkerboard"),
-        );
-        self.assets.textures.insert(checkerboard2);
-
-        // Update the texture bind group with all the textures we just created
-        renderer.update_texture_bind_group(&self.assets);
-
-        log::info!(
-            "Scene setup complete: {} meshes, {} textures",
-            self.assets.meshes.len(),
-            self.assets.textures.len()
-        );
-    }
-
-    pub fn update(&mut self, dt: f64) {
-        self.time += dt;
-    }
+    // ========================================================================
+    // Time Management
+    // ========================================================================
 
     pub fn time(&self) -> f64 {
         self.time
@@ -113,94 +48,79 @@ impl Scene {
         self.last_frame = instant;
     }
 
-    pub fn render(&mut self, renderer: &mut Renderer) {
-        let t = self.time as f32;
+    // ========================================================================
+    // Update - runs all systems
+    // ========================================================================
 
-        self.batcher.clear();
+    pub fn update(&mut self, dt: f64) {
+        self.time += dt;
+        
+        // Run systems
+        self.system_rotate_animation(dt);
+        self.system_orbit_animation(dt);
+    }
 
-        // Setup camera
-        let aspect = renderer.aspect_ratio();
-        let eye = Vec3::new(t.cos() * 3.0, 2.0, t.sin() * 3.0);
-        let cam = Camera {
-            eye,
-            target: Vec3::ZERO,
-            up: Vec3::Y,
-            fov_y_radians: 60f32.to_radians(),
-            near: 0.01,
-            far: 100.0,
-        };
-        renderer.set_camera(&cam, aspect);
+    // ========================================================================
+    // Rendering
+    // ========================================================================
 
-        if let Some(cube_handle) = self.get_cube_handle() {
-            // Center cube - checkerboard texture (0)
-            self.batcher.add(RenderObject {
-                mesh: cube_handle,
-                material: Material::white().with_texture(0),
-                transform: Transform::from_trs(
-                    Vec3::ZERO,
-                    Quat::from_rotation_x(t * 0.5)
-                        * Quat::from_rotation_y(t * 1.2)
-                        * Quat::from_rotation_z(-t * 0.2),
-                    Vec3::ONE,
-                ),
-            });
+    pub fn render(&mut self, renderer: &mut Renderer, batcher: &mut RenderBatcher) {
+        batcher.clear();
 
-            // Right cube - red gradient (1)
-            self.batcher.add(RenderObject {
-                mesh: cube_handle,
-                material: Material::white().with_texture(1),
-                transform: Transform::from_trs(
-                    Vec3::new(1.6, 0.0, 0.0),
-                    Quat::from_rotation_y(-t * 1.0),
-                    Vec3::ONE,
-                ),
-            });
-
-            // Left cube - blue radial (2)
-            self.batcher.add(RenderObject {
-                mesh: cube_handle,
-                material: Material::white().with_texture(2),
-                transform: Transform::from_trs(
-                    Vec3::new(-1.6, 0.0, 0.0),
-                    Quat::from_rotation_y(t * 1.5),
-                    Vec3::ONE,
-                ),
-            });
-
-            // Ring of cubes with alternating textures
-            for i in 0..50 {
-                let angle = (i as f32) * std::f32::consts::TAU / 50.0;
-                let radius = 2.5;
-                let texture_idx = (i % 5) as u32; // Cycle through textures 0-4
-
-                self.batcher.add(RenderObject {
-                    mesh: cube_handle,
-                    material: Material::white().with_texture(texture_idx),
-                    transform: Transform::from_trs(
-                        Vec3::new(
-                            angle.cos() * radius,
-                            (t + i as f32).sin() * 0.5,
-                            angle.sin() * radius,
-                        ),
-                        Quat::IDENTITY,
-                        Vec3::splat(0.3),
-                    ),
-                });
+        // Query all renderable entities
+        // This is pure hecs - query for components we need
+        for (_entity, (transform, mesh, material, visible)) in self
+            .world
+            .query::<(&TransformComponent, &MeshComponent, &MaterialComponent, &Visible)>()
+            .iter()
+        {
+            if !visible.0 {
+                continue;
             }
+
+            batcher.add(RenderObject {
+                mesh: mesh.0,
+                material: material.0,
+                transform: transform.0,
+            });
         }
 
-        //renderer.update_texture_bind_group(&self.assets);
-
-        if let Err(e) = renderer.render(&self.assets, &self.batcher) {
+        if let Err(e) = renderer.render(&self.assets, batcher) {
             log::error!("Render error: {:?}", e);
         }
     }
 
-    fn get_cube_handle(&self) -> Option<crate::asset::Handle<crate::asset::Mesh>> {
-        if self.assets.meshes.len() > 0 {
-            Some(crate::asset::Handle::new(0))
-        } else {
-            None
+    // ========================================================================
+    // Systems - pure hecs queries
+    // ========================================================================
+
+    /// System: Update rotation animations
+    fn system_rotate_animation(&mut self, dt: f64) {
+        for (_entity, (transform, anim)) in self
+            .world
+            .query::<(&mut TransformComponent, &RotateAnimation)>()
+            .iter()
+        {
+            let rotation = Quat::from_axis_angle(anim.axis, anim.speed * dt as f32);
+            transform.0.rotation = rotation * transform.0.rotation;
+        }
+    }
+
+    /// System: Update orbit animations
+    fn system_orbit_animation(&mut self, dt: f64) {
+        let time = self.time as f32;
+        
+        for (_entity, (transform, orbit)) in self
+            .world
+            .query::<(&mut TransformComponent, &OrbitAnimation)>()
+            .iter()
+        {
+            let angle = time * orbit.speed + orbit.offset;
+            transform.0.translation = orbit.center + Vec3::new(
+                angle.cos() * orbit.radius,
+                (time + orbit.offset).sin() * 0.5,
+                angle.sin() * orbit.radius,
+            );
         }
     }
 }
