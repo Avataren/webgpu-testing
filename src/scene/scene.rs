@@ -6,6 +6,7 @@ use crate::scene::Transform;
 use crate::time::Instant;
 use glam::{Quat, Vec3};
 use hecs::World;
+use instant::Instant;
 
 pub struct Scene {
     pub world: World,

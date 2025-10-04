@@ -2,7 +2,6 @@ pub mod app;
 pub mod asset;
 pub mod renderer;
 pub mod scene;
-pub mod time;
 
 use app::{App, SceneType};
 use winit::event_loop::EventLoop;
@@ -10,6 +9,7 @@ use winit::event_loop::EventLoop;
 fn create_app() -> App {
     // Central place to select which demo scene should run by default
     App::new(SceneType::Simple)
+    //App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

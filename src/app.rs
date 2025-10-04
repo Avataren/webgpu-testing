@@ -1,4 +1,5 @@
 // app.rs - Complete fixed version with hierarchy test scene
+use instant::Instant;
 use winit::{
     application::ApplicationHandler,
     event::*,
