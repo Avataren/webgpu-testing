@@ -13,9 +13,10 @@ use winit::platform::web::WindowExtWebSys;
 
 use crate::renderer::{Material, RenderBatcher, Renderer, Texture};
 use crate::scene::{
-    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation, 
+    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
+use crate::time::Instant;
 use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

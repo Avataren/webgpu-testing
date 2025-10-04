@@ -3,6 +3,7 @@ use super::components::*;
 use crate::asset::Assets;
 use crate::renderer::{RenderBatcher, RenderObject, Renderer};
 use crate::scene::Transform;
+use crate::time::Instant;
 use glam::{Quat, Vec3};
 use hecs::World;
 use instant::Instant;
