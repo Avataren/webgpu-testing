@@ -14,7 +14,7 @@ impl SceneLoader {
     fn load_node(
         node: &gltf::Node,
         parent: Option<hecs::Entity>,
-        mesh_handles: &[(Handle<Mesh>, Option<usize>)],
+        mesh_handles: &[Vec<(Handle<Mesh>, Option<usize>)>],
         materials: &[Material],
         world: &mut hecs::World,
         scale_multiplier: f32, // Add this parameter
@@ -49,18 +49,28 @@ impl SceneLoader {
         }
 
         // Add mesh and material if this node has a mesh
+        let mut extra_primitives: Vec<(Handle<Mesh>, Option<usize>)> = Vec::new();
+
         if let Some(gltf_mesh) = node.mesh() {
-            if let Some(&(mesh_handle, material_index)) = mesh_handles.get(gltf_mesh.index()) {
-                entity_builder.add(MeshComponent(mesh_handle));
+            if let Some(primitives) = mesh_handles.get(gltf_mesh.index()) {
+                match primitives.len() {
+                    0 => {}
+                    1 => {
+                        let (mesh_handle, material_index) = primitives[0];
+                        entity_builder.add(MeshComponent(mesh_handle));
 
-                // Get the material for this primitive
-                let material = if let Some(mat_idx) = material_index {
-                    materials.get(mat_idx).copied().unwrap_or(Material::pbr())
-                } else {
-                    Material::pbr()
-                };
+                        let material = if let Some(mat_idx) = material_index {
+                            materials.get(mat_idx).copied().unwrap_or(Material::pbr())
+                        } else {
+                            Material::pbr()
+                        };
 
-                entity_builder.add(MaterialComponent(material));
+                        entity_builder.add(MaterialComponent(material));
+                    }
+                    _ => {
+                        extra_primitives.extend(primitives.iter().copied());
+                    }
+                }
             }
         }
 
@@ -79,6 +89,37 @@ impl SceneLoader {
                 scale_multiplier,
             )?;
             children.push(child_entity);
+        }
+
+        if !extra_primitives.is_empty() {
+            for (primitive_index, (mesh_handle, material_index)) in
+                extra_primitives.into_iter().enumerate()
+            {
+                let mut primitive_builder = hecs::EntityBuilder::new();
+
+                let primitive_name = format!(
+                    "{} Primitive {}",
+                    node.name().unwrap_or("Unnamed"),
+                    primitive_index
+                );
+
+                primitive_builder.add(Name::new(primitive_name));
+                primitive_builder.add(TransformComponent(transform));
+                primitive_builder.add(Visible(true));
+                primitive_builder.add(Parent(entity));
+                primitive_builder.add(MeshComponent(mesh_handle));
+
+                let material = if let Some(mat_idx) = material_index {
+                    materials.get(mat_idx).copied().unwrap_or(Material::pbr())
+                } else {
+                    Material::pbr()
+                };
+
+                primitive_builder.add(MaterialComponent(material));
+
+                let primitive_entity = world.spawn(primitive_builder.build());
+                children.push(primitive_entity);
+            }
         }
 
         // Add children component if we have children
@@ -117,11 +158,15 @@ impl SceneLoader {
         let material_handles = Self::load_materials(&document, &texture_handles)?;
 
         // Load all meshes
-        let mut mesh_handles = Vec::new();
+        let mesh_count = document.meshes().len();
+        let mut mesh_handles: Vec<Vec<(Handle<Mesh>, Option<usize>)>> =
+            vec![Vec::new(); mesh_count];
         for gltf_mesh in document.meshes() {
+            let mesh_index = gltf_mesh.index();
+            let primitives = &mut mesh_handles[mesh_index];
             for primitive in gltf_mesh.primitives() {
                 let handle = Self::load_primitive(&primitive, &buffers, scene, renderer)?;
-                mesh_handles.push((handle, primitive.material().index()));
+                primitives.push((handle, primitive.material().index()));
             }
         }
 
