@@ -20,17 +20,34 @@ impl Mesh {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("IndexBuffer"),
-            contents: bytemuck::cast_slice(indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let uses_u32_indices = indices.iter().any(|&idx| idx > u16::MAX as u32);
+        let (index_buffer, index_format) = if uses_u32_indices {
+            (
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("IndexBuffer"),
+                    contents: bytemuck::cast_slice(indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                wgpu::IndexFormat::Uint32,
+            )
+        } else {
+            let index_data_u16: Vec<u16> = indices.iter().map(|&idx| idx as u16).collect();
+
+            (
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("IndexBuffer"),
+                    contents: bytemuck::cast_slice(&index_data_u16),
+                    usage: wgpu::BufferUsages::INDEX,
+                }),
+                wgpu::IndexFormat::Uint16,
+            )
+        };
 
         Self {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
-            index_format: wgpu::IndexFormat::Uint32,
+            index_format,
         }
     }
 
