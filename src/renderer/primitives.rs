@@ -1,6 +1,6 @@
 use super::vertex::{v, Vertex};
 
-pub fn cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
+pub fn cube_mesh() -> (Vec<Vertex>, Vec<u32>) {
     let p = |x, y, z| [x, y, z];
     let verts = vec![
         v(p(0.5, -0.5, -0.5), [1.0, 0.0, 0.0], [0.0, 1.0]),
@@ -33,7 +33,7 @@ pub fn cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
             let o = f * 4;
             [o, o + 1, o + 2, o, o + 2, o + 3]
         })
-        .map(|i| i as u16)
+        .map(|i| i as u32)
         .collect::<Vec<_>>();
     (verts, idx)
 }
