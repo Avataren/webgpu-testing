@@ -1,5 +1,4 @@
 // app.rs - Complete fixed version with hierarchy test scene
-use instant::Instant;
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -16,7 +15,7 @@ use crate::scene::{
     Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
-use crate::time::Instant;
+use crate::Instant;
 use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

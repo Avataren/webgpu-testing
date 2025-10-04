@@ -3,10 +3,9 @@ use super::components::*;
 use crate::asset::Assets;
 use crate::renderer::{RenderBatcher, RenderObject, Renderer};
 use crate::scene::Transform;
-use crate::time::Instant;
+use crate::Instant;
 use glam::{Quat, Vec3};
 use hecs::World;
-use instant::Instant;
 
 pub struct Scene {
     pub world: World,
