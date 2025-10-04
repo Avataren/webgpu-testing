@@ -2,6 +2,7 @@ pub mod app;
 pub mod asset;
 pub mod renderer;
 pub mod scene;
+pub mod time;
 
 use app::{App, SceneType};
 use winit::event_loop::EventLoop;
