@@ -443,7 +443,6 @@ impl SceneLoader {
             .read_indices()
             .ok_or("Missing indices")?
             .into_u32()
-            .map(|i| i as u16)
             .collect::<Vec<_>>();
 
         log::trace!(

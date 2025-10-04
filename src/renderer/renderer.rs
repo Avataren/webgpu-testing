@@ -115,7 +115,7 @@ impl Renderer {
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
     }
 
-    pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u16]) -> crate::asset::Mesh {
+    pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u32]) -> crate::asset::Mesh {
         crate::asset::Mesh::from_vertices(&self.context.device, vertices, indices)
     }
 
@@ -239,7 +239,7 @@ impl Renderer {
 
                 let instance_count = instances.len() as u32;
                 rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
-                rpass.set_index_buffer(mesh.index_buffer().slice(..), wgpu::IndexFormat::Uint16);
+                rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
                 rpass.draw_indexed(
                     0..mesh.index_count(),
                     0,
@@ -254,7 +254,6 @@ impl Renderer {
         frame.present();
         Ok(())
     }
-
 }
 
 impl RenderContext {
