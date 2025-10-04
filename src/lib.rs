@@ -4,8 +4,6 @@ pub mod renderer;
 pub mod scene;
 pub mod time;
 
-pub use time::Instant;
-
 use app::{App, SceneType};
 use winit::event_loop::EventLoop;
 
