@@ -49,7 +49,7 @@
     <script type="module">
       async function init() {
         try {
-          const wasm = await import("./pkg/wgpu_cube.js");
+          const wasm = await import("./pkg/wgpu-cube.js");
           await wasm.default();
           document.getElementById("loading")?.remove();
         } catch (err) {
