@@ -5,7 +5,7 @@ use crate::renderer::{RenderBatcher, RenderObject, Renderer};
 use crate::scene::Transform;
 use glam::{Quat, Vec3};
 use hecs::World;
-use std::time::Instant;
+use instant::Instant;
 
 pub struct Scene {
     pub world: World,
