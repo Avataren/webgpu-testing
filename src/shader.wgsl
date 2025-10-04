@@ -59,7 +59,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let L = normalize(vec3<f32>(0.5, 0.3, 1.0));
     let N = normalize(in.normal);
     let ndotl = max(dot(N, L), 0.0);
-    let ambient = 0.2;
+    let ambient = 0.1;
     let diffuse = ndotl * 0.8;
     let lighting = ambient + diffuse;
     
