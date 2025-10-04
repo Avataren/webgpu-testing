@@ -15,23 +15,25 @@ fn main() {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    log::info!("Starting wgpu hecs renderer");
+    log::info!("Starting wgpu hecs renderer - Hierarchy Test Mode");
 
     // Create event loop
     let event_loop = EventLoop::new().expect("Failed to create event loop");
 
-    // Create app - choose your scene type:
+    // Create app with hierarchy test scene
+    //let mut app = App::new(SceneType::HierarchyTest);
     
-    //let mut app = App::new(SceneType::Animated);
-    
-    // Other options:
-    // let mut app = App::new(SceneType::Simple);
+    // Other test scenes:
+     let mut app = App::new(SceneType::Simple);
     // let mut app = App::new(SceneType::Grid);
+    // let mut app = App::new(SceneType::Animated);
     // let mut app = App::new(SceneType::MaterialShowcase);
     
     // Load from glTF:
-    let mut app = App::with_gltf("assets/avocado/Avocado.gltf", 20.0);
-//    let mut app = App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 1.0);
+    // let mut app = App::with_gltf("assets/camera/AntiqueCamera.gltf", 1.0);
+    // let mut app = App::with_gltf("assets/damagedhelmet/DamagedHelmet.gltf", 1.0);
+    // let mut app = App::with_gltf("assets/avocado/Avocado.gltf", 20.0);
+    // let mut app = App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 1.0);
 
     // Run the application
     if let Err(e) = event_loop.run_app(&mut app) {

@@ -1,6 +1,4 @@
-// app.rs
-// Pure hecs ECS implementation - no custom entity system
-
+// app.rs - Complete fixed version with hierarchy test scene
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -11,8 +9,8 @@ use winit::{
 
 use crate::renderer::{Material, RenderBatcher, Renderer, Texture};
 use crate::scene::{
-    Camera, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation, RotateAnimation,
-    Scene, SceneLoader, Transform, TransformComponent, Visible,
+    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation, 
+    Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
 use glam::{Quat, Vec3};
 
@@ -22,6 +20,7 @@ pub enum SceneType {
     Grid,
     Animated,
     MaterialShowcase,
+    HierarchyTest,  // NEW: Test hierarchical transforms
     FromGltf,
 }
 
@@ -35,6 +34,10 @@ pub struct App {
     scene_type: SceneType,
     gltf_path: Option<String>,
     gltf_scale: f32,
+    old_scenes: Vec<Scene>,
+    old_renderers: Vec<Renderer>,
+    frame_counter: u32,
+    skip_rendering_until_frame: Option<u32>,
 }
 
 impl App {
@@ -49,26 +52,22 @@ impl App {
             scene_type,
             gltf_path: None,
             gltf_scale: 1.0,
+            old_scenes: Vec::new(),
+            old_renderers: Vec::new(),
+            frame_counter: 0,
+            skip_rendering_until_frame: None,
         }
     }
 
     fn init_default_textures(&mut self, renderer: &mut Renderer) {
-        // Create default textures that PBR materials can fall back to
-
-        // 0: White texture (default base color)
         let white = Texture::white(renderer.get_device(), renderer.get_queue());
         self.scene.assets.textures.insert(white);
 
-        // 1: Default normal map (pointing up: RGB 128,128,255)
         let normal = Texture::default_normal(renderer.get_device(), renderer.get_queue());
         self.scene.assets.textures.insert(normal);
 
-        // 2: Default metallic-roughness (non-metallic, mid-roughness)
         let mr = Texture::default_metallic_roughness(renderer.get_device(), renderer.get_queue());
         self.scene.assets.textures.insert(mr);
-
-        // Update the bind group with these default textures
-        renderer.update_texture_bind_group(&self.scene.assets);
 
         log::info!("Initialized default PBR textures");
     }
@@ -84,12 +83,15 @@ impl App {
             scene_type: SceneType::FromGltf,
             gltf_path: Some(path.into()),
             gltf_scale: scale,
+            old_scenes: Vec::new(),
+            old_renderers: Vec::new(),
+            frame_counter: 0,
+            skip_rendering_until_frame: None,
         }
     }
 
     fn setup_scene(&mut self, renderer: &mut Renderer) {
-        // Only initialize default textures if we don't have any yet
-        if self.scene.assets.textures.is_empty() {
+        if self.scene.assets.textures.is_empty() && self.scene_type != SceneType::FromGltf {
             self.init_default_textures(renderer);
         }
 
@@ -98,6 +100,7 @@ impl App {
             SceneType::Grid => self.create_grid_scene(renderer, 5),
             SceneType::Animated => self.create_animated_scene(renderer),
             SceneType::MaterialShowcase => self.create_material_showcase(renderer),
+            SceneType::HierarchyTest => self.create_hierarchy_test_scene(renderer),
             SceneType::FromGltf => {
                 if let Some(path) = &self.gltf_path.clone() {
                     self.load_gltf_scene(path, renderer);
@@ -107,21 +110,195 @@ impl App {
                 }
             }
         }
+
+        // CRITICAL: Propagate transforms immediately after scene creation
+        // This ensures WorldTransform components exist before first render
+        log::info!("Running initial transform propagation...");
+        self.scene.update(0.0);
+        log::info!("Initial propagation complete");
     }
 
     // ========================================================================
-    // Scene Creation - Pure hecs
+    // NEW: Hierarchy Test Scene
     // ========================================================================
+    
+    fn create_hierarchy_test_scene(&mut self, renderer: &mut Renderer) {
+        log::info!("Creating hierarchy test scene...");
 
-    fn create_simple_scene(&mut self, renderer: &mut Renderer) {
-        log::info!("Creating simple scene...");
-
-        // Load mesh
         let (verts, idx) = crate::renderer::cube_mesh();
         let cube_mesh = renderer.create_mesh(&verts, &idx);
         let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
 
-        // Create texture
+        // Create colored textures
+        let colors = [
+            [255, 0, 0, 255],     // Red
+            [0, 255, 0, 255],     // Green
+            [0, 0, 255, 255],     // Blue
+            [255, 255, 0, 255],   // Yellow
+            [255, 0, 255, 255],   // Magenta
+        ];
+
+        for color in colors {
+            let texture = Texture::from_color(
+                renderer.get_device(),
+                renderer.get_queue(),
+                color,
+                None,
+            );
+            self.scene.assets.textures.insert(texture);
+        }
+        renderer.update_texture_bind_group(&self.scene.assets);
+
+        // Test 1: Simple Parent-Child (should see green cube offset from red)
+        log::info!("Creating Test 1: Simple parent-child");
+        let parent1 = self.scene.world.spawn((
+            Name::new("Parent1 (Red)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(-6.0, 0.0, 0.0),  // Parent at -6,0,0
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(0)), // Red
+            Visible(true),
+        ));
+
+        let child1 = self.scene.world.spawn((
+            Name::new("Child1 (Green)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(2.0, 0.0, 0.0),  // Offset +2 in X from parent
+                Quat::IDENTITY,
+                Vec3::splat(0.5),  // Half size
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(1)), // Green
+            Visible(true),
+            Parent(parent1),
+        ));
+
+        // Add children list to parent
+        self.scene.world.insert_one(parent1, Children(vec![child1])).ok();
+
+        // Test 2: Three-level hierarchy (Grandparent -> Parent -> Child)
+        log::info!("Creating Test 2: Three-level hierarchy");
+        let grandparent = self.scene.world.spawn((
+            Name::new("Grandparent (Blue)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, 0.0, 0.0),  // Center
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(2)), // Blue
+            Visible(true),
+        ));
+
+        let parent2 = self.scene.world.spawn((
+            Name::new("Parent2 (Yellow)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, 2.0, 0.0),  // Offset +2 in Y
+                Quat::IDENTITY,
+                Vec3::splat(0.8),
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(3)), // Yellow
+            Visible(true),
+            Parent(grandparent),
+        ));
+
+        let child2 = self.scene.world.spawn((
+            Name::new("Child2 (Magenta)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, 1.5, 0.0),  // Offset +1.5 in Y from parent
+                Quat::IDENTITY,
+                Vec3::splat(0.6),
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(4)), // Magenta
+            Visible(true),
+            Parent(parent2),
+        ));
+
+        self.scene.world.insert_one(grandparent, Children(vec![parent2])).ok();
+        self.scene.world.insert_one(parent2, Children(vec![child2])).ok();
+
+        // Test 3: Rotation hierarchy
+        log::info!("Creating Test 3: Rotation hierarchy");
+        let rotating_parent = self.scene.world.spawn((
+            Name::new("Rotating Parent (Red)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(6.0, 0.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(0)), // Red
+            Visible(true),
+            RotateAnimation {
+                axis: Vec3::Y,
+                speed: 1.0,
+            },
+        ));
+
+        let rotating_child = self.scene.world.spawn((
+            Name::new("Rotating Child (Green)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(3.0, 0.0, 0.0),  // Should orbit around parent
+                Quat::IDENTITY,
+                Vec3::splat(0.5),
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(1)), // Green
+            Visible(true),
+            Parent(rotating_parent),
+        ));
+
+        self.scene.world.insert_one(rotating_parent, Children(vec![rotating_child])).ok();
+
+        // Test 4: Scale hierarchy
+        log::info!("Creating Test 4: Scale hierarchy");
+        let scaled_parent = self.scene.world.spawn((
+            Name::new("Scaled Parent (Blue)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, -3.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::splat(2.0),  // 2x scale
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(2)), // Blue
+            Visible(true),
+        ));
+
+        let scaled_child = self.scene.world.spawn((
+            Name::new("Scaled Child (Yellow)"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(1.5, 0.0, 0.0),  // Translation should also be scaled
+                Quat::IDENTITY,
+                Vec3::splat(0.5),  // 0.5x scale (net 1.0x when combined)
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(Material::white().with_texture(3)), // Yellow
+            Visible(true),
+            Parent(scaled_parent),
+        ));
+
+        self.scene.world.insert_one(scaled_parent, Children(vec![scaled_child])).ok();
+
+        log::info!("Hierarchy test scene created: {} entities", self.scene.world.len());
+        log::info!("Expected layout:");
+        log::info!("  Test 1 (left): Red cube at (-6,0,0), green smaller cube at (-4,0,0)");
+        log::info!("  Test 2 (center): Blue->Yellow->Magenta vertical stack");
+        log::info!("  Test 3 (right): Red cube at (6,0,0) with green orbiting child");
+        log::info!("  Test 4 (bottom): Large blue cube with yellow child offset");
+    }
+
+    fn create_simple_scene(&mut self, renderer: &mut Renderer) {
+        log::info!("Creating simple scene...");
+
+        let (verts, idx) = crate::renderer::cube_mesh();
+        let cube_mesh = renderer.create_mesh(&verts, &idx);
+        let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
+
         let texture = Texture::checkerboard(
             renderer.get_device(),
             renderer.get_queue(),
@@ -134,7 +311,6 @@ impl App {
         self.scene.assets.textures.insert(texture);
         renderer.update_texture_bind_group(&self.scene.assets);
 
-        // Option 1: Using EntityBuilder helper
         EntityBuilder::new(&mut self.scene.world)
             .with_name("Red Cube")
             .with_transform(Transform::from_trs(
@@ -147,7 +323,6 @@ impl App {
             .visible(true)
             .spawn();
 
-        // Option 2: Using hecs directly (no builder)
         self.scene.world.spawn((
             Name::new("Green Cube"),
             TransformComponent(Transform::from_trs(
@@ -160,7 +335,6 @@ impl App {
             Visible(true),
         ));
 
-        // Option 3: Builder again
         EntityBuilder::new(&mut self.scene.world)
             .with_name("Blue Cube")
             .with_transform(Transform::from_trs(
@@ -183,7 +357,6 @@ impl App {
         let cube_mesh = renderer.create_mesh(&verts, &idx);
         let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
 
-        // Create textures
         let colors = [
             [255, 100, 100, 255],
             [100, 255, 100, 255],
@@ -197,16 +370,13 @@ impl App {
                 Texture::from_color(renderer.get_device(), renderer.get_queue(), color, None);
             self.scene.assets.textures.insert(texture);
         }
-        renderer.update_texture_bind_group(&self.scene.assets);
 
-        // Spawn grid using pure hecs (no builder)
         let spacing = 2.0;
         for x in -size..=size {
             for z in -size..=size {
                 let pos = Vec3::new(x as f32 * spacing, 0.0, z as f32 * spacing);
                 let texture_idx = ((x.abs() + z.abs()) % 5) as u32;
 
-                // Pure hecs spawn
                 self.scene.world.spawn((
                     Name::new(format!("Cube_{}_{}", x, z)),
                     TransformComponent(Transform::from_trs(pos, Quat::IDENTITY, Vec3::splat(0.4))),
@@ -238,7 +408,6 @@ impl App {
         self.scene.assets.textures.insert(gradient);
         renderer.update_texture_bind_group(&self.scene.assets);
 
-        // Central rotating sun - using builder
         EntityBuilder::new(&mut self.scene.world)
             .with_name("Sun")
             .with_transform(Transform::from_trs(
@@ -252,7 +421,6 @@ impl App {
             .visible(true)
             .spawn();
 
-        // Orbiting planets - using pure hecs
         let planet_count = 12;
         for i in 0..planet_count {
             let offset = (i as f32) * std::f32::consts::TAU / (planet_count as f32);
@@ -282,7 +450,6 @@ impl App {
         let cube_mesh = renderer.create_mesh(&verts, &idx);
         let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
 
-        // Create various textures
         let textures = vec![
             Texture::checkerboard(
                 renderer.get_device(),
@@ -331,7 +498,6 @@ impl App {
         ];
 
         for (i, pos) in positions.iter().enumerate() {
-            // Pure hecs spawn with rotation animation
             self.scene.world.spawn((
                 Name::new(format!("Cube_{}", i)),
                 TransformComponent(Transform::from_trs(*pos, Quat::IDENTITY, Vec3::ONE)),
@@ -348,13 +514,16 @@ impl App {
         log::info!("Material showcase: {} entities", self.scene.world.len());
     }
 
-fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
+    fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
         log::info!("Loading glTF: {} (scale: {})", path, self.gltf_scale);
 
         match SceneLoader::load_gltf(path, &mut self.scene, renderer, self.gltf_scale) {
             Ok(_) => {
                 renderer.update_texture_bind_group(&self.scene.assets);
                 log::info!("glTF loaded: {} entities", self.scene.world.len());
+                
+                // Debug: Print hierarchy
+                self.debug_print_hierarchy();
             }
             Err(e) => {
                 log::error!("Failed to load glTF: {}", e);
@@ -363,22 +532,76 @@ fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
         }
     }
 
+    fn debug_print_hierarchy(&self) {
+        log::info!("=== Scene Hierarchy ===");
+        
+        // Find roots
+        let roots: Vec<_> = self.scene.world
+            .query::<()>()
+            .without::<&Parent>()
+            .iter()
+            .map(|(e, _)| e)
+            .collect();
+        
+        log::info!("Found {} root entities", roots.len());
+        
+        for root in roots {
+            self.debug_print_entity(root, 0);
+        }
+        
+        log::info!("======================");
+    }
+
+    fn debug_print_entity(&self, entity: hecs::Entity, depth: usize) {
+        let indent = "  ".repeat(depth);
+        
+        let name = self.scene.world.get::<&Name>(entity)
+            .map(|n| n.0.clone())
+            .unwrap_or_else(|_| format!("{:?}", entity));
+        
+        let local_transform = self.scene.world.get::<&TransformComponent>(entity)
+            .map(|t| format!("T:{:?} R:{:?} S:{:?}", t.0.translation, t.0.rotation, t.0.scale))
+            .unwrap_or_else(|_| "No local transform".to_string());
+        
+        let world_transform = self.scene.world.get::<&crate::scene::components::WorldTransform>(entity)
+            .map(|t| format!("WorldT:{:?}", t.0.translation))
+            .unwrap_or_else(|_| "No WorldTransform".to_string());
+        
+        let has_mesh = self.scene.world.get::<&MeshComponent>(entity).is_ok();
+        
+        log::info!("{}└─ {} [{}]", 
+            indent, 
+            name, 
+            if has_mesh { "Mesh" } else { "Empty" },
+        );
+        log::info!("{}   Local: {}", indent, local_transform);
+        log::info!("{}   {}", indent, world_transform);
+        
+        // Print children
+        if let Ok(children) = self.scene.world.get::<&Children>(entity) {
+            for child in &children.0 {
+                self.debug_print_entity(*child, depth + 1);
+            }
+        }
+    }
+
     fn update_scene(&mut self, dt: f64) {
-        // This runs all the ECS systems
         self.scene.update(dt);
     }
 
-   fn update_camera(&mut self) {
+    fn update_camera(&mut self) {
         let t = self.scene.time() as f32;
-        
+
         let (radius, height) = match self.scene_type {
+            SceneType::HierarchyTest => (15.0, 8.0),
             SceneType::FromGltf => {
-                // Adjust camera based on scale
-                let base_radius = 2.0;
-                let base_height = 1.0;
-                (base_radius * self.gltf_scale.log10().max(0.5), 
-                 base_height * self.gltf_scale.log10().max(0.5))
-            },
+                let base_radius = 5.0;
+                let base_height = 2.0;
+                (
+                    base_radius * self.gltf_scale.log10().max(0.5),
+                    base_height * self.gltf_scale.log10().max(0.5),
+                )
+            }
             SceneType::Simple => (8.0, 4.0),
             SceneType::Grid => (15.0, 8.0),
             SceneType::Animated => (12.0, 6.0),
@@ -403,7 +626,7 @@ impl ApplicationHandler for App {
             let window = event_loop
                 .create_window(
                     Window::default_attributes()
-                        .with_title("wgpu hecs Renderer")
+                        .with_title("wgpu hecs Renderer - Hierarchy Test")
                         .with_inner_size(winit::dpi::LogicalSize::new(1280, 720)),
                 )
                 .expect("Failed to create window");
@@ -411,6 +634,12 @@ impl ApplicationHandler for App {
 
             let mut renderer = pollster::block_on(Renderer::new(&window));
             self.setup_scene(&mut renderer);
+
+            renderer.update_texture_bind_group(&self.scene.assets);
+            log::info!(
+                "Bind group updated with {} textures",
+                self.scene.assets.textures.len()
+            );
 
             self.window = Some(window);
             self.window_id = Some(id);
@@ -455,23 +684,34 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                // Update time
+                self.frame_counter += 1;
+
+                let should_skip = if let Some(skip_until) = self.skip_rendering_until_frame {
+                    if self.frame_counter < skip_until {
+                        true
+                    } else {
+                        self.skip_rendering_until_frame = None;
+                        false
+                    }
+                } else {
+                    false
+                };
+
                 let now = std::time::Instant::now();
                 let dt = (now - self.scene.last_frame()).as_secs_f64();
                 self.scene.set_last_frame(now);
 
-                // Update scene (no borrow of renderer)
                 self.update_scene(dt);
                 self.update_camera();
 
-                // Now borrow renderer for rendering
-                if let Some(renderer) = self.renderer.as_mut() {
-                    let aspect = renderer.aspect_ratio();
-                    renderer.set_camera(&self.camera, aspect);
-                    self.scene.render(renderer, &mut self.batcher);
+                if !should_skip {
+                    if let Some(renderer) = self.renderer.as_mut() {
+                        let aspect = renderer.aspect_ratio();
+                        renderer.set_camera(&self.camera, aspect);
+                        self.scene.render(renderer, &mut self.batcher);
+                    }
                 }
 
-                // Request next frame
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -489,32 +729,11 @@ impl ApplicationHandler for App {
                 Key::Named(NamedKey::Escape) => {
                     event_loop.exit();
                 }
-                Key::Character(c) if ('1'..='4').contains(&c.as_str().chars().next().unwrap()) => {
-                    let scene_num = c.parse::<usize>().unwrap() - 1;
-                    let new_type = match scene_num {
-                        0 => SceneType::Simple,
-                        1 => SceneType::Grid,
-                        2 => SceneType::Animated,
-                        3 => SceneType::MaterialShowcase,
-                        _ => return,
-                    };
-
-                    if new_type != self.scene_type {
-                        log::info!("Switching to {:?}", new_type);
-                        self.scene_type = new_type;
-
-                        // Create new scene and explicitly drop old one first
-                        let old_scene = std::mem::replace(&mut self.scene, Scene::new());
-                        drop(old_scene);
-
-                        // Take renderer out temporarily to avoid double borrow
-                        if let Some(mut renderer) = self.renderer.take() {
-                            self.setup_scene(&mut renderer);
-                            self.renderer = Some(renderer); // Put it back
-                        }
-                    }
+                Key::Character(c) if c.as_str() == "h" => {
+                    // Print hierarchy on 'h' key
+                    self.debug_print_hierarchy();
                 }
-                _ => {} // Catch-all for unhandled keys
+                _ => {}
             },
 
             _ => {}

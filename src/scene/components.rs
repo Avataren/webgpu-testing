@@ -15,6 +15,10 @@ use crate::scene::Transform;
 #[derive(Debug, Clone, Copy)]
 pub struct TransformComponent(pub Transform);
 
+/// World-space transform (computed from hierarchy)
+#[derive(Debug, Clone, Copy)]
+pub struct WorldTransform(pub Transform);
+
 /// Mesh component
 #[derive(Debug, Clone, Copy)]
 pub struct MeshComponent(pub Handle<Mesh>);

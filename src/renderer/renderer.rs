@@ -254,6 +254,7 @@ impl Renderer {
         frame.present();
         Ok(())
     }
+
 }
 
 impl RenderContext {

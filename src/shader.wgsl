@@ -205,7 +205,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var Lo = (diffuse + specular) * radiance * NdotL;
     
     // Ambient (very simple)
-    let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
+    let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;
     
     var color = ambient + Lo + emissive;
     
