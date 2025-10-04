@@ -11,7 +11,7 @@ pub struct Scene {
     pub world: World,
     pub assets: Assets,
     time: f64,
-    last_frame: Instant,
+    last_frame: Option<Instant>,
 }
 
 impl Scene {
@@ -20,8 +20,13 @@ impl Scene {
             world: World::new(),
             assets: Assets::default(),
             time: 0.0,
-            last_frame: Instant::now(),
+            last_frame: None, // Start as None - will be initialized later
         }
+    }
+
+    /// Initialize the timer (must be called before first update)
+    pub fn init_timer(&mut self) {
+        self.last_frame = Some(Instant::now());
     }
 
     pub fn time(&self) -> f64 {
@@ -30,10 +35,11 @@ impl Scene {
 
     pub fn last_frame(&self) -> Instant {
         self.last_frame
+            .expect("Scene timer not initialized - call init_timer() first")
     }
 
     pub fn set_last_frame(&mut self, instant: Instant) {
-        self.last_frame = instant;
+        self.last_frame = Some(instant);
     }
 
     pub fn update(&mut self, dt: f64) {
@@ -73,9 +79,15 @@ impl Scene {
                 // Root entity without children - use local transform directly
                 local_transform_count += 1;
                 if let Ok(name) = self.world.get::<&Name>(_entity) {
-                    log::warn!("Entity '{}' using LOCAL transform (no WorldTransform)", name.0);
+                    log::warn!(
+                        "Entity '{}' using LOCAL transform (no WorldTransform)",
+                        name.0
+                    );
                 } else {
-                    log::warn!("Entity {:?} using LOCAL transform (no WorldTransform)", _entity);
+                    log::warn!(
+                        "Entity {:?} using LOCAL transform (no WorldTransform)",
+                        _entity
+                    );
                 }
                 local_trans.0
             } else {
@@ -83,7 +95,6 @@ impl Scene {
                 log::warn!("Entity {:?} without transform", _entity);
                 Transform::IDENTITY
             };
-
 
             batcher.add(RenderObject {
                 mesh: mesh.0,
@@ -175,9 +186,10 @@ impl Scene {
 
         // Compute world transform by combining parent with local
         // parent_world is Transform::IDENTITY for root entities
-        let world = if parent_world.translation == Vec3::ZERO 
-            && parent_world.rotation == Quat::IDENTITY 
-            && parent_world.scale == Vec3::ONE {
+        let world = if parent_world.translation == Vec3::ZERO
+            && parent_world.rotation == Quat::IDENTITY
+            && parent_world.scale == Vec3::ONE
+        {
             // Parent is identity, just use local transform
             local
         } else {
@@ -195,18 +207,25 @@ impl Scene {
         // Update or insert the WorldTransform component
         // We need to check if it exists first, then handle update vs insert
         let has_world_transform = self.world.get::<&WorldTransform>(entity).is_ok();
-        
+
         if has_world_transform {
             // Update existing WorldTransform
             if let Ok(mut wt) = self.world.get::<&mut WorldTransform>(entity) {
                 wt.0 = world;
             } else {
-                log::error!("Failed to get mutable WorldTransform for entity {:?}", entity);
+                log::error!(
+                    "Failed to get mutable WorldTransform for entity {:?}",
+                    entity
+                );
             }
         } else {
             // Insert new WorldTransform (borrow is dropped)
             if let Err(e) = self.world.insert_one(entity, WorldTransform(world)) {
-                log::error!("Failed to insert WorldTransform for entity {:?}: {:?}", entity, e);
+                log::error!(
+                    "Failed to insert WorldTransform for entity {:?}: {:?}",
+                    entity,
+                    e
+                );
             } else {
                 log::trace!("Inserted WorldTransform for entity {:?}", entity);
             }
@@ -220,7 +239,7 @@ impl Scene {
             return;
         };
         // Borrow is dropped here
-        
+
         // Now we can recursively process children
         for child in children {
             self.propagate_recursive(child, world);

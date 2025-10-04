@@ -664,6 +664,10 @@ impl ApplicationHandler for App {
             }
 
             let mut renderer = pollster::block_on(Renderer::new(&window));
+            
+            // ADD THIS: Initialize the scene timer now that we're in a proper context
+            self.scene.init_timer();
+            
             self.setup_scene(&mut renderer);
 
             renderer.update_texture_bind_group(&self.scene.assets);
