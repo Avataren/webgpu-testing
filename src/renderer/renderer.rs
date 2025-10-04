@@ -1,5 +1,6 @@
 // renderer/renderer.rs
-use crate::renderer::{Assets, CameraUniform, Depth, RenderBatcher, Vertex};
+use crate::asset::Assets;
+use crate::renderer::{CameraUniform, Depth, RenderBatcher, Vertex};
 use crate::scene::Camera;
 
 use std::{mem, num::NonZeroU64};
@@ -85,8 +86,8 @@ impl Renderer {
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
     }
 
-    pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u16]) -> crate::renderer::assets::Mesh {
-        crate::renderer::assets::Mesh::from_vertices(&self.context.device, vertices, indices)
+    pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u16]) -> crate::asset::Mesh {
+        crate::asset::Mesh::from_vertices(&self.context.device, vertices, indices)
     }
 
     pub fn render(
@@ -99,12 +100,12 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self
-            .context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Encoder"),
-            });
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Encoder"),
+                });
 
         self.objects_buffer.update(&self.context, batcher)?;
 
@@ -193,11 +194,12 @@ impl RenderContext {
         log::info!("Adapter features: {}", adapter_features);
 
         let mut required_features = wgpu::Features::empty();
-        if adapter_features.contains(
-            wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
-        ) {
-            required_features |= wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
-                | wgpu::Features::TEXTURE_BINDING_ARRAY;
+        if adapter_features
+            .contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
+        {
+            required_features |=
+                wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+                    | wgpu::Features::TEXTURE_BINDING_ARRAY;
             log::info!("Bindless textures supported!");
         } else {
             log::warn!("Bindless textures not supported");
@@ -209,16 +211,14 @@ impl RenderContext {
         };
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Device"),
-                    required_features,
-                    required_limits: limits,
-                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                },
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Device"),
+                required_features,
+                required_limits: limits,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
             .await
             .expect("device");
 
@@ -300,10 +300,10 @@ impl CameraBuffer {
             }],
         });
 
-        Self { 
-            buffer, 
+        Self {
+            buffer,
             bind_group,
-            bind_layout,  // Store it
+            bind_layout, // Store it
         }
     }
 }
@@ -360,9 +360,9 @@ impl DynamicObjectsBuffer {
         for (_, instances) in batcher.iter() {
             self.scratch.extend(instances.iter().map(|inst| {
                 crate::renderer::ObjectData::new(
-                    inst.transform,
+                    inst.transform.matrix(),
                     inst.material.color_f32(),
-                    inst.material.texture_index,
+                    0, // texture_index - hardcode to 0 for now
                     inst.material.flags_bits(),
                 )
             }));
@@ -415,11 +415,7 @@ impl DynamicObjectsBuffer {
 }
 
 impl RenderPipeline {
-    fn new(
-        context: &RenderContext,
-        camera: &CameraBuffer,
-        objects: &DynamicObjectsBuffer,
-    ) -> Self {
+    fn new(context: &RenderContext, camera: &CameraBuffer, objects: &DynamicObjectsBuffer) -> Self {
         let texture_array_bind_layout =
             context
                 .device

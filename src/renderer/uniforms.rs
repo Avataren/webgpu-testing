@@ -1,3 +1,4 @@
+// renderer/uniforms.rs
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
@@ -11,6 +12,12 @@ impl CameraUniform {
     pub fn new() -> Self {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+        }
+    }
+    
+    pub fn from_matrix(view_proj: Mat4) -> Self {
+        Self {
+            view_proj: view_proj.to_cols_array_2d(),
         }
     }
 }

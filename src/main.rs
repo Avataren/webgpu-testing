@@ -4,6 +4,7 @@ use winit::event_loop::EventLoop;
 use crate::app::App;
 
 mod app;
+mod asset;     // Add this line
 mod renderer;
 mod scene;
 

@@ -1,11 +1,10 @@
 // renderer/material.rs (Bindless version)
-use super::assets::Handle;
+use crate::asset::Handle;
 use super::texture::Texture;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Material {
     pub color: [u8; 4],
-    pub texture_index: u32,  // Index into texture array (0 = no texture)
     pub flags: MaterialFlags,
 }
 
@@ -49,15 +48,8 @@ impl Material {
     pub fn new(color: [u8; 4]) -> Self {
         Self {
             color,
-            texture_index: 0,
             flags: MaterialFlags::NONE,
         }
-    }
-
-    pub fn with_texture(mut self, texture_index: u32) -> Self {
-        self.texture_index = texture_index;
-        self.flags |= MaterialFlags::USE_TEXTURE;
-        self
     }
 
     pub fn with_alpha(mut self) -> Self {

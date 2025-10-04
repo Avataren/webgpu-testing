@@ -1,7 +1,6 @@
 // renderer/batch.rs (Smart version)
-use super::assets::{Handle, Mesh};
+use crate::{asset::{Handle, Mesh}, scene::transform::Transform};
 use super::material::Material;
-use glam::Mat4;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,17 +13,16 @@ pub enum RenderPass {
 pub struct RenderObject {
     pub mesh: Handle<Mesh>,
     pub material: Material,
-    pub transform: Mat4,
+    pub transform: Transform,  // Changed from Mat4
 }
 
-/// Stores transform + material for an instance
 pub struct InstanceData {
-    pub transform: Mat4,
+    pub transform: Transform,  // Changed from Mat4
     pub material: Material,
 }
 
 /// Batching key - only splits by what ACTUALLY requires different draw calls
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BatchKey {
     mesh: Handle<Mesh>,
     pass: RenderPass,  // Only split if different pipeline needed
@@ -72,19 +70,17 @@ impl RenderBatcher {
         }
     }
 
-    /// Iterate over all batches (for simple rendering without pass separation)
     pub fn iter(&self) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
         self.batches
             .iter()
-            .map(|(key, instances)| (key.mesh, instances.as_slice()))
+            .map(|(key, instances)| (key.mesh, instances.as_slice()))  // This works because Handle is Copy
     }
 
-    /// Iterate over batches for a specific pass
     pub fn iter_pass(&self, pass: RenderPass) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
         self.batches
             .iter()
             .filter(move |(key, _)| key.pass == pass)
-            .map(|(key, instances)| (key.mesh, instances.as_slice()))
+            .map(|(key, instances)| (key.mesh, instances.as_slice()))  // This works because Handle is Copy
     }
 
     /// Get all instances for a pass (useful for sorting transparent objects)

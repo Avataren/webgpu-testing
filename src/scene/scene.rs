@@ -1,7 +1,9 @@
 // scene/scene.rs
-use glam::{Mat4, Vec3};
+use glam::{Quat, Vec3};
 
-use crate::renderer::{Assets, Material, RenderBatcher, RenderObject, Renderer};
+use crate::asset::Assets;
+use crate::renderer::{Material, RenderBatcher, RenderObject, Renderer};
+use crate::scene::transform::Transform;
 use crate::scene::Camera;
 
 pub struct Scene {
@@ -52,10 +54,9 @@ impl Scene {
     pub fn render(&mut self, renderer: &mut Renderer) {
         let t = self.time as f32;
         
-        // Clear previous frame
         self.batcher.clear();
 
-        // Setup camera
+        // Setup camera (unchanged)
         let aspect = renderer.aspect_ratio();
         let eye = Vec3::new(t.cos() * 3.0, 2.0, t.sin() * 3.0);
         let cam = Camera {
@@ -68,31 +69,40 @@ impl Scene {
         };
         renderer.set_camera(&cam, aspect);
 
-        // Add objects to render
         if let Some(cube_handle) = self.get_cube_handle() {
             // Center spinning cube - red
             self.batcher.add(RenderObject {
                 mesh: cube_handle,
                 material: Material::red(),
-                transform: Mat4::from_rotation_x(t * 0.5)
-                    * Mat4::from_rotation_y(t * 1.2)
-                    * Mat4::from_rotation_z(-t * 0.2),
+                transform: Transform::from_trs(
+                    Vec3::ZERO,
+                    Quat::from_rotation_x(t * 0.5) 
+                        * Quat::from_rotation_y(t * 1.2)
+                        * Quat::from_rotation_z(-t * 0.2),
+                    Vec3::ONE,
+                ),
             });
 
             // Right cube - green
             self.batcher.add(RenderObject {
                 mesh: cube_handle,
                 material: Material::green(),
-                transform: Mat4::from_translation(Vec3::new(1.6, 0.0, 0.0))
-                    * Mat4::from_rotation_y(-t * 1.0),
+                transform: Transform::from_trs(
+                    Vec3::new(1.6, 0.0, 0.0),
+                    Quat::from_rotation_y(-t * 1.0),
+                    Vec3::ONE,
+                ),
             });
 
             // Left cube - blue
             self.batcher.add(RenderObject {
                 mesh: cube_handle,
                 material: Material::blue(),
-                transform: Mat4::from_translation(Vec3::new(-1.6, 0.0, 0.0))
-                    * Mat4::from_rotation_y(t * 1.5),
+                transform: Transform::from_trs(
+                    Vec3::new(-1.6, 0.0, 0.0),
+                    Quat::from_rotation_y(t * 1.5),
+                    Vec3::ONE,
+                ),
             });
 
             // Ring of small cubes
@@ -102,24 +112,27 @@ impl Scene {
                 self.batcher.add(RenderObject {
                     mesh: cube_handle,
                     material: Material::checker(),
-                    transform: Mat4::from_translation(Vec3::new(
-                        angle.cos() * radius,
-                        (t + i as f32).sin() * 0.5,
-                        angle.sin() * radius,
-                    )) * Mat4::from_scale(Vec3::splat(0.3)),
+                    transform: Transform::from_trs(
+                        Vec3::new(
+                            angle.cos() * radius,
+                            (t + i as f32).sin() * 0.5,
+                            angle.sin() * radius,
+                        ),
+                        Quat::IDENTITY,
+                        Vec3::splat(0.3),
+                    ),
                 });
             }
         }
 
-        // Render the frame
         if let Err(e) = renderer.render(&self.assets, &self.batcher) {
             log::error!("Render error: {:?}", e);
         }
     }
 
-    fn get_cube_handle(&self) -> Option<crate::renderer::assets::Handle<crate::renderer::assets::Mesh>> {
+    fn get_cube_handle(&self) -> Option<crate::asset::Handle<crate::asset::Mesh>> {
         if self.assets.meshes.len() > 0 {
-            Some(crate::renderer::assets::Handle::new(0))
+            Some(crate::asset::Handle::new(0))
         } else {
             None
         }

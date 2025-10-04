@@ -6,9 +6,9 @@ use glam::Mat4;
 pub struct ObjectData {
     pub model: [[f32; 4]; 4],      // 64 bytes
     pub color: [f32; 4],            // 16 bytes
-    pub texture_index: u32,         // 4 bytes
+    pub texture_index: u32,         // 4 bytes (keep it for future use)
     pub material_flags: u32,        // 4 bytes
-    pub _padding: [u32; 2],         // 8 bytes (align to 16-byte boundary)
+    pub _padding: [u32; 2],         // 8 bytes
 }
 
 impl ObjectData {
