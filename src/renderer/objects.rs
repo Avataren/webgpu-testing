@@ -17,6 +17,7 @@ pub struct ObjectData {
     pub roughness_factor: f32,           // 4 bytes
     pub emissive_strength: f32,          // 4 bytes
     pub _padding: u32,                   // 4 bytes
+    pub _padding2: [u32; 2],             // 8 bytes (ensures 128 byte stride)
 }
 
 impl ObjectData {
@@ -34,6 +35,7 @@ impl ObjectData {
             roughness_factor: material.roughness_f32(),
             emissive_strength: material.emissive_f32(),
             _padding: 0,
+            _padding2: [0, 0],
         }
     }
 }
@@ -43,7 +45,7 @@ mod tests {
     use super::*;
     #[test]
     fn object_data_size() {
-        // 64 + 16 + 5*4 + 4 + 3*4 + 4 = 64 + 16 + 20 + 4 + 12 + 4 = 120 bytes
-        assert_eq!(std::mem::size_of::<ObjectData>(), 120);
+        // 64 + 16 + 5*4 + 4 + 3*4 + 4 + 8 padding = 128 bytes
+        assert_eq!(std::mem::size_of::<ObjectData>(), 128);
     }
 }
