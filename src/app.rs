@@ -15,7 +15,7 @@ use crate::scene::{
     Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
-use crate::Instant;
+use crate::time::Instant;
 use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
