@@ -31,6 +31,7 @@ fn main() {
     
     // Load from glTF:
     let mut app = App::with_gltf("assets/avocado/Avocado.gltf", 20.0);
+//    let mut app = App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 1.0);
 
     // Run the application
     if let Err(e) = event_loop.run_app(&mut app) {

@@ -8,12 +8,39 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
+const SAMPLE_COUNT: u32 = 4;
 
 pub struct Renderer {
     context: RenderContext,
     pipeline: RenderPipeline,
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
+}
+
+struct MsaaTexture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+impl MsaaTexture {
+    fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, sample_count: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format: config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { texture, view }
+    }
 }
 
 struct RenderContext {
@@ -23,6 +50,7 @@ struct RenderContext {
     config: wgpu::SurfaceConfiguration,
     size: PhysicalSize<u32>,
     depth: Depth,
+    msaa_texture: MsaaTexture,
 }
 
 struct RenderPipeline {
@@ -141,10 +169,13 @@ impl Renderer {
             });
 
         self.pipeline.dummy_texture_bind_group = new_bind_group;
-        
-        log::debug!("Updated texture bind group with {} textures", assets.textures.len());
+
+        log::debug!(
+            "Updated texture bind group with {} textures",
+            assets.textures.len()
+        );
     }
-    
+
     pub fn render(
         &mut self,
         assets: &Assets,
@@ -168,9 +199,9 @@ impl Renderer {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &self.context.msaa_texture.view, // Render to MSAA
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: Some(&view), // Resolve to surface
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.05,
@@ -297,7 +328,10 @@ impl RenderContext {
         };
         surface.configure(&device, &config);
 
-        let depth = Depth::new(&device, size);
+        let depth = Depth::new(&device, size, SAMPLE_COUNT);
+
+        let msaa_texture = MsaaTexture::new(&device, &config, SAMPLE_COUNT);
+        log::info!("MSAA enabled: {}x", SAMPLE_COUNT);
 
         Self {
             surface,
@@ -306,6 +340,7 @@ impl RenderContext {
             config,
             size,
             depth,
+            msaa_texture,
         }
     }
 
@@ -317,7 +352,8 @@ impl RenderContext {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-        self.depth = Depth::new(&self.device, new_size);
+        self.depth = Depth::new(&self.device, new_size, SAMPLE_COUNT);
+        self.msaa_texture = MsaaTexture::new(&self.device, &self.config, SAMPLE_COUNT);
     }
 }
 
@@ -550,7 +586,11 @@ impl RenderPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
                 multiview: None,
                 cache: None,
             });
