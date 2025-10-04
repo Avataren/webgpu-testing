@@ -35,8 +35,9 @@ impl SceneLoader {
             scale: Vec3::from(scale),
         };
 
-        // Apply scale multiplier to convert units
-        transform.scale *= scale_multiplier;
+        // Apply scale multiplier to convert units. We only scale translations here; scaling the
+        // local scale at every level breaks hierarchical transforms because the multiplier would
+        // be applied once per parent. Mesh vertex data is scaled uniformly when loaded instead.
         transform.translation *= scale_multiplier;
 
         log::debug!(
@@ -209,7 +210,13 @@ impl SceneLoader {
             let primitives = &mut mesh_handles[mesh_index];
             
             for primitive in gltf_mesh.primitives() {
-                let handle = Self::load_primitive(&primitive, &buffers, scene, renderer)?;
+                let handle = Self::load_primitive(
+                    &primitive,
+                    &buffers,
+                    scene,
+                    renderer,
+                    scale,
+                )?;
                 primitives.push((handle, primitive.material().index()));
             }
         }
@@ -411,6 +418,7 @@ impl SceneLoader {
         buffers: &[gltf::buffer::Data],
         scene: &mut Scene,
         renderer: &mut Renderer,
+        scale_multiplier: f32,
     ) -> Result<Handle<Mesh>, String> {
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
@@ -449,10 +457,18 @@ impl SceneLoader {
             .iter()
             .zip(normals.iter())
             .zip(uvs.iter())
-            .map(|((pos, norm), uv)| Vertex {
-                pos: *pos,
-                normal: *norm,
-                uv: *uv,
+            .map(|((pos, norm), uv)| {
+                let scaled_pos = [
+                    pos[0] * scale_multiplier,
+                    pos[1] * scale_multiplier,
+                    pos[2] * scale_multiplier,
+                ];
+
+                Vertex {
+                    pos: scaled_pos,
+                    normal: *norm,
+                    uv: *uv,
+                }
             })
             .collect::<Vec<_>>();
 
