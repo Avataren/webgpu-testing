@@ -7,11 +7,15 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[cfg(target_arch = "wasm32")]
+use winit::platform::web::WindowExtWebSys;
+
 use crate::renderer::{Material, RenderBatcher, Renderer, Texture};
 use crate::scene::{
-    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation, 
+    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
+use crate::time::Instant;
 use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -632,6 +636,33 @@ impl ApplicationHandler for App {
                 .expect("Failed to create window");
             let id = window.id();
 
+            #[cfg(target_arch = "wasm32")]
+            {
+                let canvas = window
+                    .canvas()
+                    .expect("Failed to retrieve canvas for WebAssembly window");
+                canvas.set_id("wgpu-canvas");
+                let _ = canvas.style().set_property("width", "100%");
+                let _ = canvas.style().set_property("height", "100%");
+                let _ = canvas.style().set_property("display", "block");
+
+                let document = web_sys::window()
+                    .and_then(|win| win.document())
+                    .expect("No document on web window");
+                let body = document
+                    .body()
+                    .expect("Document should have a body element");
+
+                let should_attach = body
+                    .query_selector("#wgpu-canvas")
+                    .expect("Failed to query for canvas")
+                    .is_none();
+
+                if should_attach {
+                    let _ = body.append_child(&canvas);
+                }
+            }
+
             let mut renderer = pollster::block_on(Renderer::new(&window));
             self.setup_scene(&mut renderer);
 
@@ -697,7 +728,7 @@ impl ApplicationHandler for App {
                     false
                 };
 
-                let now = std::time::Instant::now();
+                let now = Instant::now();
                 let dt = (now - self.scene.last_frame()).as_secs_f64();
                 self.scene.set_last_frame(now);
 
