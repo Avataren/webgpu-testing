@@ -2952,6 +2952,8 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "wasm-bindgen",
+ "web-sys",
  "wgpu",
  "winit",
 ]
