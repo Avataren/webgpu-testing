@@ -9,13 +9,12 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use glam::{Quat, Vec3};
 use crate::renderer::{Material, RenderBatcher, Renderer, Texture};
 use crate::scene::{
-    Camera, EntityBuilder, OrbitAnimation, RotateAnimation, Scene, 
-    SceneLoader, Transform, TransformComponent, MaterialComponent,
-    MeshComponent, Name, Visible,
+    Camera, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation, RotateAnimation,
+    Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
+use glam::{Quat, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneType {
@@ -35,6 +34,7 @@ pub struct App {
     camera: Camera,
     scene_type: SceneType,
     gltf_path: Option<String>,
+    gltf_scale: f32,
 }
 
 impl App {
@@ -48,10 +48,32 @@ impl App {
             camera: Camera::default(),
             scene_type,
             gltf_path: None,
+            gltf_scale: 1.0,
         }
     }
 
-    pub fn with_gltf(path: impl Into<String>) -> Self {
+    fn init_default_textures(&mut self, renderer: &mut Renderer) {
+        // Create default textures that PBR materials can fall back to
+
+        // 0: White texture (default base color)
+        let white = Texture::white(renderer.get_device(), renderer.get_queue());
+        self.scene.assets.textures.insert(white);
+
+        // 1: Default normal map (pointing up: RGB 128,128,255)
+        let normal = Texture::default_normal(renderer.get_device(), renderer.get_queue());
+        self.scene.assets.textures.insert(normal);
+
+        // 2: Default metallic-roughness (non-metallic, mid-roughness)
+        let mr = Texture::default_metallic_roughness(renderer.get_device(), renderer.get_queue());
+        self.scene.assets.textures.insert(mr);
+
+        // Update the bind group with these default textures
+        renderer.update_texture_bind_group(&self.scene.assets);
+
+        log::info!("Initialized default PBR textures");
+    }
+
+    pub fn with_gltf(path: impl Into<String>, scale: f32) -> Self {
         Self {
             renderer: None,
             window: None,
@@ -61,10 +83,16 @@ impl App {
             camera: Camera::default(),
             scene_type: SceneType::FromGltf,
             gltf_path: Some(path.into()),
+            gltf_scale: scale,
         }
     }
 
     fn setup_scene(&mut self, renderer: &mut Renderer) {
+        // Only initialize default textures if we don't have any yet
+        if self.scene.assets.textures.is_empty() {
+            self.init_default_textures(renderer);
+        }
+
         match self.scene_type {
             SceneType::Simple => self.create_simple_scene(renderer),
             SceneType::Grid => self.create_grid_scene(renderer, 5),
@@ -165,12 +193,8 @@ impl App {
         ];
 
         for color in colors {
-            let texture = Texture::from_color(
-                renderer.get_device(),
-                renderer.get_queue(),
-                color,
-                None,
-            );
+            let texture =
+                Texture::from_color(renderer.get_device(), renderer.get_queue(), color, None);
             self.scene.assets.textures.insert(texture);
         }
         renderer.update_texture_bind_group(&self.scene.assets);
@@ -185,11 +209,7 @@ impl App {
                 // Pure hecs spawn
                 self.scene.world.spawn((
                     Name::new(format!("Cube_{}_{}", x, z)),
-                    TransformComponent(Transform::from_trs(
-                        pos,
-                        Quat::IDENTITY,
-                        Vec3::splat(0.4),
-                    )),
+                    TransformComponent(Transform::from_trs(pos, Quat::IDENTITY, Vec3::splat(0.4))),
                     MeshComponent(cube_handle),
                     MaterialComponent(Material::white().with_texture(texture_idx)),
                     Visible(true),
@@ -328,10 +348,10 @@ impl App {
         log::info!("Material showcase: {} entities", self.scene.world.len());
     }
 
-    fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
-        log::info!("Loading glTF: {}", path);
+fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
+        log::info!("Loading glTF: {} (scale: {})", path, self.gltf_scale);
 
-        match SceneLoader::load_gltf(path, &mut self.scene, renderer) {
+        match SceneLoader::load_gltf(path, &mut self.scene, renderer, self.gltf_scale) {
             Ok(_) => {
                 renderer.update_texture_bind_group(&self.scene.assets);
                 log::info!("glTF loaded: {} entities", self.scene.world.len());
@@ -348,10 +368,22 @@ impl App {
         self.scene.update(dt);
     }
 
-    fn update_camera(&mut self) {
+   fn update_camera(&mut self) {
         let t = self.scene.time() as f32;
-        let radius = 8.0;
-        let height = 4.0;
+        
+        let (radius, height) = match self.scene_type {
+            SceneType::FromGltf => {
+                // Adjust camera based on scale
+                let base_radius = 2.0;
+                let base_height = 1.0;
+                (base_radius * self.gltf_scale.log10().max(0.5), 
+                 base_height * self.gltf_scale.log10().max(0.5))
+            },
+            SceneType::Simple => (8.0, 4.0),
+            SceneType::Grid => (15.0, 8.0),
+            SceneType::Animated => (12.0, 6.0),
+            SceneType::MaterialShowcase => (8.0, 4.0),
+        };
 
         self.camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
         self.camera.target = Vec3::ZERO;
@@ -470,8 +502,11 @@ impl ApplicationHandler for App {
                     if new_type != self.scene_type {
                         log::info!("Switching to {:?}", new_type);
                         self.scene_type = new_type;
-                        self.scene = Scene::new();
-                        
+
+                        // Create new scene and explicitly drop old one first
+                        let old_scene = std::mem::replace(&mut self.scene, Scene::new());
+                        drop(old_scene);
+
                         // Take renderer out temporarily to avoid double borrow
                         if let Some(mut renderer) = self.renderer.take() {
                             self.setup_scene(&mut renderer);
@@ -479,7 +514,7 @@ impl ApplicationHandler for App {
                         }
                     }
                 }
-                _ => {}
+                _ => {} // Catch-all for unhandled keys
             },
 
             _ => {}

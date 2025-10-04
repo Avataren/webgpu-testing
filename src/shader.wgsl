@@ -1,3 +1,5 @@
+// PBR Shader with Normal Mapping
+
 struct Globals {
     view_proj: mat4x4<f32>,
 };
@@ -6,19 +8,31 @@ struct Globals {
 struct Object {
     model: mat4x4<f32>,
     color: vec4<f32>,
-    texture_index: u32,
+    base_color_texture: u32,
+    metallic_roughness_texture: u32,
+    normal_texture: u32,
+    emissive_texture: u32,
+    occlusion_texture: u32,
     material_flags: u32,
-    _padding: vec2<u32>,
+    metallic_factor: f32,
+    roughness_factor: f32,
+    emissive_strength: f32,
+    _padding: u32,
 };
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 
-// Bindless texture array - note: this requires the SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING feature
 @group(2) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
 @group(2) @binding(1) var tex_sampler: sampler;
 
 // Material flags
-const FLAG_USE_TEXTURE: u32 = 1u;
-const FLAG_ALPHA_BLEND: u32 = 2u;
+const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
+const FLAG_USE_METALLIC_ROUGHNESS_TEXTURE: u32 = 2u;
+const FLAG_USE_NORMAL_TEXTURE: u32 = 4u;
+const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
+const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
+const FLAG_ALPHA_BLEND: u32 = 32u;
+
+const PI: f32 = 3.14159265359;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -29,12 +43,23 @@ struct VsIn {
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
-    @location(0) normal: vec3<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) @interpolate(flat) texture_index: u32,
-    @location(4) @interpolate(flat) material_flags: u32,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) instance_id: u32,
+    @location(4) tangent: vec3<f32>,
+    @location(5) bitangent: vec3<f32>,
 };
+
+// Calculate tangent and bitangent from normal
+fn calculate_tangent_bitangent(normal: vec3<f32>) -> mat3x3<f32> {
+    // Build orthonormal basis from normal
+    let up = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
+    let tangent = normalize(cross(up, normal));
+    let bitangent = cross(normal, tangent);
+    
+    return mat3x3<f32>(tangent, bitangent, normal);
+}
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
@@ -42,53 +67,153 @@ fn vs_main(in: VsIn) -> VsOut {
     let M = obj.model;
     let world_pos = M * vec4(in.pos, 1.0);
     let n = normalize((M * vec4(in.normal, 0.0)).xyz);
+    
+    // Calculate tangent space
+    let tbn = calculate_tangent_bitangent(n);
 
     var out: VsOut;
     out.pos = globals.view_proj * world_pos;
+    out.world_pos = world_pos.xyz;
     out.normal = n;
     out.uv = in.uv;
-    out.color = obj.color;
-    out.texture_index = obj.texture_index;
-    out.material_flags = obj.material_flags;
+    out.instance_id = in.instance;
+    out.tangent = tbn[0];
+    out.bitangent = tbn[1];
     return out;
+}
+
+// PBR Functions
+
+fn distribution_ggx(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let NdotH = max(dot(N, H), 0.0);
+    let NdotH2 = NdotH * NdotH;
+    
+    let denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    return a2 / (PI * denom * denom);
+}
+
+fn geometry_schlick_ggx(NdotV: f32, roughness: f32) -> f32 {
+    let r = (roughness + 1.0);
+    let k = (r * r) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+fn geometry_smith(N: vec3<f32>, V: vec3<f32>, L: vec3<f32>, roughness: f32) -> f32 {
+    let NdotV = max(dot(N, V), 0.0);
+    let NdotL = max(dot(N, L), 0.0);
+    let ggx2 = geometry_schlick_ggx(NdotV, roughness);
+    let ggx1 = geometry_schlick_ggx(NdotL, roughness);
+    return ggx1 * ggx2;
+}
+
+fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // Lighting
-    let L = normalize(vec3<f32>(0.5, 0.3, 1.0));
-    let N = normalize(in.normal);
-    let ndotl = max(dot(N, L), 0.0);
-    let ambient = 0.1;
-    let diffuse = ndotl * 0.8;
-    let lighting = ambient + diffuse;
+    let obj = objects[in.instance_id];
     
-    // Rim light
-    let V = vec3<f32>(0.0, 0.0, 1.0);
-    let rim = pow(1.0 - max(dot(N, -V), 0.0), 3.0) * 0.15;
-    
-    var base_color: vec3<f32>;
-    
-    // Check if we should use texture
-    if ((in.material_flags & FLAG_USE_TEXTURE) != 0u) {
-        // Sample from bindless texture array
-        let tex_idx = in.texture_index;
-        let tex_color = textureSample(textures[tex_idx], tex_sampler, in.uv);
-        base_color = tex_color.rgb * in.color.rgb;
+    // Sample base color
+    var base_color: vec4<f32>;
+    if ((obj.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
+        base_color = textureSample(textures[obj.base_color_texture], tex_sampler, in.uv);
+        base_color = base_color * obj.color;
     } else {
-        // Solid color or checker pattern
-        if (in.color.a < 0.5) {
-            // Checker pattern
-            let tiles = 6.0;
-            let c = in.uv * tiles;
-            let parity = (i32(floor(c.x) + floor(c.y)) & 1) == 0;
-            let colorA = vec3<f32>(0.08, 0.09, 0.11);
-            let colorB = vec3<f32>(0.93, 0.93, 0.96);
-            base_color = select(colorA, colorB, parity);
-        } else {
-            base_color = in.color.rgb;
-        }
+        base_color = obj.color;
     }
     
-    return vec4(base_color * lighting + rim, 1.0);
+    // Sample metallic and roughness
+    var metallic: f32;
+    var roughness: f32;
+    if ((obj.material_flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u) {
+        let mr = textureSample(textures[obj.metallic_roughness_texture], tex_sampler, in.uv);
+        metallic = mr.b * obj.metallic_factor;
+        roughness = mr.g * obj.roughness_factor;
+    } else {
+        metallic = obj.metallic_factor;
+        roughness = obj.roughness_factor;
+    }
+    roughness = max(roughness, 0.04); // Prevent division by zero
+    
+    // Sample normal map
+    var N: vec3<f32>;
+    if ((obj.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
+        let normal_sample = textureSample(textures[obj.normal_texture], tex_sampler, in.uv).xyz;
+        let tangent_normal = normal_sample * 2.0 - 1.0;
+        
+        // Transform from tangent space to world space
+        let T = normalize(in.tangent);
+        let B = normalize(in.bitangent);
+        let N_base = normalize(in.normal);
+        let TBN = mat3x3<f32>(T, B, N_base);
+        N = normalize(TBN * tangent_normal);
+    } else {
+        N = normalize(in.normal);
+    }
+    
+    // Sample occlusion
+    var occlusion = 1.0;
+    if ((obj.material_flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u) {
+        occlusion = textureSample(textures[obj.occlusion_texture], tex_sampler, in.uv).r;
+    }
+    
+    // Sample emissive
+    var emissive = vec3<f32>(0.0);
+    if ((obj.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
+        emissive = textureSample(textures[obj.emissive_texture], tex_sampler, in.uv).rgb * obj.emissive_strength;
+    }
+    
+    // View direction (camera is at origin in view space, so we need world pos)
+    let V = normalize(-in.world_pos); // Assuming camera at origin for simplicity
+    
+    // Light setup (simple directional light)
+    let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+    let light_color = vec3<f32>(1.0, 1.0, 1.0);
+    let light_intensity = 3.0;
+    
+    // PBR calculation
+    let L = light_dir;
+    let H = normalize(V + L);
+    
+    // F0 for dielectrics is 0.04, for metals use albedo
+    let F0 = mix(vec3<f32>(0.04), base_color.rgb, metallic);
+    
+    // Cook-Torrance BRDF
+    let NDF = distribution_ggx(N, H, roughness);
+    let G = geometry_smith(N, V, L, roughness);
+    let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
+    
+    let numerator = NDF * G * F;
+    let NdotL = max(dot(N, L), 0.0);
+    let NdotV = max(dot(N, V), 0.0);
+    let denominator = 4.0 * NdotV * NdotL + 0.0001;
+    let specular = numerator / denominator;
+    
+    // Energy conservation
+    let kS = F;
+    var kD = vec3<f32>(1.0) - kS;
+    kD = kD * (1.0 - metallic);
+    
+    // Diffuse
+    let diffuse = kD * base_color.rgb / PI;
+    
+    // Combine
+    let radiance = light_color * light_intensity;
+    var Lo = (diffuse + specular) * radiance * NdotL;
+    
+    // Ambient (very simple)
+    let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
+    
+    var color = ambient + Lo + emissive;
+    
+    // Tone mapping (simple Reinhard)
+    color = color / (color + vec3<f32>(1.0));
+    
+    // Gamma correction
+    color = pow(color, vec3<f32>(1.0 / 2.2));
+    
+    return vec4<f32>(color, base_color.a);
 }

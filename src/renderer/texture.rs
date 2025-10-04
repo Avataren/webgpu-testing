@@ -1,4 +1,6 @@
-// renderer/texture.rs
+// renderer/texture.rs (with file loading)
+
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Texture {
@@ -8,6 +10,93 @@ pub struct Texture {
 }
 
 impl Texture {
+    /// Load texture from file path
+    pub fn from_path(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        path: impl AsRef<Path>,
+        is_srgb: bool,
+    ) -> Result<Self, String> {
+        let path = path.as_ref();
+        log::info!("Loading texture: {:?}", path);
+
+        let img = image::open(path)
+            .map_err(|e| format!("Failed to load image {:?}: {}", path, e))?;
+        
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        
+        let format = if is_srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        };
+
+        Self::from_rgba8(device, queue, &rgba, width, height, format, path.to_str())
+    }
+
+    /// Create texture from rgba8 data
+    fn from_rgba8(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: Option<&str>,
+    ) -> Result<Self, String> {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label,
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            size,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        Ok(Self {
+            texture,
+            view,
+            sampler,
+        })
+    }
+
     /// Create a solid color 1x1 texture
     pub fn from_color(
         device: &wgpu::Device,
@@ -76,56 +165,15 @@ impl Texture {
         height: u32,
         label: Option<&str>,
     ) -> Self {
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label,
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
-            },
-            size,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        Self {
-            texture,
-            view,
-            sampler,
-        }
+        Self::from_rgba8(
+            device, 
+            queue, 
+            bytes, 
+            width, 
+            height, 
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            label
+        ).unwrap()
     }
 
     /// Create a procedural checkerboard texture
@@ -193,7 +241,7 @@ impl Texture {
     ) -> Self {
         let mut pixels = vec![0u8; (size * size * 4) as usize];
         let center = size as f32 / 2.0;
-        let max_dist = center * 1.414; // diagonal distance
+        let max_dist = center * 1.414;
         
         for y in 0..size {
             for x in 0..size {
@@ -215,7 +263,7 @@ impl Texture {
         Self::from_bytes(device, queue, &pixels, size, size, label)
     }
 
-    /// Create a noise texture (simple value noise)
+    /// Create a noise texture
     pub fn noise(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -225,7 +273,6 @@ impl Texture {
     ) -> Self {
         let mut pixels = vec![0u8; (size * size * 4) as usize];
         
-        // Simple hash-based noise
         let hash = |x: u32, y: u32| -> u8 {
             let mut h = seed;
             h = h.wrapping_mul(374761393).wrapping_add(x);
@@ -245,5 +292,22 @@ impl Texture {
         }
         
         Self::from_bytes(device, queue, &pixels, size, size, label)
+    }
+
+    /// Create default white texture (1x1)
+    pub fn white(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self::from_color(device, queue, [255, 255, 255, 255], Some("White"))
+    }
+
+    /// Create default normal map (1x1, pointing up)
+    pub fn default_normal(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        // Normal pointing straight up: (0, 0, 1) -> (128, 128, 255) in texture space
+        Self::from_color(device, queue, [128, 128, 255, 255], Some("DefaultNormal"))
+    }
+
+    /// Create default metallic-roughness (1x1, non-metallic, mid-roughness)
+    pub fn default_metallic_roughness(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        // R=occlusion(1.0), G=roughness(0.5), B=metallic(0.0)
+        Self::from_color(device, queue, [255, 128, 0, 255], Some("DefaultMetallicRoughness"))
     }
 }

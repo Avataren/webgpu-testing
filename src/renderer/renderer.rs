@@ -92,33 +92,35 @@ impl Renderer {
     }
 
     pub fn update_texture_bind_group(&mut self, assets: &Assets) {
-        let views: Vec<&wgpu::TextureView> = (0..256)
+        // We need at least one texture to create a valid bind group
+        if assets.textures.is_empty() {
+            log::warn!("No textures available, keeping dummy bind group");
+            return;
+        }
+
+        // Get reference to the first texture as fallback for all empty slots
+        let fallback_texture = assets
+            .textures
+            .get(crate::asset::Handle::new(0))
+            .expect("Texture 0 should exist");
+
+        // Build array of texture views, filling empty slots with fallback
+        let views_vec: Vec<&wgpu::TextureView> = (0..256)
             .map(|i| {
                 assets
                     .textures
                     .get(crate::asset::Handle::new(i))
                     .map(|t| &t.view)
-                    .unwrap_or_else(|| {
-                        // Fallback to first texture or dummy
-                        assets
-                            .textures
-                            .get(crate::asset::Handle::new(0))
-                            .map(|t| &t.view)
-                            .expect("No textures available")
-                    })
+                    .unwrap_or(&fallback_texture.view)
             })
             .collect();
 
-        if views.is_empty() {
-            return; // Keep dummy bind group
-        }
-
         // Get sampler from first texture
-        let sampler = assets
+        let sampler = &assets
             .textures
             .get(crate::asset::Handle::new(0))
-            .map(|t| &t.sampler)
-            .expect("No textures available");
+            .expect("Texture 0 should exist")
+            .sampler;
 
         let new_bind_group = self
             .context
@@ -129,7 +131,7 @@ impl Renderer {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureViewArray(&views),
+                        resource: wgpu::BindingResource::TextureViewArray(&views_vec),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -139,8 +141,10 @@ impl Renderer {
             });
 
         self.pipeline.dummy_texture_bind_group = new_bind_group;
+        
+        log::debug!("Updated texture bind group with {} textures", assets.textures.len());
     }
-
+    
     pub fn render(
         &mut self,
         assets: &Assets,
@@ -354,7 +358,7 @@ impl CameraBuffer {
         Self {
             buffer,
             bind_group,
-            bind_layout, // Store it
+            bind_layout,
         }
     }
 }
@@ -365,7 +369,8 @@ impl DynamicObjectsBuffer {
             label: Some("ObjectsBindLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                // CHANGE THIS LINE - add FRAGMENT to visibility
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -410,12 +415,7 @@ impl DynamicObjectsBuffer {
         self.scratch.clear();
         for (_, instances) in batcher.iter() {
             self.scratch.extend(instances.iter().map(|inst| {
-                crate::renderer::ObjectData::new(
-                    inst.transform.matrix(),
-                    inst.material.color_f32(),
-                    inst.material.texture_index,
-                    inst.material.flags_bits(),
-                )
+                crate::renderer::ObjectData::from_material(inst.transform.matrix(), &inst.material)
             }));
         }
 

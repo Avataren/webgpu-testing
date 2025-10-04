@@ -22,7 +22,7 @@ fn main() {
 
     // Create app - choose your scene type:
     
-    let mut app = App::new(SceneType::Animated);
+    //let mut app = App::new(SceneType::Animated);
     
     // Other options:
     // let mut app = App::new(SceneType::Simple);
@@ -30,7 +30,7 @@ fn main() {
     // let mut app = App::new(SceneType::MaterialShowcase);
     
     // Load from glTF:
-    // let mut app = App::with_gltf("assets/scene.gltf");
+    let mut app = App::with_gltf("assets/avocado/Avocado.gltf", 20.0);
 
     // Run the application
     if let Err(e) = event_loop.run_app(&mut app) {
