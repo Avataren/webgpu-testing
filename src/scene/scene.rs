@@ -1,10 +1,7 @@
 // scene/scene.rs - Fixed version with improved transform propagation
 use super::components::*;
 use crate::asset::Assets;
-use crate::renderer::{
-    DirectionalLightData, LightsData, PointLightData, RenderBatcher, RenderObject, Renderer,
-    SpotLightData,
-};
+use crate::renderer::{LightsData, RenderBatcher, RenderObject, Renderer};
 use crate::scene::Transform;
 use crate::time::Instant;
 use glam::{Quat, Vec3};
@@ -143,11 +140,7 @@ impl Scene {
                 Vec3::new(0.0, -1.0, 0.0)
             };
 
-            lights.add_directional(DirectionalLightData {
-                direction,
-                color: light.color,
-                intensity: light.intensity,
-            });
+            lights.add_directional(direction, light.color, light.intensity);
         }
 
         for (_entity, (light, world_transform, local_transform)) in self
@@ -164,12 +157,12 @@ impl Scene {
                 .or_else(|| local_transform.map(|t| t.0))
                 .unwrap_or(Transform::IDENTITY);
 
-            lights.add_point(PointLightData {
-                position: transform.translation,
-                color: light.color,
-                intensity: light.intensity,
-                range: light.range,
-            });
+            lights.add_point(
+                transform.translation,
+                light.color,
+                light.intensity,
+                light.range,
+            );
         }
 
         for (_entity, (light, world_transform, local_transform)) in self
@@ -192,15 +185,15 @@ impl Scene {
                 Vec3::new(0.0, -1.0, 0.0)
             };
 
-            lights.add_spot(SpotLightData {
-                position: transform.translation,
+            lights.add_spot(
+                transform.translation,
                 direction,
-                color: light.color,
-                intensity: light.intensity,
-                range: light.range,
-                inner_angle: light.inner_angle,
-                outer_angle: light.outer_angle,
-            });
+                light.color,
+                light.intensity,
+                light.range,
+                light.inner_angle,
+                light.outer_angle,
+            );
         }
 
         renderer.set_lights(&lights);

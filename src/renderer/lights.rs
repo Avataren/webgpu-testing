@@ -5,37 +5,11 @@ pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 pub const MAX_POINT_LIGHTS: usize = 16;
 pub const MAX_SPOT_LIGHTS: usize = 8;
 
-#[derive(Clone, Copy, Debug)]
-pub struct DirectionalLightData {
-    pub direction: Vec3,
-    pub color: Vec3,
-    pub intensity: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PointLightData {
-    pub position: Vec3,
-    pub color: Vec3,
-    pub intensity: f32,
-    pub range: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct SpotLightData {
-    pub position: Vec3,
-    pub direction: Vec3,
-    pub color: Vec3,
-    pub intensity: f32,
-    pub range: f32,
-    pub inner_angle: f32,
-    pub outer_angle: f32,
-}
-
 #[derive(Clone, Default)]
 pub struct LightsData {
-    directional: Vec<DirectionalLightData>,
-    point: Vec<PointLightData>,
-    spot: Vec<SpotLightData>,
+    directional: Vec<DirectionalLightRaw>,
+    point: Vec<PointLightRaw>,
+    spot: Vec<SpotLightRaw>,
 }
 
 impl LightsData {
@@ -49,27 +23,46 @@ impl LightsData {
         self.spot.clear();
     }
 
-    pub fn add_directional(&mut self, light: DirectionalLightData) {
-        self.directional.push(light);
+    pub fn add_directional(&mut self, direction: Vec3, color: Vec3, intensity: f32) {
+        self.directional
+            .push(DirectionalLightRaw::new(direction, color, intensity));
     }
 
-    pub fn add_point(&mut self, light: PointLightData) {
-        self.point.push(light);
+    pub fn add_point(&mut self, position: Vec3, color: Vec3, intensity: f32, range: f32) {
+        self.point
+            .push(PointLightRaw::new(position, color, intensity, range));
     }
 
-    pub fn add_spot(&mut self, light: SpotLightData) {
-        self.spot.push(light);
+    pub fn add_spot(
+        &mut self,
+        position: Vec3,
+        direction: Vec3,
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+    ) {
+        self.spot.push(SpotLightRaw::new(
+            position,
+            direction,
+            color,
+            intensity,
+            range,
+            inner_angle,
+            outer_angle,
+        ));
     }
 
-    pub fn directional_lights(&self) -> &[DirectionalLightData] {
+    pub fn directional_lights(&self) -> &[DirectionalLightRaw] {
         &self.directional
     }
 
-    pub fn point_lights(&self) -> &[PointLightData] {
+    pub fn point_lights(&self) -> &[PointLightRaw] {
         &self.point
     }
 
-    pub fn spot_lights(&self) -> &[SpotLightData] {
+    pub fn spot_lights(&self) -> &[SpotLightRaw] {
         &self.spot
     }
 }
@@ -82,10 +75,10 @@ pub struct DirectionalLightRaw {
 }
 
 impl DirectionalLightRaw {
-    pub fn from_data(data: &DirectionalLightData) -> Self {
+    pub fn new(direction: Vec3, color: Vec3, intensity: f32) -> Self {
         Self {
-            direction: [data.direction.x, data.direction.y, data.direction.z, 0.0],
-            color_intensity: [data.color.x, data.color.y, data.color.z, data.intensity],
+            direction: [direction.x, direction.y, direction.z, 0.0],
+            color_intensity: [color.x, color.y, color.z, intensity],
         }
     }
 }
@@ -98,15 +91,10 @@ pub struct PointLightRaw {
 }
 
 impl PointLightRaw {
-    pub fn from_data(data: &PointLightData) -> Self {
+    pub fn new(position: Vec3, color: Vec3, intensity: f32, range: f32) -> Self {
         Self {
-            position_range: [
-                data.position.x,
-                data.position.y,
-                data.position.z,
-                data.range,
-            ],
-            color_intensity: [data.color.x, data.color.y, data.color.z, data.intensity],
+            position_range: [position.x, position.y, position.z, range],
+            color_intensity: [color.x, color.y, color.z, intensity],
         }
     }
 }
@@ -121,9 +109,16 @@ pub struct SpotLightRaw {
 }
 
 impl SpotLightRaw {
-    pub fn from_data(data: &SpotLightData) -> Self {
-        let mut inner = data.inner_angle;
-        let mut outer = data.outer_angle;
+    pub fn new(
+        position: Vec3,
+        direction: Vec3,
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+    ) -> Self {
+        let (mut inner, mut outer) = (inner_angle, outer_angle);
         if inner > outer {
             std::mem::swap(&mut inner, &mut outer);
         }
@@ -131,14 +126,9 @@ impl SpotLightRaw {
         let cos_outer = outer.cos();
 
         Self {
-            position_range: [
-                data.position.x,
-                data.position.y,
-                data.position.z,
-                data.range,
-            ],
-            direction: [data.direction.x, data.direction.y, data.direction.z, 0.0],
-            color_intensity: [data.color.x, data.color.y, data.color.z, data.intensity],
+            position_range: [position.x, position.y, position.z, range],
+            direction: [direction.x, direction.y, direction.z, 0.0],
+            color_intensity: [color.x, color.y, color.z, intensity],
             cone_params: [cos_inner, cos_outer, 0.0, 0.0],
         }
     }
@@ -165,7 +155,7 @@ impl LightsUniform {
             .zip(data.directional_lights().iter())
             .take(dir_count as usize)
         {
-            *dst = DirectionalLightRaw::from_data(src);
+            *dst = *src;
         }
 
         let point_count = data.point_lights().len().min(MAX_POINT_LIGHTS) as u32;
@@ -176,7 +166,7 @@ impl LightsUniform {
             .zip(data.point_lights().iter())
             .take(point_count as usize)
         {
-            *dst = PointLightRaw::from_data(src);
+            *dst = *src;
         }
 
         let spot_count = data.spot_lights().len().min(MAX_SPOT_LIGHTS) as u32;
@@ -187,7 +177,7 @@ impl LightsUniform {
             .zip(data.spot_lights().iter())
             .take(spot_count as usize)
         {
-            *dst = SpotLightRaw::from_data(src);
+            *dst = *src;
         }
 
         uniform
