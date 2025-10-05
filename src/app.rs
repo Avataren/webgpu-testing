@@ -118,7 +118,7 @@ impl App {
             return;
         }
 
-        let Some(pending) = self.pending_renderer.take() else {
+        let Some(pending) = self.pending_renderer.as_ref() else {
             return;
         };
 
@@ -137,9 +137,6 @@ impl App {
             }
 
             log::info!("Renderer initialized successfully");
-        } else {
-            // Renderer future not ready yet; restore pending handle.
-            self.pending_renderer = Some(pending);
         }
     }
 
