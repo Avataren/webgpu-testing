@@ -704,9 +704,39 @@ impl SceneLoader {
     }
 
     fn decode_image(bytes: &[u8]) -> Result<gltf::image::Data, String> {
+        use image::GenericImageView;
+
         let image = image::load_from_memory(bytes)
             .map_err(|err| format!("Failed to decode image data: {}", err))?;
-        gltf::image::Data::new(image).map_err(|err| format!("Failed to create image data: {}", err))
+
+        let format = match &image {
+            image::DynamicImage::ImageLuma8(_) => gltf::image::Format::R8,
+            image::DynamicImage::ImageLumaA8(_) => gltf::image::Format::R8G8,
+            image::DynamicImage::ImageRgb8(_) => gltf::image::Format::R8G8B8,
+            image::DynamicImage::ImageRgba8(_) => gltf::image::Format::R8G8B8A8,
+            image::DynamicImage::ImageLuma16(_) => gltf::image::Format::R16,
+            image::DynamicImage::ImageLumaA16(_) => gltf::image::Format::R16G16,
+            image::DynamicImage::ImageRgb16(_) => gltf::image::Format::R16G16B16,
+            image::DynamicImage::ImageRgba16(_) => gltf::image::Format::R16G16B16A16,
+            image::DynamicImage::ImageRgb32F(_) => gltf::image::Format::R32G32B32FLOAT,
+            image::DynamicImage::ImageRgba32F(_) => gltf::image::Format::R32G32B32A32FLOAT,
+            other => {
+                return Err(format!(
+                    "Unsupported image format: {:?}",
+                    other.color()
+                ))
+            }
+        };
+
+        let (width, height) = image.dimensions();
+        let pixels = image.into_bytes();
+
+        Ok(gltf::image::Data {
+            pixels,
+            format,
+            width,
+            height,
+        })
     }
 
     fn load_external_resource(
