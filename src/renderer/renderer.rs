@@ -366,7 +366,7 @@ impl RenderContext {
         };
 
         // Only set special limits if using bindless
-        let limits = if supports_bindless_textures {
+        let mut limits = if supports_bindless_textures {
             wgpu::Limits {
                 max_binding_array_elements_per_shader_stage: 256,
                 ..wgpu::Limits::default()
@@ -374,6 +374,13 @@ impl RenderContext {
         } else {
             wgpu::Limits::default()
         };
+
+        // Shadow mapping introduces an additional bind group, so ensure we request
+        // enough bind groups from the adapter. The default limit is 4, which now
+        // overflows at runtime when the shader expects group 4. Requesting a
+        // slightly higher limit keeps compatibility with existing defaults while
+        // avoiding validation errors on adapters that support more bind groups.
+        limits.max_bind_groups = limits.max_bind_groups.max(5);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
