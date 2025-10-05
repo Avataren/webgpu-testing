@@ -251,6 +251,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     var color = ambient + Lo + emissive;
     color = color / (color + vec3<f32>(1.0));
-    
+    color = pow(color, vec3<f32>(1.0 / 2.2));
     return vec4<f32>(color, base_color.a);
 }

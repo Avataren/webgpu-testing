@@ -298,10 +298,10 @@ impl RenderContext {
             .expect("Failed to find adapter");
 
         log::info!("Using adapter: {:?}", adapter.get_info());
-
+        log::info!("Using backend: {:?}", adapter.get_info().backend);
         let adapter_features = adapter.features();
         log::info!("Adapter features: {:?}", adapter_features);
-
+        
         // FORCE TRADITIONAL PATH FOR TESTING
         // Set to true to force traditional, false to allow bindless (when available)
         let force_traditional = false;
@@ -346,12 +346,25 @@ impl RenderContext {
             .expect("Failed to create device");
 
         let surface_caps = surface.get_capabilities(&adapter);
+
         let format = surface_caps
             .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
+            .find(|f| !f.is_srgb())  // Prefer LINEAR format
+            .unwrap_or_else(|| {
+                surface_caps.formats.iter()
+                    .copied()
+                    .find(|f| f.is_srgb())
+                    .unwrap_or(surface_caps.formats[0])
+            });
+
+        // let format = surface_caps
+        //     .formats
+        //     .iter()
+        //     .copied()
+        //     .find(|f| f.is_srgb())
+        //     .unwrap_or(surface_caps.formats[0]);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
