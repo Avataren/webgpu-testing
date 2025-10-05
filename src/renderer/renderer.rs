@@ -1,9 +1,10 @@
 // renderer/renderer.rs
 use crate::asset::Assets;
-use crate::renderer::{CameraUniform, Depth, RenderBatcher, Vertex};
+use crate::renderer::material::MaterialFlags;
+use crate::renderer::{CameraUniform, Depth, Material, RenderBatcher, Vertex};
 use crate::scene::Camera;
 
-use std::{mem, num::NonZeroU64};
+use std::{collections::HashMap, mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
@@ -51,12 +52,13 @@ struct RenderContext {
     size: PhysicalSize<u32>,
     depth: Depth,
     msaa_texture: MsaaTexture,
+    supports_bindless_textures: bool,
 }
 
 struct RenderPipeline {
     pipeline: wgpu::RenderPipeline,
-    dummy_texture_bind_group: wgpu::BindGroup,
     texture_bind_layout: wgpu::BindGroupLayout,
+    texture_binder: TextureBindingModel,
 }
 
 struct DynamicObjectsBuffer {
@@ -118,60 +120,9 @@ impl Renderer {
     }
 
     pub fn update_texture_bind_group(&mut self, assets: &Assets) {
-        // We need at least one texture to create a valid bind group
-        if assets.textures.is_empty() {
-            log::warn!("No textures available, keeping dummy bind group");
-            return;
-        }
-
-        // Get reference to the first texture as fallback for all empty slots
-        let fallback_texture = assets
-            .textures
-            .get(crate::asset::Handle::new(0))
-            .expect("Texture 0 should exist");
-
-        // Build array of texture views, filling empty slots with fallback
-        let views_vec: Vec<&wgpu::TextureView> = (0..256)
-            .map(|i| {
-                assets
-                    .textures
-                    .get(crate::asset::Handle::new(i))
-                    .map(|t| &t.view)
-                    .unwrap_or(&fallback_texture.view)
-            })
-            .collect();
-
-        // Get sampler from first texture
-        let sampler = &assets
-            .textures
-            .get(crate::asset::Handle::new(0))
-            .expect("Texture 0 should exist")
-            .sampler;
-
-        let new_bind_group = self
-            .context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("TextureArrayBindGroup"),
-                layout: &self.pipeline.texture_bind_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureViewArray(&views_vec),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            });
-
-        self.pipeline.dummy_texture_bind_group = new_bind_group;
-
-        log::debug!(
-            "Updated texture bind group with {} textures",
-            assets.textures.len()
-        );
+        self.pipeline
+            .texture_binder
+            .update(&self.context.device, assets);
     }
 
     pub fn render(
@@ -225,26 +176,77 @@ impl Renderer {
             rpass.set_pipeline(&self.pipeline.pipeline);
             rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
             rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
-            rpass.set_bind_group(2, &self.pipeline.dummy_texture_bind_group, &[]);
 
-            let mut object_offset = 0u32;
-            for (mesh_handle, instances) in batcher.iter() {
-                let Some(mesh) = assets.meshes.get(mesh_handle) else {
-                    log::warn!("Skipping batch with invalid mesh handle");
-                    object_offset += instances.len() as u32;
-                    continue;
-                };
+            match &mut self.pipeline.texture_binder {
+                TextureBindingModel::Bindless(bindless) => {
+                    rpass.set_bind_group(2, bindless.global_bind_group(), &[]);
 
-                let instance_count = instances.len() as u32;
-                rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
-                rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-                rpass.draw_indexed(
-                    0..mesh.index_count(),
-                    0,
-                    object_offset..(object_offset + instance_count),
-                );
+                    let mut object_offset = 0u32;
+                    for (mesh_handle, instances) in batcher.iter() {
+                        let Some(mesh) = assets.meshes.get(mesh_handle) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            object_offset += instances.len() as u32;
+                            continue;
+                        };
 
-                object_offset += instance_count;
+                        let instance_count = instances.len() as u32;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+                        rpass.draw_indexed(
+                            0..mesh.index_count(),
+                            0,
+                            object_offset..(object_offset + instance_count),
+                        );
+
+                        object_offset += instance_count;
+                    }
+                }
+                TextureBindingModel::Classic(classic) => {
+                    rpass.set_bind_group(2, classic.default_bind_group(), &[]);
+
+                    let mut object_offset = 0u32;
+                    for (mesh_handle, instances) in batcher.iter() {
+                        let Some(mesh) = assets.meshes.get(mesh_handle) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            object_offset += instances.len() as u32;
+                            continue;
+                        };
+
+                        let instance_count = instances.len() as u32;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+
+                        let mut local_offset = 0usize;
+                        while local_offset < instances.len() {
+                            let material = instances[local_offset].material;
+                            let bind_group = classic.bind_group_for_material(
+                                &self.context.device,
+                                assets,
+                                material,
+                            );
+                            rpass.set_bind_group(2, bind_group, &[]);
+
+                            let mut run_length = 1usize;
+                            while local_offset + run_length < instances.len()
+                                && instances[local_offset + run_length].material == material
+                            {
+                                run_length += 1;
+                            }
+
+                            let start_instance = object_offset + local_offset as u32;
+                            let end_instance = start_instance + run_length as u32;
+                            rpass.draw_indexed(
+                                0..mesh.index_count(),
+                                0,
+                                start_instance..end_instance,
+                            );
+
+                            local_offset += run_length;
+                        }
+
+                        object_offset += instance_count;
+                    }
+                }
             }
         }
 
@@ -302,16 +304,18 @@ impl RenderContext {
         log::info!("Adapter features: {:?}", adapter_features);
 
         let mut required_features = wgpu::Features::empty();
-        if adapter_features
+        let supports_bindless_textures = if adapter_features
             .contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
         {
             required_features |=
                 wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
                     | wgpu::Features::TEXTURE_BINDING_ARRAY;
             log::info!("Bindless textures enabled");
+            true
         } else {
             log::warn!("Bindless textures not supported");
-        }
+            false
+        };
 
         let limits = wgpu::Limits {
             max_binding_array_elements_per_shader_stage: 256,
@@ -363,6 +367,7 @@ impl RenderContext {
             size,
             depth,
             msaa_texture,
+            supports_bindless_textures,
         }
     }
 
@@ -523,41 +528,415 @@ impl DynamicObjectsBuffer {
     }
 }
 
+const MAX_TEXTURES: usize = 256;
+
+enum TextureBindingModel {
+    Bindless(BindlessTextureBinder),
+    Classic(TraditionalTextureBinder),
+}
+
+impl TextureBindingModel {
+    fn update(&mut self, device: &wgpu::Device, assets: &Assets) {
+        match self {
+            TextureBindingModel::Bindless(binder) => binder.update(device, assets),
+            TextureBindingModel::Classic(binder) => binder.update(device, assets),
+        }
+    }
+}
+
+struct BindlessTextureBinder {
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    fallback_texture: wgpu::Texture,
+    fallback_view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+}
+
+impl BindlessTextureBinder {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("BindlessSampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("BindlessFallbackTexture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = Self::create_bind_group_with_views(
+            device,
+            layout,
+            &sampler,
+            vec![&fallback_view; MAX_TEXTURES],
+        );
+
+        Self {
+            layout: layout.clone(),
+            sampler,
+            fallback_texture,
+            fallback_view,
+            bind_group,
+        }
+    }
+
+    fn create_bind_group_with_views(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        views: Vec<&wgpu::TextureView>,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("BindlessTextureBindGroup"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&views),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
+    }
+
+    fn update(&mut self, device: &wgpu::Device, assets: &Assets) {
+        let fallback = &self.fallback_view;
+        let views: Vec<&wgpu::TextureView> = (0..MAX_TEXTURES)
+            .map(|i| {
+                assets
+                    .textures
+                    .get(crate::asset::Handle::new(i as u32))
+                    .map(|t| &t.view)
+                    .unwrap_or(fallback)
+            })
+            .collect();
+
+        self.bind_group =
+            Self::create_bind_group_with_views(device, &self.layout, &self.sampler, views);
+
+        log::debug!(
+            "Updated bindless texture array with {} textures",
+            assets.textures.len()
+        );
+    }
+
+    fn global_bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
+}
+
+struct TraditionalTextureBinder {
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    fallback_texture: wgpu::Texture,
+    fallback_view: wgpu::TextureView,
+    default_bind_group: wgpu::BindGroup,
+    material_bind_groups: HashMap<Material, wgpu::BindGroup>,
+}
+
+impl TraditionalTextureBinder {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("TraditionalSampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("TraditionalFallbackTexture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let default_bind_group =
+            Self::create_bind_group(device, layout, &sampler, [&fallback_view; 5]);
+
+        Self {
+            layout: layout.clone(),
+            sampler,
+            fallback_texture,
+            fallback_view,
+            default_bind_group,
+            material_bind_groups: HashMap::new(),
+        }
+    }
+
+    fn create_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        views: [&wgpu::TextureView; 5],
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TraditionalTextureBindGroup"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(views[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(views[1]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(views[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(views[3]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(views[4]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
+    }
+
+    fn view_or_fallback<'a>(&'a self, assets: &'a Assets, index: u32) -> &'a wgpu::TextureView {
+        assets
+            .textures
+            .get(crate::asset::Handle::new(index))
+            .map(|t| &t.view)
+            .unwrap_or(&self.fallback_view)
+    }
+
+    fn update(&mut self, _device: &wgpu::Device, _assets: &Assets) {
+        // When assets change we clear cached bind groups to force recreation with new views
+        self.material_bind_groups.clear();
+    }
+
+    fn default_bind_group(&self) -> &wgpu::BindGroup {
+        &self.default_bind_group
+    }
+
+    fn bind_group_for_material(
+        &mut self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        material: Material,
+    ) -> &wgpu::BindGroup {
+        self.material_bind_groups
+            .entry(material)
+            .or_insert_with(|| {
+                let base_color_view = if material
+                    .flags
+                    .contains(MaterialFlags::USE_BASE_COLOR_TEXTURE)
+                {
+                    self.view_or_fallback(assets, material.base_color_texture)
+                } else {
+                    &self.fallback_view
+                };
+                let metallic_roughness_view = if material
+                    .flags
+                    .contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE)
+                {
+                    self.view_or_fallback(assets, material.metallic_roughness_texture)
+                } else {
+                    &self.fallback_view
+                };
+                let normal_view = if material.flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
+                    self.view_or_fallback(assets, material.normal_texture)
+                } else {
+                    &self.fallback_view
+                };
+                let emissive_view = if material.flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE)
+                {
+                    self.view_or_fallback(assets, material.emissive_texture)
+                } else {
+                    &self.fallback_view
+                };
+                let occlusion_view = if material
+                    .flags
+                    .contains(MaterialFlags::USE_OCCLUSION_TEXTURE)
+                {
+                    self.view_or_fallback(assets, material.occlusion_texture)
+                } else {
+                    &self.fallback_view
+                };
+
+                Self::create_bind_group(
+                    device,
+                    &self.layout,
+                    &self.sampler,
+                    [
+                        base_color_view,
+                        metallic_roughness_view,
+                        normal_view,
+                        emissive_view,
+                        occlusion_view,
+                    ],
+                )
+            })
+    }
+}
+
 impl RenderPipeline {
     fn new(context: &RenderContext, camera: &CameraBuffer, objects: &DynamicObjectsBuffer) -> Self {
-        let texture_array_bind_layout =
-            context
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("TextureArrayBindGroupLayout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
+        let (texture_bind_layout, texture_binder, shader_source) = if context
+            .supports_bindless_textures
+        {
+            let layout =
+                context
+                    .device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("TextureArrayBindGroupLayout"),
+                        entries: &[
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: std::num::NonZero::new(MAX_TEXTURES as u32),
                             },
-                            count: std::num::NonZero::new(256),
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 1,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                                count: None,
+                            },
+                        ],
+                    });
 
-        let dummy_texture_bind_group =
-            Self::create_dummy_texture_bind_group(&context.device, &texture_array_bind_layout);
+            let binder =
+                TextureBindingModel::Bindless(BindlessTextureBinder::new(&context.device, &layout));
+            let shader_source = Self::shader_source(true);
+            (layout, binder, shader_source)
+        } else {
+            let layout =
+                context
+                    .device
+                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: Some("MaterialTextureBindGroupLayout"),
+                        entries: &[
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 0,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 1,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 2,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 3,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 4,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Texture {
+                                    sample_type: wgpu::TextureSampleType::Float {
+                                        filterable: true,
+                                    },
+                                    view_dimension: wgpu::TextureViewDimension::D2,
+                                    multisampled: false,
+                                },
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 5,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                                count: None,
+                            },
+                        ],
+                    });
+
+            let binder = TextureBindingModel::Classic(TraditionalTextureBinder::new(
+                &context.device,
+                &layout,
+            ));
+            let shader_source = Self::shader_source(false);
+            (layout, binder, shader_source)
+        };
 
         let shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("../shader.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
             });
 
         let pipeline_layout =
@@ -568,7 +947,7 @@ impl RenderPipeline {
                     bind_group_layouts: &[
                         &camera.bind_layout,
                         &objects.bind_layout,
-                        &texture_array_bind_layout,
+                        &texture_bind_layout,
                     ],
                     push_constant_ranges: &[],
                 });
@@ -619,56 +998,17 @@ impl RenderPipeline {
 
         Self {
             pipeline,
-            dummy_texture_bind_group,
-            texture_bind_layout: texture_array_bind_layout,
+            texture_bind_layout,
+            texture_binder,
         }
     }
 
-    fn create_dummy_texture_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-    ) -> wgpu::BindGroup {
-        let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("DummyTexture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let dummy_view = dummy_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("DummySampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        let dummy_views = vec![&dummy_view; 256];
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("DummyTextureBindGroup"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&dummy_views),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&dummy_sampler),
-                },
-            ],
-        })
+    fn shader_source(bindless: bool) -> String {
+        let bindings = if bindless {
+            include_str!("../shader/bindings_bindless.wgsl")
+        } else {
+            include_str!("../shader/bindings_traditional.wgsl")
+        };
+        format!("{bindings}\n{}", include_str!("../shader/common.wgsl"))
     }
 }

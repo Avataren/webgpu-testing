@@ -23,9 +23,6 @@ struct Object {
 };
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 
-@group(2) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
-@group(2) @binding(1) var tex_sampler: sampler;
-
 // Material flags
 const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
 const FLAG_USE_METALLIC_ROUGHNESS_TEXTURE: u32 = 2u;
@@ -203,7 +200,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Sample base color
     var base_color: vec4<f32>;
     if ((obj.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
-        base_color = textureSample(textures[obj.base_color_texture], tex_sampler, in.uv);
+        base_color = sample_base_color_texture(obj.base_color_texture, in.uv);
         base_color = base_color * obj.color;
     } else {
         base_color = obj.color;
@@ -213,7 +210,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var metallic: f32;
     var roughness: f32;
     if ((obj.material_flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u) {
-        let mr = textureSample(textures[obj.metallic_roughness_texture], tex_sampler, in.uv);
+        let mr = sample_metallic_roughness_texture(obj.metallic_roughness_texture, in.uv);
         metallic = mr.b * obj.metallic_factor;
         roughness = mr.g * obj.roughness_factor;
     } else {
@@ -226,7 +223,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var N: vec3<f32>;
     if ((obj.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
         // Sample normal map (in tangent space, range [0,1])
-        let normal_sample = textureSample(textures[obj.normal_texture], tex_sampler, in.uv).xyz;
+        let normal_sample = sample_normal_texture(obj.normal_texture, in.uv);
         
         // Convert from [0,1] to [-1,1]
         let tangent_normal = normal_sample * 2.0 - 1.0;
@@ -246,13 +243,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Sample occlusion
     var occlusion = 1.0;
     if ((obj.material_flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u) {
-        occlusion = textureSample(textures[obj.occlusion_texture], tex_sampler, in.uv).r;
+        occlusion = sample_occlusion_texture(obj.occlusion_texture, in.uv);
     }
     
     // Sample emissive
     var emissive = vec3<f32>(0.0);
     if ((obj.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
-        emissive = textureSample(textures[obj.emissive_texture], tex_sampler, in.uv).rgb * obj.emissive_strength;
+        emissive = sample_emissive_texture(obj.emissive_texture, in.uv) * obj.emissive_strength;
     }
     
     // View direction (from surface to camera)
