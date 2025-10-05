@@ -2975,9 +2975,9 @@ dependencies = [
 name = "wgpu-cube"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bitflags 2.9.4",
  "bytemuck",
- "base64",
  "console_error_panic_hook",
  "console_log",
  "env_logger",
