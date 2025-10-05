@@ -106,7 +106,7 @@ impl App {
             SceneType::MaterialShowcase => self.create_material_showcase(renderer),
             SceneType::HierarchyTest => self.create_hierarchy_test_scene(renderer),
             SceneType::FromGltf => {
-                if let Some(path) = &self.gltf_path.clone() {
+                if let Some(path) = self.gltf_path.as_deref() {
                     self.load_gltf_scene(path, renderer);
                 } else {
                     log::error!("No glTF path provided");
