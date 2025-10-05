@@ -60,39 +60,46 @@ impl Scene {
         let mut local_transform_count = 0;
 
         // Query for all visible renderable entities
-        for (_entity, (mesh, material, visible)) in self
+        for (entity, (mesh, material, visible, world_transform, local_transform, name)) in self
             .world
-            .query::<(&MeshComponent, &MaterialComponent, &Visible)>()
+            .query::<(
+                &MeshComponent,
+                &MaterialComponent,
+                &Visible,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+                Option<&Name>,
+            )>()
             .iter()
         {
             if !visible.0 {
                 continue;
             }
 
-            //CRITICAL FIX: Always prefer WorldTransform if it exists
-            //WorldTransform is the authoritative transform after propagation
-            let transform = if let Ok(world_trans) = self.world.get::<&WorldTransform>(_entity) {
+            // CRITICAL FIX: Always prefer WorldTransform if it exists
+            // WorldTransform is the authoritative transform after propagation
+            let transform = if let Some(world_trans) = world_transform {
                 // Entity is part of a hierarchy or has been processed
                 world_transform_count += 1;
                 world_trans.0
-            } else if let Ok(local_trans) = self.world.get::<&TransformComponent>(_entity) {
+            } else if let Some(local_trans) = local_transform {
                 // Root entity without children - use local transform directly
                 local_transform_count += 1;
-                if let Ok(name) = self.world.get::<&Name>(_entity) {
+                if let Some(name) = name {
                     log::warn!(
                         "Entity '{}' using LOCAL transform (no WorldTransform)",
-                        name.0
+                        name.0.as_str()
                     );
                 } else {
                     log::warn!(
                         "Entity {:?} using LOCAL transform (no WorldTransform)",
-                        _entity
+                        entity
                     );
                 }
                 local_trans.0
             } else {
                 // Fallback - should rarely happen
-                log::warn!("Entity {:?} without transform", _entity);
+                log::warn!("Entity {:?} without transform", entity);
                 Transform::IDENTITY
             };
 
@@ -167,82 +174,56 @@ impl Scene {
 
         log::trace!("Propagating transforms from {} root entities", roots.len());
 
-        // Recursively compute world transforms from the roots
+        let mut stack: Vec<(hecs::Entity, Transform)> = Vec::new();
+
         for root in roots {
-            // For root entities, world transform = local transform
-            self.propagate_recursive(root, Transform::IDENTITY);
-        }
-    }
+            stack.push((root, Transform::IDENTITY));
 
-    fn propagate_recursive(&mut self, entity: hecs::Entity, parent_world: Transform) {
-        // Get the local transform (clone it to drop the borrow immediately)
-        let local = if let Ok(t) = self.world.get::<&TransformComponent>(entity) {
-            t.0
-        } else {
-            // Entity has no transform - skip it and its children
-            log::trace!("Entity {:?} has no TransformComponent, skipping", entity);
-            return;
-        };
+            while let Some((entity, parent_world)) = stack.pop() {
+                // Get the local transform (copy it to drop the borrow immediately)
+                let local = match self.world.get::<&TransformComponent>(entity) {
+                    Ok(t) => t.0,
+                    Err(_) => {
+                        // Entity has no transform - skip it and its children
+                        log::trace!("Entity {:?} has no TransformComponent, skipping", entity);
+                        continue;
+                    }
+                };
 
-        // Compute world transform by combining parent with local
-        // parent_world is Transform::IDENTITY for root entities
-        let world = if parent_world.translation == Vec3::ZERO
-            && parent_world.rotation == Quat::IDENTITY
-            && parent_world.scale == Vec3::ONE
-        {
-            // Parent is identity, just use local transform
-            local
-        } else {
-            // Combine parent and local transforms
-            parent_world.mul_transform(&local)
-        };
+                // Combine parent and local transforms
+                let world = parent_world.mul_transform(&local);
 
-        log::trace!(
-            "Entity {:?}: local T:{:?}, world T:{:?}",
-            entity,
-            local.translation,
-            world.translation
-        );
-
-        // Update or insert the WorldTransform component
-        // We need to check if it exists first, then handle update vs insert
-        let has_world_transform = self.world.get::<&WorldTransform>(entity).is_ok();
-
-        if has_world_transform {
-            // Update existing WorldTransform
-            if let Ok(mut wt) = self.world.get::<&mut WorldTransform>(entity) {
-                wt.0 = world;
-            } else {
-                log::error!(
-                    "Failed to get mutable WorldTransform for entity {:?}",
-                    entity
-                );
-            }
-        } else {
-            // Insert new WorldTransform (borrow is dropped)
-            if let Err(e) = self.world.insert_one(entity, WorldTransform(world)) {
-                log::error!(
-                    "Failed to insert WorldTransform for entity {:?}: {:?}",
+                log::trace!(
+                    "Entity {:?}: local T:{:?}, world T:{:?}",
                     entity,
-                    e
+                    local.translation,
+                    world.translation
                 );
-            } else {
-                log::trace!("Inserted WorldTransform for entity {:?}", entity);
+
+                match self.world.get::<&mut WorldTransform>(entity) {
+                    Ok(mut wt) => {
+                        wt.0 = world;
+                    }
+                    Err(_) => {
+                        if let Err(e) = self.world.insert_one(entity, WorldTransform(world)) {
+                            log::error!(
+                                "Failed to insert WorldTransform for entity {:?}: {:?}",
+                                entity,
+                                e
+                            );
+                            continue;
+                        } else {
+                            log::trace!("Inserted WorldTransform for entity {:?}", entity);
+                        }
+                    }
+                }
+
+                if let Ok(children) = self.world.get::<&Children>(entity) {
+                    for &child in children.0.iter().rev() {
+                        stack.push((child, world));
+                    }
+                }
             }
-        }
-
-        // Clone children list before recursing to avoid borrow issues
-        let children = if let Ok(children_comp) = self.world.get::<&Children>(entity) {
-            children_comp.0.clone()
-        } else {
-            // No children, we're done
-            return;
-        };
-        // Borrow is dropped here
-
-        // Now we can recursively process children
-        for child in children {
-            self.propagate_recursive(child, world);
         }
     }
 
@@ -289,6 +270,7 @@ impl Default for Scene {
 mod tests {
     use super::*;
     use crate::scene::Transform;
+    use std::f32::consts::FRAC_PI_2;
 
     #[test]
     fn test_transform_propagation_simple() {
@@ -362,5 +344,79 @@ mod tests {
         let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
         assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
         assert_eq!(child_world.0.scale, Vec3::splat(1.0));
+    }
+
+    #[test]
+    fn test_transform_propagation_rotation() {
+        let mut scene = Scene::new();
+
+        let parent = scene.world.spawn((
+            Name::new("Parent"),
+            TransformComponent(Transform::from_trs(
+                Vec3::ZERO,
+                Quat::from_rotation_y(FRAC_PI_2),
+                Vec3::ONE,
+            )),
+        ));
+
+        let child = scene.world.spawn((
+            Name::new("Child"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(1.0, 0.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            Parent(parent),
+        ));
+
+        scene.world.insert_one(parent, Children(vec![child])).ok();
+
+        scene.system_propagate_transforms();
+
+        let parent_world = scene.world.get::<&WorldTransform>(parent).unwrap();
+        assert!(parent_world.0.translation.abs_diff_eq(Vec3::ZERO, 1e-5));
+
+        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+        assert!(child_world
+            .0
+            .translation
+            .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), 1e-5));
+    }
+
+    #[test]
+    fn test_transform_propagation_updates_existing_world_transform() {
+        let mut scene = Scene::new();
+
+        let parent = scene.world.spawn((
+            Name::new("Parent"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
+        ));
+
+        let child = scene.world.spawn((
+            Name::new("Child"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(2.0, 0.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            Parent(parent),
+        ));
+
+        scene.world.insert_one(parent, Children(vec![child])).ok();
+
+        scene.system_propagate_transforms();
+
+        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+        assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
+
+        {
+            let mut parent_transform = scene.world.get::<&mut TransformComponent>(parent).unwrap();
+            parent_transform.0.translation = Vec3::new(1.0, 0.0, 0.0);
+        }
+
+        scene.system_propagate_transforms();
+
+        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+        assert_eq!(child_world.0.translation, Vec3::new(3.0, 0.0, 0.0));
     }
 }
