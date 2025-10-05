@@ -1,11 +1,11 @@
 // scene/components.rs
 // Pure hecs components - no custom entity system
 
-use glam::Vec3;
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::Material;
 use crate::scene::Transform;
+use glam::Vec3;
 
 // ============================================================================
 // Core Rendering Components

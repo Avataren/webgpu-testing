@@ -231,9 +231,9 @@ fn calculate_scene_lighting(
     metallic: f32,
     roughness: f32
 ) -> vec3<f32> {
-    if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
-        return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
-    }
+    // if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
+    //     return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
+    // }
 
     var Lo = vec3<f32>(0.0);
 

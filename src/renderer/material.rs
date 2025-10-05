@@ -4,14 +4,14 @@
 pub struct Material {
     pub base_color: [u8; 4],
     pub flags: MaterialFlags,
-    
+
     // PBR texture indices
     pub base_color_texture: u32,
     pub metallic_roughness_texture: u32,
     pub normal_texture: u32,
     pub emissive_texture: u32,
     pub occlusion_texture: u32,
-    
+
     // PBR parameters (stored as u8, converted to f32 in shader)
     pub metallic_factor: u8,   // 0-255 -> 0.0-1.0
     pub roughness_factor: u8,  // 0-255 -> 0.0-1.0
@@ -157,7 +157,7 @@ impl Material {
     pub fn checker() -> Self {
         Self::new([255, 255, 255, 255]).with_base_color_texture(0)
     }
-    
+
     pub fn color_f32(&self) -> [f32; 4] {
         [
             self.base_color[0] as f32 / 255.0,

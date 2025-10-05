@@ -18,7 +18,7 @@ impl CameraUniform {
             _padding: 0.0,
         }
     }
-    
+
     pub fn from_matrix(view_proj: Mat4, camera_pos: Vec3) -> Self {
         Self {
             view_proj: view_proj.to_cols_array_2d(),

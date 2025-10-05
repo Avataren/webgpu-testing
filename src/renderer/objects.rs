@@ -5,7 +5,7 @@ use glam::Mat4;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct ObjectData {
-    pub model: [[f32; 4]; 4],           // 64 bytes
+    pub model: [[f32; 4]; 4],            // 64 bytes
     pub color: [f32; 4],                 // 16 bytes
     pub base_color_texture: u32,         // 4 bytes
     pub metallic_roughness_texture: u32, // 4 bytes

@@ -1,14 +1,14 @@
 // scene/builder.rs
 // Optional helper for building entities - uses pure hecs
 
-use hecs::World;
 use glam::Vec3;
+use hecs::World;
 
+use super::components::*;
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::Material;
 use crate::scene::Transform;
-use super::components::*;
 
 /// Helper for building entities with a fluent API
 /// This is optional - you can also use world.spawn() directly

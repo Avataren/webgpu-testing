@@ -1,27 +1,27 @@
 pub mod app;
 pub mod asset;
+pub mod io;
 pub mod renderer;
 pub mod scene;
 pub mod time;
-pub mod io;
 
 use app::{App, SceneType};
-use winit::event_loop::EventLoop;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+use winit::event_loop::EventLoop;
 
 fn create_app() -> App {
     // Central place to select which demo scene should run by default
-    
+
     // Simple colored cubes:
     //App::new(SceneType::Simple)
-    
+
     // Hierarchy test (parent-child transforms):
     //App::new(SceneType::HierarchyTest)
-    
+
     // PBR material test (5x5 grid of spheres with varying metallic/roughness):
     //App::new(SceneType::PbrTest)
-    
+
     // Load a glTF file:
     App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
     //App::with_gltf("web/assets/damagedhelmet/DamagedHelmet.gltf", 1.0)
@@ -40,7 +40,6 @@ fn init_logging() {
         .filter_level(log::LevelFilter::Info)
         .try_init();
 }
-
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run() -> Result<(), winit::error::EventLoopError> {

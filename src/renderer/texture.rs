@@ -412,31 +412,31 @@ mod tests {
     fn test_mip_level_calculation() {
         // 1x1 should have 1 mip level
         assert_eq!(Texture::calculate_mip_levels(1, 1), 1);
-        
+
         // 2x2 should have 2 mip levels (2x2, 1x1)
         assert_eq!(Texture::calculate_mip_levels(2, 2), 2);
-        
+
         // 4x4 should have 3 mip levels (4x4, 2x2, 1x1)
         assert_eq!(Texture::calculate_mip_levels(4, 4), 3);
-        
+
         // 8x8 should have 4 mip levels
         assert_eq!(Texture::calculate_mip_levels(8, 8), 4);
-        
+
         // 16x16 should have 5 mip levels
         assert_eq!(Texture::calculate_mip_levels(16, 16), 5);
-        
+
         // 256x256 should have 9 mip levels
         assert_eq!(Texture::calculate_mip_levels(256, 256), 9);
-        
+
         // 512x512 should have 10 mip levels
         assert_eq!(Texture::calculate_mip_levels(512, 512), 10);
-        
+
         // 1024x1024 should have 11 mip levels
         assert_eq!(Texture::calculate_mip_levels(1024, 1024), 11);
-        
+
         // 2048x2048 should have 12 mip levels
         assert_eq!(Texture::calculate_mip_levels(2048, 2048), 12);
-        
+
         // Non-square textures use the larger dimension
         assert_eq!(Texture::calculate_mip_levels(256, 128), 9);
         assert_eq!(Texture::calculate_mip_levels(128, 256), 9);

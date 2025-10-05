@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-#[derive(Debug, PartialEq, Eq, Hash)]  // Only derive these
+#[derive(Debug, PartialEq, Eq, Hash)] // Only derive these
 pub struct Handle<T> {
     index: usize,
     _marker: PhantomData<*const T>,

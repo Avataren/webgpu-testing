@@ -1,7 +1,7 @@
 use winit::dpi::PhysicalSize;
 
 pub struct Depth {
-    pub texture: wgpu::Texture,      // keep the texture alive
+    pub texture: wgpu::Texture, // keep the texture alive
     pub view: wgpu::TextureView,
     pub format: wgpu::TextureFormat,
 }
@@ -25,7 +25,11 @@ impl Depth {
         });
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view, format }
+        Self {
+            texture,
+            view,
+            format,
+        }
     }
 }
 

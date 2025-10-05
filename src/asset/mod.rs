@@ -1,10 +1,10 @@
+pub mod cache;
 pub mod handle;
 pub mod mesh;
-pub mod cache;
 
+pub use cache::AssetCache;
 pub use handle::Handle;
 pub use mesh::Mesh;
-pub use cache::AssetCache;
 
 use crate::renderer::Texture;
 

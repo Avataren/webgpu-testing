@@ -720,12 +720,7 @@ impl SceneLoader {
             image::DynamicImage::ImageRgba16(_) => gltf::image::Format::R16G16B16A16,
             image::DynamicImage::ImageRgb32F(_) => gltf::image::Format::R32G32B32FLOAT,
             image::DynamicImage::ImageRgba32F(_) => gltf::image::Format::R32G32B32A32FLOAT,
-            other => {
-                return Err(format!(
-                    "Unsupported image format: {:?}",
-                    other.color()
-                ))
-            }
+            other => return Err(format!("Unsupported image format: {:?}", other.color())),
         };
 
         let (width, height) = image.dimensions();

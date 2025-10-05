@@ -7,7 +7,7 @@ pub struct Vertex {
     pub pos: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    pub tangent: [f32; 4],  // xyz = tangent, w = handedness (+1 or -1)
+    pub tangent: [f32; 4], // xyz = tangent, w = handedness (+1 or -1)
 }
 
 impl Vertex {
@@ -29,7 +29,12 @@ impl Vertex {
 
 #[inline]
 pub fn v(pos: [f32; 3], normal: [f32; 3], uv: [f32; 2], tangent: [f32; 4]) -> Vertex {
-    Vertex { pos, normal, uv, tangent }
+    Vertex {
+        pos,
+        normal,
+        uv,
+        tangent,
+    }
 }
 
 #[cfg(test)]
@@ -42,7 +47,7 @@ mod tests {
             std::mem::size_of::<Vertex>() as wgpu::BufferAddress
         );
     }
-    
+
     #[test]
     fn vertex_size_is_48_bytes() {
         // 3 floats (pos) + 3 floats (normal) + 2 floats (uv) + 4 floats (tangent) = 12 floats = 48 bytes

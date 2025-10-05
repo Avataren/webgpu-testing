@@ -1,6 +1,9 @@
 // renderer/batch.rs (Smart version)
-use crate::{asset::{Handle, Mesh}, scene::transform::Transform};
 use super::material::Material;
+use crate::{
+    asset::{Handle, Mesh},
+    scene::transform::Transform,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,11 +16,11 @@ pub enum RenderPass {
 pub struct RenderObject {
     pub mesh: Handle<Mesh>,
     pub material: Material,
-    pub transform: Transform,  // Changed from Mat4
+    pub transform: Transform, // Changed from Mat4
 }
 
 pub struct InstanceData {
-    pub transform: Transform,  // Changed from Mat4
+    pub transform: Transform, // Changed from Mat4
     pub material: Material,
 }
 
@@ -25,7 +28,7 @@ pub struct InstanceData {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BatchKey {
     mesh: Handle<Mesh>,
-    pass: RenderPass,  // Only split if different pipeline needed
+    pass: RenderPass, // Only split if different pipeline needed
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -73,14 +76,17 @@ impl RenderBatcher {
     pub fn iter(&self) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
         self.batches
             .iter()
-            .map(|(key, instances)| (key.mesh, instances.as_slice()))  // This works because Handle is Copy
+            .map(|(key, instances)| (key.mesh, instances.as_slice())) // This works because Handle is Copy
     }
 
-    pub fn iter_pass(&self, pass: RenderPass) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
+    pub fn iter_pass(
+        &self,
+        pass: RenderPass,
+    ) -> impl Iterator<Item = (Handle<Mesh>, &[InstanceData])> + '_ {
         self.batches
             .iter()
             .filter(move |(key, _)| key.pass == pass)
-            .map(|(key, instances)| (key.mesh, instances.as_slice()))  // This works because Handle is Copy
+            .map(|(key, instances)| (key.mesh, instances.as_slice())) // This works because Handle is Copy
     }
 
     /// Get all instances for a pass (useful for sorting transparent objects)
