@@ -23,8 +23,8 @@ type WindowHandle = Window;
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
 use crate::scene::{
-    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name,
-    Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
+    Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, Parent,
+    RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
 };
 use crate::time::Instant;
 use glam::{Quat, Vec3};
