@@ -172,6 +172,11 @@ impl SceneLoader {
         let path = path.as_ref();
         log::info!("=== Loading glTF: {:?} ===", path);
 
+        #[cfg(target_arch = "wasm32")]
+        let (document, buffers, images) =
+            Self::import_gltf_web(path).map_err(|e| format!("Failed to load glTF: {}", e))?;
+
+        #[cfg(not(target_arch = "wasm32"))]
         let (document, buffers, images) =
             gltf::import(path).map_err(|e| format!("Failed to load glTF: {}", e))?;
 
@@ -598,5 +603,141 @@ impl SceneLoader {
         let handle = scene.assets.meshes.insert(mesh);
 
         Ok(handle)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl SceneLoader {
+    fn import_gltf_web(
+        path: &Path,
+    ) -> Result<
+        (
+            gltf::Document,
+            Vec<gltf::buffer::Data>,
+            Vec<gltf::image::Data>,
+        ),
+        String,
+    > {
+        use gltf::Gltf;
+
+        let bytes = crate::io::load_binary(path)?;
+        let mut gltf = Gltf::from_slice(&bytes).map_err(|err| err.to_string())?;
+        let document = gltf.document;
+        let mut blob = gltf.blob;
+        let base_dir = path.parent().map(|p| p.to_path_buf());
+
+        let buffers = Self::import_buffers_web(&document, base_dir.as_deref(), &mut blob, path)?;
+        let images = Self::import_images_web(&document, base_dir.as_deref(), &buffers)?;
+
+        Ok((document, buffers, images))
+    }
+
+    fn import_buffers_web(
+        document: &gltf::Document,
+        base: Option<&Path>,
+        blob: &mut Option<Vec<u8>>,
+        original_path: &Path,
+    ) -> Result<Vec<gltf::buffer::Data>, String> {
+        let mut buffers = Vec::new();
+
+        for buffer in document.buffers() {
+            let mut data = match buffer.source() {
+                gltf::buffer::Source::Uri(uri) => {
+                    Self::load_external_resource(base, uri, Some(original_path))?
+                }
+                gltf::buffer::Source::Bin => blob
+                    .take()
+                    .ok_or_else(|| format!("Missing BIN chunk for buffer {}", buffer.index()))?,
+            };
+
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
+
+            let expected = buffer.length() as usize;
+            if data.len() < expected {
+                return Err(format!(
+                    "Buffer {} has {} bytes but expected {}",
+                    buffer.index(),
+                    data.len(),
+                    expected
+                ));
+            }
+
+            buffers.push(gltf::buffer::Data(data));
+        }
+
+        Ok(buffers)
+    }
+
+    fn import_images_web(
+        document: &gltf::Document,
+        base: Option<&Path>,
+        buffers: &[gltf::buffer::Data],
+    ) -> Result<Vec<gltf::image::Data>, String> {
+        let mut images = Vec::new();
+
+        for image in document.images() {
+            let data = match image.source() {
+                gltf::image::Source::Uri { uri, .. } => {
+                    let bytes = Self::load_external_resource(base, uri, None)?;
+                    Self::decode_image(&bytes)?
+                }
+                gltf::image::Source::View { view, .. } => {
+                    let parent = &buffers[view.buffer().index()].0;
+                    let begin = view.offset();
+                    let end = begin + view.length();
+                    if end > parent.len() {
+                        return Err(format!(
+                            "Image view for image {} is out of bounds",
+                            image.index()
+                        ));
+                    }
+                    Self::decode_image(&parent[begin..end])?
+                }
+            };
+
+            images.push(data);
+        }
+
+        Ok(images)
+    }
+
+    fn decode_image(bytes: &[u8]) -> Result<gltf::image::Data, String> {
+        let image = image::load_from_memory(bytes)
+            .map_err(|err| format!("Failed to decode image data: {}", err))?;
+        gltf::image::Data::new(image).map_err(|err| format!("Failed to create image data: {}", err))
+    }
+
+    fn load_external_resource(
+        base: Option<&Path>,
+        uri: &str,
+        original_path: Option<&Path>,
+    ) -> Result<Vec<u8>, String> {
+        if let Some(rest) = uri.strip_prefix("data:") {
+            let (_, encoded) = rest
+                .split_once(",")
+                .ok_or_else(|| format!("Malformed data URI: {}", uri))?;
+            return base64::decode(encoded)
+                .map_err(|err| format!("Failed to decode data URI: {}", err));
+        }
+
+        if uri.starts_with("http://") || uri.starts_with("https://") {
+            return crate::io::load_binary_from_str(uri);
+        }
+
+        let path = if uri.starts_with('/') {
+            std::path::PathBuf::from(uri.trim_start_matches('/'))
+        } else if let Some(base_path) = base {
+            base_path.join(uri)
+        } else if let Some(orig) = original_path {
+            orig.parent()
+                .map(|p| p.join(uri))
+                .ok_or_else(|| format!("Cannot resolve URI {}", uri))?
+        } else {
+            return Err(format!("Cannot resolve URI {}", uri));
+        };
+
+        crate::io::load_binary(&path)
     }
 }

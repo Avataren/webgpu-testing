@@ -2977,6 +2977,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.9.4",
  "bytemuck",
+ "base64",
  "console_error_panic_hook",
  "console_log",
  "env_logger",
@@ -2985,6 +2986,7 @@ dependencies = [
  "hecs",
  "image",
  "instant",
+ "js-sys",
  "log",
  "pollster",
  "wasm-bindgen",
