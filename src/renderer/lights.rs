@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 pub const MAX_POINT_LIGHTS: usize = 16;
@@ -10,6 +10,9 @@ pub struct LightsData {
     directional: Vec<DirectionalLightRaw>,
     point: Vec<PointLightRaw>,
     spot: Vec<SpotLightRaw>,
+    directional_shadows: Vec<DirectionalShadowRaw>,
+    point_shadows: Vec<PointShadowRaw>,
+    spot_shadows: Vec<SpotShadowRaw>,
 }
 
 impl LightsData {
@@ -21,16 +24,35 @@ impl LightsData {
         self.directional.clear();
         self.point.clear();
         self.spot.clear();
+        self.directional_shadows.clear();
+        self.point_shadows.clear();
+        self.spot_shadows.clear();
     }
 
-    pub fn add_directional(&mut self, direction: Vec3, color: Vec3, intensity: f32) {
+    pub fn add_directional(
+        &mut self,
+        direction: Vec3,
+        color: Vec3,
+        intensity: f32,
+        shadow: Option<DirectionalShadowData>,
+    ) {
         self.directional
             .push(DirectionalLightRaw::new(direction, color, intensity));
+        self.directional_shadows
+            .push(DirectionalShadowRaw::from_data(shadow));
     }
 
-    pub fn add_point(&mut self, position: Vec3, color: Vec3, intensity: f32, range: f32) {
+    pub fn add_point(
+        &mut self,
+        position: Vec3,
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        shadow: Option<PointShadowData>,
+    ) {
         self.point
             .push(PointLightRaw::new(position, color, intensity, range));
+        self.point_shadows.push(PointShadowRaw::from_data(shadow));
     }
 
     pub fn add_spot(
@@ -42,6 +64,7 @@ impl LightsData {
         range: f32,
         inner_angle: f32,
         outer_angle: f32,
+        shadow: Option<SpotShadowData>,
     ) {
         self.spot.push(SpotLightRaw::new(
             position,
@@ -52,6 +75,7 @@ impl LightsData {
             inner_angle,
             outer_angle,
         ));
+        self.spot_shadows.push(SpotShadowRaw::from_data(shadow));
     }
 
     pub fn directional_lights(&self) -> &[DirectionalLightRaw] {
@@ -64,6 +88,18 @@ impl LightsData {
 
     pub fn spot_lights(&self) -> &[SpotLightRaw] {
         &self.spot
+    }
+
+    pub fn directional_shadows(&self) -> &[DirectionalShadowRaw] {
+        &self.directional_shadows
+    }
+
+    pub fn point_shadows(&self) -> &[PointShadowRaw] {
+        &self.point_shadows
+    }
+
+    pub fn spot_shadows(&self) -> &[SpotShadowRaw] {
+        &self.spot_shadows
     }
 }
 
@@ -83,6 +119,39 @@ impl DirectionalLightRaw {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct DirectionalShadowData {
+    pub view_proj: Mat4,
+    pub bias: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct DirectionalShadowRaw {
+    pub view_proj: [[f32; 4]; 4],
+    pub params: [f32; 4],
+}
+
+impl DirectionalShadowRaw {
+    fn disabled() -> Self {
+        Self {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            params: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    fn from_data(data: Option<DirectionalShadowData>) -> Self {
+        if let Some(data) = data {
+            Self {
+                view_proj: data.view_proj.to_cols_array_2d(),
+                params: [1.0, data.bias, 0.0, 0.0],
+            }
+        } else {
+            Self::disabled()
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PointLightRaw {
@@ -95,6 +164,41 @@ impl PointLightRaw {
         Self {
             position_range: [position.x, position.y, position.z, range],
             color_intensity: [color.x, color.y, color.z, intensity],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct PointShadowData {
+    pub view_proj: [Mat4; 6],
+    pub bias: f32,
+    pub near: f32,
+    pub far: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct PointShadowRaw {
+    pub view_proj: [[[f32; 4]; 4]; 6],
+    pub params: [f32; 4],
+}
+
+impl PointShadowRaw {
+    fn disabled() -> Self {
+        Self {
+            view_proj: [Mat4::IDENTITY.to_cols_array_2d(); 6],
+            params: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    fn from_data(data: Option<PointShadowData>) -> Self {
+        if let Some(data) = data {
+            Self {
+                view_proj: data.view_proj.map(|mat| mat.to_cols_array_2d()),
+                params: [1.0, data.bias, data.near, data.far],
+            }
+        } else {
+            Self::disabled()
         }
     }
 }
@@ -130,6 +234,39 @@ impl SpotLightRaw {
             direction: [direction.x, direction.y, direction.z, 0.0],
             color_intensity: [color.x, color.y, color.z, intensity],
             cone_params: [cos_inner, cos_outer, 0.0, 0.0],
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SpotShadowData {
+    pub view_proj: Mat4,
+    pub bias: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct SpotShadowRaw {
+    pub view_proj: [[f32; 4]; 4],
+    pub params: [f32; 4],
+}
+
+impl SpotShadowRaw {
+    fn disabled() -> Self {
+        Self {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            params: [0.0, 0.0, 0.0, 0.0],
+        }
+    }
+
+    fn from_data(data: Option<SpotShadowData>) -> Self {
+        if let Some(data) = data {
+            Self {
+                view_proj: data.view_proj.to_cols_array_2d(),
+                params: [1.0, data.bias, 0.0, 0.0],
+            }
+        } else {
+            Self::disabled()
         }
     }
 }
@@ -175,6 +312,56 @@ impl LightsUniform {
             .spots
             .iter_mut()
             .zip(data.spot_lights().iter())
+            .take(spot_count as usize)
+        {
+            *dst = *src;
+        }
+
+        uniform
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ShadowsUniform {
+    pub counts: [u32; 4],
+    pub directionals: [DirectionalShadowRaw; MAX_DIRECTIONAL_LIGHTS],
+    pub points: [PointShadowRaw; MAX_POINT_LIGHTS],
+    pub spots: [SpotShadowRaw; MAX_SPOT_LIGHTS],
+}
+
+impl ShadowsUniform {
+    pub fn from_data(data: &LightsData) -> Self {
+        let mut uniform = Self::zeroed();
+
+        let dir_count = data.directional_shadows().len().min(MAX_DIRECTIONAL_LIGHTS) as u32;
+        uniform.counts[0] = dir_count;
+        for (dst, src) in uniform
+            .directionals
+            .iter_mut()
+            .zip(data.directional_shadows().iter())
+            .take(dir_count as usize)
+        {
+            *dst = *src;
+        }
+
+        let point_count = data.point_shadows().len().min(MAX_POINT_LIGHTS) as u32;
+        uniform.counts[1] = point_count;
+        for (dst, src) in uniform
+            .points
+            .iter_mut()
+            .zip(data.point_shadows().iter())
+            .take(point_count as usize)
+        {
+            *dst = *src;
+        }
+
+        let spot_count = data.spot_shadows().len().min(MAX_SPOT_LIGHTS) as u32;
+        uniform.counts[2] = spot_count;
+        for (dst, src) in uniform
+            .spots
+            .iter_mut()
+            .zip(data.spot_shadows().iter())
             .take(spot_count as usize)
         {
             *dst = *src;

@@ -11,7 +11,10 @@ pub mod vertex;
 
 pub use batch::{InstanceData, RenderBatcher, RenderObject};
 pub use depth::Depth;
-pub use lights::{LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
+pub use lights::{
+    DirectionalShadowData, LightsData, PointShadowData, SpotShadowData, MAX_DIRECTIONAL_LIGHTS,
+    MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+};
 pub use material::Material;
 pub use objects::ObjectData;
 pub use primitives::*;

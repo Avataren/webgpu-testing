@@ -1,10 +1,13 @@
 // scene/scene.rs - Fixed version with improved transform propagation
 use super::components::*;
 use crate::asset::Assets;
-use crate::renderer::{LightsData, RenderBatcher, RenderObject, Renderer};
+use crate::renderer::{
+    DirectionalShadowData, LightsData, PointShadowData, RenderBatcher, RenderObject, Renderer,
+    SpotShadowData,
+};
 use crate::scene::Transform;
 use crate::time::Instant;
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use hecs::World;
 
 pub struct Scene {
@@ -120,12 +123,13 @@ impl Scene {
 
         let mut lights = LightsData::default();
 
-        for (_entity, (light, world_transform, local_transform)) in self
+        for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
                 &DirectionalLight,
                 Option<&WorldTransform>,
                 Option<&TransformComponent>,
+                Option<&CanCastShadow>,
             )>()
             .iter()
         {
@@ -140,15 +144,20 @@ impl Scene {
                 Vec3::new(0.0, -1.0, 0.0)
             };
 
-            lights.add_directional(direction, light.color, light.intensity);
+            let shadow = shadow_flag
+                .filter(|flag| flag.0)
+                .map(|_| Self::build_directional_shadow(transform.translation, direction));
+
+            lights.add_directional(direction, light.color, light.intensity, shadow);
         }
 
-        for (_entity, (light, world_transform, local_transform)) in self
+        for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
                 &PointLight,
                 Option<&WorldTransform>,
                 Option<&TransformComponent>,
+                Option<&CanCastShadow>,
             )>()
             .iter()
         {
@@ -156,21 +165,27 @@ impl Scene {
                 .map(|t| t.0)
                 .or_else(|| local_transform.map(|t| t.0))
                 .unwrap_or(Transform::IDENTITY);
+
+            let shadow = shadow_flag
+                .filter(|flag| flag.0)
+                .map(|_| Self::build_point_shadow(transform.translation, light.range));
 
             lights.add_point(
                 transform.translation,
                 light.color,
                 light.intensity,
                 light.range,
+                shadow,
             );
         }
 
-        for (_entity, (light, world_transform, local_transform)) in self
+        for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
                 &SpotLight,
                 Option<&WorldTransform>,
                 Option<&TransformComponent>,
+                Option<&CanCastShadow>,
             )>()
             .iter()
         {
@@ -184,6 +199,10 @@ impl Scene {
             } else {
                 Vec3::new(0.0, -1.0, 0.0)
             };
+
+            let shadow = shadow_flag
+                .filter(|flag| flag.0)
+                .map(|_| Self::build_spot_shadow(transform.translation, direction, light));
 
             lights.add_spot(
                 transform.translation,
@@ -193,13 +212,90 @@ impl Scene {
                 light.range,
                 light.inner_angle,
                 light.outer_angle,
+                shadow,
             );
         }
 
         renderer.set_lights(&lights);
 
-        if let Err(e) = renderer.render(&self.assets, batcher) {
+        if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
             log::error!("Render error: {:?}", e);
+        }
+    }
+
+    fn build_directional_shadow(position: Vec3, direction: Vec3) -> DirectionalShadowData {
+        const SHADOW_DISTANCE: f32 = 40.0;
+        const NEAR_PLANE: f32 = 0.1;
+        let focus = position;
+        let light_position = focus - direction * SHADOW_DISTANCE;
+        let up = Self::shadow_up(direction);
+        let view = Mat4::look_at_rh(light_position, focus, up);
+        let projection = Mat4::orthographic_rh(
+            -SHADOW_DISTANCE,
+            SHADOW_DISTANCE,
+            -SHADOW_DISTANCE,
+            SHADOW_DISTANCE,
+            NEAR_PLANE,
+            SHADOW_DISTANCE * 2.0,
+        );
+
+        DirectionalShadowData {
+            view_proj: projection * view,
+            bias: 0.0005,
+        }
+    }
+
+    fn build_point_shadow(position: Vec3, range: f32) -> PointShadowData {
+        use std::f32::consts::FRAC_PI_2;
+
+        let near = 0.1f32;
+        let far = range.max(near + 0.1);
+        let projection = Mat4::perspective_rh(FRAC_PI_2, 1.0, near, far);
+
+        let dirs = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ];
+        let ups = [Vec3::Y, Vec3::Y, Vec3::Z, Vec3::NEG_Z, Vec3::Y, Vec3::Y];
+
+        let mut matrices = [Mat4::IDENTITY; 6];
+        for ((matrix, dir), up) in matrices.iter_mut().zip(dirs.iter()).zip(ups.iter()) {
+            let view = Mat4::look_at_rh(position, position + *dir, *up);
+            *matrix = projection * view;
+        }
+
+        PointShadowData {
+            view_proj: matrices,
+            bias: 0.001,
+            near,
+            far,
+        }
+    }
+
+    fn build_spot_shadow(position: Vec3, direction: Vec3, light: &SpotLight) -> SpotShadowData {
+        let near = 0.1f32;
+        let far = light.range.max(near + 0.1);
+        let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
+        let up = Self::shadow_up(direction);
+        let view = Mat4::look_at_rh(position, position + direction, up);
+        let projection = Mat4::perspective_rh(fov, 1.0, near, far);
+
+        SpotShadowData {
+            view_proj: projection * view,
+            bias: 0.0007,
+        }
+    }
+
+    fn shadow_up(direction: Vec3) -> Vec3 {
+        let up = Vec3::Y;
+        if direction.abs().dot(up) > 0.95 {
+            Vec3::Z
+        } else {
+            up
         }
     }
 
@@ -226,6 +322,7 @@ impl Scene {
                 color: Vec3::splat(1.0),
                 intensity: 2.5,
             },
+            CanCastShadow(true),
         ));
         created += 1;
 
@@ -242,6 +339,7 @@ impl Scene {
                 intensity: 1.5,
                 range: 25.0,
             },
+            CanCastShadow(true),
         ));
         created += 1;
 
@@ -255,6 +353,7 @@ impl Scene {
                 color: Vec3::new(1.0, 0.95, 0.9),
                 intensity: 1.0,
             },
+            CanCastShadow(true),
         ));
         created += 1;
 
