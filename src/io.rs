@@ -8,9 +8,6 @@ use js_sys::Uint8Array;
 #[cfg(target_arch = "wasm32")]
 use web_sys::XmlHttpRequest;
 #[cfg(target_arch = "wasm32")]
-use web_sys::XmlHttpRequestResponseType;
-
-#[cfg(target_arch = "wasm32")]
 fn normalize_web_path(path: &Path) -> Result<String, String> {
     let mut path_str = path.to_string_lossy().replace('\\', "/");
 
@@ -35,11 +32,17 @@ fn normalize_web_path(path: &Path) -> Result<String, String> {
 
 #[cfg(target_arch = "wasm32")]
 fn fetch_bytes_sync(url: &str) -> Result<Vec<u8>, String> {
-    let request = XmlHttpRequest::new().map_err(|err| format!("Failed to create XMLHttpRequest: {:?}", err))?;
+    let request = XmlHttpRequest::new()
+        .map_err(|err| format!("Failed to create XMLHttpRequest: {:?}", err))?;
     request
         .open_with_async("GET", url, false)
         .map_err(|err| format!("Failed to open request for {}: {:?}", url, err))?;
-    request.set_response_type(XmlHttpRequestResponseType::Arraybuffer);
+    // Browsers no longer allow configuring a binary response type for synchronous
+    // `XMLHttpRequest`s. Use an `x-user-defined` MIME override so we can recover the
+    // original bytes from the returned text payload instead. This keeps the rest of
+    // the loading pipeline synchronous, which matches the expectations of the
+    // existing glTF loader code.
+    request.override_mime_type("text/plain; charset=x-user-defined");
     request
         .send()
         .map_err(|err| format!("Failed to send request for {}: {:?}", url, err))?;
@@ -52,17 +55,12 @@ fn fetch_bytes_sync(url: &str) -> Result<Vec<u8>, String> {
         return Err(format!("HTTP {} when requesting {}", status, url));
     }
 
-    let buffer = request
-        .response()
-        .map_err(|err| format!("Failed to get response body for {}: {:?}", url, err))?;
+    let text = request
+        .response_text()
+        .map_err(|err| format!("Failed to get response body for {}: {:?}", url, err))?
+        .ok_or_else(|| format!("No response body for {}", url))?;
 
-    if buffer.is_null() || buffer.is_undefined() {
-        return Err(format!("No response body for {}", url));
-    }
-
-    let array = js_sys::Uint8Array::new(&buffer);
-    let mut bytes = vec![0u8; array.length() as usize];
-    array.copy_to(&mut bytes);
+    let bytes = text.chars().map(|ch| ch as u32 as u8).collect();
     Ok(bytes)
 }
 
