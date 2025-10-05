@@ -197,73 +197,59 @@ fn calculate_scene_lighting(
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let obj = objects[in.instance_id];
     
-    // Sample base color
+    // ALWAYS sample all textures (uniform control flow)
+    let base_color_sample = sample_base_color_texture(obj.base_color_texture, in.uv);
+    let mr_sample = sample_metallic_roughness_texture(obj.metallic_roughness_texture, in.uv);
+    let normal_sample = sample_normal_texture(obj.normal_texture, in.uv);
+    let emissive_sample = sample_emissive_texture(obj.emissive_texture, in.uv);
+    let occlusion_sample = sample_occlusion_texture(obj.occlusion_texture, in.uv);
+    
+    // Then conditionally USE the samples (non-uniform control flow is OK here)
     var base_color: vec4<f32>;
     if ((obj.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
-        base_color = sample_base_color_texture(obj.base_color_texture, in.uv);
-        base_color = base_color * obj.color;
+        base_color = base_color_sample * obj.color;
     } else {
         base_color = obj.color;
     }
     
-    // Sample metallic and roughness
     var metallic: f32;
     var roughness: f32;
     if ((obj.material_flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u) {
-        let mr = sample_metallic_roughness_texture(obj.metallic_roughness_texture, in.uv);
-        metallic = mr.b * obj.metallic_factor;
-        roughness = mr.g * obj.roughness_factor;
+        metallic = mr_sample.b * obj.metallic_factor;
+        roughness = mr_sample.g * obj.roughness_factor;
     } else {
         metallic = obj.metallic_factor;
         roughness = obj.roughness_factor;
     }
-    roughness = max(roughness, 0.01); // Prevent division by zero
+    roughness = max(roughness, 0.01);
     
-    // Sample normal map and transform to world space
     var N: vec3<f32>;
     if ((obj.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
-        // Sample normal map (in tangent space, range [0,1])
-        let normal_sample = sample_normal_texture(obj.normal_texture, in.uv);
-        
-        // Convert from [0,1] to [-1,1]
         let tangent_normal = normal_sample * 2.0 - 1.0;
-        
-        // Build TBN matrix to transform from tangent space to world space
         let T = normalize(in.tangent);
         let B = normalize(in.bitangent);
         let N_base = normalize(in.normal);
         let TBN = mat3x3<f32>(T, B, N_base);
-        
-        // Transform normal to world space
         N = normalize(TBN * tangent_normal);
     } else {
         N = normalize(in.normal);
     }
     
-    // Sample occlusion
     var occlusion = 1.0;
     if ((obj.material_flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u) {
-        occlusion = sample_occlusion_texture(obj.occlusion_texture, in.uv);
+        occlusion = occlusion_sample;
     }
     
-    // Sample emissive
     var emissive = vec3<f32>(0.0);
     if ((obj.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
-        emissive = sample_emissive_texture(obj.emissive_texture, in.uv) * obj.emissive_strength;
+        emissive = emissive_sample * obj.emissive_strength;
     }
     
-    // View direction (from surface to camera)
     let V = normalize(globals.camera_pos - in.world_pos);
-    
-    // Calculate lighting (currently hardcoded, will be replaced with ECS light entities)
     let Lo = calculate_scene_lighting(N, V, base_color.rgb, metallic, roughness);
-    
-    // Ambient (very simple)
     let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;
     
     var color = ambient + Lo + emissive;
-    
-    // Tone mapping (simple Reinhard)
     color = color / (color + vec3<f32>(1.0));
     
     return vec4<f32>(color, base_color.a);

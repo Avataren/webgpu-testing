@@ -264,13 +264,21 @@ impl RenderContext {
             // This will give us better error messages
         }
 
+        // let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        //     #[cfg(target_arch = "wasm32")]
+        //     backends: wgpu::Backends::GL | wgpu::Backends::BROWSER_WEBGPU,
+        //     #[cfg(not(target_arch = "wasm32"))]
+        //     backends: wgpu::Backends::all(),
+        //     ..Default::default()
+        // });
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::GL | wgpu::Backends::BROWSER_WEBGPU,
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,  // Try WebGPU first, fallback to WebGL
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::all(),
             ..Default::default()
-        });
+        });        
 
         log::info!("Instance created, creating surface...");
 
