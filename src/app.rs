@@ -8,9 +8,20 @@ use winit::{
 };
 
 #[cfg(target_arch = "wasm32")]
-use winit::platform::web::WindowExtWebSys;
+use std::{cell::RefCell, rc::Rc};
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
 
 use crate::renderer::{Material, RenderBatcher, Renderer, Texture};
+
+#[cfg(target_arch = "wasm32")]
+type WindowHandle = Rc<Window>;
+#[cfg(not(target_arch = "wasm32"))]
+type WindowHandle = Window;
+#[cfg(target_arch = "wasm32")]
+type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
+
 use crate::scene::{
     Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
@@ -31,7 +42,7 @@ pub enum SceneType {
 
 pub struct App {
     renderer: Option<Renderer>,
-    window: Option<Window>,
+    window: Option<WindowHandle>,
     window_id: Option<WindowId>,
     scene: Scene,
     batcher: RenderBatcher,
@@ -43,6 +54,8 @@ pub struct App {
     old_renderers: Vec<Renderer>,
     frame_counter: u32,
     skip_rendering_until_frame: Option<u32>,
+    #[cfg(target_arch = "wasm32")]
+    pending_renderer: Option<PendingRenderer>,
 }
 
 impl App {
@@ -61,6 +74,8 @@ impl App {
             old_renderers: Vec::new(),
             frame_counter: 0,
             skip_rendering_until_frame: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_renderer: None,
         }
     }
 
@@ -92,6 +107,36 @@ impl App {
             old_renderers: Vec::new(),
             frame_counter: 0,
             skip_rendering_until_frame: None,
+            #[cfg(target_arch = "wasm32")]
+            pending_renderer: None,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn try_finish_async_initialization(&mut self) {
+        if self.renderer.is_some() {
+            return;
+        }
+
+        let Some(pending) = self.pending_renderer.as_ref() else {
+            return;
+        };
+
+        if let Some(mut renderer) = pending.borrow_mut().take() {
+            log::info!("Completing asynchronous renderer initialization");
+
+            self.scene.init_timer();
+            self.setup_scene(&mut renderer);
+            renderer.update_texture_bind_group(&self.scene.assets);
+
+            self.renderer = Some(renderer);
+            self.pending_renderer = None;
+
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+
+            log::info!("Renderer initialized successfully");
         }
     }
 
@@ -427,7 +472,11 @@ impl App {
         let spacing = 2.5;
         let start_offset = -((grid_size - 1) as f32 * spacing) / 2.0;
 
-        log::info!("Creating {}x{} grid of PBR test spheres", grid_size, grid_size);
+        log::info!(
+            "Creating {}x{} grid of PBR test spheres",
+            grid_size,
+            grid_size
+        );
 
         for row in 0..grid_size {
             for col in 0..grid_size {
@@ -436,7 +485,7 @@ impl App {
 
                 // Vary metallic along X axis (0.0 to 1.0)
                 let metallic = col as f32 / (grid_size - 1) as f32;
-                
+
                 // Vary roughness along Z axis (0.0 to 1.0)
                 let roughness = row as f32 / (grid_size - 1) as f32;
 
@@ -643,8 +692,7 @@ impl App {
             SceneType::Grid => (15.0, 8.0),
             SceneType::Animated => (12.0, 6.0),
             SceneType::PbrTest => (8.0, 2.0),
-            _=> (8.0, 4.0),
-
+            _ => (8.0, 4.0),
         };
 
         self.camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
@@ -671,35 +719,54 @@ impl ApplicationHandler for App {
                 .expect("Failed to create window");
             let id = window.id();
 
-            // REMOVE ALL THE CANVAS MANIPULATION CODE IN WASM
-            // wgpu will handle the canvas setup automatically
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut renderer = pollster::block_on(Renderer::new(&window));
 
-            // Create renderer FIRST - this will properly initialize the canvas
-            let mut renderer = pollster::block_on(Renderer::new(&window));
+                self.scene.init_timer();
+                self.setup_scene(&mut renderer);
 
-            // Initialize the scene timer
-            self.scene.init_timer();
+                renderer.update_texture_bind_group(&self.scene.assets);
+                log::info!(
+                    "Bind group updated with {} textures",
+                    self.scene.assets.textures.len()
+                );
 
-            self.setup_scene(&mut renderer);
+                self.window = Some(window);
+                self.window_id = Some(id);
+                self.renderer = Some(renderer);
 
-            renderer.update_texture_bind_group(&self.scene.assets);
-            log::info!(
-                "Bind group updated with {} textures",
-                self.scene.assets.textures.len()
-            );
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
 
-            self.window = Some(window);
-            self.window_id = Some(id);
-            self.renderer = Some(renderer);
-
-            if let Some(w) = &self.window {
-                w.request_redraw();
+                log::info!("Application initialized");
             }
 
-            log::info!("Application initialized");
+            #[cfg(target_arch = "wasm32")]
+            {
+                let window_handle = Rc::new(window);
+                let pending_renderer: PendingRenderer = Rc::new(RefCell::new(None));
+                let renderer_cell = pending_renderer.clone();
+                let window_for_renderer = window_handle.clone();
+
+                log::info!("Spawning asynchronous renderer initialization");
+
+                spawn_local(async move {
+                    let renderer = Renderer::new(&window_for_renderer).await;
+                    renderer_cell.borrow_mut().replace(renderer);
+                    window_for_renderer.request_redraw();
+                });
+
+                self.window = Some(window_handle);
+                self.window_id = Some(id);
+                self.pending_renderer = Some(pending_renderer);
+
+                log::info!("Waiting for renderer to finish initializing");
+            }
         }
     }
-    
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -709,6 +776,9 @@ impl ApplicationHandler for App {
         if Some(window_id) != self.window_id {
             return;
         }
+
+        #[cfg(target_arch = "wasm32")]
+        self.try_finish_async_initialization();
 
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
@@ -731,6 +801,9 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
+                #[cfg(target_arch = "wasm32")]
+                self.try_finish_async_initialization();
+
                 self.frame_counter += 1;
 
                 let should_skip = if let Some(skip_until) = self.skip_rendering_until_frame {
