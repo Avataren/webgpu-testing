@@ -97,15 +97,10 @@ impl Renderer {
         let context = RenderContext::new(window, size).await;
         let camera_buffer = CameraBuffer::new(&context.device);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
-        let lights_buffer = LightsBuffer::new(&context.device);
         let shadows = ShadowResources::new(&context.device, &objects_buffer);
-        let pipeline = RenderPipeline::new(
-            &context,
-            &camera_buffer,
-            &objects_buffer,
-            &lights_buffer,
-            &shadows,
-        );
+        let lights_buffer = LightsBuffer::new(&context.device, &shadows);
+        let pipeline =
+            RenderPipeline::new(&context, &camera_buffer, &objects_buffer, &lights_buffer);
 
         Self {
             context,
@@ -217,7 +212,6 @@ impl Renderer {
             rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
             rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
             rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
-            rpass.set_bind_group(4, self.shadows.sample_bind_group(), &[]);
 
             match &mut self.pipeline.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
@@ -375,12 +369,11 @@ impl RenderContext {
             wgpu::Limits::default()
         };
 
-        // Shadow mapping introduces an additional bind group, so ensure we request
-        // enough bind groups from the adapter. The default limit is 4, which now
-        // overflows at runtime when the shader expects group 4. Requesting a
-        // slightly higher limit keeps compatibility with existing defaults while
-        // avoiding validation errors on adapters that support more bind groups.
-        limits.max_bind_groups = limits.max_bind_groups.max(5);
+        // The renderer now fits all lighting and shadow resources into a single
+        // bind group, so the default limit of 4 is sufficient. We still request
+        // at least 4 bind groups explicitly to ensure compatibility on adapters
+        // that expose a lower default.
+        limits.max_bind_groups = limits.max_bind_groups.max(4);
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -502,7 +495,7 @@ impl CameraBuffer {
 }
 
 impl LightsBuffer {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device, shadows: &ShadowResources) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("LightsBindLayout"),
             entries: &[
@@ -528,6 +521,54 @@ impl LightsBuffer {
                             NonZeroU64::new(mem::size_of::<ShadowsUniform>() as u64).unwrap(),
                         ),
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
             ],
@@ -558,6 +599,30 @@ impl LightsBuffer {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: shadow_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(shadows.directional_array_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(shadows.sampler()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(shadows.spot_array_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Sampler(shadows.sampler()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(shadows.point_array_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(shadows.sampler()),
                 },
             ],
         });
@@ -656,8 +721,6 @@ struct ShadowResources {
     spot: ShadowArray,
     point: ShadowArray,
     sampler: wgpu::Sampler,
-    bind_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     uniform_layout: wgpu::BindGroupLayout,
@@ -686,91 +749,6 @@ impl ShadowResources {
             lod_min_clamp: 0.0,
             lod_max_clamp: 1.0,
             ..Default::default()
-        });
-
-        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ShadowSampleLayout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-            ],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ShadowSampleBindGroup"),
-            layout: &bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(directional.array_view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(spot.array_view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(point.array_view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
         });
 
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -854,13 +832,27 @@ impl ShadowResources {
             spot,
             point,
             sampler,
-            bind_layout,
-            bind_group,
             uniform_buffer,
             uniform_bind_group,
             uniform_layout,
             pipeline,
         }
+    }
+
+    fn directional_array_view(&self) -> &wgpu::TextureView {
+        self.directional.array_view()
+    }
+
+    fn spot_array_view(&self) -> &wgpu::TextureView {
+        self.spot.array_view()
+    }
+
+    fn point_array_view(&self) -> &wgpu::TextureView {
+        self.point.array_view()
+    }
+
+    fn sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
     }
 
     fn render(
@@ -994,14 +986,6 @@ impl ShadowResources {
 
             object_offset += instance_count;
         }
-    }
-
-    fn bind_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.bind_layout
-    }
-
-    fn sample_bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
     }
 }
 
@@ -1410,7 +1394,6 @@ impl RenderPipeline {
         camera: &CameraBuffer,
         objects: &DynamicObjectsBuffer,
         lights: &LightsBuffer,
-        shadows: &ShadowResources,
     ) -> Self {
         let (texture_bind_layout, texture_binder, shader_source) = if context
             .supports_bindless_textures
@@ -1547,7 +1530,6 @@ impl RenderPipeline {
                         &objects.bind_layout,
                         &lights.bind_layout,
                         &texture_bind_layout,
-                        shadows.bind_layout(),
                     ],
                     push_constant_ranges: &[],
                 });
