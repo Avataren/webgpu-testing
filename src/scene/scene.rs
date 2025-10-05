@@ -203,6 +203,97 @@ impl Scene {
         }
     }
 
+    /// Ensure the scene has a reasonable default lighting setup.
+    ///
+    /// Returns the number of lights that were created. If the scene already
+    /// contains any light components, no additional lights will be spawned.
+    pub fn add_default_lighting(&mut self) -> usize {
+        if self.has_any_lights() {
+            return 0;
+        }
+
+        log::info!("No lights found in scene - adding default lighting setup");
+
+        let mut created = 0usize;
+
+        // Key directional light coming from above-right.
+        let key_direction = Vec3::new(0.5, 0.8, 0.3);
+        let key_rotation = Self::rotation_from_light_direction(key_direction);
+        self.world.spawn((
+            Name::new("Default Key Light"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
+            DirectionalLight {
+                color: Vec3::splat(1.0),
+                intensity: 2.5,
+            },
+        ));
+        created += 1;
+
+        // Soft fill point light near the camera position.
+        self.world.spawn((
+            Name::new("Default Fill Light"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, 2.5, 6.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            PointLight {
+                color: Vec3::new(0.9, 0.95, 1.0),
+                intensity: 1.5,
+                range: 25.0,
+            },
+        ));
+        created += 1;
+
+        // Rim directional light from behind for edge definition.
+        let rim_direction = Vec3::new(-0.3, 0.2, -0.5);
+        let rim_rotation = Self::rotation_from_light_direction(rim_direction);
+        self.world.spawn((
+            Name::new("Default Rim Light"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, rim_rotation, Vec3::ONE)),
+            DirectionalLight {
+                color: Vec3::new(1.0, 0.95, 0.9),
+                intensity: 1.0,
+            },
+        ));
+        created += 1;
+
+        created
+    }
+
+    fn has_any_lights(&self) -> bool {
+        if self
+            .world
+            .query::<&DirectionalLight>()
+            .iter()
+            .next()
+            .is_some()
+        {
+            return true;
+        }
+
+        if self.world.query::<&PointLight>().iter().next().is_some() {
+            return true;
+        }
+
+        if self.world.query::<&SpotLight>().iter().next().is_some() {
+            return true;
+        }
+
+        false
+    }
+
+    fn rotation_from_light_direction(direction: Vec3) -> Quat {
+        let dir = if direction.length_squared() > 0.0 {
+            direction.normalize()
+        } else {
+            Vec3::new(0.0, -1.0, 0.0)
+        };
+
+        let target = (-dir).normalize();
+        Quat::from_rotation_arc(Vec3::NEG_Z, target)
+    }
+
     // ========================================================================
     // Animation Systems
     // ========================================================================

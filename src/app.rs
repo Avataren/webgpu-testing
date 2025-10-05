@@ -168,6 +168,11 @@ impl App {
             _ => {}
         }
 
+        let added_lights = self.scene.add_default_lighting();
+        if added_lights > 0 {
+            log::info!("Added {} default lights to scene", added_lights);
+        }
+
         // CRITICAL: Propagate transforms immediately after scene creation
         // This ensures WorldTransform components exist before first render
         log::info!("Running initial transform propagation...");
