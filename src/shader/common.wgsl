@@ -31,6 +31,36 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 
+const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
+const MAX_POINT_LIGHTS: u32 = 16u;
+const MAX_SPOT_LIGHTS: u32 = 8u;
+
+struct DirectionalLight {
+    direction: vec4<f32>;
+    color_intensity: vec4<f32>;
+};
+
+struct PointLight {
+    position_range: vec4<f32>;
+    color_intensity: vec4<f32>;
+};
+
+struct SpotLight {
+    position_range: vec4<f32>;
+    direction: vec4<f32>;
+    color_intensity: vec4<f32>;
+    cone_params: vec4<f32>;
+};
+
+struct Lights {
+    counts: vec4<u32>;
+    directionals: array<DirectionalLight, MAX_DIRECTIONAL_LIGHTS>;
+    points: array<PointLight, MAX_POINT_LIGHTS>;
+    spots: array<SpotLight, MAX_SPOT_LIGHTS>;
+};
+
+@group(2) @binding(0) var<storage, read> lights: Lights;
+
 const PI: f32 = 3.14159265359;
 
 struct VsIn {
@@ -155,9 +185,9 @@ fn calculate_light_contribution(
     return (diffuse + specular) * radiance * NdotL;
 }
 
-// TODO: Replace this with dynamic lights from ECS
-// This is a temporary hardcoded three-point lighting setup for PBR testing
-fn calculate_scene_lighting(
+// Retained hardcoded lighting for testing and fallback scenarios
+fn calculate_test_lighting(
+    _world_pos: vec3<f32>,
     N: vec3<f32>,
     V: vec3<f32>,
     base_color: vec3<f32>,
@@ -190,6 +220,111 @@ fn calculate_scene_lighting(
         Lo += calculate_light_contribution(N, V, light_dir, base_color, metallic, roughness, light_color, light_intensity);
     }
     
+    return Lo;
+}
+
+fn calculate_scene_lighting(
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32
+) -> vec3<f32> {
+    if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
+        return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
+    }
+
+    var Lo = vec3<f32>(0.0);
+
+    let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
+    for (var i = 0u; i < dir_count; i = i + 1u) {
+        let light = lights.directionals[i];
+        let light_dir = normalize(-light.direction.xyz);
+        let light_color = light.color_intensity.xyz;
+        let light_intensity = light.color_intensity.w;
+        Lo += calculate_light_contribution(
+            N,
+            V,
+            light_dir,
+            base_color,
+            metallic,
+            roughness,
+            light_color,
+            light_intensity,
+        );
+    }
+
+    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
+    for (var i = 0u; i < point_count; i = i + 1u) {
+        let light = lights.points[i];
+        let to_light = light.position_range.xyz - world_pos;
+        let distance = length(to_light);
+        if (distance > 0.0001) {
+            let L = to_light / distance;
+            var attenuation = 1.0 / max(distance * distance, 0.0001);
+            let range = light.position_range.w;
+            if (range > 0.0) {
+                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
+                attenuation = attenuation * range_factor * range_factor;
+            }
+            let light_color = light.color_intensity.xyz;
+            let light_intensity = light.color_intensity.w * attenuation;
+            Lo += calculate_light_contribution(
+                N,
+                V,
+                L,
+                base_color,
+                metallic,
+                roughness,
+                light_color,
+                light_intensity,
+            );
+        }
+    }
+
+    let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
+    for (var i = 0u; i < spot_count; i = i + 1u) {
+        let light = lights.spots[i];
+        let to_light = light.position_range.xyz - world_pos;
+        let distance = length(to_light);
+        if (distance > 0.0001) {
+            let L = to_light / distance;
+            var attenuation = 1.0 / max(distance * distance, 0.0001);
+            let range = light.position_range.w;
+            if (range > 0.0) {
+                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
+                attenuation = attenuation * range_factor * range_factor;
+            }
+
+            let light_dir = normalize(light.direction.xyz);
+            let cos_theta = dot(light_dir, -L);
+            let cos_inner = light.cone_params.x;
+            let cos_outer = light.cone_params.y;
+            var spot_effect = 0.0;
+            if (cos_theta >= cos_outer) {
+                let denom = max(cos_inner - cos_outer, 0.0001);
+                spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
+                spot_effect = spot_effect * spot_effect;
+            }
+
+            if (spot_effect > 0.0) {
+                let light_color = light.color_intensity.xyz;
+                let light_intensity = light.color_intensity.w * attenuation * spot_effect;
+                Lo += calculate_light_contribution(
+                    N,
+                    V,
+                    L,
+                    base_color,
+                    metallic,
+                    roughness,
+                    light_color,
+                    light_intensity,
+                );
+            }
+        }
+    }
+
     return Lo;
 }
 
@@ -246,7 +381,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     
     let V = normalize(globals.camera_pos - in.world_pos);
-    let Lo = calculate_scene_lighting(N, V, base_color.rgb, metallic, roughness);
+    let Lo =
+        calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
     let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;
     
     var color = ambient + Lo + emissive;

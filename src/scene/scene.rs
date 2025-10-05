@@ -1,7 +1,7 @@
 // scene/scene.rs - Fixed version with improved transform propagation
 use super::components::*;
 use crate::asset::Assets;
-use crate::renderer::{RenderBatcher, RenderObject, Renderer};
+use crate::renderer::{LightsData, RenderBatcher, RenderObject, Renderer};
 use crate::scene::Transform;
 use crate::time::Instant;
 use glam::{Quat, Vec3};
@@ -118,6 +118,86 @@ impl Scene {
             );
         }
 
+        let mut lights = LightsData::default();
+
+        for (_entity, (light, world_transform, local_transform)) in self
+            .world
+            .query::<(
+                &DirectionalLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|t| t.0)
+                .or_else(|| local_transform.map(|t| t.0))
+                .unwrap_or(Transform::IDENTITY);
+            let raw_dir = transform.rotation * Vec3::NEG_Z;
+            let direction = if raw_dir.length_squared() > 0.0 {
+                raw_dir.normalize()
+            } else {
+                Vec3::new(0.0, -1.0, 0.0)
+            };
+
+            lights.add_directional(direction, light.color, light.intensity);
+        }
+
+        for (_entity, (light, world_transform, local_transform)) in self
+            .world
+            .query::<(
+                &PointLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|t| t.0)
+                .or_else(|| local_transform.map(|t| t.0))
+                .unwrap_or(Transform::IDENTITY);
+
+            lights.add_point(
+                transform.translation,
+                light.color,
+                light.intensity,
+                light.range,
+            );
+        }
+
+        for (_entity, (light, world_transform, local_transform)) in self
+            .world
+            .query::<(
+                &SpotLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|t| t.0)
+                .or_else(|| local_transform.map(|t| t.0))
+                .unwrap_or(Transform::IDENTITY);
+            let raw_dir = transform.rotation * Vec3::NEG_Z;
+            let direction = if raw_dir.length_squared() > 0.0 {
+                raw_dir.normalize()
+            } else {
+                Vec3::new(0.0, -1.0, 0.0)
+            };
+
+            lights.add_spot(
+                transform.translation,
+                direction,
+                light.color,
+                light.intensity,
+                light.range,
+                light.inner_angle,
+                light.outer_angle,
+            );
+        }
+
+        renderer.set_lights(&lights);
+
         if let Err(e) = renderer.render(&self.assets, batcher) {
             log::error!("Render error: {:?}", e);
         }
@@ -230,9 +310,7 @@ impl Scene {
         }
     }
 
-
-    
-// ========================================================================
+    // ========================================================================
     // Scene Composition
     // ========================================================================
 
@@ -246,12 +324,16 @@ impl Scene {
 
         // First pass: spawn all entities and build the mapping
         // Collect all entity IDs first (query with no filter gets all entities)
-        let entities_to_copy: Vec<_> = other.world.iter().map(|entity_ref| entity_ref.entity()).collect();
-        
+        let entities_to_copy: Vec<_> = other
+            .world
+            .iter()
+            .map(|entity_ref| entity_ref.entity())
+            .collect();
+
         for old_entity in entities_to_copy {
             // Build a new entity with the same components (except Parent/Children for now)
             let mut builder = hecs::EntityBuilder::new();
-            
+
             // Copy all components except Parent and Children
             // Clone components to avoid holding borrows
             if let Ok(name) = other.world.get::<&Name>(old_entity) {
@@ -285,11 +367,14 @@ impl Scene {
         }
 
         // Second pass: fix up Parent and Children references
-        let parent_children_to_fix: Vec<_> = entity_map.iter().map(|(old, new)| {
-            let parent = other.world.get::<&Parent>(*old).ok().map(|p| p.0);
-            let children = other.world.get::<&Children>(*old).ok().map(|c| c.0.clone());
-            (*old, *new, parent, children)
-        }).collect();
+        let parent_children_to_fix: Vec<_> = entity_map
+            .iter()
+            .map(|(old, new)| {
+                let parent = other.world.get::<&Parent>(*old).ok().map(|p| p.0);
+                let children = other.world.get::<&Children>(*old).ok().map(|c| c.0.clone());
+                (*old, *new, parent, children)
+            })
+            .collect();
 
         // Find root entities (those without Parent in the original scene)
         let mut root_entities = Vec::new();
@@ -311,20 +396,26 @@ impl Scene {
 
             // Update Children component
             if let Some(old_children) = children {
-                let new_children: Vec<_> = old_children.iter()
+                let new_children: Vec<_> = old_children
+                    .iter()
                     .filter_map(|old_child| entity_map.get(old_child).copied())
                     .collect();
-                
+
                 if !new_children.is_empty() {
-                    self.world.insert_one(new_entity, Children(new_children)).ok();
+                    self.world
+                        .insert_one(new_entity, Children(new_children))
+                        .ok();
                 }
             }
         }
 
         // Make all root entities children of the specified parent
         if !root_entities.is_empty() {
-            log::info!("Setting {} root entities as children of parent", root_entities.len());
-            
+            log::info!(
+                "Setting {} root entities as children of parent",
+                root_entities.len()
+            );
+
             // Set parent reference on all roots
             for &root in &root_entities {
                 self.world.insert_one(root, Parent(parent_entity)).ok();
@@ -333,7 +424,7 @@ impl Scene {
             // Add roots to parent's children list
             // Check if parent already has children
             let has_children = self.world.get::<&Children>(parent_entity).is_ok();
-            
+
             if has_children {
                 // Parent has children, extend the list
                 if let Ok(mut parent_children) = self.world.get::<&mut Children>(parent_entity) {
@@ -341,16 +432,20 @@ impl Scene {
                 }
             } else {
                 // Parent didn't have children, create new list
-                self.world.insert_one(parent_entity, Children(root_entities)).ok();
+                self.world
+                    .insert_one(parent_entity, Children(root_entities))
+                    .ok();
             }
         }
 
         // Merge assets
         // Note: This just adds new assets, doesn't remap handles
         // If you need handle remapping, you'd need to track asset handles during copy
-        log::info!("Merged {} meshes, {} textures", 
-            other.assets.meshes.len(), 
-            other.assets.textures.len());
+        log::info!(
+            "Merged {} meshes, {} textures",
+            other.assets.meshes.len(),
+            other.assets.textures.len()
+        );
     }
 
     // ========================================================================
