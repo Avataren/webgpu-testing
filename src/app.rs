@@ -122,7 +122,14 @@ impl App {
             return;
         };
 
-        if let Some(mut renderer) = pending.borrow_mut().take() {
+        let renderer_opt = {
+            let mut pending_ref = pending.borrow_mut();
+            pending_ref.take()
+        };
+
+        drop(pending);
+
+        if let Some(mut renderer) = renderer_opt {
             log::info!("Completing asynchronous renderer initialization");
 
             self.scene.init_timer();
