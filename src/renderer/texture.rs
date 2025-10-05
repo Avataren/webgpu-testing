@@ -2,6 +2,9 @@
 
 use std::path::Path;
 
+#[cfg(target_arch = "wasm32")]
+use crate::io;
+
 #[derive(Debug)]
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -26,6 +29,14 @@ impl Texture {
         let path = path.as_ref();
         log::info!("Loading texture: {:?}", path);
 
+        #[cfg(target_arch = "wasm32")]
+        let img = {
+            let bytes = io::load_binary(path)?;
+            image::load_from_memory(&bytes)
+                .map_err(|e| format!("Failed to decode image {:?}: {}", path, e))?
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
         let img =
             image::open(path).map_err(|e| format!("Failed to load image {:?}: {}", path, e))?;
 
