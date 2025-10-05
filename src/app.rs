@@ -102,8 +102,6 @@ impl App {
         match self.scene_type {
             SceneType::Simple => self.create_simple_scene(renderer),
             SceneType::Grid => self.create_grid_scene(renderer, 5),
-            SceneType::Animated => self.create_animated_scene(renderer),
-            SceneType::MaterialShowcase => self.create_material_showcase(renderer),
             SceneType::HierarchyTest => self.create_hierarchy_test_scene(renderer),
             SceneType::FromGltf => {
                 if let Some(path) = self.gltf_path.clone() {
@@ -113,6 +111,7 @@ impl App {
                     self.create_simple_scene(renderer);
                 }
             }
+            _ => {}
         }
 
         // CRITICAL: Propagate transforms immediately after scene creation
@@ -408,129 +407,6 @@ impl App {
         log::info!("Grid scene: {} entities", self.scene.world.len());
     }
 
-    fn create_animated_scene(&mut self, renderer: &mut Renderer) {
-        log::info!("Creating animated scene...");
-
-        let (verts, idx) = crate::renderer::cube_mesh();
-        let cube_mesh = renderer.create_mesh(&verts, &idx);
-        let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
-
-        let gradient = Texture::gradient(
-            renderer.get_device(),
-            renderer.get_queue(),
-            256,
-            [255, 0, 0, 255],
-            [0, 0, 255, 255],
-            Some("Gradient"),
-        );
-        self.scene.assets.textures.insert(gradient);
-        renderer.update_texture_bind_group(&self.scene.assets);
-
-        EntityBuilder::new(&mut self.scene.world)
-            .with_name("Sun")
-            .with_transform(Transform::from_trs(
-                Vec3::ZERO,
-                Quat::IDENTITY,
-                Vec3::splat(2.0),
-            ))
-            .with_mesh(cube_handle)
-            .with_material(Material::white().with_texture(0))
-            .with_rotation_animation(Vec3::Y, 0.5)
-            .visible(true)
-            .spawn();
-
-        let planet_count = 12;
-        for i in 0..planet_count {
-            let offset = (i as f32) * std::f32::consts::TAU / (planet_count as f32);
-
-            self.scene.world.spawn((
-                Name::new(format!("Planet_{}", i)),
-                TransformComponent(Transform::default()),
-                MeshComponent(cube_handle),
-                MaterialComponent(Material::white().with_texture(0)),
-                Visible(true),
-                OrbitAnimation {
-                    center: Vec3::ZERO,
-                    radius: 5.0,
-                    speed: 0.5,
-                    offset,
-                },
-            ));
-        }
-
-        log::info!("Animated scene: {} entities", self.scene.world.len());
-    }
-
-    fn create_material_showcase(&mut self, renderer: &mut Renderer) {
-        log::info!("Creating material showcase...");
-
-        let (verts, idx) = crate::renderer::cube_mesh();
-        let cube_mesh = renderer.create_mesh(&verts, &idx);
-        let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
-
-        let textures = vec![
-            Texture::checkerboard(
-                renderer.get_device(),
-                renderer.get_queue(),
-                256,
-                32,
-                [255, 255, 255, 255],
-                [0, 0, 0, 255],
-                Some("Checkerboard"),
-            ),
-            Texture::gradient(
-                renderer.get_device(),
-                renderer.get_queue(),
-                256,
-                [255, 0, 0, 255],
-                [255, 255, 0, 255],
-                Some("Gradient"),
-            ),
-            Texture::radial(
-                renderer.get_device(),
-                renderer.get_queue(),
-                256,
-                [255, 255, 255, 255],
-                [0, 0, 255, 255],
-                Some("Radial"),
-            ),
-            Texture::noise(
-                renderer.get_device(),
-                renderer.get_queue(),
-                256,
-                42,
-                Some("Noise"),
-            ),
-        ];
-
-        for texture in textures {
-            self.scene.assets.textures.insert(texture);
-        }
-        renderer.update_texture_bind_group(&self.scene.assets);
-
-        let positions = [
-            Vec3::new(-3.0, 0.0, 0.0),
-            Vec3::new(-1.0, 0.0, 0.0),
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(3.0, 0.0, 0.0),
-        ];
-
-        for (i, pos) in positions.iter().enumerate() {
-            self.scene.world.spawn((
-                Name::new(format!("Cube_{}", i)),
-                TransformComponent(Transform::from_trs(*pos, Quat::IDENTITY, Vec3::ONE)),
-                MeshComponent(cube_handle),
-                MaterialComponent(Material::white().with_texture(i as u32)),
-                Visible(true),
-                RotateAnimation {
-                    axis: Vec3::new(0.3, 1.0, 0.2).normalize(),
-                    speed: 0.8,
-                },
-            ));
-        }
-
-        log::info!("Material showcase: {} entities", self.scene.world.len());
-    }
 
     fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
         log::info!("Loading glTF: {} (scale: {})", path, self.gltf_scale);

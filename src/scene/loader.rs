@@ -292,7 +292,7 @@ impl SceneLoader {
                         renderer.get_device(),
                         renderer.get_queue(),
                         &texture_path,
-                        true, // sRGB
+                        false, // sRGB
                     )?
                 }
                 gltf::image::Source::View { .. } => {

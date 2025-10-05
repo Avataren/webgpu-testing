@@ -216,8 +216,5 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Tone mapping (simple Reinhard)
     color = color / (color + vec3<f32>(1.0));
     
-    // Gamma correction
-    color = pow(color, vec3<f32>(1.0 / 2.2));
-    
     return vec4<f32>(color, base_color.a);
 }
