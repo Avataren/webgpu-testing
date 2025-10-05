@@ -386,6 +386,25 @@ impl Texture {
         Self::from_color(device, queue, [255, 255, 255, 255], Some("White"))
     }
 
+    /// Create a solid-color texture stored in a linear color space (1x1)
+    pub fn from_color_linear(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        color: [u8; 4],
+        label: Option<&str>,
+    ) -> Self {
+        Self::from_rgba8(
+            device,
+            queue,
+            &color,
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            label,
+        )
+        .unwrap()
+    }
+
     /// Create default normal map (1x1, pointing up)
     pub fn default_normal(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // Normal pointing straight up: (0, 0, 1) -> (128, 128, 255) in texture space

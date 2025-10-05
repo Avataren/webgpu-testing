@@ -474,9 +474,16 @@ impl App {
         let sphere_mesh = renderer.create_mesh(&verts, &idx);
         let sphere_handle = self.scene.assets.meshes.insert(sphere_mesh);
 
-        // Create a white base texture
-        let white = Texture::white(renderer.get_device(), renderer.get_queue());
-        self.scene.assets.textures.insert(white);
+        // Create a unit metallic-roughness texture so we can exercise the MR branch without
+        // providing per-pixel data. This keeps constant factors working identically to textured
+        // materials.
+        let unit_mr = Texture::from_color_linear(
+            renderer.get_device(),
+            renderer.get_queue(),
+            [255, 255, 255, 255],
+            Some("UnitMetallicRoughness"),
+        );
+        let unit_mr_handle = self.scene.assets.textures.insert(unit_mr);
         renderer.update_texture_bind_group(&self.scene.assets);
 
         // Create a grid of spheres with varying metallic and roughness values
@@ -515,7 +522,8 @@ impl App {
                 let material = Material::new(color)
                     .with_metallic(metallic)
                     .with_roughness(roughness)
-                    .with_base_color_texture(0); // Use white texture
+                    .with_base_color_texture(0)
+                    .with_metallic_roughness_texture(unit_mr_handle.index() as u32);
 
                 self.scene.world.spawn((
                     Name::new(format!("Sphere_M{:.2}_R{:.2}", metallic, roughness)),
@@ -549,8 +557,8 @@ impl App {
             [100, 100, 255, 255],
             Some("Blue"),
         );
-        self.scene.assets.textures.insert(red_texture);
-        self.scene.assets.textures.insert(blue_texture);
+        let red_handle = self.scene.assets.textures.insert(red_texture);
+        let blue_handle = self.scene.assets.textures.insert(blue_texture);
         renderer.update_texture_bind_group(&self.scene.assets);
 
         // Metallic axis labels (red) - along X axis
@@ -564,7 +572,7 @@ impl App {
                     Vec3::new(0.2, 0.2, 0.2),
                 )),
                 MeshComponent(label_handle),
-                MaterialComponent(Material::white().with_texture(1)), // Red
+                MaterialComponent(Material::white().with_texture(red_handle.index() as u32)),
                 Visible(true),
             ));
         }
@@ -580,7 +588,7 @@ impl App {
                     Vec3::new(0.2, 0.2, 0.2),
                 )),
                 MeshComponent(label_handle),
-                MaterialComponent(Material::white().with_texture(2)), // Blue
+                MaterialComponent(Material::white().with_texture(blue_handle.index() as u32)),
                 Visible(true),
             ));
         }
