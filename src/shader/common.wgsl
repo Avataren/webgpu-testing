@@ -36,27 +36,27 @@ const MAX_POINT_LIGHTS: u32 = 16u;
 const MAX_SPOT_LIGHTS: u32 = 8u;
 
 struct DirectionalLight {
-    direction: vec4<f32>;
-    color_intensity: vec4<f32>;
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
 };
 
 struct PointLight {
-    position_range: vec4<f32>;
-    color_intensity: vec4<f32>;
+    position_range: vec4<f32>,
+    color_intensity: vec4<f32>,
 };
 
 struct SpotLight {
-    position_range: vec4<f32>;
-    direction: vec4<f32>;
-    color_intensity: vec4<f32>;
-    cone_params: vec4<f32>;
+    position_range: vec4<f32>,
+    direction: vec4<f32>,
+    color_intensity: vec4<f32>,
+    cone_params: vec4<f32>,
 };
 
 struct Lights {
-    counts: vec4<u32>;
-    directionals: array<DirectionalLight, MAX_DIRECTIONAL_LIGHTS>;
-    points: array<PointLight, MAX_POINT_LIGHTS>;
-    spots: array<SpotLight, MAX_SPOT_LIGHTS>;
+    counts: vec4<u32>,
+    directionals: array<DirectionalLight, MAX_DIRECTIONAL_LIGHTS>,
+    points: array<PointLight, MAX_POINT_LIGHTS>,
+    spots: array<SpotLight, MAX_SPOT_LIGHTS>,
 };
 
 @group(2) @binding(0) var<storage, read> lights: Lights;
