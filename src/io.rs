@@ -54,7 +54,11 @@ fn fetch_bytes_sync(url: &str) -> Result<Vec<u8>, String> {
 
     let buffer = request
         .response()
-        .ok_or_else(|| format!("No response body for {}", url))?;
+        .map_err(|err| format!("Failed to get response body for {}: {:?}", url, err))?;
+
+    if buffer.is_null() || buffer.is_undefined() {
+        return Err(format!("No response body for {}", url));
+    }
 
     let array = js_sys::Uint8Array::new(&buffer);
     let mut bytes = vec![0u8; array.length() as usize];
