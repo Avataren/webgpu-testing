@@ -261,24 +261,15 @@ impl RenderContext {
         #[cfg(target_arch = "wasm32")]
         {
             log::info!("Checking WebGPU/WebGL availability...");
-            // This will give us better error messages
         }
-
-        // let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        //     #[cfg(target_arch = "wasm32")]
-        //     backends: wgpu::Backends::GL | wgpu::Backends::BROWSER_WEBGPU,
-        //     #[cfg(not(target_arch = "wasm32"))]
-        //     backends: wgpu::Backends::all(),
-        //     ..Default::default()
-        // });
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             #[cfg(target_arch = "wasm32")]
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,  // Try WebGPU first, fallback to WebGL
+            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::all(),
             ..Default::default()
-        });        
+        });
 
         log::info!("Instance created, creating surface...");
 
@@ -311,8 +302,15 @@ impl RenderContext {
         let adapter_features = adapter.features();
         log::info!("Adapter features: {:?}", adapter_features);
 
+        // FORCE TRADITIONAL PATH FOR TESTING
+        // Set to true to force traditional, false to allow bindless (when available)
+        let force_traditional = false;
+
         let mut required_features = wgpu::Features::empty();
-        let supports_bindless_textures = if adapter_features
+        let supports_bindless_textures = if force_traditional {
+            log::warn!("Bindless textures DISABLED (forced for testing)");
+            false
+        } else if adapter_features
             .contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING)
         {
             required_features |=
@@ -325,9 +323,14 @@ impl RenderContext {
             false
         };
 
-        let limits = wgpu::Limits {
-            max_binding_array_elements_per_shader_stage: 256,
-            ..wgpu::Limits::default()
+        // Only set special limits if using bindless
+        let limits = if supports_bindless_textures {
+            wgpu::Limits {
+                max_binding_array_elements_per_shader_stage: 256,
+                ..wgpu::Limits::default()
+            }
+        } else {
+            wgpu::Limits::default()
         };
 
         let (device, queue) = adapter
@@ -781,11 +784,7 @@ impl TraditionalTextureBinder {
                     .flags
                     .contains(MaterialFlags::USE_BASE_COLOR_TEXTURE)
                 {
-                    Self::view_or_fallback(
-                        assets,
-                        fallback_view_ref,
-                        material.base_color_texture,
-                    )
+                    Self::view_or_fallback(assets, fallback_view_ref, material.base_color_texture)
                 } else {
                     fallback_view_ref
                 };
@@ -802,21 +801,13 @@ impl TraditionalTextureBinder {
                     fallback_view_ref
                 };
                 let normal_view = if material.flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
-                    Self::view_or_fallback(
-                        assets,
-                        fallback_view_ref,
-                        material.normal_texture,
-                    )
+                    Self::view_or_fallback(assets, fallback_view_ref, material.normal_texture)
                 } else {
                     fallback_view_ref
                 };
                 let emissive_view = if material.flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE)
                 {
-                    Self::view_or_fallback(
-                        assets,
-                        fallback_view_ref,
-                        material.emissive_texture,
-                    )
+                    Self::view_or_fallback(assets, fallback_view_ref, material.emissive_texture)
                 } else {
                     fallback_view_ref
                 };
@@ -824,11 +815,7 @@ impl TraditionalTextureBinder {
                     .flags
                     .contains(MaterialFlags::USE_OCCLUSION_TEXTURE)
                 {
-                    Self::view_or_fallback(
-                        assets,
-                        fallback_view_ref,
-                        material.occlusion_texture,
-                    )
+                    Self::view_or_fallback(assets, fallback_view_ref, material.occlusion_texture)
                 } else {
                     fallback_view_ref
                 };
