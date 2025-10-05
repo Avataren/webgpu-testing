@@ -344,9 +344,11 @@ mod tests {
 
         scene.system_propagate_transforms();
 
-        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
-        assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
-        assert_eq!(child_world.0.scale, Vec3::splat(1.0));
+        {
+            let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+            assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
+            assert_eq!(child_world.0.scale, Vec3::splat(1.0));
+        }
     }
 
     #[test]
@@ -409,8 +411,10 @@ mod tests {
 
         scene.system_propagate_transforms();
 
-        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
-        assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
+        {
+            let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+            assert_eq!(child_world.0.translation, Vec3::new(2.0, 0.0, 0.0));
+        }
 
         {
             let mut parent_transform = scene.world.get::<&mut TransformComponent>(parent).unwrap();
@@ -419,7 +423,9 @@ mod tests {
 
         scene.system_propagate_transforms();
 
-        let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
-        assert_eq!(child_world.0.translation, Vec3::new(3.0, 0.0, 0.0));
+        {
+            let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
+            assert_eq!(child_world.0.translation, Vec3::new(3.0, 0.0, 0.0));
+        }
     }
 }
