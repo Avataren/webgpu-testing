@@ -22,7 +22,7 @@ fn create_app() -> App {
     //App::new(SceneType::PbrTest)
     
     // Load a glTF file:
-    App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
+    App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
 }
 
 #[cfg(target_arch = "wasm32")]
