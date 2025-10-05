@@ -86,12 +86,12 @@ struct Shadows {
 
 @group(2) @binding(1) var<uniform> shadow_info: Shadows;
 
-@group(4) @binding(0) var directional_shadow_maps: texture_depth_2d_array;
-@group(4) @binding(1) var directional_shadow_sampler: sampler_comparison;
-@group(4) @binding(2) var spot_shadow_maps: texture_depth_2d_array;
-@group(4) @binding(3) var spot_shadow_sampler: sampler_comparison;
-@group(4) @binding(4) var point_shadow_maps: texture_depth_2d_array;
-@group(4) @binding(5) var point_shadow_sampler: sampler_comparison;
+@group(2) @binding(2) var directional_shadow_maps: texture_depth_2d_array;
+@group(2) @binding(3) var directional_shadow_sampler: sampler_comparison;
+@group(2) @binding(4) var spot_shadow_maps: texture_depth_2d_array;
+@group(2) @binding(5) var spot_shadow_sampler: sampler_comparison;
+@group(2) @binding(6) var point_shadow_maps: texture_depth_2d_array;
+@group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
 
 const PI: f32 = 3.14159265359;
 
