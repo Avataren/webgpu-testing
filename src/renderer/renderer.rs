@@ -258,14 +258,36 @@ impl Renderer {
 
 impl RenderContext {
     async fn new(window: &Window, size: PhysicalSize<u32>) -> Self {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        #[cfg(target_arch = "wasm32")]
+        {
+            log::info!("Checking WebGPU/WebGL availability...");
+            // This will give us better error messages
+        }
+
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            #[cfg(target_arch = "wasm32")]
+            backends: wgpu::Backends::GL | wgpu::Backends::BROWSER_WEBGPU,
+            #[cfg(not(target_arch = "wasm32"))]
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        log::info!("Instance created, creating surface...");
+
+        // SAFETY: The window is owned by the App struct and lives for the entire
+        // duration of the program. The surface is also owned by the App (via Renderer).
+        // The window is guaranteed to outlive the surface because the Renderer is
+        // dropped before the window when the App is destroyed.
         let surface = unsafe {
             instance
                 .create_surface_unsafe(
-                    wgpu::SurfaceTargetUnsafe::from_window(window).expect("surface target"),
+                    wgpu::SurfaceTargetUnsafe::from_window(window)
+                        .expect("Failed to create surface target"),
                 )
-                .expect("surface")
+                .expect("Failed to create surface")
         };
+
+        log::info!("Surface created successfully!");
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -274,10 +296,12 @@ impl RenderContext {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("adapter");
+            .expect("Failed to find adapter");
+
+        log::info!("Using adapter: {:?}", adapter.get_info());
 
         let adapter_features = adapter.features();
-        log::info!("Adapter features: {}", adapter_features);
+        log::info!("Adapter features: {:?}", adapter_features);
 
         let mut required_features = wgpu::Features::empty();
         if adapter_features
@@ -286,7 +310,7 @@ impl RenderContext {
             required_features |=
                 wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
                     | wgpu::Features::TEXTURE_BINDING_ARRAY;
-            log::info!("Bindless textures supported!");
+            log::info!("Bindless textures enabled");
         } else {
             log::warn!("Bindless textures not supported");
         }
@@ -306,7 +330,7 @@ impl RenderContext {
                 trace: wgpu::Trace::Off,
             })
             .await
-            .expect("device");
+            .expect("Failed to create device");
 
         let surface_caps = surface.get_capabilities(&adapter);
         let format = surface_caps
@@ -329,8 +353,8 @@ impl RenderContext {
         surface.configure(&device, &config);
 
         let depth = Depth::new(&device, size, SAMPLE_COUNT);
-
         let msaa_texture = MsaaTexture::new(&device, &config, SAMPLE_COUNT);
+
         log::info!("MSAA enabled: {}x", SAMPLE_COUNT);
 
         Self {

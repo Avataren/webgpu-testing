@@ -6,11 +6,20 @@ pub mod time;
 
 use app::{App, SceneType};
 use winit::event_loop::EventLoop;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 fn create_app() -> App {
     // Central place to select which demo scene should run by default
-    //App::new(SceneType::Simple)
-    App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
+    App::new(SceneType::Simple)
+    //App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn init_logging() {
+    // Set panic hook to get better error messages
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,10 +29,6 @@ fn init_logging() {
         .try_init();
 }
 
-#[cfg(target_arch = "wasm32")]
-fn init_logging() {
-    log::set_max_level(log::LevelFilter::Info);
-}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run() -> Result<(), winit::error::EventLoopError> {
