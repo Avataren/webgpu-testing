@@ -138,7 +138,7 @@ impl Scene {
         }
     }
 
-    fn system_orbit_animation(&mut self, dt: f64) {
+    fn system_orbit_animation(&mut self, _dt: f64) {
         let time = self.time as f32;
 
         for (_entity, (transform, orbit)) in self
@@ -200,21 +200,24 @@ impl Scene {
                     world.translation
                 );
 
-                match self.world.get::<&mut WorldTransform>(entity) {
-                    Ok(mut wt) => {
+                let mut has_world_transform = false;
+                {
+                    if let Ok(mut wt) = self.world.get::<&mut WorldTransform>(entity) {
                         wt.0 = world;
+                        has_world_transform = true;
                     }
-                    Err(_) => {
-                        if let Err(e) = self.world.insert_one(entity, WorldTransform(world)) {
-                            log::error!(
-                                "Failed to insert WorldTransform for entity {:?}: {:?}",
-                                entity,
-                                e
-                            );
-                            continue;
-                        } else {
-                            log::trace!("Inserted WorldTransform for entity {:?}", entity);
-                        }
+                }
+
+                if !has_world_transform {
+                    if let Err(e) = self.world.insert_one(entity, WorldTransform(world)) {
+                        log::error!(
+                            "Failed to insert WorldTransform for entity {:?}: {:?}",
+                            entity,
+                            e
+                        );
+                        continue;
+                    } else {
+                        log::trace!("Inserted WorldTransform for entity {:?}", entity);
                     }
                 }
 
@@ -233,7 +236,7 @@ impl Scene {
 
     pub fn debug_print_transforms(&self) {
         log::info!("=== Transform Debug ===");
-        for (entity, (name, local, world)) in self
+        for (_entity, (name, local, world)) in self
             .world
             .query::<(&Name, &TransformComponent, Option<&WorldTransform>)>()
             .iter()
