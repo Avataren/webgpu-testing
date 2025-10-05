@@ -625,7 +625,7 @@ impl BindlessTextureBinder {
             .map(|i| {
                 assets
                     .textures
-                    .get(crate::asset::Handle::new(i as u32))
+                    .get(crate::asset::Handle::new(i))
                     .map(|t| &t.view)
                     .unwrap_or(fallback)
             })
@@ -734,12 +734,16 @@ impl TraditionalTextureBinder {
         })
     }
 
-    fn view_or_fallback<'a>(&'a self, assets: &'a Assets, index: u32) -> &'a wgpu::TextureView {
+    fn view_or_fallback<'a>(
+        assets: &'a Assets,
+        fallback: &'a wgpu::TextureView,
+        index: u32,
+    ) -> &'a wgpu::TextureView {
         assets
             .textures
-            .get(crate::asset::Handle::new(index))
+            .get(crate::asset::Handle::new(index as usize))
             .map(|t| &t.view)
-            .unwrap_or(&self.fallback_view)
+            .unwrap_or(fallback)
     }
 
     fn update(&mut self, _device: &wgpu::Device, _assets: &Assets) {
@@ -757,49 +761,74 @@ impl TraditionalTextureBinder {
         assets: &Assets,
         material: Material,
     ) -> &wgpu::BindGroup {
+        let layout = self.layout.clone();
+        let sampler = self.sampler.clone();
+        let fallback_view = self.fallback_view.clone();
+
         self.material_bind_groups
             .entry(material)
             .or_insert_with(|| {
+                let fallback_view_ref = &fallback_view;
                 let base_color_view = if material
                     .flags
                     .contains(MaterialFlags::USE_BASE_COLOR_TEXTURE)
                 {
-                    self.view_or_fallback(assets, material.base_color_texture)
+                    Self::view_or_fallback(
+                        assets,
+                        fallback_view_ref,
+                        material.base_color_texture,
+                    )
                 } else {
-                    &self.fallback_view
+                    fallback_view_ref
                 };
                 let metallic_roughness_view = if material
                     .flags
                     .contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE)
                 {
-                    self.view_or_fallback(assets, material.metallic_roughness_texture)
+                    Self::view_or_fallback(
+                        assets,
+                        fallback_view_ref,
+                        material.metallic_roughness_texture,
+                    )
                 } else {
-                    &self.fallback_view
+                    fallback_view_ref
                 };
                 let normal_view = if material.flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
-                    self.view_or_fallback(assets, material.normal_texture)
+                    Self::view_or_fallback(
+                        assets,
+                        fallback_view_ref,
+                        material.normal_texture,
+                    )
                 } else {
-                    &self.fallback_view
+                    fallback_view_ref
                 };
                 let emissive_view = if material.flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE)
                 {
-                    self.view_or_fallback(assets, material.emissive_texture)
+                    Self::view_or_fallback(
+                        assets,
+                        fallback_view_ref,
+                        material.emissive_texture,
+                    )
                 } else {
-                    &self.fallback_view
+                    fallback_view_ref
                 };
                 let occlusion_view = if material
                     .flags
                     .contains(MaterialFlags::USE_OCCLUSION_TEXTURE)
                 {
-                    self.view_or_fallback(assets, material.occlusion_texture)
+                    Self::view_or_fallback(
+                        assets,
+                        fallback_view_ref,
+                        material.occlusion_texture,
+                    )
                 } else {
-                    &self.fallback_view
+                    fallback_view_ref
                 };
 
                 Self::create_bind_group(
                     device,
-                    &self.layout,
-                    &self.sampler,
+                    &layout,
+                    &sampler,
                     [
                         base_color_view,
                         metallic_roughness_view,
