@@ -470,7 +470,7 @@ impl App {
         log::info!("Creating PBR test scene...");
 
         // Create sphere mesh (higher resolution for better PBR visualization)
-        let (verts, idx) = crate::renderer::sphere_mesh(32, 16);
+        let (verts, idx) = crate::renderer::sphere_mesh(64, 32);
         let sphere_mesh = renderer.create_mesh(&verts, &idx);
         let sphere_handle = self.scene.assets.meshes.insert(sphere_mesh);
 
@@ -537,60 +537,6 @@ impl App {
                     Visible(true),
                 ));
             }
-        }
-
-        // Add labels using small cubes at the edges
-        let (label_verts, label_idx) = crate::renderer::cube_mesh();
-        let label_mesh = renderer.create_mesh(&label_verts, &label_idx);
-        let label_handle = self.scene.assets.meshes.insert(label_mesh);
-
-        // Label colors
-        let red_texture = Texture::from_color(
-            renderer.get_device(),
-            renderer.get_queue(),
-            [255, 100, 100, 255],
-            Some("Red"),
-        );
-        let blue_texture = Texture::from_color(
-            renderer.get_device(),
-            renderer.get_queue(),
-            [100, 100, 255, 255],
-            Some("Blue"),
-        );
-        let red_handle = self.scene.assets.textures.insert(red_texture);
-        let blue_handle = self.scene.assets.textures.insert(blue_texture);
-        renderer.update_texture_bind_group(&self.scene.assets);
-
-        // Metallic axis labels (red) - along X axis
-        for i in 0..3 {
-            let x = start_offset + i as f32 * spacing * 2.0;
-            self.scene.world.spawn((
-                Name::new(format!("MetallicLabel_{}", i)),
-                TransformComponent(Transform::from_trs(
-                    Vec3::new(x, 2.0, start_offset - 1.5),
-                    Quat::IDENTITY,
-                    Vec3::new(0.2, 0.2, 0.2),
-                )),
-                MeshComponent(label_handle),
-                MaterialComponent(Material::white().with_texture(red_handle.index() as u32)),
-                Visible(true),
-            ));
-        }
-
-        // Roughness axis labels (blue) - along Z axis
-        for i in 0..3 {
-            let z = start_offset + i as f32 * spacing * 2.0;
-            self.scene.world.spawn((
-                Name::new(format!("RoughnessLabel_{}", i)),
-                TransformComponent(Transform::from_trs(
-                    Vec3::new(start_offset - 1.5, 2.0, z),
-                    Quat::IDENTITY,
-                    Vec3::new(0.2, 0.2, 0.2),
-                )),
-                MeshComponent(label_handle),
-                MaterialComponent(Material::white().with_texture(blue_handle.index() as u32)),
-                Visible(true),
-            ));
         }
 
         log::info!("PBR test scene: {} entities", self.scene.world.len());

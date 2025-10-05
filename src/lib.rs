@@ -20,10 +20,10 @@ fn create_app() -> App {
     //App::new(SceneType::HierarchyTest)
 
     // PBR material test (5x5 grid of spheres with varying metallic/roughness):
-    //App::new(SceneType::PbrTest)
+    App::new(SceneType::PbrTest)
 
     // Load a glTF file:
-    App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
+    //App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
     //App::with_gltf("web/assets/damagedhelmet/DamagedHelmet.gltf", 1.0)
 }
 
