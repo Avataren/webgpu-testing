@@ -37,6 +37,10 @@ impl Default for Visible {
     }
 }
 
+// ============================================================================
+// Lighting Components
+// ============================================================================
+
 /// Point light component
 #[derive(Debug, Clone, Copy)]
 pub struct PointLight {
