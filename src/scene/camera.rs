@@ -20,6 +20,9 @@ impl Camera {
     pub fn view_proj(&self, aspect: f32) -> Mat4 {
         self.proj(aspect) * self.view()
     }
+    pub fn position(&self) -> Vec3 {
+        self.eye
+    }
 }
 
 impl Default for Camera {

@@ -2,6 +2,8 @@
 
 struct Globals {
     view_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _padding: f32,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 
@@ -38,6 +40,7 @@ struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,  // xyz = tangent, w = handedness
     @builtin(instance_index) instance: u32,
 };
 
@@ -51,25 +54,21 @@ struct VsOut {
     @location(5) bitangent: vec3<f32>,
 };
 
-// Calculate tangent and bitangent from normal
-fn calculate_tangent_bitangent(normal: vec3<f32>) -> mat3x3<f32> {
-    // Build orthonormal basis from normal
-    let up = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
-    let tangent = normalize(cross(up, normal));
-    let bitangent = cross(normal, tangent);
-    
-    return mat3x3<f32>(tangent, bitangent, normal);
-}
-
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let obj = objects[in.instance];
     let M = obj.model;
     let world_pos = M * vec4(in.pos, 1.0);
-    let n = normalize((M * vec4(in.normal, 0.0)).xyz);
     
-    // Calculate tangent space
-    let tbn = calculate_tangent_bitangent(n);
+    // Transform normal and tangent to world space
+    // For non-uniform scaling, we should use inverse transpose of the model matrix
+    // But for now, this works for uniform scaling
+    let n = normalize((M * vec4(in.normal, 0.0)).xyz);
+    let t = normalize((M * vec4(in.tangent.xyz, 0.0)).xyz);
+    
+    // Calculate bitangent using the handedness from the tangent w component
+    // B = (N × T) * handedness
+    let b = cross(n, t) * in.tangent.w;
 
     var out: VsOut;
     out.pos = globals.view_proj * world_pos;
@@ -77,8 +76,8 @@ fn vs_main(in: VsIn) -> VsOut {
     out.normal = n;
     out.uv = in.uv;
     out.instance_id = in.instance;
-    out.tangent = tbn[0];
-    out.bitangent = tbn[1];
+    out.tangent = t;
+    out.bitangent = b;
     return out;
 }
 
@@ -136,19 +135,24 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         metallic = obj.metallic_factor;
         roughness = obj.roughness_factor;
     }
-    roughness = max(roughness, 0.04); // Prevent division by zero
+    roughness = max(roughness, 0.01); // Prevent division by zero
     
-    // Sample normal map
+    // Sample normal map and transform to world space
     var N: vec3<f32>;
     if ((obj.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
+        // Sample normal map (in tangent space, range [0,1])
         let normal_sample = textureSample(textures[obj.normal_texture], tex_sampler, in.uv).xyz;
+        
+        // Convert from [0,1] to [-1,1]
         let tangent_normal = normal_sample * 2.0 - 1.0;
         
-        // Transform from tangent space to world space
+        // Build TBN matrix to transform from tangent space to world space
         let T = normalize(in.tangent);
         let B = normalize(in.bitangent);
         let N_base = normalize(in.normal);
         let TBN = mat3x3<f32>(T, B, N_base);
+        
+        // Transform normal to world space
         N = normalize(TBN * tangent_normal);
     } else {
         N = normalize(in.normal);
@@ -166,8 +170,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         emissive = textureSample(textures[obj.emissive_texture], tex_sampler, in.uv).rgb * obj.emissive_strength;
     }
     
-    // View direction (camera is at origin in view space, so we need world pos)
-    let V = normalize(-in.world_pos); // Assuming camera at origin for simplicity
+    // View direction (from surface to camera)
+    let V = normalize(globals.camera_pos - in.world_pos);
     
     // Light setup (simple directional light)
     let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));

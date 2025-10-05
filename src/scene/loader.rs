@@ -69,8 +69,11 @@ impl SceneLoader {
         let mut extra_primitives: Vec<(Handle<Mesh>, Option<usize>)> = Vec::new();
 
         if let Some(gltf_mesh) = node.mesh() {
-            log::debug!("  Has mesh with {} primitives", gltf_mesh.primitives().len());
-            
+            log::debug!(
+                "  Has mesh with {} primitives",
+                gltf_mesh.primitives().len()
+            );
+
             if let Some(primitives) = mesh_handles.get(gltf_mesh.index()) {
                 if !primitives.is_empty() {
                     // Add first primitive to this entity
@@ -113,7 +116,7 @@ impl SceneLoader {
 
             let mut primitive_builder = hecs::EntityBuilder::new();
             primitive_builder.add(Name::new(primitive_name));
-            
+
             // Identity transform - shares parent's transform
             primitive_builder.add(TransformComponent(Transform::IDENTITY));
             primitive_builder.add(Visible(true));
@@ -148,7 +151,11 @@ impl SceneLoader {
 
         // Add Children component if we have any
         if !children.is_empty() {
-            log::debug!("  Adding {} children to entity {:?}", children.len(), entity);
+            log::debug!(
+                "  Adding {} children to entity {:?}",
+                children.len(),
+                entity
+            );
             world.insert_one(entity, Children(children)).ok();
         }
 
@@ -164,7 +171,7 @@ impl SceneLoader {
     ) -> Result<(), String> {
         let path = path.as_ref();
         log::info!("=== Loading glTF: {:?} ===", path);
-        
+
         let (document, buffers, images) =
             gltf::import(path).map_err(|e| format!("Failed to load glTF: {}", e))?;
 
@@ -194,12 +201,12 @@ impl SceneLoader {
         let mesh_count = document.meshes().len();
         let mut mesh_handles: Vec<Vec<(Handle<Mesh>, Option<usize>)>> =
             vec![Vec::new(); mesh_count];
-        
+
         for gltf_mesh in document.meshes() {
             let mesh_index = gltf_mesh.index();
             let mesh_name = gltf_mesh.name().unwrap_or("Unnamed");
             let primitive_count = gltf_mesh.primitives().len();
-            
+
             log::debug!(
                 "  Mesh {}: '{}' with {} primitives",
                 mesh_index,
@@ -208,15 +215,9 @@ impl SceneLoader {
             );
 
             let primitives = &mut mesh_handles[mesh_index];
-            
+
             for primitive in gltf_mesh.primitives() {
-                let handle = Self::load_primitive(
-                    &primitive,
-                    &buffers,
-                    scene,
-                    renderer,
-                    scale,
-                )?;
+                let handle = Self::load_primitive(&primitive, &buffers, scene, renderer, scale)?;
                 primitives.push((handle, primitive.material().index()));
             }
         }
@@ -227,7 +228,7 @@ impl SceneLoader {
         for (scene_index, gltf_scene) in document.scenes().enumerate() {
             let scene_name = gltf_scene.name().unwrap_or("Unnamed");
             let root_count = gltf_scene.nodes().len();
-            
+
             log::info!(
                 "  Scene {}: '{}' with {} root nodes (scale: {}x)",
                 scene_index,
@@ -235,14 +236,15 @@ impl SceneLoader {
                 root_count,
                 scale
             );
-            
+
             for (node_index, node) in gltf_scene.nodes().enumerate() {
-                log::info!("    Loading root node {}/{}: {:?}", 
-                    node_index + 1, 
+                log::info!(
+                    "    Loading root node {}/{}: {:?}",
+                    node_index + 1,
                     root_count,
                     node.name()
                 );
-                
+
                 Self::load_node(
                     &node,
                     None,
@@ -256,16 +258,16 @@ impl SceneLoader {
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());
-        
+
         // Count entities with different components
         let mesh_count = scene.world.query::<&MeshComponent>().iter().count();
         let parent_count = scene.world.query::<&Parent>().iter().count();
         let children_count = scene.world.query::<&Children>().iter().count();
-        
+
         log::info!("  Entities with meshes: {}", mesh_count);
         log::info!("  Entities with parent: {}", parent_count);
         log::info!("  Entities with children: {}", children_count);
-        
+
         Ok(())
     }
 
@@ -412,7 +414,115 @@ impl SceneLoader {
         Ok(materials)
     }
 
-    /// Load a mesh primitive
+    /// Generate tangents for a mesh using a simplified MikkTSpace-like algorithm
+    fn generate_tangents(
+        positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        uvs: &[[f32; 2]],
+        indices: &Option<gltf::mesh::util::ReadIndices>,
+    ) -> Vec<[f32; 4]> {
+        use glam::{Vec2, Vec3};
+
+        let vertex_count = positions.len();
+        let mut tangents = vec![Vec3::ZERO; vertex_count];
+        let mut bitangents = vec![Vec3::ZERO; vertex_count];
+
+        // Get indices as u32 iterator
+        let index_iter: Vec<u32> = if let Some(idx) = indices {
+            idx.clone().into_u32().collect()
+        } else {
+            (0..vertex_count as u32).collect()
+        };
+
+        // Process each triangle
+        for triangle in index_iter.chunks(3) {
+            if triangle.len() != 3 {
+                continue;
+            }
+
+            let i0 = triangle[0] as usize;
+            let i1 = triangle[1] as usize;
+            let i2 = triangle[2] as usize;
+
+            let p0 = Vec3::from(positions[i0]);
+            let p1 = Vec3::from(positions[i1]);
+            let p2 = Vec3::from(positions[i2]);
+
+            let uv0 = Vec2::from(uvs[i0]);
+            let uv1 = Vec2::from(uvs[i1]);
+            let uv2 = Vec2::from(uvs[i2]);
+
+            let edge1 = p1 - p0;
+            let edge2 = p2 - p0;
+            let delta_uv1 = uv1 - uv0;
+            let delta_uv2 = uv2 - uv0;
+
+            let f = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv2.x * delta_uv1.y);
+
+            let tangent = if f.is_finite() {
+                Vec3::new(
+                    f * (delta_uv2.y * edge1.x - delta_uv1.y * edge2.x),
+                    f * (delta_uv2.y * edge1.y - delta_uv1.y * edge2.y),
+                    f * (delta_uv2.y * edge1.z - delta_uv1.y * edge2.z),
+                )
+            } else {
+                Vec3::X // Fallback
+            };
+
+            let bitangent = if f.is_finite() {
+                Vec3::new(
+                    f * (-delta_uv2.x * edge1.x + delta_uv1.x * edge2.x),
+                    f * (-delta_uv2.x * edge1.y + delta_uv1.x * edge2.y),
+                    f * (-delta_uv2.x * edge1.z + delta_uv1.x * edge2.z),
+                )
+            } else {
+                Vec3::Y // Fallback
+            };
+
+            // Accumulate for averaging
+            tangents[i0] += tangent;
+            tangents[i1] += tangent;
+            tangents[i2] += tangent;
+
+            bitangents[i0] += bitangent;
+            bitangents[i1] += bitangent;
+            bitangents[i2] += bitangent;
+        }
+
+        // Orthonormalize and compute handedness
+        tangents
+            .iter()
+            .zip(bitangents.iter())
+            .zip(normals.iter())
+            .map(|((t, b), n)| {
+                let normal = Vec3::from(*n);
+                let mut tangent = *t;
+
+                // Gram-Schmidt orthogonalize
+                tangent = (tangent - normal * normal.dot(tangent)).normalize_or_zero();
+
+                // If tangent is zero (degenerate), create arbitrary tangent
+                if tangent.length_squared() < 0.0001 {
+                    tangent = if normal.y.abs() < 0.999 {
+                        Vec3::Y.cross(normal).normalize()
+                    } else {
+                        Vec3::X.cross(normal).normalize()
+                    };
+                }
+
+                // Calculate handedness
+                let bitangent = *b;
+                let handedness = if normal.cross(tangent).dot(bitangent) < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+
+                [tangent.x, tangent.y, tangent.z, handedness]
+            })
+            .collect()
+    }
+
     fn load_primitive(
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
@@ -438,6 +548,16 @@ impl SceneLoader {
             .map(|uv| uv.into_f32().collect::<Vec<_>>())
             .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
+        // Read tangents if available
+        let tangents = reader
+            .read_tangents()
+            .map(|t| t.collect::<Vec<_>>())
+            .unwrap_or_else(|| {
+                log::debug!("    No tangents in glTF, generating them");
+                // Generate tangents using MikkTSpace-like algorithm
+                Self::generate_tangents(&positions, &normals, &uvs, &reader.read_indices())
+            });
+
         // Read indices
         let indices = reader
             .read_indices()
@@ -451,12 +571,13 @@ impl SceneLoader {
             indices.len()
         );
 
-        // Build vertices
+        // Build vertices with tangents
         let vertices = positions
             .iter()
             .zip(normals.iter())
             .zip(uvs.iter())
-            .map(|((pos, norm), uv)| {
+            .zip(tangents.iter())
+            .map(|(((pos, norm), uv), tangent)| {
                 let scaled_pos = [
                     pos[0] * scale_multiplier,
                     pos[1] * scale_multiplier,
@@ -467,6 +588,7 @@ impl SceneLoader {
                     pos: scaled_pos,
                     normal: *norm,
                     uv: *uv,
+                    tangent: *tangent,
                 }
             })
             .collect::<Vec<_>>();

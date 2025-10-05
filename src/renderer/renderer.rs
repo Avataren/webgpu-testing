@@ -107,9 +107,7 @@ impl Renderer {
 
     pub fn set_camera(&self, camera: &Camera, aspect: f32) {
         let vp = camera.view_proj(aspect);
-        let uni = CameraUniform {
-            view_proj: vp.to_cols_array_2d(),
-        };
+        let uni = CameraUniform::from_matrix(vp, camera.position()); // Pass camera position
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
@@ -394,7 +392,7 @@ impl CameraBuffer {
             label: Some("CameraBindLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, // <-- Add FRAGMENT here
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
