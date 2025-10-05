@@ -1,7 +1,7 @@
 const MAX_TEXTURES: u32 = 256u;
 
-@group(2) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
-@group(2) @binding(1) var tex_sampler: sampler;
+@group(3) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
+@group(3) @binding(1) var tex_sampler: sampler;
 
 fn sample_base_color_texture(index: u32, uv: vec2<f32>) -> vec4<f32> {
     return textureSample(textures[index], tex_sampler, uv);

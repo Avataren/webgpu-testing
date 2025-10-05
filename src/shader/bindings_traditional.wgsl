@@ -1,9 +1,9 @@
-@group(2) @binding(0) var base_color_texture_binding: texture_2d<f32>;
-@group(2) @binding(1) var metallic_roughness_texture_binding: texture_2d<f32>;
-@group(2) @binding(2) var normal_texture_binding: texture_2d<f32>;
-@group(2) @binding(3) var emissive_texture_binding: texture_2d<f32>;
-@group(2) @binding(4) var occlusion_texture_binding: texture_2d<f32>;
-@group(2) @binding(5) var tex_sampler: sampler;
+@group(3) @binding(0) var base_color_texture_binding: texture_2d<f32>;
+@group(3) @binding(1) var metallic_roughness_texture_binding: texture_2d<f32>;
+@group(3) @binding(2) var normal_texture_binding: texture_2d<f32>;
+@group(3) @binding(3) var emissive_texture_binding: texture_2d<f32>;
+@group(3) @binding(4) var occlusion_texture_binding: texture_2d<f32>;
+@group(3) @binding(5) var tex_sampler: sampler;
 
 fn sample_base_color_texture(_index: u32, uv: vec2<f32>) -> vec4<f32> {
     return textureSample(base_color_texture_binding, tex_sampler, uv);

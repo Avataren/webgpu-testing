@@ -1,9 +1,11 @@
 // renderer/renderer.rs
 use crate::asset::Assets;
+use crate::renderer::lights::LightsUniform;
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{CameraUniform, Depth, Material, RenderBatcher, Vertex};
+use crate::renderer::{CameraUniform, Depth, LightsData, Material, RenderBatcher, Vertex};
 use crate::scene::Camera;
 
+use bytemuck::Zeroable;
 use std::{collections::HashMap, mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -16,6 +18,7 @@ pub struct Renderer {
     pipeline: RenderPipeline,
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
+    lights_buffer: LightsBuffer,
 }
 
 struct MsaaTexture {
@@ -75,19 +78,28 @@ struct CameraBuffer {
     bind_layout: wgpu::BindGroupLayout,
 }
 
+struct LightsBuffer {
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    bind_layout: wgpu::BindGroupLayout,
+}
+
 impl Renderer {
     pub async fn new(window: &Window) -> Self {
         let size = window.inner_size();
         let context = RenderContext::new(window, size).await;
         let camera_buffer = CameraBuffer::new(&context.device);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
-        let pipeline = RenderPipeline::new(&context, &camera_buffer, &objects_buffer);
+        let lights_buffer = LightsBuffer::new(&context.device);
+        let pipeline =
+            RenderPipeline::new(&context, &camera_buffer, &objects_buffer, &lights_buffer);
 
         Self {
             context,
             pipeline,
             objects_buffer,
             camera_buffer,
+            lights_buffer,
         }
     }
 
@@ -113,6 +125,10 @@ impl Renderer {
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
+    }
+
+    pub fn set_lights(&mut self, lights: &LightsData) {
+        self.lights_buffer.update(&self.context.queue, lights);
     }
 
     pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u32]) -> crate::asset::Mesh {
@@ -176,10 +192,11 @@ impl Renderer {
             rpass.set_pipeline(&self.pipeline.pipeline);
             rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
             rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+            rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
 
             match &mut self.pipeline.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
-                    rpass.set_bind_group(2, bindless.global_bind_group(), &[]);
+                    rpass.set_bind_group(3, bindless.global_bind_group(), &[]);
 
                     let mut object_offset = 0u32;
                     for (mesh_handle, instances) in batcher.iter() {
@@ -202,7 +219,7 @@ impl Renderer {
                     }
                 }
                 TextureBindingModel::Classic(classic) => {
-                    rpass.set_bind_group(2, classic.default_bind_group(), &[]);
+                    rpass.set_bind_group(3, classic.default_bind_group(), &[]);
 
                     let mut object_offset = 0u32;
                     for (mesh_handle, instances) in batcher.iter() {
@@ -224,7 +241,7 @@ impl Renderer {
                                 assets,
                                 material,
                             );
-                            rpass.set_bind_group(2, bind_group, &[]);
+                            rpass.set_bind_group(3, bind_group, &[]);
 
                             let mut run_length = 1usize;
                             while local_offset + run_length < instances.len()
@@ -301,7 +318,7 @@ impl RenderContext {
         log::info!("Using backend: {:?}", adapter.get_info().backend);
         let adapter_features = adapter.features();
         log::info!("Adapter features: {:?}", adapter_features);
-        
+
         // FORCE TRADITIONAL PATH FOR TESTING
         // Set to true to force traditional, false to allow bindless (when available)
         let force_traditional = false;
@@ -351,9 +368,11 @@ impl RenderContext {
             .formats
             .iter()
             .copied()
-            .find(|f| !f.is_srgb())  // Prefer LINEAR format
+            .find(|f| !f.is_srgb()) // Prefer LINEAR format
             .unwrap_or_else(|| {
-                surface_caps.formats.iter()
+                surface_caps
+                    .formats
+                    .iter()
                     .copied()
                     .find(|f| f.is_srgb())
                     .unwrap_or(surface_caps.formats[0])
@@ -447,6 +466,53 @@ impl CameraBuffer {
             bind_group,
             bind_layout,
         }
+    }
+}
+
+impl LightsBuffer {
+    fn new(device: &wgpu::Device) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("LightsBindLayout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: Some(
+                        NonZeroU64::new(mem::size_of::<LightsUniform>() as u64).unwrap(),
+                    ),
+                },
+                count: None,
+            }],
+        });
+
+        let initial = LightsUniform::zeroed();
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LightsBuffer"),
+            contents: bytemuck::bytes_of(&initial),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("LightsBindGroup"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        });
+
+        Self {
+            buffer,
+            bind_group,
+            bind_layout: layout,
+        }
+    }
+
+    fn update(&mut self, queue: &wgpu::Queue, lights: &LightsData) {
+        let data = LightsUniform::from_data(lights);
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
     }
 }
 
@@ -850,7 +916,12 @@ impl TraditionalTextureBinder {
 }
 
 impl RenderPipeline {
-    fn new(context: &RenderContext, camera: &CameraBuffer, objects: &DynamicObjectsBuffer) -> Self {
+    fn new(
+        context: &RenderContext,
+        camera: &CameraBuffer,
+        objects: &DynamicObjectsBuffer,
+        lights: &LightsBuffer,
+    ) -> Self {
         let (texture_bind_layout, texture_binder, shader_source) = if context
             .supports_bindless_textures
         {
@@ -984,6 +1055,7 @@ impl RenderPipeline {
                     bind_group_layouts: &[
                         &camera.bind_layout,
                         &objects.bind_layout,
+                        &lights.bind_layout,
                         &texture_bind_layout,
                     ],
                     push_constant_ranges: &[],
