@@ -34,6 +34,7 @@ const FLAG_ALPHA_BLEND: u32 = 32u;
 const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
 const MAX_POINT_LIGHTS: u32 = 16u;
 const MAX_SPOT_LIGHTS: u32 = 8u;
+const POINT_SHADOW_FACE_COUNT: u32 = 6u;
 
 struct DirectionalLight {
     direction: vec4<f32>,
@@ -60,6 +61,37 @@ struct Lights {
 };
 
 @group(2) @binding(0) var<storage, read> lights: Lights;
+
+struct DirectionalShadow {
+    view_proj: mat4x4<f32>,
+    params: vec4<f32>,
+};
+
+struct PointShadow {
+    view_proj: array<mat4x4<f32>, POINT_SHADOW_FACE_COUNT>,
+    params: vec4<f32>,
+};
+
+struct SpotShadow {
+    view_proj: mat4x4<f32>,
+    params: vec4<f32>,
+};
+
+struct Shadows {
+    counts: vec4<u32>,
+    directionals: array<DirectionalShadow, MAX_DIRECTIONAL_LIGHTS>,
+    points: array<PointShadow, MAX_POINT_LIGHTS>,
+    spots: array<SpotShadow, MAX_SPOT_LIGHTS>,
+};
+
+@group(2) @binding(1) var<uniform> shadow_info: Shadows;
+
+@group(4) @binding(0) var directional_shadow_maps: texture_depth_2d_array;
+@group(4) @binding(1) var directional_shadow_sampler: sampler_comparison;
+@group(4) @binding(2) var spot_shadow_maps: texture_depth_2d_array;
+@group(4) @binding(3) var spot_shadow_sampler: sampler_comparison;
+@group(4) @binding(4) var point_shadow_maps: texture_depth_2d_array;
+@group(4) @binding(5) var point_shadow_sampler: sampler_comparison;
 
 const PI: f32 = 3.14159265359;
 
@@ -223,6 +255,127 @@ fn calculate_test_lighting(
     return Lo;
 }
 
+fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    let clip = matrix * vec4<f32>(world_pos, 1.0);
+    if (clip.w <= 0.0) {
+        return vec3<f32>(-1.0, -1.0, -1.0);
+    }
+    let ndc = clip.xyz / clip.w;
+    return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
+}
+
+fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
+    let info = shadow_info.directionals[index];
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
+
+    let proj = project_shadow(info.view_proj, world_pos);
+    if (proj.z < 0.0 || proj.z > 1.0) {
+        return 1.0;
+    }
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
+        return 1.0;
+    }
+
+    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    return textureSampleCompare(
+        directional_shadow_maps,
+        directional_shadow_sampler,
+        proj.xy,
+        i32(index),
+        depth,
+    );
+}
+
+fn sample_spot_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
+    let info = shadow_info.spots[index];
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
+
+    let proj = project_shadow(info.view_proj, world_pos);
+    if (proj.z < 0.0 || proj.z > 1.0) {
+        return 1.0;
+    }
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
+        return 1.0;
+    }
+
+    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    return textureSampleCompare(
+        spot_shadow_maps,
+        spot_shadow_sampler,
+        proj.xy,
+        i32(index),
+        depth,
+    );
+}
+
+fn select_point_face(direction: vec3<f32>) -> u32 {
+    let abs_dir = abs(direction);
+    if (abs_dir.x >= abs_dir.y && abs_dir.x >= abs_dir.z) {
+        if (direction.x > 0.0) {
+            return 0u;
+        } else {
+            return 1u;
+        }
+    } else if (abs_dir.y >= abs_dir.z) {
+        if (direction.y > 0.0) {
+            return 2u;
+        } else {
+            return 3u;
+        }
+    } else {
+        if (direction.z > 0.0) {
+            return 4u;
+        } else {
+            return 5u;
+        }
+    }
+}
+
+fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
+    let info = shadow_info.points[index];
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
+
+    let light = lights.points[index];
+    let light_pos = light.position_range.xyz;
+    let to_fragment = world_pos - light_pos;
+    let distance = length(to_fragment);
+    if (distance <= 0.0001) {
+        return 1.0;
+    }
+
+    let range = light.position_range.w;
+    if (range > 0.0 && distance > range) {
+        return 1.0;
+    }
+
+    let dir = normalize(to_fragment);
+    let face = select_point_face(dir);
+    let matrix = info.view_proj[face];
+    let proj = project_shadow(matrix, world_pos);
+    if (proj.z < 0.0 || proj.z > 1.0) {
+        return 1.0;
+    }
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
+        return 1.0;
+    }
+
+    let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
+    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    return textureSampleCompare(
+        point_shadow_maps,
+        point_shadow_sampler,
+        proj.xy,
+        layer,
+        depth,
+    );
+}
+
 fn calculate_scene_lighting(
     world_pos: vec3<f32>,
     N: vec3<f32>,
@@ -243,7 +396,8 @@ fn calculate_scene_lighting(
         let light_dir = normalize(-light.direction.xyz);
         let light_color = light.color_intensity.xyz;
         let light_intensity = light.color_intensity.w;
-        Lo += calculate_light_contribution(
+        let shadow = sample_directional_shadow(i, world_pos);
+        Lo += shadow * calculate_light_contribution(
             N,
             V,
             light_dir,
@@ -270,7 +424,8 @@ fn calculate_scene_lighting(
             }
             let light_color = light.color_intensity.xyz;
             let light_intensity = light.color_intensity.w * attenuation;
-            Lo += calculate_light_contribution(
+            let shadow = sample_point_shadow(i, world_pos);
+            Lo += shadow * calculate_light_contribution(
                 N,
                 V,
                 L,
@@ -311,7 +466,8 @@ fn calculate_scene_lighting(
             if (spot_effect > 0.0) {
                 let light_color = light.color_intensity.xyz;
                 let light_intensity = light.color_intensity.w * attenuation * spot_effect;
-                Lo += calculate_light_contribution(
+                let shadow = sample_spot_shadow(i, world_pos);
+                Lo += shadow * calculate_light_contribution(
                     N,
                     V,
                     L,

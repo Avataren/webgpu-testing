@@ -66,6 +66,16 @@ pub struct SpotLight {
     pub range: f32,
 }
 
+/// Marker/flag component indicating a light should cast shadows
+#[derive(Debug, Clone, Copy)]
+pub struct CanCastShadow(pub bool);
+
+impl Default for CanCastShadow {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 // ============================================================================
 // Utility Components
 // ============================================================================
