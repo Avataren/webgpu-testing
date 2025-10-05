@@ -118,7 +118,7 @@ impl App {
             return;
         }
 
-        let Some(pending) = self.pending_renderer.as_ref() else {
+        let Some(pending) = self.pending_renderer.clone() else {
             return;
         };
 
