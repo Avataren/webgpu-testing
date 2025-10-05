@@ -1,2 +1,2 @@
-cargo build --lib --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir web/pkg target/wasm32-unknown-unknown/release/wgpu_cube.wasm
+RUSTFLAGS="--cfg=web_sys_unstable_apis" cargo build --lib --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir web/pkg target/wasm32-unknown-unknown/release/wgpu_cube.wasm
 python3 -m http.server --directory web 8080

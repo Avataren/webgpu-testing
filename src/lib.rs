@@ -11,8 +11,8 @@ use wasm_bindgen::prelude::*;
 
 fn create_app() -> App {
     // Central place to select which demo scene should run by default
-    App::new(SceneType::Simple)
-    //App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
+    //App::new(SceneType::Simple)
+    App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
 }
 
 #[cfg(target_arch = "wasm32")]
