@@ -1,4 +1,4 @@
-// PBR Shader with Normal Mapping
+// PBR Shader with Normal Mapping and Modular Lighting
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -111,6 +111,91 @@ fn fresnel_schlick(cos_theta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
 }
 
+// Calculate PBR lighting contribution from a single light source
+// Returns the color contribution (diffuse + specular) * radiance * NdotL
+fn calculate_light_contribution(
+    N: vec3<f32>,           // Surface normal
+    V: vec3<f32>,           // View direction
+    L: vec3<f32>,           // Light direction
+    base_color: vec3<f32>,  // Surface albedo
+    metallic: f32,          // Metallic factor
+    roughness: f32,         // Roughness factor
+    light_color: vec3<f32>, // Light color
+    light_intensity: f32    // Light intensity
+) -> vec3<f32> {
+    let NdotL = max(dot(N, L), 0.0);
+    
+    // Early out if light doesn't hit surface
+    if (NdotL <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+    
+    let H = normalize(V + L);
+    
+    // F0 for dielectrics is 0.04, for metals use albedo
+    let F0 = mix(vec3<f32>(0.04), base_color, metallic);
+    
+    // Cook-Torrance BRDF
+    let NDF = distribution_ggx(N, H, roughness);
+    let G = geometry_smith(N, V, L, roughness);
+    let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
+    
+    let numerator = NDF * G * F;
+    let NdotV = max(dot(N, V), 0.0);
+    let denominator = 4.0 * NdotV * NdotL + 0.0001;
+    let specular = numerator / denominator;
+    
+    // Energy conservation
+    let kS = F;
+    var kD = vec3<f32>(1.0) - kS;
+    kD = kD * (1.0 - metallic);
+    
+    // Diffuse
+    let diffuse = kD * base_color / PI;
+    
+    // Combine
+    let radiance = light_color * light_intensity;
+    return (diffuse + specular) * radiance * NdotL;
+}
+
+// TODO: Replace this with dynamic lights from ECS
+// This is a temporary hardcoded three-point lighting setup for PBR testing
+fn calculate_scene_lighting(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32
+) -> vec3<f32> {
+    var Lo = vec3<f32>(0.0);
+    
+    // Key light (main directional light from above-right)
+    {
+        let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+        let light_color = vec3<f32>(1.0, 1.0, 1.0);
+        let light_intensity = 2.5;
+        Lo += calculate_light_contribution(N, V, light_dir, base_color, metallic, roughness, light_color, light_intensity);
+    }
+    
+    // Fill light (from camera direction, softer - ensures specular highlights are visible)
+    {
+        let light_dir = normalize(V + vec3<f32>(0.0, 0.3, 0.0));
+        let light_color = vec3<f32>(0.9, 0.95, 1.0); // Slightly cool tint
+        let light_intensity = 1.5;
+        Lo += calculate_light_contribution(N, V, light_dir, base_color, metallic, roughness, light_color, light_intensity);
+    }
+    
+    // Rim light (from behind, for edge definition)
+    {
+        let light_dir = normalize(vec3<f32>(-0.3, 0.2, -0.5));
+        let light_color = vec3<f32>(1.0, 0.95, 0.9); // Slightly warm tint
+        let light_intensity = 1.0;
+        Lo += calculate_light_contribution(N, V, light_dir, base_color, metallic, roughness, light_color, light_intensity);
+    }
+    
+    return Lo;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let obj = objects[in.instance_id];
@@ -173,40 +258,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // View direction (from surface to camera)
     let V = normalize(globals.camera_pos - in.world_pos);
     
-    // Light setup (simple directional light)
-    let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
-    let light_color = vec3<f32>(1.0, 1.0, 1.0);
-    let light_intensity = 3.0;
-    
-    // PBR calculation
-    let L = light_dir;
-    let H = normalize(V + L);
-    
-    // F0 for dielectrics is 0.04, for metals use albedo
-    let F0 = mix(vec3<f32>(0.04), base_color.rgb, metallic);
-    
-    // Cook-Torrance BRDF
-    let NDF = distribution_ggx(N, H, roughness);
-    let G = geometry_smith(N, V, L, roughness);
-    let F = fresnel_schlick(max(dot(H, V), 0.0), F0);
-    
-    let numerator = NDF * G * F;
-    let NdotL = max(dot(N, L), 0.0);
-    let NdotV = max(dot(N, V), 0.0);
-    let denominator = 4.0 * NdotV * NdotL + 0.0001;
-    let specular = numerator / denominator;
-    
-    // Energy conservation
-    let kS = F;
-    var kD = vec3<f32>(1.0) - kS;
-    kD = kD * (1.0 - metallic);
-    
-    // Diffuse
-    let diffuse = kD * base_color.rgb / PI;
-    
-    // Combine
-    let radiance = light_color * light_intensity;
-    var Lo = (diffuse + specular) * radiance * NdotL;
+    // Calculate lighting (currently hardcoded, will be replaced with ECS light entities)
+    let Lo = calculate_scene_lighting(N, V, base_color.rgb, metallic, roughness);
     
     // Ambient (very simple)
     let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;

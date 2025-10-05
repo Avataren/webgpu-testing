@@ -24,7 +24,8 @@ pub enum SceneType {
     Grid,
     Animated,
     MaterialShowcase,
-    HierarchyTest, // NEW: Test hierarchical transforms
+    HierarchyTest,
+    PbrTest,
     FromGltf,
 }
 
@@ -111,6 +112,7 @@ impl App {
                     self.create_simple_scene(renderer);
                 }
             }
+            SceneType::PbrTest => self.create_pbr_test_scene(renderer),
             _ => {}
         }
 
@@ -407,6 +409,130 @@ impl App {
         log::info!("Grid scene: {} entities", self.scene.world.len());
     }
 
+    fn create_pbr_test_scene(&mut self, renderer: &mut Renderer) {
+        log::info!("Creating PBR test scene...");
+
+        // Create sphere mesh (higher resolution for better PBR visualization)
+        let (verts, idx) = crate::renderer::sphere_mesh(32, 16);
+        let sphere_mesh = renderer.create_mesh(&verts, &idx);
+        let sphere_handle = self.scene.assets.meshes.insert(sphere_mesh);
+
+        // Create a white base texture
+        let white = Texture::white(renderer.get_device(), renderer.get_queue());
+        self.scene.assets.textures.insert(white);
+        renderer.update_texture_bind_group(&self.scene.assets);
+
+        // Create a grid of spheres with varying metallic and roughness values
+        let grid_size = 5; // 5x5 grid
+        let spacing = 2.5;
+        let start_offset = -((grid_size - 1) as f32 * spacing) / 2.0;
+
+        log::info!("Creating {}x{} grid of PBR test spheres", grid_size, grid_size);
+
+        for row in 0..grid_size {
+            for col in 0..grid_size {
+                let x = start_offset + col as f32 * spacing;
+                let z = start_offset + row as f32 * spacing;
+
+                // Vary metallic along X axis (0.0 to 1.0)
+                let metallic = col as f32 / (grid_size - 1) as f32;
+                
+                // Vary roughness along Z axis (0.0 to 1.0)
+                let roughness = row as f32 / (grid_size - 1) as f32;
+
+                // Color based on position for visual distinction
+                let color = if col == 0 && row == 0 {
+                    [200, 200, 200, 255] // Light gray for (0,0)
+                } else if col == grid_size - 1 && row == 0 {
+                    [200, 150, 100, 255] // Copper tone for metallic
+                } else if col == 0 && row == grid_size - 1 {
+                    [180, 180, 200, 255] // Bluish for rough
+                } else {
+                    [220, 220, 220, 255] // Nearly white
+                };
+
+                let material = Material::new(color)
+                    .with_metallic(metallic)
+                    .with_roughness(roughness)
+                    .with_base_color_texture(0); // Use white texture
+
+                self.scene.world.spawn((
+                    Name::new(format!("Sphere_M{:.2}_R{:.2}", metallic, roughness)),
+                    TransformComponent(Transform::from_trs(
+                        Vec3::new(x, 0.0, z),
+                        Quat::IDENTITY,
+                        Vec3::splat(0.8),
+                    )),
+                    MeshComponent(sphere_handle),
+                    MaterialComponent(material),
+                    Visible(true),
+                ));
+            }
+        }
+
+        // Add labels using small cubes at the edges
+        let (label_verts, label_idx) = crate::renderer::cube_mesh();
+        let label_mesh = renderer.create_mesh(&label_verts, &label_idx);
+        let label_handle = self.scene.assets.meshes.insert(label_mesh);
+
+        // Label colors
+        let red_texture = Texture::from_color(
+            renderer.get_device(),
+            renderer.get_queue(),
+            [255, 100, 100, 255],
+            Some("Red"),
+        );
+        let blue_texture = Texture::from_color(
+            renderer.get_device(),
+            renderer.get_queue(),
+            [100, 100, 255, 255],
+            Some("Blue"),
+        );
+        self.scene.assets.textures.insert(red_texture);
+        self.scene.assets.textures.insert(blue_texture);
+        renderer.update_texture_bind_group(&self.scene.assets);
+
+        // Metallic axis labels (red) - along X axis
+        for i in 0..3 {
+            let x = start_offset + i as f32 * spacing * 2.0;
+            self.scene.world.spawn((
+                Name::new(format!("MetallicLabel_{}", i)),
+                TransformComponent(Transform::from_trs(
+                    Vec3::new(x, 2.0, start_offset - 1.5),
+                    Quat::IDENTITY,
+                    Vec3::new(0.2, 0.2, 0.2),
+                )),
+                MeshComponent(label_handle),
+                MaterialComponent(Material::white().with_texture(1)), // Red
+                Visible(true),
+            ));
+        }
+
+        // Roughness axis labels (blue) - along Z axis
+        for i in 0..3 {
+            let z = start_offset + i as f32 * spacing * 2.0;
+            self.scene.world.spawn((
+                Name::new(format!("RoughnessLabel_{}", i)),
+                TransformComponent(Transform::from_trs(
+                    Vec3::new(start_offset - 1.5, 2.0, z),
+                    Quat::IDENTITY,
+                    Vec3::new(0.2, 0.2, 0.2),
+                )),
+                MeshComponent(label_handle),
+                MaterialComponent(Material::white().with_texture(2)), // Blue
+                Visible(true),
+            ));
+        }
+
+        log::info!("PBR test scene: {} entities", self.scene.world.len());
+        log::info!("Grid layout:");
+        log::info!("  X-axis (red labels): Metallic 0.0 → 1.0");
+        log::info!("  Z-axis (blue labels): Roughness 0.0 → 1.0");
+        log::info!("  Front-left: Non-metallic, smooth");
+        log::info!("  Front-right: Metallic, smooth (mirror-like)");
+        log::info!("  Back-left: Non-metallic, rough (matte)");
+        log::info!("  Back-right: Metallic, rough");
+    }
 
     fn load_gltf_scene(&mut self, path: &str, renderer: &mut Renderer) {
         log::info!("Loading glTF: {} (scale: {})", path, self.gltf_scale);
@@ -516,7 +642,9 @@ impl App {
             SceneType::Simple => (8.0, 4.0),
             SceneType::Grid => (15.0, 8.0),
             SceneType::Animated => (12.0, 6.0),
-            SceneType::MaterialShowcase => (8.0, 4.0),
+            SceneType::PbrTest => (8.0, 2.0),
+            _=> (8.0, 4.0),
+
         };
 
         self.camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);

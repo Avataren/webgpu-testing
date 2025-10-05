@@ -12,7 +12,7 @@ pub use batch::{InstanceData, RenderBatcher, RenderObject};
 pub use depth::Depth;
 pub use material::Material;
 pub use objects::ObjectData;
-pub use primitives::cube_mesh;
+pub use primitives::*;
 pub use vertex::Vertex;
 pub use texture::Texture;
 pub use renderer::Renderer;

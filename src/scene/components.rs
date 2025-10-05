@@ -37,6 +37,31 @@ impl Default for Visible {
     }
 }
 
+/// Point light component
+#[derive(Debug, Clone, Copy)]
+pub struct PointLight {
+    pub color: Vec3,
+    pub intensity: f32,
+    pub range: f32,
+}
+
+/// Directional light component
+#[derive(Debug, Clone, Copy)]
+pub struct DirectionalLight {
+    pub color: Vec3,
+    pub intensity: f32,
+}
+
+/// Spot light component
+#[derive(Debug, Clone, Copy)]
+pub struct SpotLight {
+    pub color: Vec3,
+    pub intensity: f32,
+    pub inner_angle: f32,
+    pub outer_angle: f32,
+    pub range: f32,
+}
+
 // ============================================================================
 // Utility Components
 // ============================================================================

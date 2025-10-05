@@ -11,7 +11,17 @@ use wasm_bindgen::prelude::*;
 
 fn create_app() -> App {
     // Central place to select which demo scene should run by default
+    
+    // Simple colored cubes:
     //App::new(SceneType::Simple)
+    
+    // Hierarchy test (parent-child transforms):
+    //App::new(SceneType::HierarchyTest)
+    
+    // PBR material test (5x5 grid of spheres with varying metallic/roughness):
+    //App::new(SceneType::PbrTest)
+    
+    // Load a glTF file:
     App::with_gltf("assets/chessboard/ABeautifulGame.gltf", 10.0)
 }
 

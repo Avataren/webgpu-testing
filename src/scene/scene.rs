@@ -230,6 +230,129 @@ impl Scene {
         }
     }
 
+
+    
+// ========================================================================
+    // Scene Composition
+    // ========================================================================
+
+    /// Add all entities from another scene as children of a parent entity
+    /// This allows composing complex scenes from smaller scene hierarchies
+    pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, mut other: Scene) {
+        log::info!("Merging scene with {} entities as child", other.world.len());
+
+        // Map old entity IDs to new entity IDs
+        let mut entity_map = std::collections::HashMap::new();
+
+        // First pass: spawn all entities and build the mapping
+        // Collect all entity IDs first (query with no filter gets all entities)
+        let entities_to_copy: Vec<_> = other.world.iter().map(|entity_ref| entity_ref.entity()).collect();
+        
+        for old_entity in entities_to_copy {
+            // Build a new entity with the same components (except Parent/Children for now)
+            let mut builder = hecs::EntityBuilder::new();
+            
+            // Copy all components except Parent and Children
+            // Clone components to avoid holding borrows
+            if let Ok(name) = other.world.get::<&Name>(old_entity) {
+                builder.add(Name(name.0.clone()));
+            }
+            if let Ok(transform) = other.world.get::<&TransformComponent>(old_entity) {
+                builder.add(*transform);
+            }
+            if let Ok(mesh) = other.world.get::<&MeshComponent>(old_entity) {
+                builder.add(*mesh);
+            }
+            if let Ok(material) = other.world.get::<&MaterialComponent>(old_entity) {
+                builder.add(*material);
+            }
+            if let Ok(visible) = other.world.get::<&Visible>(old_entity) {
+                builder.add(*visible);
+            }
+            if let Ok(rotate) = other.world.get::<&RotateAnimation>(old_entity) {
+                builder.add(*rotate);
+            }
+            if let Ok(orbit) = other.world.get::<&OrbitAnimation>(old_entity) {
+                builder.add(*orbit);
+            }
+            if let Ok(world_trans) = other.world.get::<&WorldTransform>(old_entity) {
+                builder.add(*world_trans);
+            }
+
+            // Spawn the new entity
+            let new_entity = self.world.spawn(builder.build());
+            entity_map.insert(old_entity, new_entity);
+        }
+
+        // Second pass: fix up Parent and Children references
+        let parent_children_to_fix: Vec<_> = entity_map.iter().map(|(old, new)| {
+            let parent = other.world.get::<&Parent>(*old).ok().map(|p| p.0);
+            let children = other.world.get::<&Children>(*old).ok().map(|c| c.0.clone());
+            (*old, *new, parent, children)
+        }).collect();
+
+        // Find root entities (those without Parent in the original scene)
+        let mut root_entities = Vec::new();
+
+        for (old_entity, new_entity, parent, children) in parent_children_to_fix {
+            // Update Parent component
+            if let Some(old_parent) = parent {
+                // This entity had a parent in the original scene
+                if let Some(&new_parent) = entity_map.get(&old_parent) {
+                    self.world.insert_one(new_entity, Parent(new_parent)).ok();
+                } else {
+                    // Parent wasn't in the scene (shouldn't happen), make it a root
+                    root_entities.push(new_entity);
+                }
+            } else {
+                // This was a root entity in the original scene
+                root_entities.push(new_entity);
+            }
+
+            // Update Children component
+            if let Some(old_children) = children {
+                let new_children: Vec<_> = old_children.iter()
+                    .filter_map(|old_child| entity_map.get(old_child).copied())
+                    .collect();
+                
+                if !new_children.is_empty() {
+                    self.world.insert_one(new_entity, Children(new_children)).ok();
+                }
+            }
+        }
+
+        // Make all root entities children of the specified parent
+        if !root_entities.is_empty() {
+            log::info!("Setting {} root entities as children of parent", root_entities.len());
+            
+            // Set parent reference on all roots
+            for &root in &root_entities {
+                self.world.insert_one(root, Parent(parent_entity)).ok();
+            }
+
+            // Add roots to parent's children list
+            // Check if parent already has children
+            let has_children = self.world.get::<&Children>(parent_entity).is_ok();
+            
+            if has_children {
+                // Parent has children, extend the list
+                if let Ok(mut parent_children) = self.world.get::<&mut Children>(parent_entity) {
+                    parent_children.0.extend(&root_entities);
+                }
+            } else {
+                // Parent didn't have children, create new list
+                self.world.insert_one(parent_entity, Children(root_entities)).ok();
+            }
+        }
+
+        // Merge assets
+        // Note: This just adds new assets, doesn't remap handles
+        // If you need handle remapping, you'd need to track asset handles during copy
+        log::info!("Merged {} meshes, {} textures", 
+            other.assets.meshes.len(), 
+            other.assets.textures.len());
+    }
+
     // ========================================================================
     // Debug Utilities
     // ========================================================================
