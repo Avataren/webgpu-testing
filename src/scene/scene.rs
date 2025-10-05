@@ -506,7 +506,7 @@ impl Scene {
 
     /// Add all entities from another scene as children of a parent entity
     /// This allows composing complex scenes from smaller scene hierarchies
-    pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, mut other: Scene) {
+    pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, other: Scene) {
         log::info!("Merging scene with {} entities as child", other.world.len());
 
         // Map old entity IDs to new entity IDs

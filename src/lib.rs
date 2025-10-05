@@ -5,7 +5,7 @@ pub mod renderer;
 pub mod scene;
 pub mod time;
 
-use app::{App, SceneType};
+use app::App;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
