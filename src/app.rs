@@ -1,4 +1,6 @@
 // app.rs - Complete fixed version with hierarchy test scene
+use std::path::Path;
+
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -22,7 +24,10 @@ type WindowHandle = Window;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
-use crate::scene::components::{CanCastShadow, DirectionalLight, PointLight};
+use crate::scene::components::{
+    Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, DirectionalLight,
+    PointLight,
+};
 use crate::scene::{
     Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, Parent,
     RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
@@ -430,6 +435,10 @@ impl App {
         let cube_mesh = renderer.create_mesh(&verts, &idx);
         let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
 
+        let (quad_vertices, quad_indices) = crate::renderer::quad_mesh();
+        let quad_mesh = renderer.create_mesh(&quad_vertices, &quad_indices);
+        let quad_handle = self.scene.assets.meshes.insert(quad_mesh);
+
         let checker_texture = Texture::checkerboard(
             renderer.get_device(),
             renderer.get_queue(),
@@ -440,7 +449,6 @@ impl App {
             Some("Shadow Test Floor"),
         );
         let checker_handle = self.scene.assets.textures.insert(checker_texture);
-        renderer.update_texture_bind_group(&self.scene.assets);
 
         let floor_material = Material::pbr()
             .with_base_color_texture(checker_handle.index() as u32)
@@ -501,6 +509,39 @@ impl App {
             },
             CanCastShadow(false),
         ));
+
+        let webgpu_texture = Texture::from_path(
+            renderer.get_device(),
+            renderer.get_queue(),
+            Path::new("web/assets/textures/webgpu.png"),
+            true,
+        )
+        .expect("Failed to load webgpu billboard texture");
+        let webgpu_handle = self.scene.assets.textures.insert(webgpu_texture);
+
+        let sprite_material = Material::new([255, 255, 255, 255])
+            .with_base_color_texture(webgpu_handle.index() as u32)
+            .with_alpha();
+
+        let sprite_offset = Vec3::new(3.0, 2.2, 8.0);
+        let sprite_transform = Transform::from_trs(sprite_offset, Quat::IDENTITY, Vec3::splat(2.5));
+
+        let billboard =
+            Billboard::new(BillboardOrientation::FaceCamera).with_space(BillboardSpace::View {
+                offset: sprite_offset,
+            });
+
+        self.scene.world.spawn((
+            Name::new("Shadow Test Sprite"),
+            TransformComponent(sprite_transform),
+            MeshComponent(quad_handle),
+            MaterialComponent(sprite_material),
+            billboard,
+            DepthState::new(false, false),
+            Visible(true),
+        ));
+
+        renderer.update_texture_bind_group(&self.scene.assets);
 
         log::info!(
             "Shadow test scene created: {} entities",

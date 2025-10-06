@@ -8,6 +8,81 @@ use crate::scene::Transform;
 use glam::Vec3;
 
 // ============================================================================
+// Billboard Components
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BillboardOrientation {
+    /// Rotate freely so the quad faces the camera.
+    FaceCamera,
+    /// Only rotate around the world Y axis to face the camera.
+    FaceCameraYAxis,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BillboardSpace {
+    /// Use the transform's translation directly in world space.
+    World,
+    /// Treat the transform's translation as an offset in view space
+    /// (x = right, y = up, z = forward).
+    View { offset: Vec3 },
+}
+
+impl Default for BillboardSpace {
+    fn default() -> Self {
+        Self::World
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Billboard {
+    pub orientation: BillboardOrientation,
+    pub space: BillboardSpace,
+}
+
+impl Billboard {
+    pub fn new(orientation: BillboardOrientation) -> Self {
+        Self {
+            orientation,
+            space: BillboardSpace::World,
+        }
+    }
+
+    pub fn with_space(mut self, space: BillboardSpace) -> Self {
+        self.space = space;
+        self
+    }
+}
+
+// ============================================================================
+// Depth State Component
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DepthState {
+    pub depth_test: bool,
+    pub depth_write: bool,
+}
+
+impl DepthState {
+    pub const fn new(depth_test: bool, depth_write: bool) -> Self {
+        Self {
+            depth_test,
+            depth_write,
+        }
+    }
+}
+
+impl Default for DepthState {
+    fn default() -> Self {
+        Self {
+            depth_test: true,
+            depth_write: true,
+        }
+    }
+}
+
+// ============================================================================
 // Core Rendering Components
 // ============================================================================
 

@@ -9,7 +9,7 @@ pub mod texture;
 pub mod uniforms;
 pub mod vertex;
 
-pub use batch::{InstanceData, RenderBatcher, RenderObject};
+pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
 pub use depth::Depth;
 pub use lights::{
     DirectionalShadowData, LightsData, PointShadowData, SpotShadowData, MAX_DIRECTIONAL_LIGHTS,
