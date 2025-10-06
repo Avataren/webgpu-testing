@@ -6,7 +6,8 @@ use crate::renderer::lights::{
 };
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{
-    CameraUniform, Depth, LightsData, Material, RenderBatcher, RenderPass, Vertex,
+    postprocess::PostProcess, CameraUniform, Depth, LightsData, Material, RenderBatcher,
+    RenderPass, Vertex,
 };
 use crate::scene::components::DepthState;
 use crate::scene::Camera;
@@ -18,7 +19,7 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
-const SAMPLE_COUNT: u32 = 4;
+const SAMPLE_COUNT: u32 = 1;
 const SHADOW_MAP_SIZE: u32 = 2048;
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
@@ -31,38 +32,10 @@ pub struct Renderer {
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
     shadows: ShadowResources,
+    postprocess: PostProcess,
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
-}
-
-struct MsaaTexture {
-    _texture: wgpu::Texture,
-    view: wgpu::TextureView,
-}
-
-impl MsaaTexture {
-    fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, sample_count: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("MSAA Texture"),
-            size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count,
-            dimension: wgpu::TextureDimension::D2,
-            format: config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self {
-            _texture: texture,
-            view,
-        }
-    }
 }
 
 struct RenderContext {
@@ -72,7 +45,6 @@ struct RenderContext {
     config: wgpu::SurfaceConfiguration,
     size: PhysicalSize<u32>,
     depth: Depth,
-    msaa_texture: MsaaTexture,
     supports_bindless_textures: bool,
 }
 
@@ -104,6 +76,28 @@ struct OrderedBatch {
     depth_state: DepthState,
     instances: Vec<InstanceData>,
     alpha_blend: bool,
+    first_instance: u32,
+}
+
+struct PreparedBatches {
+    batches: Vec<OrderedBatch>,
+    opaque_range: std::ops::Range<usize>,
+    transparent_range: std::ops::Range<usize>,
+    overlay_range: std::ops::Range<usize>,
+}
+
+impl PreparedBatches {
+    fn all(&self) -> &[OrderedBatch] {
+        &self.batches
+    }
+
+    fn geometry(&self) -> &[OrderedBatch] {
+        &self.batches[self.opaque_range.start..self.transparent_range.end]
+    }
+
+    fn overlay(&self) -> &[OrderedBatch] {
+        &self.batches[self.overlay_range.clone()]
+    }
 }
 
 struct DynamicObjectsBuffer {
@@ -137,6 +131,7 @@ impl Renderer {
         let lights_buffer = LightsBuffer::new(&context.device, &shadows);
         let (pipeline, texture_binder) =
             RenderPipeline::new(&context, &camera_buffer, &objects_buffer, &lights_buffer);
+        let postprocess = PostProcess::new(&context.device, &context.queue, &context.config);
 
         Self {
             context,
@@ -146,6 +141,7 @@ impl Renderer {
             camera_buffer,
             lights_buffer,
             shadows,
+            postprocess,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -162,6 +158,13 @@ impl Renderer {
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         self.context.resize(new_size);
+        self.postprocess.resize(
+            &self.context.device,
+            &self.context.queue,
+            self.context.config.width,
+            self.context.config.height,
+            self.context.config.format,
+        );
     }
 
     pub fn aspect_ratio(&self) -> f32 {
@@ -177,6 +180,9 @@ impl Renderer {
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
+        let proj = camera.proj(aspect);
+        self.postprocess
+            .update_camera(&self.context.queue, proj, camera.near, camera.far);
     }
 
     pub fn camera_position(&self) -> Vec3 {
@@ -191,7 +197,7 @@ impl Renderer {
         self.camera_up
     }
 
-    fn prepare_batches(&self, batcher: &RenderBatcher) -> Vec<OrderedBatch> {
+    fn prepare_batches(&self, batcher: &RenderBatcher) -> PreparedBatches {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
@@ -208,7 +214,7 @@ impl Renderer {
                 });
             }
 
-            let alpha_blend = matches!(batch.pass, RenderPass::Transparent)
+            let alpha_blend = matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay)
                 || instances
                     .iter()
                     .any(|inst| inst.material.requires_separate_pass());
@@ -219,6 +225,7 @@ impl Renderer {
                 depth_state: batch.depth_state,
                 instances,
                 alpha_blend,
+                first_instance: 0,
             };
 
             match ordered.pass {
@@ -256,9 +263,29 @@ impl Renderer {
             db.partial_cmp(&da).unwrap_or(Ordering::Equal)
         });
 
-        opaque.extend(transparent);
-        opaque.extend(overlay);
-        opaque
+        let mut batches = Vec::with_capacity(opaque.len() + transparent.len() + overlay.len());
+        let opaque_start = 0;
+        batches.extend(opaque);
+        let opaque_end = batches.len();
+        let transparent_start = batches.len();
+        batches.extend(transparent);
+        let transparent_end = batches.len();
+        let overlay_start = batches.len();
+        batches.extend(overlay);
+        let overlay_end = batches.len();
+
+        let mut offset = 0u32;
+        for batch in &mut batches {
+            batch.first_instance = offset;
+            offset += batch.instances.len() as u32;
+        }
+
+        PreparedBatches {
+            batches,
+            opaque_range: opaque_start..opaque_end,
+            transparent_range: transparent_start..transparent_end,
+            overlay_range: overlay_start..overlay_end,
+        }
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {
@@ -291,16 +318,16 @@ impl Renderer {
                     label: Some("Encoder"),
                 });
 
-        let ordered_batches = self.prepare_batches(batcher);
+        let prepared_batches = self.prepare_batches(batcher);
 
         self.objects_buffer
-            .update(&self.context, &ordered_batches)?;
+            .update(&self.context, prepared_batches.all())?;
 
         self.shadows.render(
             &self.context,
             &mut encoder,
             assets,
-            &ordered_batches,
+            prepared_batches.all(),
             lights,
             &self.objects_buffer,
         );
@@ -309,9 +336,9 @@ impl Renderer {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.context.msaa_texture.view, // Render to MSAA
+                    view: self.postprocess.scene_view(),
                     depth_slice: None,
-                    resolve_target: Some(&view), // Resolve to surface
+                    resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.231,
@@ -326,7 +353,7 @@ impl Renderer {
                     view: &self.context.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
                 }),
@@ -336,11 +363,9 @@ impl Renderer {
 
             match &mut self.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
-                    let mut object_offset = 0u32;
-                    for batch in &ordered_batches {
+                    for batch in prepared_batches.geometry() {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
-                            object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
@@ -362,18 +387,14 @@ impl Renderer {
                         rpass.draw_indexed(
                             0..mesh.index_count(),
                             0,
-                            object_offset..(object_offset + instance_count),
+                            batch.first_instance..(batch.first_instance + instance_count),
                         );
-
-                        object_offset += instance_count;
                     }
                 }
                 TextureBindingModel::Classic(classic) => {
-                    let mut object_offset = 0u32;
-                    for batch in &ordered_batches {
+                    for batch in prepared_batches.geometry() {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
-                            object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
@@ -389,7 +410,6 @@ impl Renderer {
                         rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
 
                         let instances = &batch.instances;
-                        let instance_count = instances.len() as u32;
                         rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                         rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
@@ -410,7 +430,7 @@ impl Renderer {
                                 run_length += 1;
                             }
 
-                            let start_instance = object_offset + local_offset as u32;
+                            let start_instance = batch.first_instance + local_offset as u32;
                             let end_instance = start_instance + run_length as u32;
                             rpass.draw_indexed(
                                 0..mesh.index_count(),
@@ -420,8 +440,121 @@ impl Renderer {
 
                             local_offset += run_length;
                         }
+                    }
+                }
+            }
+        }
 
-                        object_offset += instance_count;
+        self.postprocess.execute(
+            &mut encoder,
+            &self.context.device,
+            &self.context.depth.sampled_view,
+            &view,
+        );
+
+        if !prepared_batches.overlay().is_empty() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("OverlayPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.context.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            match &mut self.texture_binder {
+                TextureBindingModel::Bindless(bindless) => {
+                    for batch in prepared_batches.overlay() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            continue;
+                        };
+
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                        );
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+                        rpass.set_bind_group(3, bindless.global_bind_group(), &[]);
+
+                        let instance_count = batch.instances.len() as u32;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+                        rpass.draw_indexed(
+                            0..mesh.index_count(),
+                            0,
+                            batch.first_instance..(batch.first_instance + instance_count),
+                        );
+                    }
+                }
+                TextureBindingModel::Classic(classic) => {
+                    for batch in prepared_batches.overlay() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            continue;
+                        };
+
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                        );
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+
+                        let instances = &batch.instances;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+
+                        let mut local_offset = 0usize;
+                        while local_offset < instances.len() {
+                            let material = instances[local_offset].material;
+                            let bind_group = classic.bind_group_for_material(
+                                &self.context.device,
+                                assets,
+                                material,
+                            );
+                            rpass.set_bind_group(3, bind_group, &[]);
+
+                            let mut run_length = 1usize;
+                            while local_offset + run_length < instances.len()
+                                && instances[local_offset + run_length].material == material
+                            {
+                                run_length += 1;
+                            }
+
+                            let start_instance = batch.first_instance + local_offset as u32;
+                            let end_instance = start_instance + run_length as u32;
+                            rpass.draw_indexed(
+                                0..mesh.index_count(),
+                                0,
+                                start_instance..end_instance,
+                            );
+
+                            local_offset += run_length;
+                        }
                     }
                 }
             }
@@ -568,9 +701,6 @@ impl RenderContext {
         surface.configure(&device, &config);
 
         let depth = Depth::new(&device, size, SAMPLE_COUNT);
-        let msaa_texture = MsaaTexture::new(&device, &config, SAMPLE_COUNT);
-
-        log::info!("MSAA enabled: {}x", SAMPLE_COUNT);
 
         Self {
             surface,
@@ -579,7 +709,6 @@ impl RenderContext {
             config,
             size,
             depth,
-            msaa_texture,
             supports_bindless_textures,
         }
     }
@@ -593,7 +722,6 @@ impl RenderContext {
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
         self.depth = Depth::new(&self.device, new_size, SAMPLE_COUNT);
-        self.msaa_texture = MsaaTexture::new(&self.device, &self.config, SAMPLE_COUNT);
     }
 }
 
@@ -1292,15 +1420,11 @@ impl ShadowResources {
         pass.set_bind_group(0, &self.uniform_bind_group, &[]);
         pass.set_bind_group(1, &objects.bind_group, &[]);
 
-        let mut object_offset = 0u32;
-
         for batch in batches {
             if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
-                object_offset += batch.instances.len() as u32;
                 continue;
             }
             let Some(mesh) = assets.meshes.get(batch.mesh) else {
-                object_offset += batch.instances.len() as u32;
                 continue;
             };
 
@@ -1310,7 +1434,7 @@ impl ShadowResources {
             let mut current_range_start: Option<u32> = None;
 
             for (local_index, instance) in batch.instances.iter().enumerate() {
-                let global_index = object_offset + local_index as u32;
+                let global_index = batch.first_instance + local_index as u32;
                 if instance.material.is_unlit() {
                     if let Some(start) = current_range_start.take() {
                         pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
@@ -1324,10 +1448,9 @@ impl ShadowResources {
                 pass.draw_indexed(
                     0..mesh.index_count(),
                     0,
-                    start..(object_offset + instance_count),
+                    start..(batch.first_instance + instance_count),
                 );
             }
-            object_offset += instance_count;
         }
     }
 }

@@ -3,6 +3,7 @@ pub mod depth;
 pub mod lights;
 pub mod material;
 pub mod objects;
+pub mod postprocess;
 pub mod primitives;
 pub mod renderer;
 pub mod texture;
