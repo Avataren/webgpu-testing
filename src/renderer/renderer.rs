@@ -803,6 +803,7 @@ struct ShadowResources {
     uniform_bind_group: wgpu::BindGroup,
     _uniform_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    staging_buffer: wgpu::Buffer,
 }
 
 impl ShadowResources {
@@ -849,6 +850,17 @@ impl ShadowResources {
             label: Some("ShadowUniformBuffer"),
             size: mem::size_of::<ShadowViewUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Create staging buffer that can hold matrices for all shadow types
+        let max_shadows = (MAX_DIRECTIONAL_LIGHTS
+            + MAX_SPOT_LIGHTS
+            + MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u64;
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ShadowStagingBuffer"),
+            size: mem::size_of::<ShadowViewUniform>() as u64 * max_shadows,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -914,6 +926,7 @@ impl ShadowResources {
             uniform_bind_group,
             _uniform_layout: uniform_layout,
             pipeline,
+            staging_buffer,
         }
     }
 
@@ -947,9 +960,14 @@ impl ShadowResources {
         }
 
         let queue = &context.queue;
+        let uniform_size = mem::size_of::<ShadowViewUniform>() as u64;
+        let mut staging_offset = 0u64;
 
-        //log::info!("Shadow render: {} directional shadows", lights.directional_shadows().len());
+        // ========================================================================
+        // STAGE 1: Write all shadow matrices to staging buffer
+        // ========================================================================
 
+        // Directional lights
         for (index, shadow) in lights
             .directional_shadows()
             .iter()
@@ -960,16 +978,19 @@ impl ShadowResources {
                 continue;
             }
             let matrix = glam::Mat4::from_cols_array_2d(&shadow.view_proj);
-            self.write_uniform(queue, matrix);
-            self.render_pass(
-                encoder,
-                self.directional.layer_view(index),
-                assets,
-                batcher,
-                objects,
+            let uniform = ShadowViewUniform {
+                view_proj: matrix.to_cols_array_2d(),
+            };
+            queue.write_buffer(
+                &self.staging_buffer,
+                staging_offset,
+                bytemuck::bytes_of(&uniform),
             );
+            staging_offset += uniform_size;
         }
 
+        // Spot lights
+        let spot_start_offset = staging_offset;
         for (index, shadow) in lights
             .spot_shadows()
             .iter()
@@ -980,16 +1001,19 @@ impl ShadowResources {
                 continue;
             }
             let matrix = glam::Mat4::from_cols_array_2d(&shadow.view_proj);
-            self.write_uniform(queue, matrix);
-            self.render_pass(
-                encoder,
-                self.spot.layer_view(index),
-                assets,
-                batcher,
-                objects,
+            let uniform = ShadowViewUniform {
+                view_proj: matrix.to_cols_array_2d(),
+            };
+            queue.write_buffer(
+                &self.staging_buffer,
+                staging_offset,
+                bytemuck::bytes_of(&uniform),
             );
+            staging_offset += uniform_size;
         }
 
+        // Point lights
+        let point_start_offset = staging_offset;
         for (index, shadow) in lights
             .point_shadows()
             .iter()
@@ -1001,7 +1025,107 @@ impl ShadowResources {
             }
             for face in 0..POINT_SHADOW_FACE_COUNT {
                 let matrix = glam::Mat4::from_cols_array_2d(&shadow.view_proj[face]);
-                self.write_uniform(queue, matrix);
+                let uniform = ShadowViewUniform {
+                    view_proj: matrix.to_cols_array_2d(),
+                };
+                queue.write_buffer(
+                    &self.staging_buffer,
+                    staging_offset,
+                    bytemuck::bytes_of(&uniform),
+                );
+                staging_offset += uniform_size;
+            }
+        }
+
+        // ========================================================================
+        // STAGE 2: Encode copy + render commands in order
+        // ========================================================================
+
+        // Directional lights
+        staging_offset = 0;
+        for (index, shadow) in lights
+            .directional_shadows()
+            .iter()
+            .enumerate()
+            .take(MAX_DIRECTIONAL_LIGHTS)
+        {
+            if shadow.params[0] == 0.0 {
+                continue;
+            }
+
+            // Copy from staging to uniform buffer
+            encoder.copy_buffer_to_buffer(
+                &self.staging_buffer,
+                staging_offset,
+                &self.uniform_buffer,
+                0,
+                uniform_size,
+            );
+
+            // Render shadow pass
+            self.render_pass(
+                encoder,
+                self.directional.layer_view(index),
+                assets,
+                batcher,
+                objects,
+            );
+
+            staging_offset += uniform_size;
+        }
+
+        // Spot lights
+        let mut spot_staging_offset = spot_start_offset;
+        for (index, shadow) in lights
+            .spot_shadows()
+            .iter()
+            .enumerate()
+            .take(MAX_SPOT_LIGHTS)
+        {
+            if shadow.params[0] == 0.0 {
+                continue;
+            }
+
+            encoder.copy_buffer_to_buffer(
+                &self.staging_buffer,
+                spot_staging_offset,
+                &self.uniform_buffer,
+                0,
+                uniform_size,
+            );
+
+            self.render_pass(
+                encoder,
+                self.spot.layer_view(index),
+                assets,
+                batcher,
+                objects,
+            );
+
+            spot_staging_offset += uniform_size;
+        }
+
+        // Point lights
+        let mut point_staging_offset = point_start_offset;
+        for (index, shadow) in lights
+            .point_shadows()
+            .iter()
+            .enumerate()
+            .take(MAX_POINT_LIGHTS)
+        {
+            if shadow.params[0] == 0.0 {
+                continue;
+            }
+
+            for face in 0..POINT_SHADOW_FACE_COUNT {
+                encoder.copy_buffer_to_buffer(
+                    &self.staging_buffer,
+                    point_staging_offset,
+                    &self.uniform_buffer,
+                    0,
+                    uniform_size,
+                );
+
                 let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
                 self.render_pass(
                     encoder,
@@ -1010,15 +1134,10 @@ impl ShadowResources {
                     batcher,
                     objects,
                 );
+
+                point_staging_offset += uniform_size;
             }
         }
-    }
-
-    fn write_uniform(&self, queue: &wgpu::Queue, matrix: glam::Mat4) {
-        let uniform = ShadowViewUniform {
-            view_proj: matrix.to_cols_array_2d(),
-        };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
     fn render_pass(
