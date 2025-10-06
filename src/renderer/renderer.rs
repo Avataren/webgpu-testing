@@ -30,7 +30,7 @@ pub struct Renderer {
 }
 
 struct MsaaTexture {
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
@@ -51,7 +51,10 @@ impl MsaaTexture {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view }
+        Self {
+            _texture: texture,
+            view,
+        }
     }
 }
 
@@ -68,7 +71,6 @@ struct RenderContext {
 
 struct RenderPipeline {
     pipeline: wgpu::RenderPipeline,
-    texture_bind_layout: wgpu::BindGroupLayout,
     texture_binder: TextureBindingModel,
 }
 
@@ -678,7 +680,7 @@ struct ShadowViewUniform {
 }
 
 struct ShadowArray {
-    texture: wgpu::Texture,
+    _texture: wgpu::Texture,
     array_view: wgpu::TextureView,
     layer_views: Vec<wgpu::TextureView>,
 }
@@ -728,7 +730,7 @@ impl ShadowArray {
         }
 
         Self {
-            texture,
+            _texture: texture,
             array_view,
             layer_views,
         }
@@ -751,7 +753,7 @@ struct ShadowResources {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    uniform_layout: wgpu::BindGroupLayout,
+    _uniform_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -862,7 +864,7 @@ impl ShadowResources {
             sampler,
             uniform_buffer,
             uniform_bind_group,
-            uniform_layout,
+            _uniform_layout: uniform_layout,
             pipeline,
         }
     }
@@ -999,7 +1001,6 @@ impl ShadowResources {
         pass.set_bind_group(1, &objects.bind_group, &[]);
 
         let mut object_offset = 0u32;
-        let mut draw_calls = 0;
 
         for (mesh_handle, instances) in batcher.iter() {
             let Some(mesh) = assets.meshes.get(mesh_handle) else {
@@ -1015,15 +1016,8 @@ impl ShadowResources {
                 0,
                 object_offset..(object_offset + instance_count),
             );
-            draw_calls += 1;
             object_offset += instance_count;
         }
-        //drop(pass);
-        // log::info!(
-        //     "Shadow pass drew {} batches, {} total instances",
-        //     draw_calls,
-        //     object_offset
-        // );
     }
 }
 
@@ -1148,7 +1142,7 @@ impl TextureBindingModel {
 struct BindlessTextureBinder {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    fallback_texture: wgpu::Texture,
+    _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
 }
@@ -1192,7 +1186,7 @@ impl BindlessTextureBinder {
         Self {
             layout: layout.clone(),
             sampler,
-            fallback_texture,
+            _fallback_texture: fallback_texture,
             fallback_view,
             bind_group,
         }
@@ -1249,7 +1243,7 @@ impl BindlessTextureBinder {
 struct TraditionalTextureBinder {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    fallback_texture: wgpu::Texture,
+    _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
     default_bind_group: wgpu::BindGroup,
     material_bind_groups: HashMap<Material, wgpu::BindGroup>,
@@ -1290,7 +1284,7 @@ impl TraditionalTextureBinder {
         Self {
             layout: layout.clone(),
             sampler,
-            fallback_texture,
+            _fallback_texture: fallback_texture,
             fallback_view,
             default_bind_group,
             material_bind_groups: HashMap::new(),
@@ -1618,7 +1612,6 @@ impl RenderPipeline {
 
         Self {
             pipeline,
-            texture_bind_layout,
             texture_binder,
         }
     }
