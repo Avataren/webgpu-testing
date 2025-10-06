@@ -350,7 +350,7 @@ impl ShadowsUniform {
             log::info!("ShadowsUniform created - first dir shadow:");
             log::info!("  view_proj[0]: {:?}", uniform.directionals[0].view_proj[0]);
             log::info!("  params: {:?}", uniform.directionals[0].params);
-        }        
+        }
 
         let point_count = data.point_shadows().len().min(MAX_POINT_LIGHTS) as u32;
         uniform.counts[1] = point_count;
@@ -375,5 +375,59 @@ impl ShadowsUniform {
         }
 
         uniform
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spot_light_uniform_includes_shadow_data() {
+        let mut data = LightsData::new();
+        let position = Vec3::new(1.0, 2.0, 3.0);
+        let direction = Vec3::new(-0.2, -0.9, 0.3).normalize();
+        let color = Vec3::new(0.8, 0.7, 0.6);
+        let intensity = 4.0;
+        let range = 10.0;
+        let inner = 0.3;
+        let outer = 0.6;
+
+        let view = Mat4::look_at_rh(position, position + direction, Vec3::Y);
+        let proj = Mat4::perspective_rh(outer * 2.0, 1.0, 0.1, range);
+        let shadow = SpotShadowData {
+            view_proj: proj * view,
+            bias: 0.005,
+        };
+
+        data.add_spot(
+            position,
+            direction,
+            color,
+            intensity,
+            range,
+            inner,
+            outer,
+            Some(shadow),
+        );
+
+        let lights = LightsUniform::from_data(&data);
+        assert_eq!(lights.counts[2], 1);
+        let stored = lights.spots[0];
+        assert_eq!(stored.position_range, [1.0, 2.0, 3.0, range]);
+        assert_eq!(stored.color_intensity, [0.8, 0.7, 0.6, intensity]);
+        let stored_dir = Vec3::new(
+            stored.direction[0],
+            stored.direction[1],
+            stored.direction[2],
+        );
+        assert!(stored_dir.abs_diff_eq(direction, 1e-6));
+
+        let shadows = ShadowsUniform::from_data(&data);
+        assert_eq!(shadows.counts[2], 1);
+        assert_eq!(shadows.spots[0].params[0], 1.0);
+        assert_eq!(shadows.spots[0].params[1], 0.005);
+        let stored_view = Mat4::from_cols_array_2d(&shadows.spots[0].view_proj);
+        assert!(stored_view.abs_diff_eq(proj * view, 1e-6));
     }
 }

@@ -386,10 +386,31 @@ impl Scene {
 
         // Extract direction and up from the transform's rotation
         let position = transform.translation;
-        let forward = transform.rotation * Vec3::NEG_Z; // Light looks down -Z
-        let up = transform.rotation * Vec3::Y;
+        let mut forward = transform.rotation * Vec3::NEG_Z; // Light looks down -Z
+        if forward.length_squared() < 1e-8 {
+            forward = Vec3::NEG_Z;
+        }
+        forward = forward.normalize();
 
-        // Build view matrix properly using look_at
+        let mut up = transform.rotation * Vec3::Y;
+        if up.length_squared() < 1e-8 {
+            up = Vec3::Y;
+        }
+
+        // Re-orthonormalize the basis to avoid degenerate look_at matrices
+        let mut right = forward.cross(up);
+        if right.length_squared() < 1e-8 {
+            let fallback = if forward.dot(Vec3::X).abs() < 0.9 {
+                Vec3::X
+            } else {
+                Vec3::Y
+            };
+            right = forward.cross(fallback);
+        }
+        right = right.normalize();
+        let up = right.cross(forward).normalize();
+
+        // Build view matrix properly using look_at with a stable basis
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);
 
