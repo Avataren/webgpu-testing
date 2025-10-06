@@ -1,5 +1,6 @@
 pub mod app;
 pub mod asset;
+pub mod demo_scenes;
 pub mod io;
 pub mod renderer;
 pub mod scene;
@@ -71,5 +72,7 @@ pub fn run_with_app(app: App) -> Result<(), JsValue> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-    run(AppBuilder::default())
+    run(crate::demo_scenes::build_app_for_scene(
+        crate::demo_scenes::ACTIVE_SCENE,
+    ))
 }
