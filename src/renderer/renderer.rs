@@ -1217,7 +1217,6 @@ impl ShadowResources {
 
         // Point lights
         let mut point_staging_offset = point_start_offset;
-        log::info!("=== Point Light Shadow Passes ===");
 
         for (index, shadow) in lights
             .point_shadows()
@@ -1228,8 +1227,6 @@ impl ShadowResources {
             if shadow.params[0] == 0.0 {
                 continue;
             }
-
-            log::info!("Point light {} - rendering shadow passes", index);
 
             for face in 0..POINT_SHADOW_FACE_COUNT {
                 let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
@@ -1259,7 +1256,6 @@ impl ShadowResources {
                 point_staging_offset += uniform_size;
             }
         }
-        log::info!("=== Shadow Rendering Complete ===");
     }
 
     fn render_pass(
