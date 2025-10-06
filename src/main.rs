@@ -1,23 +1,20 @@
-use wgpu_cube::{demo_scenes, AppBuilder};
+mod demo_scenes;
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+use demo_scenes::DemoScene;
+use wgpu_cube::AppBuilder;
 
-fn build_demo_app() -> AppBuilder {
-    let mut builder = AppBuilder::new();
-    demo_scenes::add_scene_to_app(&mut builder, demo_scenes::ACTIVE_SCENE);
-    builder
-}
+//const ACTIVE_SCENE: DemoScene = DemoScene::ShadowTest;
 
-#[cfg(not(target_arch = "wasm32"))]
+const ACTIVE_SCENE: DemoScene = DemoScene::Gltf {
+    path: "web/assets/chessboard/ABeautifulGame.gltf",
+    scale: 15.0,
+};
+
 fn main() {
-    if let Err(err) = wgpu_cube::run(build_demo_app()) {
+    let mut builder = AppBuilder::new();
+    builder.add_plugin(ACTIVE_SCENE.plugin());
+
+    if let Err(err) = wgpu_cube::run(builder) {
         eprintln!("Application error: {err}");
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn wasm_start() -> Result<(), wasm_bindgen::JsValue> {
-    wgpu_cube::run(build_demo_app())
 }
