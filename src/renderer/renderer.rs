@@ -786,6 +786,14 @@ impl ShadowArray {
 
     fn layer_view(&self, index: usize) -> &wgpu::TextureView {
         let clamped = index.min(self.layer_views.len().saturating_sub(1));
+        if clamped != index {
+            log::warn!(
+                "Shadow layer index {} clamped to {} (max: {})",
+                index,
+                clamped,
+                self.layer_views.len() - 1
+            );
+        }
         &self.layer_views[clamped]
     }
 
@@ -863,6 +871,23 @@ impl ShadowResources {
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
+        log::info!("Created staging buffer:");
+        log::info!("  Max shadows: {}", max_shadows);
+        log::info!(
+            "  Uniform size: {} bytes",
+            mem::size_of::<ShadowViewUniform>()
+        );
+        log::info!(
+            "  Total buffer size: {} bytes",
+            mem::size_of::<ShadowViewUniform>() as u64 * max_shadows
+        );
+        log::info!(
+            "  Breakdown: {} dir + {} spot + {} point faces",
+            MAX_DIRECTIONAL_LIGHTS,
+            MAX_SPOT_LIGHTS,
+            MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT
+        );
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ShadowUniformBindGroup"),
@@ -968,7 +993,7 @@ impl ShadowResources {
         // ========================================================================
 
         // Directional lights
-        for (index, shadow) in lights
+        for (_index, shadow) in lights
             .directional_shadows()
             .iter()
             .enumerate()
@@ -991,7 +1016,7 @@ impl ShadowResources {
 
         // Spot lights
         let spot_start_offset = staging_offset;
-        for (index, shadow) in lights
+        for (_index, shadow) in lights
             .spot_shadows()
             .iter()
             .enumerate()
@@ -1014,15 +1039,18 @@ impl ShadowResources {
 
         // Point lights
         let point_start_offset = staging_offset;
-        for (index, shadow) in lights
+
+        for (_index, shadow) in lights
             .point_shadows()
             .iter()
             .enumerate()
             .take(MAX_POINT_LIGHTS)
         {
             if shadow.params[0] == 0.0 {
+                //log::info!("Point light {} - shadows disabled, skipping", index);
                 continue;
             }
+
             for face in 0..POINT_SHADOW_FACE_COUNT {
                 let matrix = glam::Mat4::from_cols_array_2d(&shadow.view_proj[face]);
                 let uniform = ShadowViewUniform {
@@ -1036,7 +1064,6 @@ impl ShadowResources {
                 staging_offset += uniform_size;
             }
         }
-
         // ========================================================================
         // STAGE 2: Encode copy + render commands in order
         // ========================================================================
@@ -1107,6 +1134,8 @@ impl ShadowResources {
 
         // Point lights
         let mut point_staging_offset = point_start_offset;
+        log::info!("=== Point Light Shadow Passes ===");
+
         for (index, shadow) in lights
             .point_shadows()
             .iter()
@@ -1117,7 +1146,17 @@ impl ShadowResources {
                 continue;
             }
 
+            log::info!("Point light {} - rendering shadow passes", index);
+
             for face in 0..POINT_SHADOW_FACE_COUNT {
+                let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
+                log::info!(
+                    "  Face {} - copying from staging offset {}, layer {}",
+                    face,
+                    point_staging_offset,
+                    layer_index
+                );
+
                 encoder.copy_buffer_to_buffer(
                     &self.staging_buffer,
                     point_staging_offset,
@@ -1126,7 +1165,6 @@ impl ShadowResources {
                     uniform_size,
                 );
 
-                let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
                 self.render_pass(
                     encoder,
                     self.point.layer_view(layer_index),
@@ -1138,6 +1176,7 @@ impl ShadowResources {
                 point_staging_offset += uniform_size;
             }
         }
+        log::info!("=== Shadow Rendering Complete ===");
     }
 
     fn render_pass(
@@ -1148,6 +1187,9 @@ impl ShadowResources {
         batcher: &RenderBatcher,
         objects: &DynamicObjectsBuffer,
     ) {
+        if batcher.instance_count() == 0 {
+            return;
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ShadowPass"),
             color_attachments: &[],

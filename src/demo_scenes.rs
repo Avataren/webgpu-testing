@@ -63,7 +63,7 @@ impl Plugin for DemoScenePlugin {
                 app.add_system(orbit_camera(15.0, 8.0));
             }
             DemoScene::ShadowTest => {
-                app.disable_default_lighting();
+                //app.disable_default_lighting();
                 app.add_startup_system(setup_shadow_test_scene);
                 app.add_system(orbit_camera(12.0, 6.0));
             }
@@ -451,30 +451,30 @@ fn setup_shadow_test_scene(ctx: &mut StartupContext<'_>) {
     let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
     let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
-    scene.world.spawn((
-        Name::new("Shadow Test Sun"),
-        TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
-        DirectionalLight {
-            color: Vec3::splat(1.0),
-            intensity: 6.0,
-        },
-        CanCastShadow(true),
-    ));
+    // scene.world.spawn((
+    //     Name::new("Shadow Test Sun"),
+    //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
+    //     DirectionalLight {
+    //         color: Vec3::splat(1.0),
+    //         intensity: 6.0,
+    //     },
+    //     CanCastShadow(true),
+    // ));
 
-    scene.world.spawn((
-        Name::new("Shadow Test Fill"),
-        TransformComponent(Transform::from_trs(
-            Vec3::new(3.0, 4.0, 2.0),
-            Quat::IDENTITY,
-            Vec3::ONE,
-        )),
-        PointLight {
-            color: Vec3::new(0.9, 0.95, 1.0),
-            intensity: 2.0,
-            range: 20.0,
-        },
-        CanCastShadow(false),
-    ));
+    // scene.world.spawn((
+    //     Name::new("Shadow Test Fill"),
+    //     TransformComponent(Transform::from_trs(
+    //         Vec3::new(3.0, 4.0, 2.0),
+    //         Quat::IDENTITY,
+    //         Vec3::ONE,
+    //     )),
+    //     PointLight {
+    //         color: Vec3::new(0.9, 0.95, 1.0),
+    //         intensity: 2.0,
+    //         range: 20.0,
+    //     },
+    //     CanCastShadow(false),
+    // ));
 
     let webgpu_texture = Texture::from_path(
         renderer.get_device(),

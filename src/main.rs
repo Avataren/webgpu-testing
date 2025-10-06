@@ -3,6 +3,8 @@ mod demo_scenes;
 use demo_scenes::DemoScene;
 use wgpu_cube::AppBuilder;
 
+//const ACTIVE_SCENE: DemoScene = DemoScene::ShadowTest;
+
 const ACTIVE_SCENE: DemoScene = DemoScene::Gltf {
     path: "web/assets/chessboard/ABeautifulGame.gltf",
     scale: 15.0,
