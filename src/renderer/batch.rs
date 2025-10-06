@@ -11,6 +11,7 @@ use std::collections::HashMap;
 pub enum RenderPass {
     Opaque,      // Normal opaque geometry
     Transparent, // Alpha blended (needs sorting)
+    Overlay,     // Draw last, typically with depth disabled
 }
 
 /// A single renderable object instance
@@ -19,8 +20,10 @@ pub struct RenderObject {
     pub material: Material,
     pub transform: Transform, // Changed from Mat4
     pub depth_state: DepthState,
+    pub force_overlay: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct InstanceData {
     pub transform: Transform, // Changed from Mat4
     pub material: Material,
@@ -56,7 +59,9 @@ impl RenderBatcher {
     /// Add an object to be rendered
     pub fn add(&mut self, obj: RenderObject) {
         // Determine which pass this object belongs to
-        let pass = if obj.material.requires_separate_pass() {
+        let pass = if obj.force_overlay {
+            RenderPass::Overlay
+        } else if obj.material.requires_separate_pass() {
             RenderPass::Transparent
         } else {
             RenderPass::Opaque
