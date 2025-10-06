@@ -445,6 +445,7 @@ impl Renderer {
             }
         }
 
+
         self.postprocess.execute(
             &mut encoder,
             &self.context.device,
@@ -637,6 +638,9 @@ impl RenderContext {
             required_features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
         }
 
+        if adapter_features.contains(wgpu::Features::FLOAT32_FILTERABLE) {
+            required_features |= wgpu::Features::FLOAT32_FILTERABLE;
+        }
         // Only set special limits if using bindless
         let mut limits = if supports_bindless_textures {
             wgpu::Limits {

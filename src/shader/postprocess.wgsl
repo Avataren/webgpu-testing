@@ -13,7 +13,8 @@ fn vs_fullscreen(@builtin(vertex_index) vertex_index : u32) -> VertexOutput {
     let pos = positions[vertex_index];
     var out : VertexOutput;
     out.position = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = 0.5 * (pos + vec2<f32>(1.0, 1.0));
+    // Flip Y coordinate: top of screen (clip Y=1) maps to UV.y=0
+    out.uv = vec2<f32>(0.5 * (pos.x + 1.0), 0.5 * (1.0 - pos.y));
     return out;
 }
 
@@ -37,8 +38,15 @@ var noise_texture : texture_2d<f32>;
 @group(1) @binding(2)
 var clamp_sampler : sampler;
 
+fn linearize_depth(depth: f32) -> f32 {
+    let near = post_uniform.near_far.x;
+    let far = post_uniform.near_far.y;
+    return (2.0 * near * far) / (far + near - depth * (far - near));
+}
+
 fn reconstruct_view_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
-    let clip = vec4<f32>(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    // For wgpu, depth is already in [0, 1], don't remap it
+    let clip = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);  // Changed: removed "depth * 2.0 - 1.0"
     let view = post_uniform.proj_inv * clip;
     return view.xyz / view.w;
 }
@@ -100,6 +108,12 @@ fn ssao_kernel() -> array<vec3<f32>, 32> {
     );
 }
 
+// @fragment
+// fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
+//     let depth = fetch_depth(in.uv);
+//     let inverted = (1.0 - depth) * 100.0;
+//     return vec4<f32>(inverted, inverted, inverted, 1.0);
+// }
 @fragment
 fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     let depth = fetch_depth(in.uv);
@@ -136,7 +150,7 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     let ao = 1.0 - occlusion / 32.0;
     let ao_pow = pow(ao, post_uniform.intensity_power.y);
     let strength = clamp(post_uniform.intensity_power.x, 0.0, 5.0);
-    return vec4<f32>(mix(1.0, ao_pow, strength), 1.0, 1.0, 1.0);
+    return vec4<f32>(mix(1.0, ao_pow * 1, strength), 1.0, 1.0, 1.0);
 }
 
 // Bloom prefilter
@@ -217,3 +231,17 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     let result = shaded + bloom;
     return vec4<f32>(result, base.a);
 }
+
+
+// fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
+//     let ssao = textureSample(composite_ssao, composite_sampler, in.uv);
+//     // Temporarily show just SSAO (should see dark areas in corners/crevices)
+//     return vec4<f32>(ssao.r, ssao.g, ssao.b, 1.0);
+    
+//     // Original composite code commented out:
+//     // let base = textureSample(composite_scene, composite_sampler, in.uv);
+//     // let bloom = textureSample(composite_bloom, composite_sampler, in.uv).rgb;
+//     // let shaded = base.rgb * ssao;
+//     // let result = shaded + bloom;
+//     // return vec4<f32>(result, base.a);
+// }

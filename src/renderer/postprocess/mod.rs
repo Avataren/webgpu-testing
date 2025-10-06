@@ -403,7 +403,8 @@ impl PostProcess {
             size,
             last_proj: Mat4::IDENTITY,
             last_near: 0.01,
-            last_far: 1000.0,
+            last_far: 100.0,
+
         };
 
         let initial_uniform = PostProcessUniform::new(
@@ -735,14 +736,15 @@ struct PostProcessUniform {
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
+    _padding: [f32; 2], 
 }
 
 impl PostProcessUniform {
     fn new(proj: Mat4, proj_inv: Mat4, width: f32, height: f32, near: f32, far: f32) -> Self {
-        let radius = 0.5f32;
+        let radius = 5.5f32;
         let bias = 0.025f32;
-        let intensity = 1.5f32;
-        let power = 1.1f32;
+        let intensity = 3.5f32;
+        let power = 1.5f32;
         let noise_scale = [
             width / NOISE_TEXTURE_SIZE as f32,
             height / NOISE_TEXTURE_SIZE as f32,
@@ -755,6 +757,7 @@ impl PostProcessUniform {
             intensity_power: [intensity, power],
             noise_scale,
             near_far: [near, far],
+            _padding: [0.0, 0.0],
         }
     }
 }
