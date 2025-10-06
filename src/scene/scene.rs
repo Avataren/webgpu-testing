@@ -436,7 +436,7 @@ impl Scene {
 
         DirectionalShadowData {
             view_proj: projection * view,
-            bias: 0.005,
+            bias: 0.0001,
         }
     }
 
@@ -472,7 +472,7 @@ impl Scene {
 
     //     DirectionalShadowData {
     //         view_proj: projection * view,
-    //         bias: 0.005,
+    //         bias: 0.0001,
     //     }
     // }
 
@@ -552,7 +552,7 @@ impl Scene {
 
         SpotShadowData {
             view_proj: projection * view,
-            bias: 0.005,
+            bias: 0.0001,
         }
     }
 
@@ -676,7 +676,7 @@ impl Scene {
 
         let mut created = 0usize;
 
-        // // Main directional light (sun) from above-right - warm sunlight
+        // Main directional light (sun) from above-right - warm sunlight
         // let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
         // let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
@@ -685,26 +685,26 @@ impl Scene {
         //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
         //     DirectionalLight {
         //         color: Vec3::new(1.0, 0.98, 0.95), // Slightly warm
-        //         intensity: 3.0,
+        //         intensity: 0.5,
         //     },
         //     CanCastShadow(true),
         // ));
         // created += 1;
 
-        // // Second directional light from different angle - cooler sky light
-        // let sun2_direction = Vec3::new(0.3, -1.0, 0.5).normalize();
-        // let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
+        // Second directional light from different angle - cooler sky light
+        let sun2_direction = Vec3::new(-0.4, -1.0, 0.25).normalize();
+        let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
 
-        // self.world.spawn((
-        //     Name::new("Default Sky Light"),
-        //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
-        //     DirectionalLight {
-        //         color: Vec3::new(0.9, 0.95, 1.0), // Cool blue tint
-        //         intensity: 2.5,
-        //     },
-        //     CanCastShadow(true),
-        // ));
-        // created += 1;
+        self.world.spawn((
+            Name::new("Default Sky Light"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
+            DirectionalLight {
+                color: Vec3::new(0.9, 0.95, 0.4), // Cool blue tint
+                intensity: 2.0,
+            },
+            CanCastShadow(true),
+        ));
+        created += 1;
 
         // Soft fill point light - neutral with slight warmth
         self.world.spawn((
@@ -715,13 +715,35 @@ impl Scene {
                 Vec3::ONE,
             )),
             PointLight {
-                color: Vec3::new(1.0, 0.97, 0.92), // Warm accent
-                intensity: 100.0,
+                color: Vec3::new(1.0, 0.47, 0.22), // Warm accent
+                intensity: 200.0,
                 range: 20.0,
             },
             CanCastShadow(true),
         ));
         created += 1;
+
+
+
+        //// Rim spot light from behind
+        let rim_position = Vec3::new(-2.0, 6.0, -5.0);
+        let rim_direction = (Vec3::ZERO - rim_position).normalize();
+        let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);
+
+        self.world.spawn((
+            Name::new("Default Rim Spot Light"),
+            TransformComponent(Transform::from_trs(rim_position, rim_rotation, Vec3::ONE)),
+            SpotLight {
+                color: Vec3::new(0.3, 0.55, 0.9),
+                intensity: 200.0,
+                range: 20.0,
+                inner_angle: 20f32.to_radians(),
+                outer_angle: 30f32.to_radians(),
+            },
+            CanCastShadow(true),
+        ));
+        created += 1;
+
 
         created
     }
