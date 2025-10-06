@@ -7,6 +7,19 @@ edition = "2021"
 name = "wgpu_cube"
 crate-type = ["cdylib", "rlib"]
 
+# Example for native builds (just a regular binary)
+[[example]]
+name = "demo"
+
+# Binary for wasm builds (can be cdylib)
+[[bin]]
+name = "demo-web"
+path = "src/bin/demo-web.rs"
+required-features = ["wasm"]
+
+[features]
+wasm = []
+
 [dependencies]
 winit = "0.30"
 pollster = "0.3"

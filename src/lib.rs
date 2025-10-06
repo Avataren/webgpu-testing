@@ -56,7 +56,6 @@ pub fn run(builder: AppBuilder) -> Result<(), JsValue> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn run_with_app(app: App) -> Result<(), JsValue> {
-    use wasm_bindgen::JsValue;
     use winit::platform::web::EventLoopExtWebSys;
 
     init_logging();
