@@ -38,6 +38,7 @@ impl Default for BillboardSpace {
 pub struct Billboard {
     pub orientation: BillboardOrientation,
     pub space: BillboardSpace,
+    pub lit: bool,
 }
 
 impl Billboard {
@@ -45,11 +46,17 @@ impl Billboard {
         Self {
             orientation,
             space: BillboardSpace::World,
+            lit: false,
         }
     }
 
     pub fn with_space(mut self, space: BillboardSpace) -> Self {
         self.space = space;
+        self
+    }
+
+    pub fn with_lighting(mut self, enabled: bool) -> Self {
+        self.lit = enabled;
         self
     }
 }

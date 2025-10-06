@@ -30,6 +30,7 @@ impl MaterialFlags {
     pub const USE_OCCLUSION_TEXTURE: Self = Self(1 << 4);
     pub const ALPHA_BLEND: Self = Self(1 << 5);
     pub const DOUBLE_SIDED: Self = Self(1 << 6);
+    pub const UNLIT: Self = Self(1 << 7);
 
     pub const fn bits(&self) -> u32 {
         self.0
@@ -41,6 +42,10 @@ impl MaterialFlags {
 
     pub fn insert(&mut self, other: Self) {
         self.0 |= other.0;
+    }
+
+    pub fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
     }
 }
 
@@ -96,6 +101,16 @@ impl Material {
 
     pub fn with_alpha(mut self) -> Self {
         self.flags |= MaterialFlags::ALPHA_BLEND;
+        self
+    }
+
+    pub fn with_unlit(mut self) -> Self {
+        self.flags.insert(MaterialFlags::UNLIT);
+        self
+    }
+
+    pub fn with_lit(mut self) -> Self {
+        self.flags.remove(MaterialFlags::UNLIT);
         self
     }
 
@@ -181,6 +196,10 @@ impl Material {
 
     pub fn flags_bits(&self) -> u32 {
         self.flags.bits()
+    }
+
+    pub fn is_unlit(&self) -> bool {
+        self.flags.contains(MaterialFlags::UNLIT)
     }
 
     pub fn requires_separate_pass(&self) -> bool {
