@@ -65,6 +65,7 @@ struct Lights {
 struct DirectionalShadow {
     view_proj: mat4x4<f32>,
     params: vec4<f32>,
+    _padding: vec4<f32>,
 };
 
 struct PointShadow {
