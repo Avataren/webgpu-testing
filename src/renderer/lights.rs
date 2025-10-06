@@ -138,6 +138,7 @@ pub struct DirectionalShadowData {
 pub struct DirectionalShadowRaw {
     pub view_proj: [[f32; 4]; 4],
     pub params: [f32; 4],
+    pub _padding: [f32; 4],
 }
 
 impl DirectionalShadowRaw {
@@ -145,6 +146,7 @@ impl DirectionalShadowRaw {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             params: [0.0, 0.0, 0.0, 0.0],
+            _padding: [0.0; 4],
         }
     }
 
@@ -153,6 +155,7 @@ impl DirectionalShadowRaw {
             Self {
                 view_proj: data.view_proj.to_cols_array_2d(),
                 params: [1.0, data.bias, 0.0, 0.0],
+                _padding: [0.0; 4],
             }
         } else {
             Self::disabled()
