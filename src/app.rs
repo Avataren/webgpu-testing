@@ -321,7 +321,7 @@ impl ApplicationHandler for App {
             log::info!("Initializing application...");
 
             // Build window attributes with web-specific configuration
-            let window_attrs = Window::default_attributes()
+            let mut window_attrs = Window::default_attributes()
                 .with_title("wgpu hecs Renderer")
                 .with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
 

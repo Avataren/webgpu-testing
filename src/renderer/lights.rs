@@ -2,8 +2,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
-pub const MAX_POINT_LIGHTS: usize = 16;
-pub const MAX_SPOT_LIGHTS: usize = 8;
+pub const MAX_POINT_LIGHTS: usize = 4;
+pub const MAX_SPOT_LIGHTS: usize = 4;
 
 #[derive(Clone, Default)]
 pub struct LightsData {

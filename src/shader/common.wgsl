@@ -33,8 +33,8 @@ const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
 
 const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
-const MAX_POINT_LIGHTS: u32 = 16u;
-const MAX_SPOT_LIGHTS: u32 = 8u;
+const MAX_POINT_LIGHTS: u32 = 4u;
+const MAX_SPOT_LIGHTS: u32 = 4u;
 const POINT_SHADOW_FACE_COUNT: u32 = 6u;
 
 struct DirectionalLight {
@@ -329,23 +329,16 @@ fn sample_shadow_pcf(
     return result;
 }
 
+
+
 fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.directionals[index];
-    if (info.params.x == 0.0) {
-        return 1.0;  // No shadow data - fully lit
-    }
-
     let proj = project_shadow(info.view_proj, world_pos);
-    if (proj.z < 0.0 || proj.z > 1.0) {
-        return 1.0;  // Outside depth range - fully lit
-    }
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
-        return 1.0;  // Outside shadow map bounds - fully lit
-    }
-
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
     let texel = shadow_texel_size(directional_shadow_maps);
-    return sample_shadow_pcf(
+    
+    // ALWAYS sample in uniform control flow
+    let shadow_sample = sample_shadow_pcf(
         directional_shadow_maps,
         directional_shadow_sampler,
         proj.xy,
@@ -353,25 +346,24 @@ fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
         depth,
         texel,
     );
+    
+    // Then conditionally return based on validity checks
+    let has_shadow_data = info.params.x != 0.0;
+    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
+    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
+    let valid = has_shadow_data && in_depth_range && in_bounds;
+    
+    return select(1.0, shadow_sample, valid);
 }
 
 fn sample_spot_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.spots[index];
-    if (info.params.x == 0.0) {
-        return 1.0;
-    }
-
     let proj = project_shadow(info.view_proj, world_pos);
-    if (proj.z < 0.0 || proj.z > 1.0) {
-        return 1.0;
-    }
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
-        return 1.0;
-    }
-
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
     let texel = shadow_texel_size(spot_shadow_maps);
-    return sample_shadow_pcf(
+    
+    // ALWAYS sample in uniform control flow
+    let shadow_sample = sample_shadow_pcf(
         spot_shadow_maps,
         spot_shadow_sampler,
         proj.xy,
@@ -379,6 +371,51 @@ fn sample_spot_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
         depth,
         texel,
     );
+    
+    // Then conditionally return based on validity checks
+    let has_shadow_data = info.params.x != 0.0;
+    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
+    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
+    let valid = has_shadow_data && in_depth_range && in_bounds;
+    
+    return select(1.0, shadow_sample, valid);
+}
+
+fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
+    let info = shadow_info.points[index];
+    let light = lights.points[index];
+    let light_pos = light.position_range.xyz;
+    let to_fragment = world_pos - light_pos;
+    let distance = length(to_fragment);
+    let range = light.position_range.w;
+    
+    let dir = normalize(to_fragment);
+    let face = select_point_face(dir);
+    let matrix = info.view_proj[face];
+    let proj = project_shadow(matrix, world_pos);
+    let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
+    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    let texel = shadow_texel_size(point_shadow_maps);
+    
+    // ALWAYS sample in uniform control flow
+    let shadow_sample = sample_shadow_pcf(
+        point_shadow_maps,
+        point_shadow_sampler,
+        proj.xy,
+        layer,
+        depth,
+        texel,
+    );
+    
+    // Then conditionally return based on validity checks
+    let has_shadow_data = info.params.x != 0.0;
+    let valid_distance = distance > 0.0001;
+    let in_range = range <= 0.0 || distance <= range;
+    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
+    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
+    let valid = has_shadow_data && valid_distance && in_range && in_depth_range && in_bounds;
+    
+    return select(1.0, shadow_sample, valid);
 }
 
 fn select_point_face(direction: vec3<f32>) -> u32 {
@@ -404,48 +441,115 @@ fn select_point_face(direction: vec3<f32>) -> u32 {
     }
 }
 
-fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
-    let info = shadow_info.points[index];
-    if (info.params.x == 0.0) {
-        return 1.0;
-    }
 
-    let light = lights.points[index];
-    let light_pos = light.position_range.xyz;
-    let to_fragment = world_pos - light_pos;
-    let distance = length(to_fragment);
-    if (distance <= 0.0001) {
-        return 1.0;
-    }
 
-    let range = light.position_range.w;
-    if (range > 0.0 && distance > range) {
-        return 1.0;
-    }
+// fn calculate_scene_lighting(
+//     world_pos: vec3<f32>,
+//     N: vec3<f32>,
+//     V: vec3<f32>,
+//     base_color: vec3<f32>,
+//     metallic: f32,
+//     roughness: f32
+// ) -> vec3<f32> {
+//     // if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
+//     //     return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
+//     // }
 
-    let dir = normalize(to_fragment);
-    let face = select_point_face(dir);
-    let matrix = info.view_proj[face];
-    let proj = project_shadow(matrix, world_pos);
-    if (proj.z < 0.0 || proj.z > 1.0) {
-        return 1.0;
-    }
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
-        return 1.0;
-    }
+//     var Lo = vec3<f32>(0.0);
 
-    let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
-    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
-    let texel = shadow_texel_size(point_shadow_maps);
-    return sample_shadow_pcf(
-        point_shadow_maps,
-        point_shadow_sampler,
-        proj.xy,
-        layer,
-        depth,
-        texel,
-    );
-}
+//     let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
+//     for (var i = 0u; i < dir_count; i = i + 1u) {
+//         let light = lights.directionals[i];
+//         let light_dir = normalize(-light.direction.xyz);
+//         let light_color = light.color_intensity.xyz;
+//         let light_intensity = light.color_intensity.w;
+//         let shadow = sample_directional_shadow(i, world_pos);
+//         Lo += shadow * calculate_light_contribution(
+//             N,
+//             V,
+//             light_dir,
+//             base_color,
+//             metallic,
+//             roughness,
+//             light_color,
+//             light_intensity,
+//         );
+//     }
+
+//     let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
+//     for (var i = 0u; i < point_count; i = i + 1u) {
+//         let light = lights.points[i];
+//         let to_light = light.position_range.xyz - world_pos;
+//         let distance = length(to_light);
+//         if (distance > 0.0001) {
+//             let L = to_light / distance;
+//             var attenuation = 1.0 / max(distance * distance, 0.0001);
+//             let range = light.position_range.w;
+//             if (range > 0.0) {
+//                 let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
+//                 attenuation = attenuation * range_factor * range_factor;
+//             }
+//             let light_color = light.color_intensity.xyz;
+//             let light_intensity = light.color_intensity.w * attenuation;
+//             let shadow = sample_point_shadow(i, world_pos);
+//             Lo += shadow * calculate_light_contribution(
+//                 N,
+//                 V,
+//                 L,
+//                 base_color,
+//                 metallic,
+//                 roughness,
+//                 light_color,
+//                 light_intensity,
+//             );
+//         }
+//     }
+
+//     let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
+//     for (var i = 0u; i < spot_count; i = i + 1u) {
+//         let light = lights.spots[i];
+//         let to_light = light.position_range.xyz - world_pos;
+//         let distance = length(to_light);
+//         if (distance > 0.0001) {
+//             let L = to_light / distance;
+//             var attenuation = 1.0 / max(distance * distance, 0.0001);
+//             let range = light.position_range.w;
+//             if (range > 0.0) {
+//                 let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
+//                 attenuation = attenuation * range_factor * range_factor;
+//             }
+
+//             let light_dir = normalize(light.direction.xyz);
+//             let cos_theta = dot(light_dir, -L);
+//             let cos_inner = light.cone_params.x;
+//             let cos_outer = light.cone_params.y;
+//             var spot_effect = 0.0;
+//             if (cos_theta >= cos_outer) {
+//                 let denom = max(cos_inner - cos_outer, 0.0001);
+//                 spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
+//                 spot_effect = spot_effect * spot_effect;
+//             }
+
+//             if (spot_effect > 0.0) {
+//                 let light_color = light.color_intensity.xyz;
+//                 let light_intensity = light.color_intensity.w * attenuation * spot_effect;
+//                 let shadow = sample_spot_shadow(i, world_pos);
+//                 Lo += shadow * calculate_light_contribution(
+//                     N,
+//                     V,
+//                     L,
+//                     base_color,
+//                     metallic,
+//                     roughness,
+//                     light_color,
+//                     light_intensity,
+//                 );
+//             }
+//         }
+//     }
+
+//     return Lo;
+// }
 
 fn calculate_scene_lighting(
     world_pos: vec3<f32>,
@@ -455,12 +559,9 @@ fn calculate_scene_lighting(
     metallic: f32,
     roughness: f32
 ) -> vec3<f32> {
-    // if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
-    //     return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
-    // }
-
     var Lo = vec3<f32>(0.0);
 
+    // Directional lights
     let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
     for (var i = 0u; i < dir_count; i = i + 1u) {
         let light = lights.directionals[i];
@@ -480,11 +581,17 @@ fn calculate_scene_lighting(
         );
     }
 
+    // Point lights
     let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
     for (var i = 0u; i < point_count; i = i + 1u) {
         let light = lights.points[i];
         let to_light = light.position_range.xyz - world_pos;
         let distance = length(to_light);
+        
+        // ALWAYS sample shadow in uniform control flow
+        let shadow = sample_point_shadow(i, world_pos);
+        
+        // Then conditionally use the result
         if (distance > 0.0001) {
             let L = to_light / distance;
             var attenuation = 1.0 / max(distance * distance, 0.0001);
@@ -495,7 +602,6 @@ fn calculate_scene_lighting(
             }
             let light_color = light.color_intensity.xyz;
             let light_intensity = light.color_intensity.w * attenuation;
-            let shadow = sample_point_shadow(i, world_pos);
             Lo += shadow * calculate_light_contribution(
                 N,
                 V,
@@ -509,11 +615,17 @@ fn calculate_scene_lighting(
         }
     }
 
+    // Spot lights
     let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
     for (var i = 0u; i < spot_count; i = i + 1u) {
         let light = lights.spots[i];
         let to_light = light.position_range.xyz - world_pos;
         let distance = length(to_light);
+        
+        // ALWAYS sample shadow in uniform control flow
+        let shadow = sample_spot_shadow(i, world_pos);
+        
+        // Then conditionally use the result
         if (distance > 0.0001) {
             let L = to_light / distance;
             var attenuation = 1.0 / max(distance * distance, 0.0001);
@@ -537,7 +649,6 @@ fn calculate_scene_lighting(
             if (spot_effect > 0.0) {
                 let light_color = light.color_intensity.xyz;
                 let light_intensity = light.color_intensity.w * attenuation * spot_effect;
-                let shadow = sample_spot_shadow(i, world_pos);
                 Lo += shadow * calculate_light_contribution(
                     N,
                     V,
@@ -686,21 +797,40 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if ((obj.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
         emissive = emissive_sample * obj.emissive_strength;
     }
-    
-    if ((obj.material_flags & FLAG_UNLIT) != 0u) {
-        var color = base_color.rgb + emissive;
-        color = color / (color + vec3<f32>(1.0));
-        color = pow(color, vec3<f32>(1.0 / 2.2));
-        return vec4<f32>(color, base_color.a);
-    }
 
+  // Always calculate lighting in uniform control flow (required for shadow sampling)
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
     let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
-
-    var color = ambient + Lo + emissive;
+    
+    // Then conditionally use lighting based on material flags
+    var color: vec3<f32>;
+    if ((obj.material_flags & FLAG_UNLIT) != 0u) {
+        color = base_color.rgb + emissive;
+    } else {
+        color = ambient + Lo + emissive;
+    }
+    
+    // Tone mapping and gamma correction
     color = color / (color + vec3<f32>(1.0));
     color = pow(color, vec3<f32>(1.0 / 2.2));
-    return vec4<f32>(color, base_color.a);
-}
+    return vec4<f32>(color, base_color.a);   
+
+//     if ((obj.material_flags & FLAG_UNLIT) != 0u) {
+//         var color = base_color.rgb + emissive;
+//         color = color / (color + vec3<f32>(1.0));
+//         color = pow(color, vec3<f32>(1.0 / 2.2));
+//         return vec4<f32>(color, base_color.a);
+//     }
+
+//     let V = normalize(globals.camera_pos - in.world_pos);
+//     let Lo =
+//         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
+//     let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
+
+//     var color = ambient + Lo + emissive;
+//     color = color / (color + vec3<f32>(1.0));
+//     color = pow(color, vec3<f32>(1.0 / 2.2));
+//     return vec4<f32>(color, base_color.a);
+ }

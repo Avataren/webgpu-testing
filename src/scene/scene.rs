@@ -542,14 +542,6 @@ impl Scene {
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);
 
-        log::info!(
-            "Spot shadow - pos: {:?}, forward: {:?}, up: {:?}",
-            position,
-            forward,
-            up
-        );
-        log::info!("  View matrix: {:?}", view);
-
         SpotShadowData {
             view_proj: projection * view,
             bias: 0.001,

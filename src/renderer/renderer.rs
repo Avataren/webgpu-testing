@@ -18,7 +18,7 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
-const SAMPLE_COUNT: u32 = 8;
+const SAMPLE_COUNT: u32 = 4;
 const SHADOW_MAP_SIZE: u32 = 2048;
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
@@ -503,7 +503,7 @@ impl RenderContext {
         if adapter_features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
             required_features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
         }
-        
+
         // Only set special limits if using bindless
         let mut limits = if supports_bindless_textures {
             wgpu::Limits {
