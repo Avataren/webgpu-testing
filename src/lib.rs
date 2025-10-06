@@ -5,7 +5,7 @@ pub mod renderer;
 pub mod scene;
 pub mod time;
 
-use app::App;
+use app::{App, SceneType};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
@@ -19,13 +19,18 @@ fn create_app() -> App {
     // Hierarchy test (parent-child transforms):
     //App::new(SceneType::HierarchyTest)
 
+    // Shadow casting test scene:
+    //App::new(SceneType::ShadowTest)
+
     // PBR material test (5x5 grid of spheres with varying metallic/roughness):
     //App::new(SceneType::PbrTest)
 
     // Load a glTF file:
 
     //App::with_gltf("web/assets/damagedhelmet/DamagedHelmet.gltf", 1.0)
-    App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
+    //App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
+
+    App::new(SceneType::ShadowTest)
 }
 
 #[cfg(target_arch = "wasm32")]
