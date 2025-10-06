@@ -1,5 +1,6 @@
 pub mod app;
 pub mod asset;
+pub mod demo_scenes;
 pub mod io;
 pub mod renderer;
 pub mod scene;
@@ -9,8 +10,6 @@ pub use app::{
     App, AppBuilder, Plugin, StartupContext, StartupSystem, UpdateContext, UpdateSystem,
 };
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,8 +67,3 @@ pub fn run_with_app(app: App) -> Result<(), JsValue> {
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
-    run(AppBuilder::default())
-}

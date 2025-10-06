@@ -1,17 +1,14 @@
 use std::path::Path;
 
-use glam::{Quat, Vec3};
-use log::info;
-use wgpu_cube::app::{AppBuilder, Plugin, StartupContext, UpdateContext};
-use wgpu_cube::renderer::{Material, Texture};
-use wgpu_cube::scene::components::{
-    Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, DirectionalLight,
-    PointLight,
-};
-use wgpu_cube::scene::{
+use crate::app::{AppBuilder, Plugin, StartupContext, UpdateContext};
+use crate::renderer::{self, Material, Texture};
+use crate::scene::components::{Billboard, BillboardOrientation, BillboardSpace, DepthState};
+use crate::scene::{
     Children, EntityBuilder, MaterialComponent, MeshComponent, Name, Parent, RotateAnimation,
     SceneLoader, Transform, TransformComponent, Visible,
 };
+use glam::{Quat, Vec3};
+use log::info;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +25,16 @@ impl DemoScene {
     pub fn plugin(self) -> DemoScenePlugin {
         DemoScenePlugin::new(self)
     }
+}
+
+pub const ACTIVE_SCENE: DemoScene = DemoScene::Gltf {
+    path: "web/assets/chessboard/ABeautifulGame.gltf",
+    scale: 15.0,
+};
+
+pub fn add_scene_to_app(builder: &mut AppBuilder, scene: DemoScene) -> &mut AppBuilder {
+    builder.add_plugin(scene.plugin());
+    builder
 }
 
 #[allow(dead_code)]
@@ -103,7 +110,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating simple scene...");
 
-    let (verts, idx) = wgpu_cube::renderer::cube_mesh();
+    let (verts, idx) = renderer::cube_mesh();
     let cube_mesh = renderer.create_mesh(&verts, &idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
@@ -164,7 +171,7 @@ fn setup_grid_scene(ctx: &mut StartupContext<'_>, size: i32) {
 
     info!("Creating grid scene...");
 
-    let (verts, idx) = wgpu_cube::renderer::cube_mesh();
+    let (verts, idx) = renderer::cube_mesh();
     let cube_mesh = renderer.create_mesh(&verts, &idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
@@ -206,7 +213,7 @@ fn setup_hierarchy_test_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating hierarchy test scene...");
 
-    let (verts, idx) = wgpu_cube::renderer::cube_mesh();
+    let (verts, idx) = renderer::cube_mesh();
     let cube_mesh = renderer.create_mesh(&verts, &idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
@@ -397,11 +404,11 @@ fn setup_shadow_test_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating shadow map test scene...");
 
-    let (verts, idx) = wgpu_cube::renderer::cube_mesh();
+    let (verts, idx) = renderer::cube_mesh();
     let cube_mesh = renderer.create_mesh(&verts, &idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
-    let (quad_vertices, quad_indices) = wgpu_cube::renderer::quad_mesh();
+    let (quad_vertices, quad_indices) = renderer::quad_mesh();
     let quad_mesh = renderer.create_mesh(&quad_vertices, &quad_indices);
     let quad_handle = scene.assets.meshes.insert(quad_mesh);
 
@@ -449,7 +456,7 @@ fn setup_shadow_test_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
-    let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
+    let _sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
     // scene.world.spawn((
     //     Name::new("Shadow Test Sun"),
@@ -518,7 +525,7 @@ fn setup_pbr_test_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating PBR test scene...");
 
-    let (verts, idx) = wgpu_cube::renderer::sphere_mesh(64, 32);
+    let (verts, idx) = renderer::sphere_mesh(64, 32);
     let sphere_mesh = renderer.create_mesh(&verts, &idx);
     let sphere_handle = scene.assets.meshes.insert(sphere_mesh);
 
