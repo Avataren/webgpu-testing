@@ -271,9 +271,18 @@ fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
         return vec3<f32>(-1.0, -1.0, -1.0);
     }
     let ndc = clip.xyz / clip.w;
-    // If using glam's standard matrices, ndc.z is in [-1, 1]
-    // Map it to [0, 1] for wgpu
-    return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
+    // Our projection matrices already map the clip space depth into
+    // wgpu's [0, 1] range, so we only need to remap the XY coordinates
+    // from [-1, 1] into [0, 1]. The Y axis of texture coordinates is
+    // flipped compared to clip space however (texture V=0 is at the top
+    // of the image), so we mirror the Y coordinate while remapping. Re-
+    // mapping Z again would shrink the usable depth range and skew the
+    // shadow comparison.
+    return vec3<f32>(
+        ndc.x * 0.5 + 0.5,
+        -ndc.y * 0.5 + 0.5,
+        ndc.z,
+    );
 }
 // fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 //     let clip = matrix * vec4<f32>(world_pos, 1.0);
