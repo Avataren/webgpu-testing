@@ -30,6 +30,7 @@ const FLAG_USE_NORMAL_TEXTURE: u32 = 4u;
 const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
+const FLAG_UNLIT: u32 = 128u;
 
 const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
 const MAX_POINT_LIGHTS: u32 = 16u;
@@ -647,11 +648,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         emissive = emissive_sample * obj.emissive_strength;
     }
     
+    if ((obj.material_flags & FLAG_UNLIT) != 0u) {
+        var color = base_color.rgb + emissive;
+        color = color / (color + vec3<f32>(1.0));
+        color = pow(color, vec3<f32>(1.0 / 2.2));
+        return vec4<f32>(color, base_color.a);
+    }
+
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
     let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
-    
+
     var color = ambient + Lo + emissive;
     color = color / (color + vec3<f32>(1.0));
     color = pow(color, vec3<f32>(1.0 / 2.2));

@@ -139,6 +139,8 @@ impl Scene {
                 Transform::IDENTITY
             };
 
+            let mut material_value = material.0;
+
             if let Some(billboard) = billboard {
                 transform = Self::apply_billboard_transform(
                     transform,
@@ -147,6 +149,12 @@ impl Scene {
                     renderer.camera_target(),
                     renderer.camera_up(),
                 );
+
+                if billboard.lit {
+                    material_value = material_value.with_lit();
+                } else {
+                    material_value = material_value.with_unlit();
+                }
             }
 
             let depth_state = depth_state.copied().unwrap_or_default();
@@ -155,7 +163,7 @@ impl Scene {
 
             batcher.add(RenderObject {
                 mesh: mesh.0,
-                material: material.0,
+                material: material_value,
                 transform,
                 depth_state,
                 force_overlay,

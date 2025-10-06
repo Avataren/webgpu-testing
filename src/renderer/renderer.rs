@@ -1307,11 +1307,26 @@ impl ShadowResources {
             let instance_count = batch.instances.len() as u32;
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-            pass.draw_indexed(
-                0..mesh.index_count(),
-                0,
-                object_offset..(object_offset + instance_count),
-            );
+            let mut current_range_start: Option<u32> = None;
+
+            for (local_index, instance) in batch.instances.iter().enumerate() {
+                let global_index = object_offset + local_index as u32;
+                if instance.material.is_unlit() {
+                    if let Some(start) = current_range_start.take() {
+                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                    }
+                } else if current_range_start.is_none() {
+                    current_range_start = Some(global_index);
+                }
+            }
+
+            if let Some(start) = current_range_start.take() {
+                pass.draw_indexed(
+                    0..mesh.index_count(),
+                    0,
+                    start..(object_offset + instance_count),
+                );
+            }
             object_offset += instance_count;
         }
     }
