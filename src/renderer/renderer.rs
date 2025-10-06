@@ -27,6 +27,7 @@ pub struct Renderer {
     lights_buffer: LightsBuffer,
     shadows: ShadowResources,
     camera_position: Vec3,
+    camera_target: Vec3,
 }
 
 struct MsaaTexture {
@@ -114,6 +115,7 @@ impl Renderer {
             lights_buffer,
             shadows,
             camera_position: Vec3::ZERO,
+            camera_target: Vec3::ZERO,
         }
     }
 
@@ -135,6 +137,7 @@ impl Renderer {
 
     pub fn set_camera(&mut self, camera: &Camera, aspect: f32) {
         self.camera_position = camera.position(); // Store it
+        self.camera_target = camera.target;
         let vp = camera.view_proj(aspect);
         let uni = CameraUniform::from_matrix(vp, camera.position());
         self.context
@@ -144,6 +147,10 @@ impl Renderer {
 
     pub fn camera_position(&self) -> Vec3 {
         self.camera_position
+    }
+
+    pub fn camera_target(&self) -> Vec3 {
+        self.camera_target
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {

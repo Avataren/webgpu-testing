@@ -76,6 +76,7 @@ impl Scene {
     pub fn render(&mut self, renderer: &mut Renderer, batcher: &mut RenderBatcher) {
         batcher.clear();
         let camera_pos = renderer.camera_position();
+        let camera_target = renderer.camera_target();
 
         let mut world_transform_count = 0;
         let mut local_transform_count = 0;
@@ -163,7 +164,7 @@ impl Scene {
             };
 
             let shadow = shadow_flag.filter(|flag| flag.0).map(|_| {
-                let s = Self::build_directional_shadow(camera_pos, direction);
+                let s = Self::build_directional_shadow(camera_pos, camera_target, transform);
                 log::info!("Built shadow matrix for light direction {:?}", direction);
                 log::info!("  First COLUMN: {:?}", s.view_proj.col(0)); // Changed to col
                 log::info!("  As array [0]: {:?}", s.view_proj.to_cols_array_2d()[0]); // Add this
@@ -172,7 +173,7 @@ impl Scene {
 
             // let shadow = shadow_flag
             //     .filter(|flag| flag.0)
-            //     .map(|_| Self::build_directional_shadow(camera_pos, direction)); // PASS camera_pos
+            //     .map(|_| Self::build_directional_shadow(camera_pos, camera_target, transform));
 
             lights.add_directional(direction, light.color, light.intensity, shadow);
         }
@@ -253,14 +254,35 @@ impl Scene {
         }
     }
 
-    fn build_directional_shadow(camera_pos: Vec3, direction: Vec3) -> DirectionalShadowData {
+    fn build_directional_shadow(
+        camera_pos: Vec3,
+        camera_target: Vec3,
+        light_transform: Transform,
+    ) -> DirectionalShadowData {
         const SHADOW_SIZE: f32 = 15.0;
         const SHADOW_DISTANCE: f32 = 30.0;
 
-        let focus = camera_pos;
+        let raw_dir = light_transform.rotation * Vec3::NEG_Z;
+        let direction = if raw_dir.length_squared() > 0.0 {
+            raw_dir.normalize()
+        } else {
+            Vec3::new(0.0, -1.0, 0.0)
+        };
+
+        let focus = if (camera_target - camera_pos).length_squared() > 1e-4 {
+            camera_target
+        } else {
+            camera_pos
+        };
         let light_pos = focus - direction * SHADOW_DISTANCE;
 
-        let up = Self::shadow_up(direction);
+        let mut up = light_transform.rotation * Vec3::Y;
+        if up.length_squared() > 0.0 {
+            up = up.normalize();
+        }
+        if up.length_squared() <= 0.0 || up.abs().dot(direction).abs() > 0.999 {
+            up = Self::shadow_up(direction);
+        }
 
         let view = Mat4::look_at_rh(light_pos, focus, up);
 
@@ -863,7 +885,9 @@ impl Default for Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::components::SpotLight;
     use crate::scene::Transform;
+    use glam::{EulerRot, Vec2, Vec4};
     use std::f32::consts::FRAC_PI_2;
 
     #[test]
@@ -1017,6 +1041,268 @@ mod tests {
         {
             let child_world = scene.world.get::<&WorldTransform>(child).unwrap();
             assert_eq!(child_world.0.translation, Vec3::new(3.0, 0.0, 0.0));
+        }
+    }
+
+    const EPS: f32 = 1e-5;
+
+    fn build_directional_projection() -> Mat4 {
+        let left = -15.0;
+        let right = 15.0;
+        let bottom = -15.0;
+        let top = 15.0;
+        let near = 0.1;
+        let far = 60.0;
+
+        Mat4::from_cols(
+            Vec4::new(2.0 / (right - left), 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 2.0 / (top - bottom), 0.0, 0.0),
+            Vec4::new(0.0, 0.0, -1.0 / (far - near), 0.0),
+            Vec4::new(
+                -(right + left) / (right - left),
+                -(top + bottom) / (top - bottom),
+                -near / (far - near),
+                1.0,
+            ),
+        )
+    }
+
+    #[test]
+    fn directional_shadow_view_matrix_matches_expected_orientation() {
+        let camera_pos = Vec3::new(8.0, 6.0, -4.0);
+        let camera_target = Vec3::new(2.5, 1.0, -3.0);
+        let rotation = Quat::from_euler(EulerRot::YXZ, 0.35, -0.6, 0.5)
+            * Quat::from_euler(EulerRot::ZXY, 0.2, 0.0, 0.1);
+        let transform = Transform::from_trs(Vec3::new(1.5, 3.0, -2.0), rotation, Vec3::ONE);
+
+        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+
+        let direction = (rotation * Vec3::NEG_Z).normalize();
+        let up = (rotation * Vec3::Y).normalize();
+        let focus = camera_target;
+        let light_pos = focus - direction * 30.0;
+        let expected_view = Mat4::look_at_rh(light_pos, focus, up);
+        let projection = build_directional_projection();
+        let expected_view_proj = projection * expected_view;
+
+        assert!(
+            shadow.view_proj.abs_diff_eq(expected_view_proj, EPS),
+            "view projection mismatch: {:?} vs {:?}",
+            shadow.view_proj,
+            expected_view_proj
+        );
+
+        let actual_view = projection.inverse() * shadow.view_proj;
+        assert!(actual_view.abs_diff_eq(expected_view, EPS));
+
+        // The light direction should map to the -Z axis in the light's view space.
+        let dir_in_view = (actual_view * direction.extend(0.0)).truncate().normalize();
+        assert!(dir_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
+    }
+
+    #[test]
+    fn directional_shadow_centers_camera_target() {
+        let camera_pos = Vec3::new(4.0, 6.0, 12.0);
+        let camera_target = Vec3::new(1.0, 0.5, -2.0);
+        let rotation = Quat::from_euler(EulerRot::YXZ, -0.2, -0.9, 0.3);
+        let transform = Transform::from_trs(Vec3::ZERO, rotation, Vec3::ONE);
+
+        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+
+        let clip = shadow.view_proj * camera_target.extend(1.0);
+        assert!(clip.w > 0.0);
+        let ndc = clip.truncate() / clip.w;
+        let uv = Vec2::new(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+
+        assert!(
+            uv.abs_diff_eq(Vec2::splat(0.5), 1e-4),
+            "camera target projected to {:?}",
+            uv
+        );
+    }
+
+    #[test]
+    fn directional_shadow_respects_light_roll() {
+        let camera_pos = Vec3::new(-6.0, 5.0, 2.0);
+        let camera_target = Vec3::new(0.5, 1.5, -3.0);
+        let rotation = Quat::from_euler(EulerRot::ZXY, 0.3, -0.5, 0.9);
+        let transform = Transform::from_trs(Vec3::new(-1.0, 2.0, 0.5), rotation, Vec3::splat(1.0));
+
+        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+
+        let projection = build_directional_projection();
+        let actual_view = projection.inverse() * shadow.view_proj;
+
+        let forward = (rotation * Vec3::NEG_Z).normalize();
+        let up = (rotation * Vec3::Y).normalize();
+        let right = (rotation * Vec3::X).normalize();
+
+        let forward_in_view = (actual_view * forward.extend(0.0)).truncate().normalize();
+        let up_in_view = (actual_view * up.extend(0.0)).truncate().normalize();
+        let right_in_view = (actual_view * right.extend(0.0)).truncate().normalize();
+
+        assert!(forward_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
+        assert!(up_in_view.abs_diff_eq(Vec3::Y, EPS));
+        assert!(right_in_view.abs_diff_eq(Vec3::X, EPS));
+    }
+
+    #[test]
+    fn spot_shadow_view_matrix_uses_transform_basis() {
+        let rotation = Quat::from_euler(EulerRot::YXZ, 0.45, -0.35, 0.2);
+        let transform = Transform::from_trs(Vec3::new(2.0, 5.0, -1.0), rotation, Vec3::ONE);
+        let light = SpotLight {
+            color: Vec3::splat(1.0),
+            intensity: 10.0,
+            inner_angle: 0.3,
+            outer_angle: 0.6,
+            range: 25.0,
+        };
+
+        let shadow = Scene::build_spot_shadow(transform, &light);
+
+        let near = 0.1;
+        let far = light.range.max(near + 0.1);
+        let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
+        let expected_view = Mat4::look_at_rh(
+            transform.translation,
+            transform.translation + transform.rotation * Vec3::NEG_Z,
+            transform.rotation * Vec3::Y,
+        );
+        let projection = Mat4::perspective_rh(fov, 1.0, near, far);
+        let expected_view_proj = projection * expected_view;
+
+        assert!(shadow.view_proj.abs_diff_eq(expected_view_proj, EPS));
+
+        let actual_view = projection.inverse() * shadow.view_proj;
+        assert!(actual_view.abs_diff_eq(expected_view, EPS));
+
+        let forward = transform.rotation * Vec3::NEG_Z;
+        let up = transform.rotation * Vec3::Y;
+        let forward_in_view = (actual_view * forward.extend(0.0)).truncate().normalize();
+        let up_in_view = (actual_view * up.extend(0.0)).truncate().normalize();
+        assert!(forward_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
+        assert!(up_in_view.abs_diff_eq(Vec3::Y, EPS));
+    }
+
+    #[test]
+    fn point_shadow_view_matrices_cover_all_cubemap_faces() {
+        let position = Vec3::new(-3.0, 4.5, 1.0);
+        let range = 12.0;
+        let shadow = Scene::build_point_shadow(position, range);
+
+        let near = 0.1;
+        let far = range.max(near + 0.1);
+        let projection = Mat4::perspective_rh(FRAC_PI_2, 1.0, near, far);
+
+        let dirs = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ];
+        let ups = [Vec3::Y, Vec3::Y, Vec3::Z, Vec3::NEG_Z, Vec3::Y, Vec3::Y];
+
+        for (((matrix, dir), up), face) in shadow
+            .view_proj
+            .iter()
+            .zip(dirs.iter())
+            .zip(ups.iter())
+            .zip(0usize..)
+        {
+            let expected_view = Mat4::look_at_rh(position, position + *dir, *up);
+            let expected_view_proj = projection * expected_view;
+            assert!(
+                matrix.abs_diff_eq(expected_view_proj, EPS),
+                "face {} mismatch",
+                face
+            );
+
+            let actual_view = projection.inverse() * *matrix;
+            assert!(actual_view.abs_diff_eq(expected_view, EPS));
+
+            let dir_in_view = (actual_view * dir.extend(0.0)).truncate().normalize();
+            assert!(dir_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
+        }
+    }
+
+    #[test]
+    fn spot_shadow_depth_maps_into_wgpu_range() {
+        let rotation = Quat::from_euler(EulerRot::YXZ, -0.35, 0.5, 0.1);
+        let transform = Transform::from_trs(Vec3::new(-4.0, 3.0, 6.0), rotation, Vec3::ONE);
+        let light = SpotLight {
+            color: Vec3::splat(1.0),
+            intensity: 5.0,
+            inner_angle: 0.4,
+            outer_angle: 0.7,
+            range: 30.0,
+        };
+
+        let shadow = Scene::build_spot_shadow(transform, &light);
+
+        let near = 0.1;
+        let far = light.range.max(near + 0.1);
+        let forward = (transform.rotation * Vec3::NEG_Z).normalize();
+        let position = transform.translation;
+
+        let near_world = position + forward * near;
+        let far_world = position + forward * far;
+
+        let clip_near = shadow.view_proj * near_world.extend(1.0);
+        let clip_far = shadow.view_proj * far_world.extend(1.0);
+        assert!(clip_near.w > 0.0 && clip_far.w > 0.0);
+
+        let ndc_near = clip_near.truncate() / clip_near.w;
+        let ndc_far = clip_far.truncate() / clip_far.w;
+
+        assert!(ndc_near.z >= -EPS && ndc_near.z <= 1.0 + EPS);
+        assert!(ndc_far.z >= -EPS && ndc_far.z <= 1.0 + EPS);
+
+        assert!((ndc_near.z - 0.0).abs() < 1e-4, "near depth {}", ndc_near.z);
+        assert!((ndc_far.z - 1.0).abs() < 1e-4, "far depth {}", ndc_far.z);
+    }
+
+    #[test]
+    fn point_shadow_depth_maps_into_wgpu_range() {
+        let position = Vec3::new(2.5, -1.5, 7.0);
+        let range = 18.0;
+        let shadow = Scene::build_point_shadow(position, range);
+
+        for (matrix, dir) in shadow.view_proj.iter().zip([
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ]) {
+            let forward = dir.normalize();
+            let near_world = position + forward * shadow.near;
+            let far_world = position + forward * shadow.far;
+
+            let clip_near = *matrix * near_world.extend(1.0);
+            let clip_far = *matrix * far_world.extend(1.0);
+            assert!(clip_near.w > 0.0 && clip_far.w > 0.0);
+
+            let ndc_near = clip_near.truncate() / clip_near.w;
+            let ndc_far = clip_far.truncate() / clip_far.w;
+
+            assert!(ndc_near.z >= -EPS && ndc_near.z <= 1.0 + EPS);
+            assert!(ndc_far.z >= -EPS && ndc_far.z <= 1.0 + EPS);
+
+            assert!(
+                (ndc_near.z - 0.0).abs() < 1e-4,
+                "face dir {:?} near {}",
+                dir,
+                ndc_near.z
+            );
+            assert!(
+                (ndc_far.z - 1.0).abs() < 1e-4,
+                "face dir {:?} far {}",
+                dir,
+                ndc_far.z
+            );
         }
     }
 }
