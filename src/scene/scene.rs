@@ -301,70 +301,77 @@ impl Scene {
     ) -> Transform {
         let mut result = transform;
 
+        let view_forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
+        let mut view_up = Self::safe_normalize(camera_up, Vec3::Y);
+        let mut view_right = view_forward.cross(view_up);
+        if view_right.length_squared() < 1e-6 {
+            view_right = Vec3::X;
+        } else {
+            view_right = view_right.normalize();
+        }
+        view_up = view_right.cross(view_forward);
+        if view_up.length_squared() < 1e-6 {
+            view_up = Vec3::Y;
+        } else {
+            view_up = view_up.normalize();
+        }
+
         let translation = match billboard.space {
             BillboardSpace::World => transform.translation,
             BillboardSpace::View { offset } => {
-                let forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
-                let up_dir = Self::safe_normalize(camera_up, Vec3::Y);
-                let mut right = forward.cross(up_dir);
-                if right.length_squared() < 1e-6 {
-                    right = Vec3::X;
-                } else {
-                    right = right.normalize();
-                }
-                let mut corrected_up = right.cross(forward);
-                if corrected_up.length_squared() < 1e-6 {
-                    corrected_up = up_dir;
-                } else {
-                    corrected_up = corrected_up.normalize();
-                }
-
-                camera_position + right * offset.x + corrected_up * offset.y + forward * offset.z
+                camera_position
+                    + view_right * offset.x
+                    + view_up * offset.y
+                    + view_forward * offset.z
             }
         };
 
-        let rotation_matrix = match billboard.orientation {
-            BillboardOrientation::FaceCamera => {
-                let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
-                let mut up_dir = Self::safe_normalize(camera_up, Vec3::Y);
-                let mut right = up_dir.cross(forward);
-                if right.length_squared() < 1e-6 {
-                    right = Vec3::X;
-                } else {
-                    right = right.normalize();
+        let rotation_matrix = if matches!(billboard.space, BillboardSpace::View { .. }) {
+            Mat3::from_cols(view_right, view_up, -view_forward)
+        } else {
+            match billboard.orientation {
+                BillboardOrientation::FaceCamera => {
+                    let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
+                    let mut up_dir = Self::safe_normalize(camera_up, Vec3::Y);
+                    let mut right = up_dir.cross(forward);
+                    if right.length_squared() < 1e-6 {
+                        right = Vec3::X;
+                    } else {
+                        right = right.normalize();
+                    }
+                    up_dir = forward.cross(right);
+                    if up_dir.length_squared() < 1e-6 {
+                        up_dir = Vec3::Y;
+                    } else {
+                        up_dir = up_dir.normalize();
+                    }
+                    Mat3::from_cols(right, up_dir, forward)
                 }
-                up_dir = forward.cross(right);
-                if up_dir.length_squared() < 1e-6 {
-                    up_dir = Vec3::Y;
-                } else {
-                    up_dir = up_dir.normalize();
+                BillboardOrientation::FaceCameraYAxis => {
+                    let mut forward = Vec3::new(
+                        camera_position.x - translation.x,
+                        0.0,
+                        camera_position.z - translation.z,
+                    );
+                    if forward.length_squared() < 1e-6 {
+                        forward = Vec3::Z;
+                    } else {
+                        forward = forward.normalize();
+                    }
+                    let mut right = Vec3::Y.cross(forward);
+                    if right.length_squared() < 1e-6 {
+                        right = Vec3::X;
+                    } else {
+                        right = right.normalize();
+                    }
+                    let mut up_dir = forward.cross(right);
+                    if up_dir.length_squared() < 1e-6 {
+                        up_dir = Vec3::Y;
+                    } else {
+                        up_dir = up_dir.normalize();
+                    }
+                    Mat3::from_cols(right, up_dir, forward)
                 }
-                Mat3::from_cols(right, up_dir, forward)
-            }
-            BillboardOrientation::FaceCameraYAxis => {
-                let mut forward = Vec3::new(
-                    camera_position.x - translation.x,
-                    0.0,
-                    camera_position.z - translation.z,
-                );
-                if forward.length_squared() < 1e-6 {
-                    forward = Vec3::Z;
-                } else {
-                    forward = forward.normalize();
-                }
-                let mut right = Vec3::Y.cross(forward);
-                if right.length_squared() < 1e-6 {
-                    right = Vec3::X;
-                } else {
-                    right = right.normalize();
-                }
-                let mut up_dir = forward.cross(right);
-                if up_dir.length_squared() < 1e-6 {
-                    up_dir = Vec3::Y;
-                } else {
-                    up_dir = up_dir.normalize();
-                }
-                Mat3::from_cols(right, up_dir, forward)
             }
         };
 
@@ -1039,6 +1046,78 @@ mod tests {
     use crate::scene::Transform;
     use glam::{EulerRot, Vec2, Vec4};
     use std::f32::consts::FRAC_PI_2;
+
+    #[test]
+    fn view_space_billboard_aligns_with_camera_basis() {
+        let transform = Transform::IDENTITY;
+        let offset = Vec3::new(2.0, -1.0, 6.0);
+        let billboard = Billboard::new(BillboardOrientation::FaceCamera)
+            .with_space(BillboardSpace::View { offset });
+        let camera_pos = Vec3::new(1.5, -3.2, 4.0);
+        let camera_target = Vec3::new(1.5, -2.2, -1.0);
+        let camera_up = Vec3::new(0.0, 1.0, 0.1);
+
+        let result = Scene::apply_billboard_transform(
+            transform,
+            billboard,
+            camera_pos,
+            camera_target,
+            camera_up,
+        );
+
+        let view_forward = Scene::safe_normalize(camera_target - camera_pos, Vec3::NEG_Z);
+        let mut view_up = Scene::safe_normalize(camera_up, Vec3::Y);
+        let mut view_right = view_forward.cross(view_up);
+        if view_right.length_squared() < 1e-6 {
+            view_right = Vec3::X;
+        } else {
+            view_right = view_right.normalize();
+        }
+        view_up = view_right.cross(view_forward);
+        if view_up.length_squared() < 1e-6 {
+            view_up = Vec3::Y;
+        } else {
+            view_up = view_up.normalize();
+        }
+
+        let expected_translation = camera_pos
+            + view_right * offset.x
+            + view_up * offset.y
+            + view_forward * offset.z;
+
+        assert!(result
+            .translation
+            .abs_diff_eq(expected_translation, 1e-5));
+        assert!((result.rotation * Vec3::X).abs_diff_eq(view_right, 1e-5));
+        assert!((result.rotation * Vec3::Y).abs_diff_eq(view_up, 1e-5));
+        assert!((result.rotation * Vec3::Z).abs_diff_eq(-view_forward, 1e-5));
+    }
+
+    #[test]
+    fn world_space_billboard_faces_camera_position() {
+        let transform = Transform::from_trs(
+            Vec3::new(-2.0, 1.0, -5.0),
+            Quat::IDENTITY,
+            Vec3::splat(1.5),
+        );
+        let billboard = Billboard::new(BillboardOrientation::FaceCamera);
+        let camera_pos = Vec3::new(4.0, 3.0, 2.0);
+        let camera_target = Vec3::new(0.0, 0.0, 0.0);
+        let camera_up = Vec3::Y;
+
+        let result = Scene::apply_billboard_transform(
+            transform,
+            billboard,
+            camera_pos,
+            camera_target,
+            camera_up,
+        );
+
+        let expected_forward = Scene::safe_normalize(camera_pos - transform.translation, Vec3::Z);
+
+        assert!(result.translation.abs_diff_eq(transform.translation, 1e-5));
+        assert!((result.rotation * Vec3::Z).abs_diff_eq(expected_forward, 1e-5));
+    }
 
     #[test]
     fn test_transform_propagation_simple() {
