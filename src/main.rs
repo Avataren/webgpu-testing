@@ -28,6 +28,6 @@ fn main() {
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
-pub fn wasm_start() -> Result<(), JsValue> {
+pub fn main() -> Result<(), JsValue> {
     wgpu_cube::run(build_app())
 }
