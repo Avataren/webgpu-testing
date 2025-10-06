@@ -8,6 +8,7 @@ use crate::renderer::{CameraUniform, Depth, LightsData, Material, RenderBatcher,
 use crate::scene::Camera;
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 use std::{collections::HashMap, mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -25,6 +26,7 @@ pub struct Renderer {
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
     shadows: ShadowResources,
+    camera_position: Vec3,
 }
 
 struct MsaaTexture {
@@ -109,6 +111,7 @@ impl Renderer {
             camera_buffer,
             lights_buffer,
             shadows,
+            camera_position: Vec3::ZERO,
         }
     }
 
@@ -128,12 +131,17 @@ impl Renderer {
         self.context.config.width as f32 / self.context.config.height.max(1) as f32
     }
 
-    pub fn set_camera(&self, camera: &Camera, aspect: f32) {
+    pub fn set_camera(&mut self, camera: &Camera, aspect: f32) {
+        self.camera_position = camera.position(); // Store it
         let vp = camera.view_proj(aspect);
-        let uni = CameraUniform::from_matrix(vp, camera.position()); // Pass camera position
+        let uni = CameraUniform::from_matrix(vp, camera.position());
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
+    }
+
+    pub fn camera_position(&self) -> Vec3 {
+        self.camera_position
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {
@@ -639,8 +647,28 @@ impl LightsBuffer {
         let data = LightsUniform::from_data(lights);
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
         let shadow_data = ShadowsUniform::from_data(lights);
+
+        // DEBUG: Check what we're uploading
+        if shadow_data.counts[0] > 0 {
+            log::info!(
+                "Uploading shadow uniform - first dir shadow enabled: {}",
+                shadow_data.directionals[0].params[0]
+            );
+            log::info!(
+                "  Matrix first row: {:?}",
+                shadow_data.directionals[0].view_proj[0]
+            );
+        }
+
         queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
     }
+
+    // fn update(&mut self, queue: &wgpu::Queue, lights: &LightsData) {
+    //     let data = LightsUniform::from_data(lights);
+    //     queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
+    //     let shadow_data = ShadowsUniform::from_data(lights);
+    //     queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
+    // }
 }
 
 #[repr(C)]
@@ -817,8 +845,8 @@ impl ShadowResources {
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
+                    constant: 0,
+                    slope_scale: 0.0,
                     clamp: 0.0,
                 },
             }),
@@ -869,6 +897,8 @@ impl ShadowResources {
         }
 
         let queue = &context.queue;
+
+        //log::info!("Shadow render: {} directional shadows", lights.directional_shadows().len());
 
         for (index, shadow) in lights
             .directional_shadows()
@@ -969,6 +999,8 @@ impl ShadowResources {
         pass.set_bind_group(1, &objects.bind_group, &[]);
 
         let mut object_offset = 0u32;
+        let mut draw_calls = 0;
+
         for (mesh_handle, instances) in batcher.iter() {
             let Some(mesh) = assets.meshes.get(mesh_handle) else {
                 object_offset += instances.len() as u32;
@@ -983,9 +1015,15 @@ impl ShadowResources {
                 0,
                 object_offset..(object_offset + instance_count),
             );
-
+            draw_calls += 1;
             object_offset += instance_count;
         }
+        //drop(pass);
+        // log::info!(
+        //     "Shadow pass drew {} batches, {} total instances",
+        //     draw_calls,
+        //     object_offset
+        // );
     }
 }
 

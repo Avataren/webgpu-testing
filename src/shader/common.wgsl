@@ -255,27 +255,48 @@ fn calculate_test_lighting(
     return Lo;
 }
 
+
+// fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+//     let clip = matrix * vec4<f32>(world_pos, 1.0);
+//     if (clip.w <= 0.0) {
+//         return vec3<f32>(-1.0, -1.0, -1.0);
+//     }
+//     let ndc = clip.xyz / clip.w;
+//     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z);  // Use ndc.z directly
+// }
+
 fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let clip = matrix * vec4<f32>(world_pos, 1.0);
     if (clip.w <= 0.0) {
         return vec3<f32>(-1.0, -1.0, -1.0);
     }
     let ndc = clip.xyz / clip.w;
+    // If using glam's standard matrices, ndc.z is in [-1, 1]
+    // Map it to [0, 1] for wgpu
     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
 }
+// fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+//     let clip = matrix * vec4<f32>(world_pos, 1.0);
+//     if (clip.w <= 0.0) {
+//         return vec3<f32>(-1.0, -1.0, -1.0);
+//     }
+//     let ndc = clip.xyz / clip.w;
+//     //return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
+//     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z);
+// }
 
 fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.directionals[index];
     if (info.params.x == 0.0) {
-        return 1.0;
+        return 1.0;  // No shadow data - fully lit
     }
 
     let proj = project_shadow(info.view_proj, world_pos);
     if (proj.z < 0.0 || proj.z > 1.0) {
-        return 1.0;
+        return 1.0;  // Outside depth range - fully lit
     }
     if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
-        return 1.0;
+        return 1.0;  // Outside shadow map bounds - fully lit
     }
 
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
@@ -484,10 +505,90 @@ fn calculate_scene_lighting(
     return Lo;
 }
 
+// @fragment
+// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+//     let obj = objects[in.instance_id];
+    
+//     // DEBUG: Check if world position is in shadow map bounds
+//     let info = shadow_info.directionals[0u];
+//     if (info.params.x != 0.0) {
+//         let proj = project_shadow(info.view_proj, in.world_pos);
+        
+//         // Visualize shadow map coordinates
+//         if (proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0) {
+//             // In shadow map bounds - show depth as color
+//             return vec4<f32>(proj.z, proj.z, proj.z, 1.0);
+//         } else {
+//             // Outside shadow map - show red
+//             return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+//         }
+//     }
+    
+//     // If no shadow info, show blue
+//     return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+// }
+
+// @fragment
+// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+//     let shadow = sample_directional_shadow(0u, in.world_pos);
+//     return vec4<f32>(shadow, shadow, shadow, 1.0);
+// }
+
+// @fragment
+// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+//     let shadow_mat = shadow_info.directionals[0u].view_proj;
+//     let test_pos = vec3<f32>(0.0, 0.1, 0.0);
+    
+//     // Shadow projection - manual multiply to see intermediate values
+//     let shadow_clip = shadow_mat * vec4<f32>(test_pos, 1.0);
+//     let shadow_w = shadow_clip.w;
+//     let shadow_z = shadow_clip.z;
+    
+//     // Show raw values (might be outside [0,1])
+//     // Red = clip.z, Green = clip.w (for perspective divide)
+//     return vec4<f32>(
+//         shadow_z * 0.1 + 0.5,  // Scale to make visible
+//         shadow_w * 0.1 + 0.5,
+//         0.0,
+//         1.0
+//     );
+// }
+
+// @fragment
+// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+//     let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
+//     if (spot_count == 0u) {
+//         return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red = no lights
+//     }
+    
+//     // Test first spot light
+//     let light = lights.spots[0u];
+//     let to_light = light.position_range.xyz - in.world_pos;
+//     let distance = length(to_light);
+//     let L = to_light / distance;
+//     let light_dir = normalize(light.direction.xyz);
+//     let cos_theta = dot(light_dir, -L);
+    
+//     // Visualize the angle check
+//     return vec4<f32>(
+//         cos_theta,  // Red channel shows the angle
+//         light.cone_params.y,  // Green = cos_outer threshold
+//         0.0,
+//         1.0
+//     );
+// }
+
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let obj = objects[in.instance_id];
-    
+
+    // shadow debug    
+    // let shadow = sample_directional_shadow(0u, in.world_pos);
+    // if (shadow < 0.99) {
+    //     return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red = in shadow
+    // }
+
     // ALWAYS sample all textures (uniform control flow)
     let base_color_sample = sample_base_color_texture(obj.base_color_texture, in.uv);
     let mr_sample = sample_metallic_roughness_texture(obj.metallic_roughness_texture, in.uv);
@@ -539,7 +640,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
-    let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;
+    let ambient = vec3<f32>(0.003) * base_color.rgb * occlusion;
     
     var color = ambient + Lo + emissive;
     color = color / (color + vec3<f32>(1.0));

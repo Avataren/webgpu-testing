@@ -23,8 +23,9 @@ fn create_app() -> App {
     //App::new(SceneType::PbrTest)
 
     // Load a glTF file:
-    App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
+    
     //App::with_gltf("web/assets/damagedhelmet/DamagedHelmet.gltf", 1.0)
+    App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -63,6 +64,8 @@ pub fn run() -> Result<(), winit::error::EventLoopError> {
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
+use crate::app::SceneType;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]

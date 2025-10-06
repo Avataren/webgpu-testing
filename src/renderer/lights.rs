@@ -345,6 +345,13 @@ impl ShadowsUniform {
             *dst = *src;
         }
 
+        // DEBUG: Log what we're putting in the uniform
+        if dir_count > 0 {
+            log::info!("ShadowsUniform created - first dir shadow:");
+            log::info!("  view_proj[0]: {:?}", uniform.directionals[0].view_proj[0]);
+            log::info!("  params: {:?}", uniform.directionals[0].params);
+        }        
+
         let point_count = data.point_shadows().len().min(MAX_POINT_LIGHTS) as u32;
         uniform.counts[1] = point_count;
         for (dst, src) in uniform
