@@ -257,14 +257,10 @@ impl Scene {
         const SHADOW_SIZE: f32 = 15.0;
         const SHADOW_DISTANCE: f32 = 30.0;
 
-        let focus = Vec3::ZERO;
+        let focus = camera_pos;
         let light_pos = focus - direction * SHADOW_DISTANCE;
 
-        let up = if direction.abs().dot(Vec3::Y) > 0.95 {
-            Vec3::Z
-        } else {
-            Vec3::Y
-        };
+        let up = Self::shadow_up(direction);
 
         let view = Mat4::look_at_rh(light_pos, focus, up);
 
@@ -399,10 +395,10 @@ impl Scene {
     }
 
     // Ensure the scene has a reasonable default lighting setup.
-    // 
+    //
     // Returns the number of lights that were created. If the scene already
     // contains any light components, no additional lights will be spawned.
-    // 
+    //
     // pub fn add_default_lighting(&mut self) -> usize {
     //     if self.has_any_lights() {
     //         return 0;
@@ -499,7 +495,7 @@ impl Scene {
         log::info!("Created {} spot lights", created);
         created
     }
-    
+
     // pub fn add_default_lighting(&mut self) -> usize {
     //     if self.has_any_lights() {
     //         return 0;
@@ -578,17 +574,6 @@ impl Scene {
         }
 
         false
-    }
-
-    fn rotation_from_light_direction(direction: Vec3) -> Quat {
-        let dir = if direction.length_squared() > 0.0 {
-            direction.normalize()
-        } else {
-            Vec3::new(0.0, -1.0, 0.0)
-        };
-
-        let target = (-dir).normalize();
-        Quat::from_rotation_arc(Vec3::NEG_Z, target)
     }
 
     // ========================================================================
@@ -757,17 +742,17 @@ impl Scene {
         // Second pass: fix up Parent and Children references
         let parent_children_to_fix: Vec<_> = entity_map
             .iter()
-            .map(|(old, new)| {
+            .map(|(old, &new)| {
                 let parent = other.world.get::<&Parent>(*old).ok().map(|p| p.0);
                 let children = other.world.get::<&Children>(*old).ok().map(|c| c.0.clone());
-                (*old, *new, parent, children)
+                (new, parent, children)
             })
             .collect();
 
         // Find root entities (those without Parent in the original scene)
         let mut root_entities = Vec::new();
 
-        for (old_entity, new_entity, parent, children) in parent_children_to_fix {
+        for (new_entity, parent, children) in parent_children_to_fix {
             // Update Parent component
             if let Some(old_parent) = parent {
                 // This entity had a parent in the original scene

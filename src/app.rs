@@ -50,8 +50,6 @@ pub struct App {
     scene_type: SceneType,
     gltf_path: Option<String>,
     gltf_scale: f32,
-    old_scenes: Vec<Scene>,
-    old_renderers: Vec<Renderer>,
     frame_counter: u32,
     skip_rendering_until_frame: Option<u32>,
     #[cfg(target_arch = "wasm32")]
@@ -70,8 +68,6 @@ impl App {
             scene_type,
             gltf_path: None,
             gltf_scale: 1.0,
-            old_scenes: Vec::new(),
-            old_renderers: Vec::new(),
             frame_counter: 0,
             skip_rendering_until_frame: None,
             #[cfg(target_arch = "wasm32")]
@@ -103,8 +99,6 @@ impl App {
             scene_type: SceneType::FromGltf,
             gltf_path: Some(path.into()),
             gltf_scale: scale,
-            old_scenes: Vec::new(),
-            old_renderers: Vec::new(),
             frame_counter: 0,
             skip_rendering_until_frame: None,
             #[cfg(target_arch = "wasm32")]

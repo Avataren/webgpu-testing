@@ -24,10 +24,9 @@ fn run_vertex_shader(input: VertexInput, model: Mat4, globals_view_proj: Mat4) -
     let _ = input.uv;
     let _ = input.instance;
     let _normal = (model * input.normal.extend(0.0)).truncate().normalize();
-    let _tangent = (model
-        * Vec4::new(input.tangent.x, input.tangent.y, input.tangent.z, 0.0))
-    .truncate()
-    .normalize();
+    let _tangent = (model * Vec4::new(input.tangent.x, input.tangent.y, input.tangent.z, 0.0))
+        .truncate()
+        .normalize();
     let _bitangent = _normal.cross(_tangent) * input.tangent.w;
 
     let clip_position = globals_view_proj * world_position4;
