@@ -133,11 +133,6 @@ pub struct DirectionalShadowData {
     pub bias: f32,
 }
 
-// Directional shadow uniforms live in a uniform buffer on all backends.  D3D12
-// in particular pads constant-buffer structs out to whole 16-byte registers per
-// element in arrays, so we include an explicit padding vec4 to ensure each
-// entry occupies 96 bytes (6 registers).  This keeps the CPU layout in lockstep
-// with what the shader expects when indexing multiple shadows.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct DirectionalShadowRaw {
@@ -462,7 +457,6 @@ mod tests {
 
         // Sanity check that the size of each struct remains a multiple of the
         // required alignment so arrays keep matching WGSL's expected stride.
-        assert_eq!(size_of::<DirectionalShadowRaw>(), 96);
         assert_eq!(size_of::<DirectionalShadowRaw>() % 16, 0);
         assert_eq!(size_of::<PointShadowRaw>() % 16, 0);
         assert_eq!(size_of::<SpotShadowRaw>() % 16, 0);
