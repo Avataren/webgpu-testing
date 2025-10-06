@@ -239,9 +239,9 @@ impl Renderer {
                     resolve_target: Some(&view), // Resolve to surface
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.07,
-                            b: 0.10,
+                            r: 0.231,
+                            g: 0.269,
+                            b: 0.338,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,

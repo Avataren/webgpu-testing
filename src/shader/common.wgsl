@@ -650,7 +650,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
-    let ambient = vec3<f32>(0.003) * base_color.rgb * occlusion;
+    let ambient = vec3<f32>(0.01) * base_color.rgb * occlusion;
     
     var color = ambient + Lo + emissive;
     color = color / (color + vec3<f32>(1.0));

@@ -584,32 +584,34 @@ fn load_gltf_scene(ctx: &mut StartupContext<'_>, path: &'static str, scale: f32)
 
     match SceneLoader::load_gltf(path, scene, renderer, scale) {
         Ok(_) => {
-            let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
-            let sun2_direction = Vec3::new(0.3, -1.0, -0.7).normalize();
-            let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
-            let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
+            scene.add_default_lighting();
 
-            scene.world.spawn((
-                Name::new("Shadow Test Sun"),
-                TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
-                DirectionalLight {
-                    color: Vec3::splat(1.0),
-                    intensity: 3.0,
-                },
-                CanCastShadow(true),
-            ));
+            // let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
+            // let sun2_direction = Vec3::new(0.3, -1.0, -0.7).normalize();
+            // let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
+            // let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
 
-            scene.world.spawn((
-                Name::new("Shadow Test Sun 2"),
-                TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
-                DirectionalLight {
-                    color: Vec3::splat(1.0),
-                    intensity: 3.0,
-                },
-                CanCastShadow(true),
-            ));
+            // scene.world.spawn((
+            //     Name::new("Shadow Test Sun"),
+            //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
+            //     DirectionalLight {
+            //         color: Vec3::splat(1.0),
+            //         intensity: 3.0,
+            //     },
+            //     CanCastShadow(true),
+            // ));
 
-            renderer.update_texture_bind_group(&scene.assets);
+            // scene.world.spawn((
+            //     Name::new("Shadow Test Sun 2"),
+            //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
+            //     DirectionalLight {
+            //         color: Vec3::splat(1.0),
+            //         intensity: 3.0,
+            //     },
+            //     CanCastShadow(true),
+            // ));
+
+            //renderer.update_texture_bind_group(&scene.assets);
             info!("glTF loaded: {} entities", scene.world.len());
         }
         Err(err) => {
