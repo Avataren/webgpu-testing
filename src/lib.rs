@@ -67,9 +67,3 @@ pub fn run_with_app(app: App) -> Result<(), JsValue> {
 
     Ok(())
 }
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
-    run(AppBuilder::default())
-}
