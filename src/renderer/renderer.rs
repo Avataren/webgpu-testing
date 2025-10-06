@@ -1234,12 +1234,12 @@ impl ShadowResources {
 
             for face in 0..POINT_SHADOW_FACE_COUNT {
                 let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
-                log::info!(
-                    "  Face {} - copying from staging offset {}, layer {}",
-                    face,
-                    point_staging_offset,
-                    layer_index
-                );
+                // log::info!(
+                //     "  Face {} - copying from staging offset {}, layer {}",
+                //     face,
+                //     point_staging_offset,
+                //     layer_index
+                // );
 
                 encoder.copy_buffer_to_buffer(
                     &self.staging_buffer,
