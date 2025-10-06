@@ -1,18 +1,19 @@
 // renderer/renderer.rs
-use crate::asset::Assets;
+use crate::asset::{Assets, Handle, Mesh};
+use crate::renderer::batch::InstanceData;
 use crate::renderer::lights::{
     LightsUniform, ShadowsUniform, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{
-    Batch as RenderBatch, CameraUniform, Depth, LightsData, Material, RenderBatcher, RenderPass,
-    Vertex,
+    CameraUniform, Depth, LightsData, Material, RenderBatcher, RenderPass, Vertex,
 };
+use crate::scene::components::DepthState;
 use crate::scene::Camera;
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use std::{collections::HashMap, mem, num::NonZeroU64};
+use std::{cmp::Ordering, collections::HashMap, mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
@@ -94,14 +95,15 @@ impl PipelineKey {
             alpha_blend,
         }
     }
+}
 
-    fn from_batch(batch: &RenderBatch) -> Self {
-        Self {
-            depth_test: batch.depth_state.depth_test,
-            depth_write: batch.depth_state.depth_write,
-            alpha_blend: matches!(batch.pass, RenderPass::Transparent),
-        }
-    }
+#[derive(Debug, Clone)]
+struct OrderedBatch {
+    mesh: Handle<Mesh>,
+    pass: RenderPass,
+    depth_state: DepthState,
+    instances: Vec<InstanceData>,
+    alpha_blend: bool,
 }
 
 struct DynamicObjectsBuffer {
@@ -189,6 +191,76 @@ impl Renderer {
         self.camera_up
     }
 
+    fn prepare_batches(&self, batcher: &RenderBatcher) -> Vec<OrderedBatch> {
+        let mut opaque = Vec::new();
+        let mut transparent = Vec::new();
+        let mut overlay = Vec::new();
+        let camera_pos = self.camera_position;
+
+        for batch in batcher.iter() {
+            let mut instances: Vec<InstanceData> = batch.instances.to_vec();
+
+            if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
+                instances.sort_by(|a, b| {
+                    let da = (a.transform.translation - camera_pos).length_squared();
+                    let db = (b.transform.translation - camera_pos).length_squared();
+                    db.partial_cmp(&da).unwrap_or(Ordering::Equal)
+                });
+            }
+
+            let alpha_blend = matches!(batch.pass, RenderPass::Transparent)
+                || instances
+                    .iter()
+                    .any(|inst| inst.material.requires_separate_pass());
+
+            let ordered = OrderedBatch {
+                mesh: batch.mesh,
+                pass: batch.pass,
+                depth_state: batch.depth_state,
+                instances,
+                alpha_blend,
+            };
+
+            match ordered.pass {
+                RenderPass::Opaque => opaque.push(ordered),
+                RenderPass::Transparent => transparent.push(ordered),
+                RenderPass::Overlay => overlay.push(ordered),
+            }
+        }
+
+        transparent.sort_by(|a, b| {
+            let da = a
+                .instances
+                .iter()
+                .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+                .fold(0.0, f32::max);
+            let db = b
+                .instances
+                .iter()
+                .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+                .fold(0.0, f32::max);
+            db.partial_cmp(&da).unwrap_or(Ordering::Equal)
+        });
+
+        overlay.sort_by(|a, b| {
+            let da = a
+                .instances
+                .iter()
+                .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+                .fold(0.0, f32::max);
+            let db = b
+                .instances
+                .iter()
+                .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+                .fold(0.0, f32::max);
+            db.partial_cmp(&da).unwrap_or(Ordering::Equal)
+        });
+
+        opaque.extend(transparent);
+        opaque.extend(overlay);
+        opaque
+    }
+
     pub fn set_lights(&mut self, lights: &LightsData) {
         self.lights_buffer.update(&self.context.queue, lights);
     }
@@ -219,13 +291,16 @@ impl Renderer {
                     label: Some("Encoder"),
                 });
 
-        self.objects_buffer.update(&self.context, batcher)?;
+        let ordered_batches = self.prepare_batches(batcher);
+
+        self.objects_buffer
+            .update(&self.context, &ordered_batches)?;
 
         self.shadows.render(
             &self.context,
             &mut encoder,
             assets,
-            batcher,
+            &ordered_batches,
             lights,
             &self.objects_buffer,
         );
@@ -262,14 +337,18 @@ impl Renderer {
             match &mut self.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
                     let mut object_offset = 0u32;
-                    for batch in batcher.iter() {
+                    for batch in &ordered_batches {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
                             object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
-                        let pipeline_key = PipelineKey::from_batch(&batch);
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                        );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
                         rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
@@ -291,21 +370,25 @@ impl Renderer {
                 }
                 TextureBindingModel::Classic(classic) => {
                     let mut object_offset = 0u32;
-                    for batch in batcher.iter() {
+                    for batch in &ordered_batches {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
                             object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
-                        let pipeline_key = PipelineKey::from_batch(&batch);
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                        );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
                         rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
                         rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
                         rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
 
-                        let instances = batch.instances;
+                        let instances = &batch.instances;
                         let instance_count = instances.len() as u32;
                         rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                         rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
@@ -976,11 +1059,11 @@ impl ShadowResources {
         context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
         assets: &Assets,
-        batcher: &RenderBatcher,
+        batches: &[OrderedBatch],
         lights: &LightsData,
         objects: &DynamicObjectsBuffer,
     ) {
-        if batcher.instance_count() == 0 {
+        if batches.is_empty() {
             return;
         }
 
@@ -1094,7 +1177,7 @@ impl ShadowResources {
                 encoder,
                 self.directional.layer_view(index),
                 assets,
-                batcher,
+                batches,
                 objects,
             );
 
@@ -1125,7 +1208,7 @@ impl ShadowResources {
                 encoder,
                 self.spot.layer_view(index),
                 assets,
-                batcher,
+                batches,
                 objects,
             );
 
@@ -1169,7 +1252,7 @@ impl ShadowResources {
                     encoder,
                     self.point.layer_view(layer_index),
                     assets,
-                    batcher,
+                    batches,
                     objects,
                 );
 
@@ -1184,10 +1267,10 @@ impl ShadowResources {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         assets: &Assets,
-        batcher: &RenderBatcher,
+        batches: &[OrderedBatch],
         objects: &DynamicObjectsBuffer,
     ) {
-        if batcher.instance_count() == 0 {
+        if batches.is_empty() {
             return;
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1211,7 +1294,11 @@ impl ShadowResources {
 
         let mut object_offset = 0u32;
 
-        for batch in batcher.iter() {
+        for batch in batches {
+            if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
+                object_offset += batch.instances.len() as u32;
+                continue;
+            }
             let Some(mesh) = assets.meshes.get(batch.mesh) else {
                 object_offset += batch.instances.len() as u32;
                 continue;
@@ -1277,10 +1364,10 @@ impl DynamicObjectsBuffer {
     fn update(
         &mut self,
         context: &RenderContext,
-        batcher: &RenderBatcher,
+        batches: &[OrderedBatch],
     ) -> Result<(), wgpu::SurfaceError> {
         self.scratch.clear();
-        for batch in batcher.iter() {
+        for batch in batches {
             self.scratch.extend(batch.instances.iter().map(|inst| {
                 crate::renderer::ObjectData::from_material(inst.transform.matrix(), &inst.material)
             }));

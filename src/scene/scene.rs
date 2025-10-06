@@ -150,12 +150,15 @@ impl Scene {
             }
 
             let depth_state = depth_state.copied().unwrap_or_default();
+            let force_overlay =
+                billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
 
             batcher.add(RenderObject {
                 mesh: mesh.0,
                 material: material.0,
                 transform,
                 depth_state,
+                force_overlay,
             });
         }
 
@@ -359,7 +362,7 @@ impl Scene {
 
         let billboard_rotation = Quat::from_mat3(&rotation_matrix);
         result.translation = translation;
-        result.rotation = billboard_rotation * transform.rotation;
+        result.rotation = billboard_rotation;
         result
     }
 
