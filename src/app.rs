@@ -22,6 +22,7 @@ type WindowHandle = Window;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
+use crate::scene::components::{CanCastShadow, DirectionalLight, PointLight};
 use crate::scene::{
     Camera, Children, EntityBuilder, MaterialComponent, MeshComponent, Name, Parent,
     RotateAnimation, Scene, SceneLoader, Transform, TransformComponent, Visible,
@@ -36,6 +37,7 @@ pub enum SceneType {
     Animated,
     MaterialShowcase,
     HierarchyTest,
+    ShadowTest,
     PbrTest,
     FromGltf,
 }
@@ -150,6 +152,7 @@ impl App {
             SceneType::Simple => self.create_simple_scene(renderer),
             SceneType::Grid => self.create_grid_scene(renderer, 5),
             SceneType::HierarchyTest => self.create_hierarchy_test_scene(renderer),
+            SceneType::ShadowTest => self.create_shadow_test_scene(renderer),
             SceneType::FromGltf => {
                 if let Some(path) = self.gltf_path.clone() {
                     self.load_gltf_scene(&path, renderer);
@@ -420,6 +423,91 @@ impl App {
         log::info!("Simple scene: {} entities", self.scene.world.len());
     }
 
+    fn create_shadow_test_scene(&mut self, renderer: &mut Renderer) {
+        log::info!("Creating shadow map test scene...");
+
+        let (verts, idx) = crate::renderer::cube_mesh();
+        let cube_mesh = renderer.create_mesh(&verts, &idx);
+        let cube_handle = self.scene.assets.meshes.insert(cube_mesh);
+
+        let checker_texture = Texture::checkerboard(
+            renderer.get_device(),
+            renderer.get_queue(),
+            512,
+            32,
+            [200, 200, 200, 255],
+            [40, 40, 40, 255],
+            Some("Shadow Test Floor"),
+        );
+        let checker_handle = self.scene.assets.textures.insert(checker_texture);
+        renderer.update_texture_bind_group(&self.scene.assets);
+
+        let floor_material = Material::pbr()
+            .with_base_color_texture(checker_handle.index() as u32)
+            .with_roughness(1.0);
+
+        self.scene.world.spawn((
+            Name::new("Shadow Test Floor"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, -0.05, 0.0),
+                Quat::IDENTITY,
+                Vec3::new(25.0, 0.1, 25.0),
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(floor_material),
+            Visible(true),
+        ));
+
+        let cube_material = Material::new([220, 220, 230, 255])
+            .with_metallic(0.0)
+            .with_roughness(0.3);
+
+        self.scene.world.spawn((
+            Name::new("Shadow Test Cube"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(0.0, 1.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::splat(1.5),
+            )),
+            MeshComponent(cube_handle),
+            MaterialComponent(cube_material),
+            Visible(true),
+        ));
+
+        let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
+        let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
+
+        self.scene.world.spawn((
+            Name::new("Shadow Test Sun"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
+            DirectionalLight {
+                color: Vec3::splat(1.0),
+                intensity: 6.0,
+            },
+            CanCastShadow(true),
+        ));
+
+        self.scene.world.spawn((
+            Name::new("Shadow Test Fill"),
+            TransformComponent(Transform::from_trs(
+                Vec3::new(3.0, 4.0, 2.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            )),
+            PointLight {
+                color: Vec3::new(0.9, 0.95, 1.0),
+                intensity: 2.0,
+                range: 20.0,
+            },
+            CanCastShadow(false),
+        ));
+
+        log::info!(
+            "Shadow test scene created: {} entities",
+            self.scene.world.len()
+        );
+    }
+
     fn create_grid_scene(&mut self, renderer: &mut Renderer, size: i32) {
         log::info!("Creating grid scene...");
 
@@ -652,6 +740,7 @@ impl App {
             SceneType::Grid => (15.0, 8.0),
             SceneType::Animated => (12.0, 6.0),
             SceneType::PbrTest => (8.0, 2.0),
+            SceneType::ShadowTest => (12.0, 6.0),
             _ => (8.0, 4.0),
         };
 
