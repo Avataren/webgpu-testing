@@ -436,7 +436,7 @@ impl Scene {
 
         DirectionalShadowData {
             view_proj: projection * view,
-            bias: 0.0001,
+            bias: 0.001,
         }
     }
 
@@ -472,7 +472,7 @@ impl Scene {
 
     //     DirectionalShadowData {
     //         view_proj: projection * view,
-    //         bias: 0.0001,
+    //         bias: 0.001,
     //     }
     // }
 
@@ -552,7 +552,7 @@ impl Scene {
 
         SpotShadowData {
             view_proj: projection * view,
-            bias: 0.0001,
+            bias: 0.001,
         }
     }
 

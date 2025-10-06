@@ -90,7 +90,7 @@ fn orbit_camera(
     height: f32,
 ) -> Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static> {
     Box::new(move |ctx: &mut UpdateContext<'_>| {
-        let t = ctx.scene.time() as f32;
+        let t = ctx.scene.time() as f32 * 0.25;
         ctx.camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
         ctx.camera.target = Vec3::ZERO;
         ctx.camera.up = Vec3::Y;
