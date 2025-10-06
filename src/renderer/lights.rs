@@ -103,7 +103,15 @@ impl LightsData {
     }
 }
 
-#[repr(C)]
+// All raw light/shadow structs are uploaded directly to GPU buffers.  WebGPU
+// follows WGSL's std140/std430 layout rules which require 16 byte alignment for
+// anything containing vectors/matrices.  The default C representation would only
+// guarantee 4 byte alignment for arrays of `f32`, which in turn caused
+// subsequent array elements to become misaligned once more than one entry was
+// present.  Explicitly enforcing 16 byte alignment on these structs keeps the
+// CPU layout in lock-step with the shader expectations.
+
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct DirectionalLightRaw {
     pub direction: [f32; 4],
@@ -125,7 +133,7 @@ pub struct DirectionalShadowData {
     pub bias: f32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct DirectionalShadowRaw {
     pub view_proj: [[f32; 4]; 4],
@@ -152,7 +160,7 @@ impl DirectionalShadowRaw {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PointLightRaw {
     pub position_range: [f32; 4],
@@ -176,7 +184,7 @@ pub struct PointShadowData {
     pub far: f32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct PointShadowRaw {
     pub view_proj: [[[f32; 4]; 4]; 6],
@@ -203,7 +211,7 @@ impl PointShadowRaw {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct SpotLightRaw {
     pub position_range: [f32; 4],
@@ -244,7 +252,7 @@ pub struct SpotShadowData {
     pub bias: f32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct SpotShadowRaw {
     pub view_proj: [[f32; 4]; 4],
@@ -271,7 +279,7 @@ impl SpotShadowRaw {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct LightsUniform {
     pub counts: [u32; 4],
@@ -321,7 +329,7 @@ impl LightsUniform {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct ShadowsUniform {
     pub counts: [u32; 4],
@@ -429,5 +437,27 @@ mod tests {
         assert_eq!(shadows.spots[0].params[1], 0.005);
         let stored_view = Mat4::from_cols_array_2d(&shadows.spots[0].view_proj);
         assert!(stored_view.abs_diff_eq(proj * view, 1e-6));
+    }
+
+    #[test]
+    fn gpu_structs_are_16_byte_aligned() {
+        use std::mem::{align_of, size_of};
+
+        assert_eq!(align_of::<DirectionalLightRaw>(), 16);
+        assert_eq!(align_of::<PointLightRaw>(), 16);
+        assert_eq!(align_of::<SpotLightRaw>(), 16);
+        assert_eq!(align_of::<DirectionalShadowRaw>(), 16);
+        assert_eq!(align_of::<PointShadowRaw>(), 16);
+        assert_eq!(align_of::<SpotShadowRaw>(), 16);
+        assert_eq!(align_of::<LightsUniform>(), 16);
+        assert_eq!(align_of::<ShadowsUniform>(), 16);
+
+        // Sanity check that the size of each struct remains a multiple of the
+        // required alignment so arrays keep matching WGSL's expected stride.
+        assert_eq!(size_of::<DirectionalShadowRaw>() % 16, 0);
+        assert_eq!(size_of::<PointShadowRaw>() % 16, 0);
+        assert_eq!(size_of::<SpotShadowRaw>() % 16, 0);
+        assert_eq!(size_of::<LightsUniform>() % 16, 0);
+        assert_eq!(size_of::<ShadowsUniform>() % 16, 0);
     }
 }
