@@ -306,7 +306,7 @@ fn shadow_texel_size(texture: texture_depth_2d_array) -> vec2<f32> {
 
 fn sample_shadow_pcf(
     texture: texture_depth_2d_array,
-    sampler: sampler_comparison,
+    smp: sampler_comparison,
     coords: vec2<f32>,
     layer: i32,
     depth: f32,
@@ -318,7 +318,7 @@ fn sample_shadow_pcf(
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            result += textureSampleCompare(texture, sampler, coords + offset, layer, depth);
+            result += textureSampleCompare(texture, smp, coords + offset, layer, depth);
             samples = samples + 1.0;
         }
     }
