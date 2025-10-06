@@ -699,16 +699,16 @@ impl LightsBuffer {
         let shadow_data = ShadowsUniform::from_data(lights);
 
         // DEBUG: Check what we're uploading
-        if shadow_data.counts[0] > 0 {
-            log::info!(
-                "Uploading shadow uniform - first dir shadow enabled: {}",
-                shadow_data.directionals[0].params[0]
-            );
-            log::info!(
-                "  Matrix first row: {:?}",
-                shadow_data.directionals[0].view_proj[0]
-            );
-        }
+        // if shadow_data.counts[0] > 0 {
+        //     log::info!(
+        //         "Uploading shadow uniform - first dir shadow enabled: {}",
+        //         shadow_data.directionals[0].params[0]
+        //     );
+        //     log::info!(
+        //         "  Matrix first row: {:?}",
+        //         shadow_data.directionals[0].view_proj[0]
+        //     );
+        // }
 
         queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
     }

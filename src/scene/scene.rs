@@ -192,9 +192,9 @@ impl Scene {
 
             let shadow = shadow_flag.filter(|flag| flag.0).map(|_| {
                 let s = Self::build_directional_shadow(camera_pos, camera_target, transform);
-                log::info!("Built shadow matrix for light direction {:?}", direction);
-                log::info!("  First COLUMN: {:?}", s.view_proj.col(0)); // Changed to col
-                log::info!("  As array [0]: {:?}", s.view_proj.to_cols_array_2d()[0]); // Add this
+                // log::info!("Built shadow matrix for light direction {:?}", direction);
+                // log::info!("  First COLUMN: {:?}", s.view_proj.col(0)); // Changed to col
+                // log::info!("  As array [0]: {:?}", s.view_proj.to_cols_array_2d()[0]);
                 s
             });
 
