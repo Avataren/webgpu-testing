@@ -735,7 +735,6 @@ struct PostProcessUniform {
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
-    _padding: [f32; 2],
 }
 
 impl PostProcessUniform {
@@ -756,7 +755,6 @@ impl PostProcessUniform {
             intensity_power: [intensity, power],
             noise_scale,
             near_far: [near, far],
-            _padding: [0.0, 0.0],
         }
     }
 }
