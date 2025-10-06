@@ -296,6 +296,39 @@ fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 //     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z);
 // }
 
+fn shadow_texel_size(texture: texture_depth_2d_array) -> vec2<f32> {
+    let dims = textureDimensions(texture, 0u);
+    return vec2<f32>(
+        select(0.0, 1.0 / f32(dims.x), dims.x != 0u),
+        select(0.0, 1.0 / f32(dims.y), dims.y != 0u),
+    );
+}
+
+fn sample_shadow_pcf(
+    texture: texture_depth_2d_array,
+    sampler: sampler_comparison,
+    coords: vec2<f32>,
+    layer: i32,
+    depth: f32,
+    texel_size: vec2<f32>,
+) -> f32 {
+    var result = 0.0;
+    var samples = 0.0;
+
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            result += textureSampleCompare(texture, sampler, coords + offset, layer, depth);
+            samples = samples + 1.0;
+        }
+    }
+
+    if (samples > 0.0) {
+        return result / samples;
+    }
+    return result;
+}
+
 fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.directionals[index];
     if (info.params.x == 0.0) {
@@ -311,12 +344,14 @@ fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     }
 
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
-    return textureSampleCompare(
+    let texel = shadow_texel_size(directional_shadow_maps);
+    return sample_shadow_pcf(
         directional_shadow_maps,
         directional_shadow_sampler,
         proj.xy,
         i32(index),
         depth,
+        texel,
     );
 }
 
@@ -335,12 +370,14 @@ fn sample_spot_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     }
 
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
-    return textureSampleCompare(
+    let texel = shadow_texel_size(spot_shadow_maps);
+    return sample_shadow_pcf(
         spot_shadow_maps,
         spot_shadow_sampler,
         proj.xy,
         i32(index),
         depth,
+        texel,
     );
 }
 
@@ -399,12 +436,14 @@ fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
 
     let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
     let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
-    return textureSampleCompare(
+    let texel = shadow_texel_size(point_shadow_maps);
+    return sample_shadow_pcf(
         point_shadow_maps,
         point_shadow_sampler,
         proj.xy,
         layer,
         depth,
+        texel,
     );
 }
 
