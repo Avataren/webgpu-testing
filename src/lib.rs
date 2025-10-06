@@ -5,40 +5,13 @@ pub mod renderer;
 pub mod scene;
 pub mod time;
 
-use app::{App, SceneType};
+pub use app::{
+    App, AppBuilder, Plugin, StartupContext, StartupSystem, UpdateContext, UpdateSystem,
+};
+
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
-
-fn create_app() -> App {
-    // Central place to select which demo scene should run by default
-
-    // Simple colored cubes:
-    //App::new(SceneType::Simple)
-
-    // Hierarchy test (parent-child transforms):
-    //App::new(SceneType::HierarchyTest)
-
-    // Shadow casting test scene:
-    //App::new(SceneType::ShadowTest)
-
-    // PBR material test (5x5 grid of spheres with varying metallic/roughness):
-    //App::new(SceneType::PbrTest)
-
-    // Load a glTF file:
-
-    //App::with_gltf("web/assets/damagedhelmet/DamagedHelmet.gltf", 1.0)
-    //App::with_gltf("web/assets/chessboard/ABeautifulGame.gltf", 10.0)
-
-    App::new(SceneType::ShadowTest)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn init_logging() {
-    // Set panic hook to get better error messages
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
-}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn init_logging() {
@@ -47,15 +20,24 @@ fn init_logging() {
         .try_init();
 }
 
+#[cfg(target_arch = "wasm32")]
+fn init_logging() {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run() -> Result<(), winit::error::EventLoopError> {
+pub fn run(builder: AppBuilder) -> Result<(), winit::error::EventLoopError> {
+    run_with_app(builder.build())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_with_app(mut app: App) -> Result<(), winit::error::EventLoopError> {
     init_logging();
 
-    log::info!("Starting wgpu hecs renderer - Hierarchy Test Mode");
+    log::info!("Starting wgpu hecs renderer");
 
     let event_loop = EventLoop::new()?;
-    let mut app = create_app();
-
     let result = event_loop.run_app(&mut app);
 
     if let Err(ref err) = result {
@@ -68,8 +50,12 @@ pub fn run() -> Result<(), winit::error::EventLoopError> {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn run() -> Result<(), JsValue> {
+pub fn run(builder: AppBuilder) -> Result<(), JsValue> {
+    run_with_app(builder.build())
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn run_with_app(app: App) -> Result<(), JsValue> {
     use wasm_bindgen::JsValue;
     use winit::platform::web::EventLoopExtWebSys;
 
@@ -77,9 +63,13 @@ pub fn run() -> Result<(), JsValue> {
     log::info!("Starting wgpu hecs renderer - WebAssembly");
 
     let event_loop = EventLoop::new().map_err(|err| JsValue::from_str(&err.to_string()))?;
-    let app = create_app();
-
     event_loop.spawn_app(app);
 
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn start() -> Result<(), JsValue> {
+    run(AppBuilder::default())
 }
