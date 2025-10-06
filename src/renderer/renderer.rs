@@ -4,7 +4,10 @@ use crate::renderer::lights::{
     LightsUniform, ShadowsUniform, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{CameraUniform, Depth, LightsData, Material, RenderBatcher, Vertex};
+use crate::renderer::{
+    Batch as RenderBatch, CameraUniform, Depth, LightsData, Material, RenderBatcher, RenderPass,
+    Vertex,
+};
 use crate::scene::Camera;
 
 use bytemuck::{Pod, Zeroable};
@@ -22,12 +25,14 @@ const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as
 pub struct Renderer {
     context: RenderContext,
     pipeline: RenderPipeline,
+    texture_binder: TextureBindingModel,
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
     shadows: ShadowResources,
     camera_position: Vec3,
     camera_target: Vec3,
+    camera_up: Vec3,
 }
 
 struct MsaaTexture {
@@ -71,8 +76,32 @@ struct RenderContext {
 }
 
 struct RenderPipeline {
-    pipeline: wgpu::RenderPipeline,
-    texture_binder: TextureBindingModel,
+    pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    depth_test: bool,
+    depth_write: bool,
+    alpha_blend: bool,
+}
+
+impl PipelineKey {
+    fn new(depth_test: bool, depth_write: bool, alpha_blend: bool) -> Self {
+        Self {
+            depth_test,
+            depth_write,
+            alpha_blend,
+        }
+    }
+
+    fn from_batch(batch: &RenderBatch) -> Self {
+        Self {
+            depth_test: batch.depth_state.depth_test,
+            depth_write: batch.depth_state.depth_write,
+            alpha_blend: matches!(batch.pass, RenderPass::Transparent),
+        }
+    }
 }
 
 struct DynamicObjectsBuffer {
@@ -104,18 +133,20 @@ impl Renderer {
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
         let shadows = ShadowResources::new(&context.device, &objects_buffer);
         let lights_buffer = LightsBuffer::new(&context.device, &shadows);
-        let pipeline =
+        let (pipeline, texture_binder) =
             RenderPipeline::new(&context, &camera_buffer, &objects_buffer, &lights_buffer);
 
         Self {
             context,
             pipeline,
+            texture_binder,
             objects_buffer,
             camera_buffer,
             lights_buffer,
             shadows,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
+            camera_up: Vec3::Y,
         }
     }
 
@@ -138,6 +169,7 @@ impl Renderer {
     pub fn set_camera(&mut self, camera: &Camera, aspect: f32) {
         self.camera_position = camera.position(); // Store it
         self.camera_target = camera.target;
+        self.camera_up = camera.up;
         let vp = camera.view_proj(aspect);
         let uni = CameraUniform::from_matrix(vp, camera.position());
         self.context
@@ -153,6 +185,10 @@ impl Renderer {
         self.camera_target
     }
 
+    pub fn camera_up(&self) -> Vec3 {
+        self.camera_up
+    }
+
     pub fn set_lights(&mut self, lights: &LightsData) {
         self.lights_buffer.update(&self.context.queue, lights);
     }
@@ -162,9 +198,7 @@ impl Renderer {
     }
 
     pub fn update_texture_bind_group(&mut self, assets: &Assets) {
-        self.pipeline
-            .texture_binder
-            .update(&self.context.device, assets);
+        self.texture_binder.update(&self.context.device, assets);
     }
 
     pub fn render(
@@ -225,24 +259,25 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            rpass.set_pipeline(&self.pipeline.pipeline);
-            rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
-            rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
-            rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
-
-            match &mut self.pipeline.texture_binder {
+            match &mut self.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
-                    rpass.set_bind_group(3, bindless.global_bind_group(), &[]);
-
                     let mut object_offset = 0u32;
-                    for (mesh_handle, instances) in batcher.iter() {
-                        let Some(mesh) = assets.meshes.get(mesh_handle) else {
+                    for batch in batcher.iter() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
-                            object_offset += instances.len() as u32;
+                            object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
-                        let instance_count = instances.len() as u32;
+                        let pipeline_key = PipelineKey::from_batch(&batch);
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+                        rpass.set_bind_group(3, bindless.global_bind_group(), &[]);
+
+                        let instance_count = batch.instances.len() as u32;
                         rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                         rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
                         rpass.draw_indexed(
@@ -255,16 +290,22 @@ impl Renderer {
                     }
                 }
                 TextureBindingModel::Classic(classic) => {
-                    rpass.set_bind_group(3, classic.default_bind_group(), &[]);
-
                     let mut object_offset = 0u32;
-                    for (mesh_handle, instances) in batcher.iter() {
-                        let Some(mesh) = assets.meshes.get(mesh_handle) else {
+                    for batch in batcher.iter() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
-                            object_offset += instances.len() as u32;
+                            object_offset += batch.instances.len() as u32;
                             continue;
                         };
 
+                        let pipeline_key = PipelineKey::from_batch(&batch);
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+
+                        let instances = batch.instances;
                         let instance_count = instances.len() as u32;
                         rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                         rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
@@ -1009,13 +1050,13 @@ impl ShadowResources {
 
         let mut object_offset = 0u32;
 
-        for (mesh_handle, instances) in batcher.iter() {
-            let Some(mesh) = assets.meshes.get(mesh_handle) else {
-                object_offset += instances.len() as u32;
+        for batch in batcher.iter() {
+            let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                object_offset += batch.instances.len() as u32;
                 continue;
             };
 
-            let instance_count = instances.len() as u32;
+            let instance_count = batch.instances.len() as u32;
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
             pass.draw_indexed(
@@ -1078,8 +1119,8 @@ impl DynamicObjectsBuffer {
         batcher: &RenderBatcher,
     ) -> Result<(), wgpu::SurfaceError> {
         self.scratch.clear();
-        for (_, instances) in batcher.iter() {
-            self.scratch.extend(instances.iter().map(|inst| {
+        for batch in batcher.iter() {
+            self.scratch.extend(batch.instances.iter().map(|inst| {
                 crate::renderer::ObjectData::from_material(inst.transform.matrix(), &inst.material)
             }));
         }
@@ -1252,7 +1293,6 @@ struct TraditionalTextureBinder {
     sampler: wgpu::Sampler,
     _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
-    default_bind_group: wgpu::BindGroup,
     material_bind_groups: HashMap<Material, wgpu::BindGroup>,
 }
 
@@ -1285,15 +1325,11 @@ impl TraditionalTextureBinder {
         });
         let fallback_view = fallback_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let default_bind_group =
-            Self::create_bind_group(device, layout, &sampler, [&fallback_view; 5]);
-
         Self {
             layout: layout.clone(),
             sampler,
             _fallback_texture: fallback_texture,
             fallback_view,
-            default_bind_group,
             material_bind_groups: HashMap::new(),
         }
     }
@@ -1351,10 +1387,6 @@ impl TraditionalTextureBinder {
     fn update(&mut self, _device: &wgpu::Device, _assets: &Assets) {
         // When assets change we clear cached bind groups to force recreation with new views
         self.material_bind_groups.clear();
-    }
-
-    fn default_bind_group(&self) -> &wgpu::BindGroup {
-        &self.default_bind_group
     }
 
     fn bind_group_for_material(
@@ -1433,7 +1465,7 @@ impl RenderPipeline {
         camera: &CameraBuffer,
         objects: &DynamicObjectsBuffer,
         lights: &LightsBuffer,
-    ) -> Self {
+    ) -> (Self, TextureBindingModel) {
         let (texture_bind_layout, texture_binder, shader_source) = if context
             .supports_bindless_textures
         {
@@ -1573,23 +1605,73 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
-        let pipeline = context
+        let mut pipelines = HashMap::new();
+        for &depth_test in &[false, true] {
+            for &depth_write in &[false, true] {
+                for &alpha_blend in &[false, true] {
+                    let key = PipelineKey::new(depth_test, depth_write, alpha_blend);
+                    let pipeline = Self::create_pipeline(
+                        context,
+                        &pipeline_layout,
+                        &shader,
+                        depth_test,
+                        depth_write,
+                        alpha_blend,
+                    );
+                    pipelines.insert(key, pipeline);
+                }
+            }
+        }
+
+        (Self { pipelines }, texture_binder)
+    }
+
+    fn shader_source(bindless: bool) -> String {
+        let bindings = if bindless {
+            include_str!("../shader/bindings_bindless.wgsl")
+        } else {
+            include_str!("../shader/bindings_traditional.wgsl")
+        };
+        format!("{bindings}\n{}", include_str!("../shader/common.wgsl"))
+    }
+
+    fn create_pipeline(
+        context: &RenderContext,
+        pipeline_layout: &wgpu::PipelineLayout,
+        shader: &wgpu::ShaderModule,
+        depth_test: bool,
+        depth_write: bool,
+        alpha_blend: bool,
+    ) -> wgpu::RenderPipeline {
+        let depth_compare = if depth_test {
+            wgpu::CompareFunction::LessEqual
+        } else {
+            wgpu::CompareFunction::Always
+        };
+
+        let blend_state = if alpha_blend {
+            Some(wgpu::BlendState::ALPHA_BLENDING)
+        } else {
+            Some(wgpu::BlendState::REPLACE)
+        };
+
+        context
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Pipeline"),
-                layout: Some(&pipeline_layout),
+                layout: Some(pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some("vs_main"),
                     buffers: &[Vertex::layout()],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: context.config.format,
-                        blend: Some(wgpu::BlendState::REPLACE),
+                        blend: blend_state,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                     compilation_options: Default::default(),
@@ -1603,8 +1685,8 @@ impl RenderPipeline {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: context.depth.format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_write_enabled: depth_write,
+                    depth_compare,
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
@@ -1615,20 +1697,10 @@ impl RenderPipeline {
                 },
                 multiview: None,
                 cache: None,
-            });
-
-        Self {
-            pipeline,
-            texture_binder,
-        }
+            })
     }
 
-    fn shader_source(bindless: bool) -> String {
-        let bindings = if bindless {
-            include_str!("../shader/bindings_bindless.wgsl")
-        } else {
-            include_str!("../shader/bindings_traditional.wgsl")
-        };
-        format!("{bindings}\n{}", include_str!("../shader/common.wgsl"))
+    fn pipeline(&self, key: PipelineKey) -> &wgpu::RenderPipeline {
+        self.pipelines.get(&key).expect("missing pipeline variant")
     }
 }

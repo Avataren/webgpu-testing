@@ -7,7 +7,7 @@ use crate::renderer::{
 };
 use crate::scene::Transform;
 use crate::time::Instant;
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use hecs::World;
 
 pub struct Scene {
@@ -82,7 +82,19 @@ impl Scene {
         let mut local_transform_count = 0;
 
         // Query for all visible renderable entities
-        for (entity, (mesh, material, visible, world_transform, local_transform, name)) in self
+        for (
+            entity,
+            (
+                mesh,
+                material,
+                visible,
+                world_transform,
+                local_transform,
+                name,
+                billboard,
+                depth_state,
+            ),
+        ) in self
             .world
             .query::<(
                 &MeshComponent,
@@ -91,6 +103,8 @@ impl Scene {
                 Option<&WorldTransform>,
                 Option<&TransformComponent>,
                 Option<&Name>,
+                Option<&Billboard>,
+                Option<&DepthState>,
             )>()
             .iter()
         {
@@ -100,7 +114,7 @@ impl Scene {
 
             // CRITICAL FIX: Always prefer WorldTransform if it exists
             // WorldTransform is the authoritative transform after propagation
-            let transform = if let Some(world_trans) = world_transform {
+            let mut transform = if let Some(world_trans) = world_transform {
                 // Entity is part of a hierarchy or has been processed
                 world_transform_count += 1;
                 world_trans.0
@@ -125,10 +139,23 @@ impl Scene {
                 Transform::IDENTITY
             };
 
+            if let Some(billboard) = billboard {
+                transform = Self::apply_billboard_transform(
+                    transform,
+                    *billboard,
+                    renderer.camera_position(),
+                    renderer.camera_target(),
+                    renderer.camera_up(),
+                );
+            }
+
+            let depth_state = depth_state.copied().unwrap_or_default();
+
             batcher.add(RenderObject {
                 mesh: mesh.0,
                 material: material.0,
                 transform,
+                depth_state,
             });
         }
 
@@ -251,6 +278,96 @@ impl Scene {
 
         if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
             log::error!("Render error: {:?}", e);
+        }
+    }
+
+    fn apply_billboard_transform(
+        transform: Transform,
+        billboard: Billboard,
+        camera_position: Vec3,
+        camera_target: Vec3,
+        camera_up: Vec3,
+    ) -> Transform {
+        let mut result = transform;
+
+        let translation = match billboard.space {
+            BillboardSpace::World => transform.translation,
+            BillboardSpace::View { offset } => {
+                let forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
+                let up_dir = Self::safe_normalize(camera_up, Vec3::Y);
+                let mut right = forward.cross(up_dir);
+                if right.length_squared() < 1e-6 {
+                    right = Vec3::X;
+                } else {
+                    right = right.normalize();
+                }
+                let mut corrected_up = right.cross(forward);
+                if corrected_up.length_squared() < 1e-6 {
+                    corrected_up = up_dir;
+                } else {
+                    corrected_up = corrected_up.normalize();
+                }
+
+                camera_position + right * offset.x + corrected_up * offset.y + forward * offset.z
+            }
+        };
+
+        let rotation_matrix = match billboard.orientation {
+            BillboardOrientation::FaceCamera => {
+                let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
+                let mut up_dir = Self::safe_normalize(camera_up, Vec3::Y);
+                let mut right = up_dir.cross(forward);
+                if right.length_squared() < 1e-6 {
+                    right = Vec3::X;
+                } else {
+                    right = right.normalize();
+                }
+                up_dir = forward.cross(right);
+                if up_dir.length_squared() < 1e-6 {
+                    up_dir = Vec3::Y;
+                } else {
+                    up_dir = up_dir.normalize();
+                }
+                Mat3::from_cols(right, up_dir, forward)
+            }
+            BillboardOrientation::FaceCameraYAxis => {
+                let mut forward = Vec3::new(
+                    camera_position.x - translation.x,
+                    0.0,
+                    camera_position.z - translation.z,
+                );
+                if forward.length_squared() < 1e-6 {
+                    forward = Vec3::Z;
+                } else {
+                    forward = forward.normalize();
+                }
+                let mut right = Vec3::Y.cross(forward);
+                if right.length_squared() < 1e-6 {
+                    right = Vec3::X;
+                } else {
+                    right = right.normalize();
+                }
+                let mut up_dir = forward.cross(right);
+                if up_dir.length_squared() < 1e-6 {
+                    up_dir = Vec3::Y;
+                } else {
+                    up_dir = up_dir.normalize();
+                }
+                Mat3::from_cols(right, up_dir, forward)
+            }
+        };
+
+        let billboard_rotation = Quat::from_mat3(&rotation_matrix);
+        result.translation = translation;
+        result.rotation = billboard_rotation * transform.rotation;
+        result
+    }
+
+    fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
+        if vec.length_squared() > 1e-6 {
+            vec.normalize()
+        } else {
+            fallback
         }
     }
 
