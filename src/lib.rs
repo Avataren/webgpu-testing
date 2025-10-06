@@ -10,8 +10,6 @@ pub use app::{
     App, AppBuilder, Plugin, StartupContext, StartupSystem, UpdateContext, UpdateSystem,
 };
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,10 +67,3 @@ pub fn run_with_app(app: App) -> Result<(), JsValue> {
     Ok(())
 }
 
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
-    let mut builder = crate::app::AppBuilder::new();
-    crate::demo_scenes::add_scene_to_app(&mut builder, crate::demo_scenes::ACTIVE_SCENE);
-    run(builder)
-}
