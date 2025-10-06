@@ -32,8 +32,7 @@ pub const ACTIVE_SCENE: DemoScene = DemoScene::Gltf {
     scale: 15.0,
 };
 
-pub fn build_app_for_scene(scene: DemoScene) -> AppBuilder {
-    let mut builder = AppBuilder::new();
+pub fn add_scene_to_app(builder: &mut AppBuilder, scene: DemoScene) -> &mut AppBuilder {
     builder.add_plugin(scene.plugin());
     builder
 }

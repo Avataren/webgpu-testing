@@ -72,7 +72,7 @@ pub fn run_with_app(app: App) -> Result<(), JsValue> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
-    run(crate::demo_scenes::build_app_for_scene(
-        crate::demo_scenes::ACTIVE_SCENE,
-    ))
+    let mut builder = crate::app::AppBuilder::new();
+    crate::demo_scenes::add_scene_to_app(&mut builder, crate::demo_scenes::ACTIVE_SCENE);
+    run(builder)
 }
