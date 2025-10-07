@@ -36,8 +36,15 @@ pub struct UpdateContext<'a> {
     pub dt: f64,
 }
 
+pub struct GpuUpdateContext<'a> {
+    pub scene: &'a mut Scene,
+    pub renderer: &'a mut Renderer,
+    pub dt: f64,
+}
+
 pub type StartupSystem = Box<dyn for<'a> FnMut(&mut StartupContext<'a>) + 'static>;
 pub type UpdateSystem = Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static>;
+pub type GpuUpdateSystem = Box<dyn for<'a> FnMut(&mut GpuUpdateContext<'a>) + 'static>;
 
 pub trait Plugin {
     fn build(&self, app: &mut AppBuilder);
@@ -46,6 +53,7 @@ pub trait Plugin {
 pub struct AppBuilder {
     startup_systems: Vec<StartupSystem>,
     update_systems: Vec<UpdateSystem>,
+    gpu_systems: Vec<GpuUpdateSystem>,
     auto_init_default_textures: bool,
     auto_add_default_lighting: bool,
     skip_initial_frames: Option<u32>,
@@ -57,6 +65,7 @@ impl Default for AppBuilder {
         Self {
             startup_systems: Vec::new(),
             update_systems: Vec::new(),
+            gpu_systems: Vec::new(),
             auto_init_default_textures: true,
             auto_add_default_lighting: true,
             skip_initial_frames: None,
@@ -83,6 +92,14 @@ impl AppBuilder {
         F: for<'a> FnMut(&mut UpdateContext<'a>) + 'static,
     {
         self.update_systems.push(Box::new(system));
+        self
+    }
+
+    pub fn add_gpu_system<F>(&mut self, system: F) -> &mut Self
+    where
+        F: for<'a> FnMut(&mut GpuUpdateContext<'a>) + 'static,
+    {
+        self.gpu_systems.push(Box::new(system));
         self
     }
 
@@ -120,6 +137,7 @@ impl AppBuilder {
             batcher: RenderBatcher::new(),
             startup_systems: self.startup_systems,
             update_systems: self.update_systems,
+            gpu_systems: self.gpu_systems,
             auto_init_default_textures: self.auto_init_default_textures,
             auto_add_default_lighting: self.auto_add_default_lighting,
             startup_ran: false,
@@ -140,6 +158,7 @@ pub struct App {
     batcher: RenderBatcher,
     startup_systems: Vec<StartupSystem>,
     update_systems: Vec<UpdateSystem>,
+    gpu_systems: Vec<GpuUpdateSystem>,
     auto_init_default_textures: bool,
     auto_add_default_lighting: bool,
     startup_ran: bool,
@@ -454,8 +473,20 @@ impl ApplicationHandler for App {
 
                 self.update_scene(dt);
 
-                if !should_skip {
-                    if let Some(renderer) = self.renderer.as_mut() {
+                if let Some(renderer) = self.renderer.as_mut() {
+                    {
+                        let scene = &mut self.scene;
+                        for system in &mut self.gpu_systems {
+                            let mut ctx = GpuUpdateContext {
+                                scene,
+                                renderer,
+                                dt,
+                            };
+                            (system)(&mut ctx);
+                        }
+                    }
+
+                    if !should_skip {
                         let aspect = renderer.aspect_ratio();
                         renderer.set_camera(self.scene.camera(), aspect);
                         self.scene.render(renderer, &mut self.batcher);

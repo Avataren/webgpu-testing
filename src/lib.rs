@@ -7,7 +7,8 @@ pub mod settings;
 pub mod time;
 
 pub use app::{
-    App, AppBuilder, Plugin, StartupContext, StartupSystem, UpdateContext, UpdateSystem,
+    App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,
+    UpdateContext, UpdateSystem,
 };
 
 #[cfg(target_arch = "wasm32")]
