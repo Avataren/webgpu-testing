@@ -79,6 +79,8 @@ impl PostProcess {
         let bloom_ping = TextureBundle::bloom(device, &size, "BloomPing");
         let bloom_pong = TextureBundle::bloom(device, &size, "BloomPong");
 
+        let depth_multisampled = sample_count > 1;
+
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("PostProcessUniformLayout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -117,7 +119,13 @@ impl PostProcess {
 
         let postprocess_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PostProcessShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into()),
+            source: if depth_multisampled {
+                wgpu::ShaderSource::Wgsl(
+                    include_str!("../../shader/postprocess_msaa.wgsl").into(),
+                )
+            } else {
+                wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into())
+            },
         });
 
         let fullscreen_vertex = wgpu::VertexState {
@@ -137,7 +145,7 @@ impl PostProcess {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                        multisampled: depth_multisampled,
                     },
                     count: None,
                 },
