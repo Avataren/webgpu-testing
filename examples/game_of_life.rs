@@ -82,8 +82,8 @@ fn spawn_billboard(
     let mesh = renderer.create_mesh(&vertices, &indices);
     let mesh_handle = scene.assets.meshes.insert(mesh);
 
-    let scale_x = (width as f32) / 64.0;
-    let scale_y = (height as f32) / 64.0;
+    let scale_x = (width as f32) / 32.0;
+    let scale_y = (height as f32) / 32.0;
 
     let entity = EntityBuilder::new(&mut scene.world)
         .with_name("Game of Life Board")
@@ -111,15 +111,18 @@ fn spawn_billboard(
 }
 
 struct GameOfLifeState {
-    bind_group: wgpu::BindGroup,
+    bind_group_0: wgpu::BindGroup,
+    bind_group_1: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
-    scratch_texture: Texture,
+    texture_0: Texture,
+    texture_1: Texture,
     display_handle: Handle<Texture>,
     dispatch_x: u32,
     dispatch_y: u32,
     extent: wgpu::Extent3d,
     accumulator: f64,
     step_interval: f64,
+    current_buffer: bool,
 }
 
 impl GameOfLifeState {
@@ -127,15 +130,17 @@ impl GameOfLifeState {
         let mut initial_data = vec![0u8; (width * height * 4) as usize];
         generate_initial_pattern(&mut initial_data, width, height);
 
-        let (display_texture, scratch_texture, bind_group, pipeline, dispatch_x, dispatch_y) = {
+        let (texture_0, texture_1, bind_group_0, bind_group_1, pipeline, dispatch_x, dispatch_y) = {
             let device = ctx.renderer.get_device();
             let queue = ctx.renderer.get_queue();
 
-            let display_texture =
-                Texture::storage_rgba8(device, width, height, Some("Game of Life"));
+            let texture_0 = Texture::storage_rgba8(device, width, height, Some("GoL Texture 0"));
+            let texture_1 = Texture::storage_rgba8(device, width, height, Some("GoL Texture 1"));
+
+            // Initialize texture_0 with the initial pattern
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &display_texture.texture,
+                    texture: &texture_0.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -152,9 +157,6 @@ impl GameOfLifeState {
                     depth_or_array_layers: 1,
                 },
             );
-
-            let scratch_texture =
-                Texture::storage_rgba8(device, width, height, Some("Game of Life Scratch"));
 
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Game of Life Compute Shader"),
@@ -188,17 +190,34 @@ impl GameOfLifeState {
                     ],
                 });
 
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Game of Life Bind Group"),
+            // Bind group 0: read from texture_0, write to texture_1
+            let bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Game of Life Bind Group 0"),
                 layout: &bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&display_texture.view),
+                        resource: wgpu::BindingResource::TextureView(&texture_0.view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&scratch_texture.view),
+                        resource: wgpu::BindingResource::TextureView(&texture_1.view),
+                    },
+                ],
+            });
+
+            // Bind group 1: read from texture_1, write to texture_0
+            let bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Game of Life Bind Group 1"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_1.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture_0.view),
                     },
                 ],
             });
@@ -222,22 +241,54 @@ impl GameOfLifeState {
             let dispatch_y = (height + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
 
             (
-                display_texture,
-                scratch_texture,
-                bind_group,
+                texture_0,
+                texture_1,
+                bind_group_0,
+                bind_group_1,
                 pipeline,
                 dispatch_x,
                 dispatch_y,
             )
         };
 
+        // Create display texture and initialize it with the same initial pattern
+        let display_texture = Texture::storage_rgba8(
+            ctx.renderer.get_device(),
+            width,
+            height,
+            Some("GoL Display"),
+        );
+
+        // Initialize display texture so we see the pattern immediately
+        ctx.renderer.get_queue().write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &display_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &initial_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
         let display_handle = ctx.scene.assets.textures.insert(display_texture);
         ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
 
         Self {
-            bind_group,
+            bind_group_0,
+            bind_group_1,
             pipeline,
-            scratch_texture,
+            texture_0,
+            texture_1,
             display_handle,
             dispatch_x,
             dispatch_y,
@@ -248,8 +299,10 @@ impl GameOfLifeState {
             },
             accumulator: 0.0,
             step_interval,
+            current_buffer: false,
         }
     }
+
     fn display_texture_handle(&self) -> Handle<Texture> {
         self.display_handle
     }
@@ -274,19 +327,35 @@ impl GameOfLifeState {
             label: Some("Game of Life Encoder"),
         });
 
+        // Run compute shader with ping-pong buffering
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("Game of Life Compute"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
+
+            // Alternate which bind group we use (swaps read/write textures)
+            if self.current_buffer {
+                pass.set_bind_group(0, &self.bind_group_1, &[]);
+            } else {
+                pass.set_bind_group(0, &self.bind_group_0, &[]);
+            }
+
             pass.dispatch_workgroups(self.dispatch_x, self.dispatch_y, 1);
         }
 
+        // Copy the result to the display texture
+        // After compute, the result is in texture_1 (if current_buffer=false) or texture_0 (if current_buffer=true)
+        let source_texture = if self.current_buffer {
+            &self.texture_0.texture
+        } else {
+            &self.texture_1.texture
+        };
+
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: &self.scratch_texture.texture,
+                texture: source_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -301,19 +370,119 @@ impl GameOfLifeState {
         );
 
         queue.submit(Some(encoder.finish()));
+
+        // Swap buffers for next frame
+        self.current_buffer = !self.current_buffer;
     }
 }
 
 fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
-    for y in 0..height {
-        for x in 0..width {
+    // Helper to set a cell
+    let mut set_cell = |x: u32, y: u32, alive: bool| {
+        if x < width && y < height {
             let idx = ((y * width + x) * 4) as usize;
-            let alive = ((x + y) % 11 == 0) || ((x * y) % 17 == 0);
             let value = if alive { 255 } else { 0 };
             buffer[idx] = value;
             buffer[idx + 1] = value;
             buffer[idx + 2] = value;
             buffer[idx + 3] = 255;
+        }
+    };
+
+    // Clear everything first
+    for y in 0..height {
+        for x in 0..width {
+            set_cell(x, y, false);
+        }
+    }
+
+    // Add random noise (30% density)
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let hasher = RandomState::new();
+    for y in 0..height {
+        for x in 0..width {
+            let mut h = hasher.build_hasher();
+            (x, y).hash(&mut h);
+            let hash_val = h.finish();
+            if hash_val % 100 < 30 {
+                set_cell(x, y, true);
+            }
+        }
+    }
+
+    // Add some stable structures scattered around
+    let structures = [
+        // Glider
+        (vec![(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)], 20, 20),
+        // Blinker (period 2 oscillator)
+        (vec![(0, 0), (1, 0), (2, 0)], 50, 30),
+        // Toad (period 2 oscillator)
+        (vec![(1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1)], 80, 40),
+        // Beacon (period 2 oscillator)
+        (
+            vec![(0, 0), (1, 0), (0, 1), (3, 2), (2, 3), (3, 3)],
+            110,
+            50,
+        ),
+        // Pulsar (period 3 oscillator) - simplified
+        (
+            vec![
+                (2, 0),
+                (3, 0),
+                (4, 0),
+                (8, 0),
+                (9, 0),
+                (10, 0),
+                (0, 2),
+                (5, 2),
+                (7, 2),
+                (12, 2),
+                (0, 3),
+                (5, 3),
+                (7, 3),
+                (12, 3),
+                (0, 4),
+                (5, 4),
+                (7, 4),
+                (12, 4),
+                (2, 5),
+                (3, 5),
+                (4, 5),
+                (8, 5),
+                (9, 5),
+                (10, 5),
+            ],
+            width / 2 - 6,
+            height / 2 - 6,
+        ),
+        // Another glider going opposite direction
+        (
+            vec![(0, 0), (1, 0), (2, 0), (2, 1), (1, 2)],
+            width - 30,
+            height - 30,
+        ),
+        // Lightweight spaceship
+        (
+            vec![
+                (1, 0),
+                (4, 0),
+                (0, 1),
+                (0, 2),
+                (4, 2),
+                (0, 3),
+                (1, 3),
+                (2, 3),
+                (3, 3),
+            ],
+            width / 2,
+            20,
+        ),
+    ];
+
+    for (pattern, base_x, base_y) in structures {
+        for (dx, dy) in pattern {
+            set_cell(base_x + dx, base_y + dy, true);
         }
     }
 }
