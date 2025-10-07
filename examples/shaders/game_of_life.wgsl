@@ -20,7 +20,7 @@ fn load_cell(position : vec2<i32>, dims : vec2<i32>) -> f32 {
         wrap_coord(position.x, dims.x),
         wrap_coord(position.y, dims.y),
     );
-    return textureLoad(state_src, wrapped, 0).r;
+    return textureLoad(state_src, wrapped).r;
 }
 
 @compute @workgroup_size(WORKGROUP_SIZE_X, WORKGROUP_SIZE_Y)
