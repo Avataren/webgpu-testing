@@ -59,14 +59,16 @@ struct PipelineKey {
     depth_test: bool,
     depth_write: bool,
     alpha_blend: bool,
+    sample_count: u32,
 }
 
 impl PipelineKey {
-    fn new(depth_test: bool, depth_write: bool, alpha_blend: bool) -> Self {
+    fn new(depth_test: bool, depth_write: bool, alpha_blend: bool, sample_count: u32) -> Self {
         Self {
             depth_test,
             depth_write,
             alpha_blend,
+            sample_count,
         }
     }
 }
@@ -449,6 +451,7 @@ impl Renderer {
                             batch.depth_state.depth_test,
                             batch.depth_state.depth_write,
                             batch.alpha_blend,
+                            self.context.sample_count,
                         );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
@@ -482,6 +485,7 @@ impl Renderer {
                             batch.depth_state.depth_test,
                             batch.depth_state.depth_write,
                             batch.alpha_blend,
+                            self.context.sample_count,
                         );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
@@ -544,14 +548,7 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -568,6 +565,7 @@ impl Renderer {
                             batch.depth_state.depth_test,
                             batch.depth_state.depth_write,
                             batch.alpha_blend,
+                            1,
                         );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
@@ -597,6 +595,7 @@ impl Renderer {
                             batch.depth_state.depth_test,
                             batch.depth_state.depth_write,
                             batch.alpha_blend,
+                            1,
                         );
                         let pipeline = self.pipeline.pipeline(pipeline_key);
                         rpass.set_pipeline(pipeline);
@@ -2127,20 +2126,33 @@ impl RenderPipeline {
                 });
 
         let mut pipelines = HashMap::new();
-        for &depth_test in &[false, true] {
-            for &depth_write in &[false, true] {
-                for &alpha_blend in &[false, true] {
-                    let key = PipelineKey::new(depth_test, depth_write, alpha_blend);
-                    let pipeline = Self::create_pipeline(
-                        context,
-                        &pipeline_layout,
-                        &shader,
-                        depth_test,
-                        depth_write,
-                        alpha_blend,
-                        sample_count,
-                    );
-                    pipelines.insert(key, pipeline);
+        let sample_counts = if sample_count > 1 {
+            vec![sample_count, 1]
+        } else {
+            vec![1]
+        };
+
+        for &current_sample_count in &sample_counts {
+            for &depth_test in &[false, true] {
+                for &depth_write in &[false, true] {
+                    for &alpha_blend in &[false, true] {
+                        let key = PipelineKey::new(
+                            depth_test,
+                            depth_write,
+                            alpha_blend,
+                            current_sample_count,
+                        );
+                        let pipeline = Self::create_pipeline(
+                            context,
+                            &pipeline_layout,
+                            &shader,
+                            depth_test,
+                            depth_write,
+                            alpha_blend,
+                            current_sample_count,
+                        );
+                        pipelines.insert(key, pipeline);
+                    }
                 }
             }
         }
