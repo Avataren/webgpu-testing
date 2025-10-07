@@ -310,7 +310,11 @@ mod tests {
 
         let half = sampler.sample_quat(0.5).unwrap();
         let rotated_half = (half * Vec3::Z).normalize();
-        assert!(rotated_half.z.abs() < 1e-4, "unexpected slerp result: {:?}", half);
+        assert!(
+            rotated_half.z.abs() < 1e-4,
+            "unexpected slerp result: {:?}",
+            half
+        );
         assert!(
             (rotated_half.x.abs() - 1.0).abs() < 1e-4,
             "unexpected slerp result: {:?}",
@@ -347,10 +351,7 @@ mod tests {
         };
         let color_sampler = AnimationSampler {
             times: vec![0.0, 1.0],
-            output: AnimationOutput::Vec4(vec![
-                vec4(0.2, 0.2, 0.2, 1.0),
-                vec4(0.8, 0.4, 0.6, 1.0),
-            ]),
+            output: AnimationOutput::Vec4(vec![vec4(0.2, 0.2, 0.2, 1.0), vec4(0.8, 0.4, 0.6, 1.0)]),
             interpolation: AnimationInterpolation::Linear,
         };
 
@@ -376,10 +377,7 @@ mod tests {
 
         let transform = transform_updates.get(&entity).expect("missing transform");
         assert!(transform.rotation.is_none());
-        assert_eq!(
-            transform.translation.unwrap(),
-            vec3(1.0, 1.0, 1.0)
-        );
+        assert_eq!(transform.translation.unwrap(), vec3(1.0, 1.0, 1.0));
 
         let material = material_updates
             .get(&3)

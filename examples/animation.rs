@@ -1,6 +1,7 @@
+use glam::Vec3;
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext};
-use wgpu_cube::scene::SceneLoader;
+use wgpu_cube::scene::{Camera, SceneLoader};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -26,6 +27,12 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
     match SceneLoader::load_gltf(CHESS_GLTF_PATH, scene, renderer, SCENE_SCALE) {
         Ok(_) => {
             scene.add_default_lighting();
+            scene.set_camera(Camera {
+                eye: Vec3::new(1.5, 2.5, 3.0),
+                target: Vec3::ZERO,
+                up: Vec3::Y,
+                ..Camera::default()
+            });
             info!("glTF loaded: {} entities", scene.world.len());
         }
         Err(err) => {
