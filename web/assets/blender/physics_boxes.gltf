@@ -908,8 +908,7 @@
 				897,
 				898,
 				899,
-				900,
-				901
+				900
 			]
 		}
 	],
@@ -14417,10 +14416,6 @@
 		{
 			"mesh":50,
 			"name":"Floor.008"
-		},
-		{
-			"mesh":51,
-			"name":"Cube_BASE"
 		}
 	],
 	"animations":[
@@ -43804,20 +43799,6 @@
 					},
 					"indices":4,
 					"material":50
-				}
-			]
-		},
-		{
-			"name":"SmallCubeMesh",
-			"primitives":[
-				{
-					"attributes":{
-						"POSITION":0,
-						"NORMAL":1,
-						"TEXCOORD_0":2,
-						"TANGENT":3
-					},
-					"indices":4
 				}
 			]
 		}
