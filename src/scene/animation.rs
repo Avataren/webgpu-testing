@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub enum AnimationInterpolation {
     Step,
     Linear,
+    CubicSpline,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +70,130 @@ impl AnimationSampler {
         }
     }
 
+    /// For cubic spline, output array contains [in_tangent, value, out_tangent] for each keyframe
+    fn get_cubic_spline_segment_vec3(&self, values: &[Vec3], lower: usize, upper: usize) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
+        if lower == upper {
+            let idx = lower * 3 + 1; // Get the value component
+            if idx >= values.len() {
+                return None;
+            }
+            return Some((values[idx], values[idx], values[idx], values[idx]));
+        }
+
+        let lower_value_idx = lower * 3 + 1;
+        let lower_out_tangent_idx = lower * 3 + 2;
+        let upper_in_tangent_idx = upper * 3;
+        let upper_value_idx = upper * 3 + 1;
+
+        if upper_value_idx >= values.len() {
+            return None;
+        }
+
+        Some((
+            values[lower_value_idx],
+            values[lower_out_tangent_idx],
+            values[upper_in_tangent_idx],
+            values[upper_value_idx],
+        ))
+    }
+
+    fn get_cubic_spline_segment_vec4(&self, values: &[Vec4], lower: usize, upper: usize) -> Option<(Vec4, Vec4, Vec4, Vec4)> {
+        if lower == upper {
+            let idx = lower * 3 + 1;
+            if idx >= values.len() {
+                return None;
+            }
+            return Some((values[idx], values[idx], values[idx], values[idx]));
+        }
+
+        let lower_value_idx = lower * 3 + 1;
+        let lower_out_tangent_idx = lower * 3 + 2;
+        let upper_in_tangent_idx = upper * 3;
+        let upper_value_idx = upper * 3 + 1;
+
+        if upper_value_idx >= values.len() {
+            return None;
+        }
+
+        Some((
+            values[lower_value_idx],
+            values[lower_out_tangent_idx],
+            values[upper_in_tangent_idx],
+            values[upper_value_idx],
+        ))
+    }
+
+    fn get_cubic_spline_segment_quat(&self, values: &[Quat], lower: usize, upper: usize) -> Option<(Quat, Quat, Quat, Quat)> {
+        if lower == upper {
+            let idx = lower * 3 + 1;
+            if idx >= values.len() {
+                return None;
+            }
+            return Some((values[idx], values[idx], values[idx], values[idx]));
+        }
+
+        let lower_value_idx = lower * 3 + 1;
+        let lower_out_tangent_idx = lower * 3 + 2;
+        let upper_in_tangent_idx = upper * 3;
+        let upper_value_idx = upper * 3 + 1;
+
+        if upper_value_idx >= values.len() {
+            return None;
+        }
+
+        Some((
+            values[lower_value_idx],
+            values[lower_out_tangent_idx],
+            values[upper_in_tangent_idx],
+            values[upper_value_idx],
+        ))
+    }
+
+    /// Hermite cubic spline interpolation
+    fn cubic_hermite_vec3(p0: Vec3, m0: Vec3, m1: Vec3, p1: Vec3, t: f32, dt: f32) -> Vec3 {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        
+        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h10 = t3 - 2.0 * t2 + t;
+        let h01 = -2.0 * t3 + 3.0 * t2;
+        let h11 = t3 - t2;
+
+        p0 * h00 + m0 * h10 * dt + p1 * h01 + m1 * h11 * dt
+    }
+
+    fn cubic_hermite_vec4(p0: Vec4, m0: Vec4, m1: Vec4, p1: Vec4, t: f32, dt: f32) -> Vec4 {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        
+        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h10 = t3 - 2.0 * t2 + t;
+        let h01 = -2.0 * t3 + 3.0 * t2;
+        let h11 = t3 - t2;
+
+        p0 * h00 + m0 * h10 * dt + p1 * h01 + m1 * h11 * dt
+    }
+
+    fn cubic_hermite_quat(p0: Quat, m0: Quat, m1: Quat, p1: Quat, t: f32, dt: f32) -> Quat {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        
+        let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h10 = t3 - 2.0 * t2 + t;
+        let h01 = -2.0 * t3 + 3.0 * t2;
+        let h11 = t3 - t2;
+
+        // Component-wise interpolation for quaternions in cubic spline
+        let result = Quat::from_xyzw(
+            p0.x * h00 + m0.x * h10 * dt + p1.x * h01 + m1.x * h11 * dt,
+            p0.y * h00 + m0.y * h10 * dt + p1.y * h01 + m1.y * h11 * dt,
+            p0.z * h00 + m0.z * h10 * dt + p1.z * h01 + m1.z * h11 * dt,
+            p0.w * h00 + m0.w * h10 * dt + p1.w * h01 + m1.w * h11 * dt,
+        );
+        
+        result.normalize()
+    }
+
     pub fn sample_vec3(&self, time: f32) -> Option<Vec3> {
         let values = match &self.output {
             AnimationOutput::Vec3(values) => values,
@@ -77,11 +202,25 @@ impl AnimationSampler {
 
         let (lower, upper, factor) = self.sample_indices(time)?;
 
-        if lower == upper || matches!(self.interpolation, AnimationInterpolation::Step) {
-            return Some(values[lower]);
+        match self.interpolation {
+            AnimationInterpolation::Step => Some(values[lower]),
+            AnimationInterpolation::Linear => {
+                if lower == upper {
+                    Some(values[lower])
+                } else {
+                    Some(values[lower].lerp(values[upper], factor))
+                }
+            }
+            AnimationInterpolation::CubicSpline => {
+                let (p0, m0, m1, p1) = self.get_cubic_spline_segment_vec3(values, lower, upper)?;
+                if lower == upper {
+                    Some(p0)
+                } else {
+                    let dt = self.times[upper] - self.times[lower];
+                    Some(Self::cubic_hermite_vec3(p0, m0, m1, p1, factor, dt))
+                }
+            }
         }
-
-        Some(values[lower].lerp(values[upper], factor))
     }
 
     pub fn sample_vec4(&self, time: f32) -> Option<Vec4> {
@@ -92,11 +231,25 @@ impl AnimationSampler {
 
         let (lower, upper, factor) = self.sample_indices(time)?;
 
-        if lower == upper || matches!(self.interpolation, AnimationInterpolation::Step) {
-            return Some(values[lower]);
+        match self.interpolation {
+            AnimationInterpolation::Step => Some(values[lower]),
+            AnimationInterpolation::Linear => {
+                if lower == upper {
+                    Some(values[lower])
+                } else {
+                    Some(values[lower].lerp(values[upper], factor))
+                }
+            }
+            AnimationInterpolation::CubicSpline => {
+                let (p0, m0, m1, p1) = self.get_cubic_spline_segment_vec4(values, lower, upper)?;
+                if lower == upper {
+                    Some(p0)
+                } else {
+                    let dt = self.times[upper] - self.times[lower];
+                    Some(Self::cubic_hermite_vec4(p0, m0, m1, p1, factor, dt))
+                }
+            }
         }
-
-        Some(values[lower].lerp(values[upper], factor))
     }
 
     pub fn sample_quat(&self, time: f32) -> Option<Quat> {
@@ -107,13 +260,27 @@ impl AnimationSampler {
 
         let (lower, upper, factor) = self.sample_indices(time)?;
 
-        if lower == upper || matches!(self.interpolation, AnimationInterpolation::Step) {
-            return Some(values[lower]);
+        match self.interpolation {
+            AnimationInterpolation::Step => Some(values[lower]),
+            AnimationInterpolation::Linear => {
+                if lower == upper {
+                    Some(values[lower])
+                } else {
+                    let a = values[lower].normalize();
+                    let b = values[upper].normalize();
+                    Some(a.slerp(b, factor).normalize())
+                }
+            }
+            AnimationInterpolation::CubicSpline => {
+                let (p0, m0, m1, p1) = self.get_cubic_spline_segment_quat(values, lower, upper)?;
+                if lower == upper {
+                    Some(p0.normalize())
+                } else {
+                    let dt = self.times[upper] - self.times[lower];
+                    Some(Self::cubic_hermite_quat(p0, m0, m1, p1, factor, dt))
+                }
+            }
         }
-
-        let a = values[lower].normalize();
-        let b = values[upper].normalize();
-        Some(a.slerp(b, factor).normalize())
     }
 }
 
@@ -403,5 +570,53 @@ mod tests {
         assert!(!once.playing);
         let advanced = once.advance(1.0, 2.0);
         assert!((advanced - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cubic_spline_vec3_interpolation() {
+        // Data format: [in_tangent_0, value_0, out_tangent_0, in_tangent_1, value_1, out_tangent_1]
+        let sampler = AnimationSampler {
+            times: vec![0.0, 1.0],
+            output: AnimationOutput::Vec3(vec![
+                vec3(0.0, 0.0, 0.0),  // in-tangent for keyframe 0
+                vec3(0.0, 0.0, 0.0),  // value for keyframe 0
+                vec3(1.0, 1.0, 1.0),  // out-tangent for keyframe 0
+                vec3(1.0, 1.0, 1.0),  // in-tangent for keyframe 1
+                vec3(2.0, 2.0, 2.0),  // value for keyframe 1
+                vec3(0.0, 0.0, 0.0),  // out-tangent for keyframe 1
+            ]),
+            interpolation: AnimationInterpolation::CubicSpline,
+        };
+
+        let start = sampler.sample_vec3(0.0).unwrap();
+        assert!((start - vec3(0.0, 0.0, 0.0)).length() < 1e-5);
+
+        let end = sampler.sample_vec3(1.0).unwrap();
+        assert!((end - vec3(2.0, 2.0, 2.0)).length() < 1e-5);
+
+        // Middle should be smoothly interpolated
+        let mid = sampler.sample_vec3(0.5).unwrap();
+        assert!(mid.x > 0.5 && mid.x < 1.5);
+    }
+
+    #[test]
+    fn cubic_spline_vec4_color_animation() {
+        let sampler = AnimationSampler {
+            times: vec![0.0, 1.0],
+            output: AnimationOutput::Vec4(vec![
+                vec4(0.0, 0.0, 0.0, 0.0),  // in-tangent
+                vec4(1.0, 0.0, 0.0, 1.0),  // red
+                vec4(0.0, 0.0, 1.0, 0.0),  // out-tangent
+                vec4(0.0, 0.0, -1.0, 0.0), // in-tangent
+                vec4(0.0, 0.0, 1.0, 1.0),  // blue
+                vec4(0.0, 0.0, 0.0, 0.0),  // out-tangent
+            ]),
+            interpolation: AnimationInterpolation::CubicSpline,
+        };
+
+        let color = sampler.sample_vec4(0.5).unwrap();
+        // Should transition smoothly from red to blue
+        assert!(color.x >= 0.0 && color.z >= 0.0);
+        assert!((color.w - 1.0).abs() < 1e-5); // Alpha stays at 1
     }
 }

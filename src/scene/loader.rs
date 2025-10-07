@@ -527,14 +527,7 @@ impl SceneLoader {
                 let interpolation = match channel.sampler().interpolation() {
                     gltf::animation::Interpolation::Step => AnimationInterpolation::Step,
                     gltf::animation::Interpolation::Linear => AnimationInterpolation::Linear,
-                    gltf::animation::Interpolation::CubicSpline => {
-                        log::warn!(
-                            "Skipping cubic spline animation '{}' channel {} (unsupported)",
-                            clip_name,
-                            channel_index
-                        );
-                        continue;
-                    }
+                    gltf::animation::Interpolation::CubicSpline => AnimationInterpolation::CubicSpline,
                 };
 
                 if Self::is_pointer_channel(document, animation_index, channel_index) {

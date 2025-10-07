@@ -6,7 +6,7 @@ use wgpu_cube::scene::{Camera, SceneLoader};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const CHESS_GLTF_PATH: &str = "web/assets/animated/InterpolationTest.gltf";
+const CHESS_GLTF_PATH: &str = "web/assets/morph/SuzanneMorphSparse.gltf";
 const SCENE_SCALE: f32 = 0.25;
 
 fn build_app() -> AppBuilder {
@@ -28,7 +28,7 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
         Ok(_) => {
             scene.add_default_lighting();
             scene.set_camera(Camera {
-                eye: Vec3::new(0.1, 0.25, 5.0),
+                eye: Vec3::new(0.5, 0.25, 1.0),
                 target: Vec3::ZERO,
                 up: Vec3::Y,
                 ..Camera::default()
