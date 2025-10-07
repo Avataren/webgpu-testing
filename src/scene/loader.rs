@@ -388,7 +388,14 @@ impl SceneLoader {
         }
 
         log::info!("Loading animations...");
-        Self::load_animations(&document, &buffers, &node_entities, scene, path)?;
+        Self::load_animations(
+            &document,
+            &buffers,
+            &node_entities,
+            scene,
+            path,
+            scale,
+        )?;
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());
@@ -553,6 +560,7 @@ impl SceneLoader {
         node_entities: &[Option<hecs::Entity>],
         scene: &mut Scene,
         path: &Path,
+        scale_multiplier: f32,
     ) -> Result<(), String> {
         if document.animations().len() == 0 {
             log::info!("No animations in glTF document");
