@@ -127,7 +127,6 @@ fn orbit_camera(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    env_logger::init();
     if let Err(err) = wgpu_cube::run(build_app()) {
         eprintln!("Application error: {err}");
     }
