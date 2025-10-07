@@ -23,7 +23,7 @@ type WindowHandle = Window;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
-use crate::scene::{Camera, Children, MeshComponent, Name, Parent, Scene, TransformComponent};
+use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
 use crate::time::Instant;
 
 pub struct StartupContext<'a> {
@@ -33,7 +33,6 @@ pub struct StartupContext<'a> {
 
 pub struct UpdateContext<'a> {
     pub scene: &'a mut Scene,
-    pub camera: &'a mut Camera,
     pub dt: f64,
 }
 
@@ -119,7 +118,6 @@ impl AppBuilder {
             window_id: None,
             scene: Scene::new(),
             batcher: RenderBatcher::new(),
-            camera: Camera::default(),
             startup_systems: self.startup_systems,
             update_systems: self.update_systems,
             auto_init_default_textures: self.auto_init_default_textures,
@@ -140,7 +138,6 @@ pub struct App {
     window_id: Option<WindowId>,
     scene: Scene,
     batcher: RenderBatcher,
-    camera: Camera,
     startup_systems: Vec<StartupSystem>,
     update_systems: Vec<UpdateSystem>,
     auto_init_default_textures: bool,
@@ -313,7 +310,6 @@ impl App {
         for system in &mut self.update_systems {
             let mut ctx = UpdateContext {
                 scene: &mut self.scene,
-                camera: &mut self.camera,
                 dt,
             };
             (system)(&mut ctx);
@@ -461,7 +457,7 @@ impl ApplicationHandler for App {
                 if !should_skip {
                     if let Some(renderer) = self.renderer.as_mut() {
                         let aspect = renderer.aspect_ratio();
-                        renderer.set_camera(&self.camera, aspect);
+                        renderer.set_camera(self.scene.camera(), aspect);
                         self.scene.render(renderer, &mut self.batcher);
                     }
                 }

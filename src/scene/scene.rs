@@ -8,7 +8,7 @@ use crate::renderer::{
     DirectionalShadowData, LightsData, PointShadowData, RenderBatcher, RenderObject, Renderer,
     SpotShadowData,
 };
-use crate::scene::Transform;
+use crate::scene::{Camera, Transform};
 use crate::time::Instant;
 use glam::{Mat3, Mat4, Quat, Vec3};
 use hecs::World;
@@ -21,6 +21,7 @@ pub struct Scene {
     last_frame: Option<Instant>,
     animations: Vec<AnimationClip>,
     animation_states: Vec<AnimationState>,
+    camera: Camera,
 }
 
 impl Scene {
@@ -32,6 +33,7 @@ impl Scene {
             last_frame: None, // Start as None - will be initialized later
             animations: Vec::new(),
             animation_states: Vec::new(),
+            camera: Camera::default(),
         }
     }
 
@@ -63,6 +65,18 @@ impl Scene {
 
     pub fn animation_states_mut(&mut self) -> &mut Vec<AnimationState> {
         &mut self.animation_states
+    }
+
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+
+    pub fn camera_mut(&mut self) -> &mut Camera {
+        &mut self.camera
+    }
+
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
     }
 
     pub fn add_animation_clip(&mut self, clip: AnimationClip) -> usize {
