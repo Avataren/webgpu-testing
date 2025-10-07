@@ -2218,6 +2218,18 @@ impl RenderPipeline {
             Some(wgpu::BlendState::REPLACE)
         };
 
+        let depth_stencil = if depth_test || depth_write {
+            Some(wgpu::DepthStencilState {
+                format: context.depth.format,
+                depth_write_enabled: depth_write,
+                depth_compare,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+        } else {
+            None
+        };
+
         context
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -2246,13 +2258,7 @@ impl RenderPipeline {
                     polygon_mode: wgpu::PolygonMode::Fill,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: context.depth.format,
-                    depth_write_enabled: depth_write,
-                    depth_compare,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                depth_stencil,
                 multisample: wgpu::MultisampleState {
                     count: sample_count,
                     mask: !0,
