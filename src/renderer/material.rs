@@ -31,6 +31,7 @@ impl MaterialFlags {
     pub const ALPHA_BLEND: Self = Self(1 << 5);
     pub const DOUBLE_SIDED: Self = Self(1 << 6);
     pub const UNLIT: Self = Self(1 << 7);
+    pub const USE_NEAREST_FILTERING: Self = Self(1 << 8);
 
     pub const fn bits(&self) -> u32 {
         self.0
@@ -111,6 +112,16 @@ impl Material {
 
     pub fn with_lit(mut self) -> Self {
         self.flags.remove(MaterialFlags::UNLIT);
+        self
+    }
+
+    pub fn with_nearest_filtering(mut self) -> Self {
+        self.flags.insert(MaterialFlags::USE_NEAREST_FILTERING);
+        self
+    }
+
+    pub fn with_linear_filtering(mut self) -> Self {
+        self.flags.remove(MaterialFlags::USE_NEAREST_FILTERING);
         self
     }
 

@@ -96,6 +96,7 @@ fn spawn_billboard(
         .with_material(
             Material::pbr()
                 .with_unlit()
+                .with_nearest_filtering()
                 .with_base_color_texture(texture_handle.index() as u32),
         )
         .visible(true)

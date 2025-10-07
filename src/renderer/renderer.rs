@@ -1653,7 +1653,8 @@ impl TextureBindingModel {
 
 struct BindlessTextureBinder {
     layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    linear_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
@@ -1661,14 +1662,25 @@ struct BindlessTextureBinder {
 
 impl BindlessTextureBinder {
     fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("BindlessSampler"),
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("BindlessSamplerLinear"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("BindlessSamplerNearest"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -1691,13 +1703,15 @@ impl BindlessTextureBinder {
         let bind_group = Self::create_bind_group_with_views(
             device,
             layout,
-            &sampler,
+            &linear_sampler,
+            &nearest_sampler,
             vec![&fallback_view; MAX_TEXTURES],
         );
 
         Self {
             layout: layout.clone(),
-            sampler,
+            linear_sampler,
+            nearest_sampler,
             _fallback_texture: fallback_texture,
             fallback_view,
             bind_group,
@@ -1707,7 +1721,8 @@ impl BindlessTextureBinder {
     fn create_bind_group_with_views(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
+        linear_sampler: &wgpu::Sampler,
+        nearest_sampler: &wgpu::Sampler,
         views: Vec<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1720,7 +1735,11 @@ impl BindlessTextureBinder {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: wgpu::BindingResource::Sampler(linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(nearest_sampler),
                 },
             ],
         })
@@ -1738,8 +1757,13 @@ impl BindlessTextureBinder {
             })
             .collect();
 
-        self.bind_group =
-            Self::create_bind_group_with_views(device, &self.layout, &self.sampler, views);
+        self.bind_group = Self::create_bind_group_with_views(
+            device,
+            &self.layout,
+            &self.linear_sampler,
+            &self.nearest_sampler,
+            views,
+        );
 
         log::debug!(
             "Updated bindless texture array with {} textures",
@@ -1754,7 +1778,8 @@ impl BindlessTextureBinder {
 
 struct TraditionalTextureBinder {
     layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
+    linear_sampler: wgpu::Sampler,
+    nearest_sampler: wgpu::Sampler,
     _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
     material_bind_groups: HashMap<Material, wgpu::BindGroup>,
@@ -1762,14 +1787,25 @@ struct TraditionalTextureBinder {
 
 impl TraditionalTextureBinder {
     fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("TraditionalSampler"),
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("TraditionalSamplerLinear"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("TraditionalSamplerNearest"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -1791,7 +1827,8 @@ impl TraditionalTextureBinder {
 
         Self {
             layout: layout.clone(),
-            sampler,
+            linear_sampler,
+            nearest_sampler,
             _fallback_texture: fallback_texture,
             fallback_view,
             material_bind_groups: HashMap::new(),
@@ -1801,7 +1838,8 @@ impl TraditionalTextureBinder {
     fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        sampler: &wgpu::Sampler,
+        linear_sampler: &wgpu::Sampler,
+        nearest_sampler: &wgpu::Sampler,
         views: [&wgpu::TextureView; 5],
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1830,7 +1868,11 @@ impl TraditionalTextureBinder {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: wgpu::BindingResource::Sampler(linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(nearest_sampler),
                 },
             ],
         })
@@ -1860,7 +1902,8 @@ impl TraditionalTextureBinder {
         material: Material,
     ) -> &wgpu::BindGroup {
         let layout = self.layout.clone();
-        let sampler = self.sampler.clone();
+        let linear_sampler = self.linear_sampler.clone();
+        let nearest_sampler = self.nearest_sampler.clone();
         let fallback_view = self.fallback_view.clone();
 
         self.material_bind_groups
@@ -1910,7 +1953,8 @@ impl TraditionalTextureBinder {
                 Self::create_bind_group(
                     device,
                     &layout,
-                    &sampler,
+                    &linear_sampler,
+                    &nearest_sampler,
                     [
                         base_color_view,
                         metallic_roughness_view,
@@ -1954,6 +1998,12 @@ impl RenderPipeline {
                             },
                             wgpu::BindGroupLayoutEntry {
                                 binding: 1,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 2,
                                 visibility: wgpu::ShaderStages::FRAGMENT,
                                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                                 count: None,
@@ -2034,6 +2084,12 @@ impl RenderPipeline {
                             },
                             wgpu::BindGroupLayoutEntry {
                                 binding: 5,
+                                visibility: wgpu::ShaderStages::FRAGMENT,
+                                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                                count: None,
+                            },
+                            wgpu::BindGroupLayoutEntry {
+                                binding: 6,
                                 visibility: wgpu::ShaderStages::FRAGMENT,
                                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                                 count: None,
