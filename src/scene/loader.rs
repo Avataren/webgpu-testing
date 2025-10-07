@@ -1,14 +1,27 @@
 // scene/loader.rs - Improved version with better debugging
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec3, Vec4};
 use std::path::Path;
 
 use super::components::*;
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::{Material, Renderer, Texture, Vertex};
+use crate::scene::animation::{
+    AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
+    AnimationTarget, MaterialProperty, TransformProperty,
+};
 use crate::scene::{Scene, Transform};
+use gltf::json::validation::Checked;
+use serde_json::Value;
+use std::collections::HashMap;
 
 pub struct SceneLoader;
+
+#[derive(Debug, Clone, Copy)]
+struct MaterialPointerTarget {
+    material_index: usize,
+    property: MaterialProperty,
+}
 
 impl SceneLoader {
     fn load_node(
@@ -18,6 +31,7 @@ impl SceneLoader {
         materials: &[Material],
         world: &mut hecs::World,
         scale_multiplier: f32,
+        node_entities: &mut [Option<hecs::Entity>],
     ) -> Result<hecs::Entity, String> {
         let node_name = node.name().unwrap_or("Unnamed");
         log::debug!(
@@ -54,6 +68,7 @@ impl SceneLoader {
         entity_builder.add(Name::new(node_name));
         entity_builder.add(TransformComponent(transform));
         entity_builder.add(Visible(true));
+        entity_builder.add(GltfNode(node.index()));
 
         // Add parent if exists
         if let Some(parent_entity) = parent {
@@ -86,6 +101,9 @@ impl SceneLoader {
                         Material::pbr()
                     };
                     entity_builder.add(MaterialComponent(material));
+                    if let Some(mat_idx) = material_index {
+                        entity_builder.add(GltfMaterial(mat_idx));
+                    }
 
                     log::debug!("  Added primary mesh primitive");
 
@@ -102,6 +120,9 @@ impl SceneLoader {
 
         // Spawn the entity
         let entity = world.spawn(entity_builder.build());
+        if let Some(slot) = node_entities.get_mut(node.index()) {
+            *slot = Some(entity);
+        }
         log::debug!("  Spawned entity: {:?}", entity);
 
         // Track all children
@@ -129,6 +150,9 @@ impl SceneLoader {
                 Material::pbr()
             };
             primitive_builder.add(MaterialComponent(material));
+            if let Some(mat_idx) = material_index {
+                primitive_builder.add(GltfMaterial(mat_idx));
+            }
 
             let primitive_entity = world.spawn(primitive_builder.build());
             children.push(primitive_entity);
@@ -145,6 +169,7 @@ impl SceneLoader {
                 materials,
                 world,
                 scale_multiplier,
+                node_entities,
             )?;
             children.push(child_entity);
         }
@@ -228,6 +253,9 @@ impl SceneLoader {
         }
         log::info!("Loaded {} meshes", mesh_count);
 
+        // Track the spawned entity for each glTF node so animations can target them
+        let mut node_entities: Vec<Option<hecs::Entity>> = vec![None; document.nodes().len()];
+
         // Load all scenes and their node hierarchies
         log::info!("Loading scene hierarchies...");
         for (scene_index, gltf_scene) in document.scenes().enumerate() {
@@ -257,9 +285,13 @@ impl SceneLoader {
                     &material_handles,
                     &mut scene.world,
                     scale,
+                    &mut node_entities,
                 )?;
             }
         }
+
+        log::info!("Loading animations...");
+        Self::load_animations(&document, &buffers, &node_entities, scene, path)?;
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());
@@ -274,6 +306,405 @@ impl SceneLoader {
         log::info!("  Entities with children: {}", children_count);
 
         Ok(())
+    }
+
+    fn load_animations(
+        document: &gltf::Document,
+        buffers: &[gltf::buffer::Data],
+        node_entities: &[Option<hecs::Entity>],
+        scene: &mut Scene,
+        path: &Path,
+    ) -> Result<(), String> {
+        if document.animations().len() == 0 {
+            log::info!("No animations in glTF document");
+            return Ok(());
+        }
+
+        let pointer_targets = Self::extract_pointer_targets(path);
+        let mut loaded_clips = 0usize;
+
+        for (animation_index, animation) in document.animations().enumerate() {
+            let clip_name = animation
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| format!("Animation_{}", animation_index));
+            let mut clip = AnimationClip::new(clip_name.clone());
+            let mut supported_channels = 0usize;
+
+            for (channel_index, channel) in animation.channels().enumerate() {
+                let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
+
+                let Some(inputs) = reader.read_inputs() else {
+                    log::warn!(
+                        "Animation '{}' channel {} is missing input keyframes",
+                        clip_name,
+                        channel_index
+                    );
+                    continue;
+                };
+
+                let mut times: Vec<f32> = inputs.collect();
+                if times.is_empty() {
+                    continue;
+                }
+
+                let interpolation = match channel.sampler().interpolation() {
+                    gltf::animation::Interpolation::Step => AnimationInterpolation::Step,
+                    gltf::animation::Interpolation::Linear => AnimationInterpolation::Linear,
+                    gltf::animation::Interpolation::CubicSpline => {
+                        log::warn!(
+                            "Skipping cubic spline animation '{}' channel {} (unsupported)",
+                            clip_name,
+                            channel_index
+                        );
+                        continue;
+                    }
+                };
+
+                if Self::is_pointer_channel(document, animation_index, channel_index) {
+                    let Some(pointer_target) =
+                        pointer_targets.get(&(animation_index, channel_index))
+                    else {
+                        log::warn!(
+                            "Animation '{}' channel {} uses unsupported pointer target",
+                            clip_name,
+                            channel_index
+                        );
+                        continue;
+                    };
+
+                    let output_accessor = channel.sampler().output();
+                    let mut values = match Self::read_vec4_outputs(&output_accessor, buffers) {
+                        Ok(values) => values,
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to read pointer animation data for '{}' channel {}: {}",
+                                clip_name,
+                                channel_index,
+                                err
+                            );
+                            continue;
+                        }
+                    };
+
+                    if values.is_empty() {
+                        continue;
+                    }
+
+                    if values.len() != times.len() {
+                        let min_len = times.len().min(values.len());
+                        log::warn!(
+                            "Pointer animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                            clip_name,
+                            channel_index,
+                            times.len(),
+                            values.len()
+                        );
+                        times.truncate(min_len);
+                        values.truncate(min_len);
+                    }
+
+                    if times.is_empty() || values.is_empty() {
+                        continue;
+                    }
+
+                    let sampler = AnimationSampler {
+                        times,
+                        output: AnimationOutput::Vec4(values),
+                        interpolation,
+                    };
+
+                    clip.add_channel(AnimationChannel {
+                        sampler,
+                        target: AnimationTarget::Material {
+                            material_index: pointer_target.material_index,
+                            property: pointer_target.property,
+                        },
+                    });
+
+                    supported_channels += 1;
+                    continue;
+                }
+
+                let target_node = channel.target().node();
+                let Some(entity) = node_entities
+                    .get(target_node.index())
+                    .and_then(|entry| *entry)
+                else {
+                    log::warn!(
+                        "Animation '{}' channel {} references node {} that was not instantiated",
+                        clip_name,
+                        channel_index,
+                        target_node.index()
+                    );
+                    continue;
+                };
+
+                let property = channel.target().property();
+                let output = match property {
+                    gltf::animation::Property::Translation => match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Translations(iter)) => {
+                            let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
+                            if values.len() != times.len() {
+                                let min_len = times.len().min(values.len());
+                                log::warn!(
+                                    "Translation animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                                    clip_name,
+                                    channel_index,
+                                    times.len(),
+                                    values.len()
+                                );
+                                times.truncate(min_len);
+                                values.truncate(min_len);
+                            }
+
+                            if times.is_empty() || values.is_empty() {
+                                continue;
+                            }
+
+                            AnimationOutput::Vec3(values)
+                        }
+                        _ => {
+                            log::warn!(
+                                "Unexpected translation outputs for animation '{}' channel {}",
+                                clip_name,
+                                channel_index
+                            );
+                            continue;
+                        }
+                    },
+                    gltf::animation::Property::Scale => match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Scales(iter)) => {
+                            let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
+                            if values.len() != times.len() {
+                                let min_len = times.len().min(values.len());
+                                log::warn!(
+                                    "Scale animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                                    clip_name,
+                                    channel_index,
+                                    times.len(),
+                                    values.len()
+                                );
+                                times.truncate(min_len);
+                                values.truncate(min_len);
+                            }
+
+                            if times.is_empty() || values.is_empty() {
+                                continue;
+                            }
+
+                            AnimationOutput::Vec3(values)
+                        }
+                        _ => {
+                            log::warn!(
+                                "Unexpected scale outputs for animation '{}' channel {}",
+                                clip_name,
+                                channel_index
+                            );
+                            continue;
+                        }
+                    },
+                    gltf::animation::Property::Rotation => match reader.read_outputs() {
+                        Some(gltf::animation::util::ReadOutputs::Rotations(rotations)) => {
+                            let mut values: Vec<Quat> = rotations
+                                .into_f32()
+                                .map(|r| Quat::from_xyzw(r[0], r[1], r[2], r[3]))
+                                .collect();
+                            if values.len() != times.len() {
+                                let min_len = times.len().min(values.len());
+                                log::warn!(
+                                    "Rotation animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                                    clip_name,
+                                    channel_index,
+                                    times.len(),
+                                    values.len()
+                                );
+                                times.truncate(min_len);
+                                values.truncate(min_len);
+                            }
+
+                            if times.is_empty() || values.is_empty() {
+                                continue;
+                            }
+
+                            AnimationOutput::Quat(values)
+                        }
+                        _ => {
+                            log::warn!(
+                                "Unexpected rotation outputs for animation '{}' channel {}",
+                                clip_name,
+                                channel_index
+                            );
+                            continue;
+                        }
+                    },
+                    gltf::animation::Property::MorphTargetWeights => {
+                        log::warn!(
+                            "Skipping morph target animation '{}' channel {} (not supported)",
+                            clip_name,
+                            channel_index
+                        );
+                        continue;
+                    }
+                };
+
+                if times.is_empty() {
+                    continue;
+                }
+
+                let sampler = AnimationSampler {
+                    times,
+                    output,
+                    interpolation,
+                };
+
+                let target = match property {
+                    gltf::animation::Property::Translation => AnimationTarget::Transform {
+                        entity,
+                        property: TransformProperty::Translation,
+                    },
+                    gltf::animation::Property::Rotation => AnimationTarget::Transform {
+                        entity,
+                        property: TransformProperty::Rotation,
+                    },
+                    gltf::animation::Property::Scale => AnimationTarget::Transform {
+                        entity,
+                        property: TransformProperty::Scale,
+                    },
+                    gltf::animation::Property::MorphTargetWeights => unreachable!(),
+                };
+
+                clip.add_channel(AnimationChannel { sampler, target });
+                supported_channels += 1;
+            }
+
+            if supported_channels > 0 {
+                let clip_index = scene.add_animation_clip(clip);
+                let _ = scene.play_animation(clip_index, true);
+                loaded_clips += 1;
+            } else {
+                log::debug!(
+                    "Skipping animation '{}' because it has no supported channels",
+                    clip_name
+                );
+            }
+        }
+
+        if loaded_clips > 0 {
+            log::info!("Loaded {} animation clips", loaded_clips);
+        } else {
+            log::info!("No supported animations were loaded");
+        }
+
+        Ok(())
+    }
+
+    fn is_pointer_channel(
+        document: &gltf::Document,
+        animation_index: usize,
+        channel_index: usize,
+    ) -> bool {
+        document
+            .as_json()
+            .animations
+            .get(animation_index)
+            .and_then(|anim| anim.channels.get(channel_index))
+            .map(|channel| matches!(channel.target.path.as_ref(), Checked::Invalid))
+            .unwrap_or(false)
+    }
+
+    fn read_vec4_outputs(
+        accessor: &gltf::Accessor,
+        buffers: &[gltf::buffer::Data],
+    ) -> Result<Vec<Vec4>, String> {
+        let mut values = Vec::new();
+        let iter = gltf::accessor::Iter::<[f32; 4]>::new(accessor.clone(), |buffer| {
+            Some(&buffers[buffer.index()].0)
+        })
+        .ok_or_else(|| "Accessor output is not a VEC4 float".to_string())?;
+
+        for value in iter {
+            values.push(Vec4::from_array(value));
+        }
+
+        Ok(values)
+    }
+
+    fn extract_pointer_targets(path: &Path) -> HashMap<(usize, usize), MaterialPointerTarget> {
+        let mut targets = HashMap::new();
+
+        let Ok(bytes) = crate::io::load_binary(path) else {
+            return targets;
+        };
+
+        let text = match std::str::from_utf8(&bytes) {
+            Ok(text) => text,
+            Err(_) => return targets,
+        };
+
+        let Ok(root) = serde_json::from_str::<Value>(text) else {
+            return targets;
+        };
+
+        let animations = match root.get("animations").and_then(|value| value.as_array()) {
+            Some(list) => list,
+            None => return targets,
+        };
+
+        for (animation_index, animation) in animations.iter().enumerate() {
+            let Some(channels) = animation.get("channels").and_then(|value| value.as_array())
+            else {
+                continue;
+            };
+
+            for (channel_index, channel) in channels.iter().enumerate() {
+                let pointer_value = channel
+                    .get("target")
+                    .and_then(|target| target.get("extensions"))
+                    .and_then(|ext| ext.get("KHR_animation_pointer"))
+                    .and_then(|pointer| pointer.get("pointer"))
+                    .and_then(|pointer| pointer.as_str());
+
+                let Some(pointer) = pointer_value else {
+                    continue;
+                };
+
+                if let Some(target) = Self::parse_pointer_target(pointer) {
+                    targets.insert((animation_index, channel_index), target);
+                } else {
+                    log::warn!(
+                        "Unsupported animation pointer path '{}' in animation {} channel {}",
+                        pointer,
+                        animation_index,
+                        channel_index
+                    );
+                }
+            }
+        }
+
+        targets
+    }
+
+    fn parse_pointer_target(pointer: &str) -> Option<MaterialPointerTarget> {
+        let mut segments = pointer.split('/').filter(|segment| !segment.is_empty());
+        let first = segments.next()?;
+        if first != "materials" {
+            return None;
+        }
+
+        let index_segment = segments.next()?;
+        let material_index = index_segment.parse().ok()?;
+
+        let property_group = segments.next()?;
+        let property_name = segments.next()?;
+
+        match (property_group, property_name) {
+            ("pbrMetallicRoughness", "baseColorFactor") => Some(MaterialPointerTarget {
+                material_index,
+                property: MaterialProperty::BaseColorFactor,
+            }),
+            _ => None,
+        }
     }
 
     /// Load all textures from glTF

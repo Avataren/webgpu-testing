@@ -1,4 +1,7 @@
 // scene/scene.rs - Fixed version with improved transform propagation
+use super::animation::{
+    AnimationClip, AnimationState, AnimationTarget, MaterialUpdate, TransformUpdate,
+};
 use super::components::*;
 use crate::asset::Assets;
 use crate::renderer::{
@@ -9,12 +12,15 @@ use crate::scene::Transform;
 use crate::time::Instant;
 use glam::{Mat3, Mat4, Quat, Vec3};
 use hecs::World;
+use std::collections::HashMap;
 
 pub struct Scene {
     pub world: World,
     pub assets: Assets,
     time: f64,
     last_frame: Option<Instant>,
+    animations: Vec<AnimationClip>,
+    animation_states: Vec<AnimationState>,
 }
 
 impl Scene {
@@ -24,6 +30,8 @@ impl Scene {
             assets: Assets::default(),
             time: 0.0,
             last_frame: None, // Start as None - will be initialized later
+            animations: Vec::new(),
+            animation_states: Vec::new(),
         }
     }
 
@@ -45,10 +53,41 @@ impl Scene {
         self.last_frame = Some(instant);
     }
 
+    pub fn animations(&self) -> &[AnimationClip] {
+        &self.animations
+    }
+
+    pub fn animation_states(&self) -> &[AnimationState] {
+        &self.animation_states
+    }
+
+    pub fn animation_states_mut(&mut self) -> &mut Vec<AnimationState> {
+        &mut self.animation_states
+    }
+
+    pub fn add_animation_clip(&mut self, clip: AnimationClip) -> usize {
+        let index = self.animations.len();
+        self.animations.push(clip);
+        index
+    }
+
+    pub fn play_animation(&mut self, clip_index: usize, looping: bool) -> Option<usize> {
+        if clip_index >= self.animations.len() {
+            return None;
+        }
+
+        let mut state = AnimationState::new(clip_index);
+        state.looping = looping;
+        let index = self.animation_states.len();
+        self.animation_states.push(state);
+        Some(index)
+    }
+
     pub fn update(&mut self, dt: f64) {
         self.time += dt;
 
         // Run animation systems BEFORE propagating transforms
+        self.system_animations(dt);
         self.system_rotate_animation(dt);
         self.system_orbit_animation(dt);
 
@@ -763,6 +802,82 @@ impl Scene {
     // Animation Systems
     // ========================================================================
 
+    fn system_animations(&mut self, dt: f64) {
+        if self.animation_states.is_empty() || self.animations.is_empty() {
+            return;
+        }
+
+        let dt = dt as f32;
+
+        let mut transform_updates: HashMap<hecs::Entity, TransformUpdate> = HashMap::new();
+        let mut material_updates: HashMap<usize, MaterialUpdate> = HashMap::new();
+
+        for state in &mut self.animation_states {
+            if state.clip_index >= self.animations.len() {
+                continue;
+            }
+
+            let clip = &self.animations[state.clip_index];
+            let sample_time = state.advance(dt, clip.duration);
+            clip.sample(sample_time, &mut transform_updates, &mut material_updates);
+        }
+
+        for (entity, update) in transform_updates {
+            if let Ok(mut transform) = self.world.get::<&mut TransformComponent>(entity) {
+                if let Some(translation) = update.translation {
+                    transform.0.translation = translation;
+                }
+
+                if let Some(rotation) = update.rotation {
+                    transform.0.rotation = rotation;
+                }
+
+                if let Some(scale) = update.scale {
+                    transform.0.scale = scale;
+                }
+            }
+        }
+
+        if material_updates.is_empty() {
+            return;
+        }
+
+        let mut material_entities: Vec<hecs::Entity> = Vec::new();
+
+        for (material_index, update) in material_updates {
+            let Some(color) = update.base_color else {
+                continue;
+            };
+
+            material_entities.clear();
+            {
+                let mut query = self.world.query::<&GltfMaterial>();
+                for (entity, gltf_material) in query.iter() {
+                    if gltf_material.0 == material_index {
+                        material_entities.push(entity);
+                    }
+                }
+            }
+
+            if material_entities.is_empty() {
+                continue;
+            }
+
+            let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
+
+            for entity in &material_entities {
+                if let Ok(mut material) = self.world.get::<&mut MaterialComponent>(*entity) {
+                    material.0.base_color = [
+                        to_u8(color.x),
+                        to_u8(color.y),
+                        to_u8(color.z),
+                        to_u8(color.w),
+                    ];
+                }
+            }
+        }
+    }
+
     fn system_rotate_animation(&mut self, dt: f64) {
         for (_entity, (transform, anim)) in self
             .world
@@ -904,6 +1019,12 @@ impl Scene {
             if let Ok(material) = other.world.get::<&MaterialComponent>(old_entity) {
                 builder.add(*material);
             }
+            if let Ok(gltf_node) = other.world.get::<&GltfNode>(old_entity) {
+                builder.add(*gltf_node);
+            }
+            if let Ok(gltf_material) = other.world.get::<&GltfMaterial>(old_entity) {
+                builder.add(*gltf_material);
+            }
             if let Ok(visible) = other.world.get::<&Visible>(old_entity) {
                 builder.add(*visible);
             }
@@ -992,6 +1113,32 @@ impl Scene {
                     .insert_one(parent_entity, Children(root_entities))
                     .ok();
             }
+        }
+
+        // Merge animation clips and states, remapping entity references
+        let animation_offset = self.animations.len();
+        for mut clip in other.animations {
+            for channel in clip.channels.iter_mut() {
+                if let AnimationTarget::Transform { entity, property } = channel.target {
+                    if let Some(&new_entity) = entity_map.get(&entity) {
+                        channel.target = AnimationTarget::Transform {
+                            entity: new_entity,
+                            property,
+                        };
+                    } else {
+                        log::warn!(
+                            "Skipping animation channel targeting entity {:?} missing from merge",
+                            entity
+                        );
+                    }
+                }
+            }
+            self.animations.push(clip);
+        }
+
+        for mut state in other.animation_states {
+            state.clip_index += animation_offset;
+            self.animation_states.push(state);
         }
 
         // Merge assets

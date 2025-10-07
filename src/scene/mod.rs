@@ -1,5 +1,6 @@
 // scene/mod.rs
 
+pub mod animation;
 pub mod builder;
 pub mod camera;
 pub mod components;
@@ -16,6 +17,6 @@ pub use transform::Transform;
 
 // Re-export all components
 pub use components::{
-    Children, MaterialComponent, MeshComponent, Name, OrbitAnimation, Parent, RotateAnimation,
-    TransformComponent, Visible,
+    Children, GltfMaterial, GltfNode, MaterialComponent, MeshComponent, Name, OrbitAnimation,
+    Parent, RotateAnimation, TransformComponent, Visible,
 };
