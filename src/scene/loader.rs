@@ -688,12 +688,6 @@ impl SceneLoader {
                         Some(gltf::animation::util::ReadOutputs::Translations(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
 
-                            if scale_multiplier != 1.0 {
-                                for value in &mut values {
-                                    *value *= scale_multiplier;
-                                }
-                            }
-
                             if !Self::reconcile_keyframe_lengths(
                                 &mut times,
                                 &mut values,
