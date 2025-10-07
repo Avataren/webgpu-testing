@@ -12,6 +12,7 @@ const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as us
 
 pub struct PostProcess {
     scene: TextureBundle,
+    scene_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
     bloom_ping: TextureBundle,
     bloom_pong: TextureBundle,
@@ -34,6 +35,7 @@ pub struct PostProcess {
     last_proj: Mat4,
     last_near: f32,
     last_far: f32,
+    sample_count: u32,
 }
 
 impl PostProcess {
@@ -41,6 +43,7 @@ impl PostProcess {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
+        sample_count: u32,
     ) -> Self {
         let size = wgpu::Extent3d {
             width: config.width.max(1),
@@ -70,7 +73,8 @@ impl PostProcess {
             ..Default::default()
         });
 
-        let scene = TextureBundle::color(device, &size, config.format, "SceneColor");
+        let (scene, scene_msaa) =
+            Self::create_scene_targets(device, &size, config.format, sample_count);
         let ssao = TextureBundle::ssao(device, &size);
         let bloom_ping = TextureBundle::bloom(device, &size, "BloomPing");
         let bloom_pong = TextureBundle::bloom(device, &size, "BloomPong");
@@ -382,6 +386,7 @@ impl PostProcess {
 
         let post = Self {
             scene,
+            scene_msaa,
             ssao,
             bloom_ping,
             bloom_pong,
@@ -404,7 +409,7 @@ impl PostProcess {
             last_proj: Mat4::IDENTITY,
             last_near: 0.01,
             last_far: 100.0,
-
+            sample_count,
         };
 
         let initial_uniform = PostProcessUniform::new(
@@ -440,7 +445,10 @@ impl PostProcess {
             height,
             depth_or_array_layers: 1,
         };
-        self.scene = TextureBundle::color(device, &self.size, format, "SceneColor");
+        let (scene, scene_msaa) =
+            Self::create_scene_targets(device, &self.size, format, self.sample_count);
+        self.scene = scene;
+        self.scene_msaa = scene_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
         self.bloom_ping = TextureBundle::bloom(device, &self.size, "BloomPing");
         self.bloom_pong = TextureBundle::bloom(device, &self.size, "BloomPong");
@@ -452,6 +460,13 @@ impl PostProcess {
         self.last_near = near;
         self.last_far = far;
         self.upload_uniform(queue);
+    }
+
+    pub fn scene_color_views(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
+        match self.scene_msaa.as_ref() {
+            Some(msaa) => (&msaa.view, Some(&self.scene.view)),
+            None => (&self.scene.view, None),
+        }
     }
 
     pub fn scene_view(&self) -> &wgpu::TextureView {
@@ -724,6 +739,28 @@ impl PostProcess {
 
         texture
     }
+
+    fn create_scene_targets(
+        device: &wgpu::Device,
+        size: &wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+    ) -> (TextureBundle, Option<MsaaTarget>) {
+        let resolved = TextureBundle::color(device, size, format, "SceneColor");
+        let msaa = if sample_count > 1 {
+            Some(MsaaTarget::new(
+                device,
+                size,
+                format,
+                sample_count,
+                "SceneColorMsaa",
+            ))
+        } else {
+            None
+        };
+
+        (resolved, msaa)
+    }
 }
 
 #[repr(C)]
@@ -736,7 +773,7 @@ struct PostProcessUniform {
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
-    _padding: [f32; 2], 
+    _padding: [f32; 2],
 }
 
 impl PostProcessUniform {
@@ -758,6 +795,37 @@ impl PostProcessUniform {
             noise_scale,
             near_far: [near, far],
             _padding: [0.0, 0.0],
+        }
+    }
+}
+
+struct MsaaTarget {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+impl MsaaTarget {
+    fn new(
+        device: &wgpu::Device,
+        size: &wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+        label: &str,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: *size,
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self {
+            _texture: texture,
+            view,
         }
     }
 }

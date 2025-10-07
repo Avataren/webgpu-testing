@@ -14,6 +14,7 @@ use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen_futures::spawn_local;
 
 use crate::renderer::{RenderBatcher, Renderer, Texture};
+use crate::settings::RenderSettings;
 
 #[cfg(target_arch = "wasm32")]
 type WindowHandle = Rc<Window>;
@@ -49,6 +50,7 @@ pub struct AppBuilder {
     auto_init_default_textures: bool,
     auto_add_default_lighting: bool,
     skip_initial_frames: Option<u32>,
+    settings: RenderSettings,
 }
 
 impl Default for AppBuilder {
@@ -59,6 +61,7 @@ impl Default for AppBuilder {
             auto_init_default_textures: true,
             auto_add_default_lighting: true,
             skip_initial_frames: None,
+            settings: RenderSettings::load(),
         }
     }
 }
@@ -86,6 +89,11 @@ impl AppBuilder {
 
     pub fn add_plugin<P: Plugin>(&mut self, plugin: P) -> &mut Self {
         plugin.build(self);
+        self
+    }
+
+    pub fn set_settings(&mut self, settings: RenderSettings) -> &mut Self {
+        self.settings = settings;
         self
     }
 
@@ -119,6 +127,7 @@ impl AppBuilder {
             startup_ran: false,
             frame_counter: 0,
             skip_rendering_until_frame: self.skip_initial_frames,
+            settings: self.settings,
             #[cfg(target_arch = "wasm32")]
             pending_renderer: None,
         }
@@ -139,6 +148,7 @@ pub struct App {
     startup_ran: bool,
     frame_counter: u32,
     skip_rendering_until_frame: Option<u32>,
+    settings: RenderSettings,
     #[cfg(target_arch = "wasm32")]
     pending_renderer: Option<PendingRenderer>,
 }
@@ -321,9 +331,13 @@ impl ApplicationHandler for App {
             log::info!("Initializing application...");
 
             // Build window attributes with web-specific configuration
+            #[allow(unused_mut)]
             let mut window_attrs = Window::default_attributes()
                 .with_title("wgpu hecs Renderer")
-                .with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
+                .with_inner_size(winit::dpi::LogicalSize::new(
+                    f64::from(self.settings.resolution.width),
+                    f64::from(self.settings.resolution.height),
+                ));
 
             #[cfg(target_arch = "wasm32")]
             {
@@ -338,7 +352,8 @@ impl ApplicationHandler for App {
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let mut renderer = pollster::block_on(Renderer::new(&window));
+                let mut renderer =
+                    pollster::block_on(Renderer::new(&window, self.settings.clone()));
 
                 self.scene.init_timer();
                 self.run_startup_systems(&mut renderer);
@@ -366,11 +381,12 @@ impl ApplicationHandler for App {
                 let pending_renderer: PendingRenderer = Rc::new(RefCell::new(None));
                 let renderer_cell = pending_renderer.clone();
                 let window_for_renderer = window_handle.clone();
+                let settings = self.settings.clone();
 
                 log::info!("Spawning asynchronous renderer initialization");
 
                 spawn_local(async move {
-                    let renderer = Renderer::new(&window_for_renderer).await;
+                    let renderer = Renderer::new(&window_for_renderer, settings).await;
                     renderer_cell.borrow_mut().replace(renderer);
                     window_for_renderer.request_redraw();
                 });

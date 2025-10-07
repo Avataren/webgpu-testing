@@ -11,6 +11,7 @@ use crate::renderer::{
 };
 use crate::scene::components::DepthState;
 use crate::scene::Camera;
+use crate::settings::RenderSettings;
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
@@ -19,8 +20,6 @@ use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
-const SAMPLE_COUNT: u32 = 1;
-const SHADOW_MAP_SIZE: u32 = 2048;
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
 
@@ -36,6 +35,7 @@ pub struct Renderer {
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
+    settings: RenderSettings,
 }
 
 struct RenderContext {
@@ -46,6 +46,7 @@ struct RenderContext {
     size: PhysicalSize<u32>,
     depth: Depth,
     supports_bindless_textures: bool,
+    sample_count: u32,
 }
 
 struct RenderPipeline {
@@ -122,16 +123,27 @@ struct LightsBuffer {
 }
 
 impl Renderer {
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: &Window, settings: RenderSettings) -> Self {
         let size = window.inner_size();
-        let context = RenderContext::new(window, size).await;
+        let context = RenderContext::new(window, size, &settings).await;
         let camera_buffer = CameraBuffer::new(&context.device);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
-        let shadows = ShadowResources::new(&context.device, &objects_buffer);
+        let shadows =
+            ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
         let lights_buffer = LightsBuffer::new(&context.device, &shadows);
-        let (pipeline, texture_binder) =
-            RenderPipeline::new(&context, &camera_buffer, &objects_buffer, &lights_buffer);
-        let postprocess = PostProcess::new(&context.device, &context.queue, &context.config);
+        let (pipeline, texture_binder) = RenderPipeline::new(
+            &context,
+            &camera_buffer,
+            &objects_buffer,
+            &lights_buffer,
+            settings.sample_count,
+        );
+        let postprocess = PostProcess::new(
+            &context.device,
+            &context.queue,
+            &context.config,
+            settings.sample_count,
+        );
 
         Self {
             context,
@@ -145,6 +157,7 @@ impl Renderer {
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
+            settings,
         }
     }
 
@@ -154,6 +167,10 @@ impl Renderer {
 
     pub fn get_queue(&self) -> &wgpu::Queue {
         &self.context.queue
+    }
+
+    pub fn settings(&self) -> &RenderSettings {
+        &self.settings
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -332,13 +349,15 @@ impl Renderer {
             &self.objects_buffer,
         );
 
+        let (scene_view, resolve_target) = self.postprocess.scene_color_views();
+
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.postprocess.scene_view(),
+                    view: scene_view,
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.231,
@@ -444,7 +463,6 @@ impl Renderer {
                 }
             }
         }
-
 
         self.postprocess.execute(
             &mut encoder,
@@ -568,7 +586,7 @@ impl Renderer {
 }
 
 impl RenderContext {
-    async fn new(window: &Window, size: PhysicalSize<u32>) -> Self {
+    async fn new(window: &Window, size: PhysicalSize<u32>, settings: &RenderSettings) -> Self {
         #[cfg(target_arch = "wasm32")]
         {
             log::info!("Checking WebGPU/WebGL availability...");
@@ -692,19 +710,21 @@ impl RenderContext {
         //     .find(|f| f.is_srgb())
         //     .unwrap_or(surface_caps.formats[0]);
 
+        let present_mode = settings.present_mode(&surface_caps.present_modes);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
 
-        let depth = Depth::new(&device, size, SAMPLE_COUNT);
+        let depth = Depth::new(&device, size, settings.sample_count);
 
         Self {
             surface,
@@ -714,6 +734,7 @@ impl RenderContext {
             size,
             depth,
             supports_bindless_textures,
+            sample_count: settings.sample_count,
         }
     }
 
@@ -725,7 +746,7 @@ impl RenderContext {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-        self.depth = Depth::new(&self.device, new_size, SAMPLE_COUNT);
+        self.depth = Depth::new(&self.device, new_size, self.sample_count);
     }
 }
 
@@ -953,12 +974,12 @@ struct ShadowArray {
 }
 
 impl ShadowArray {
-    fn new(device: &wgpu::Device, label: &str, layers: u32) -> Self {
+    fn new(device: &wgpu::Device, label: &str, layers: u32, size: u32) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
+                width: size,
+                height: size,
                 depth_or_array_layers: layers.max(1),
             },
             mip_level_count: 1,
@@ -1034,14 +1055,25 @@ struct ShadowResources {
 }
 
 impl ShadowResources {
-    fn new(device: &wgpu::Device, objects: &DynamicObjectsBuffer) -> Self {
+    fn new(device: &wgpu::Device, objects: &DynamicObjectsBuffer, shadow_map_size: u32) -> Self {
         let directional = ShadowArray::new(
             device,
             "DirectionalShadowMap",
             MAX_DIRECTIONAL_LIGHTS as u32,
+            shadow_map_size,
         );
-        let spot = ShadowArray::new(device, "SpotShadowMap", MAX_SPOT_LIGHTS as u32);
-        let point = ShadowArray::new(device, "PointShadowMap", POINT_SHADOW_LAYERS);
+        let spot = ShadowArray::new(
+            device,
+            "SpotShadowMap",
+            MAX_SPOT_LIGHTS as u32,
+            shadow_map_size,
+        );
+        let point = ShadowArray::new(
+            device,
+            "PointShadowMap",
+            POINT_SHADOW_LAYERS,
+            shadow_map_size,
+        );
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ShadowSampler"),
@@ -1855,6 +1887,7 @@ impl RenderPipeline {
         camera: &CameraBuffer,
         objects: &DynamicObjectsBuffer,
         lights: &LightsBuffer,
+        sample_count: u32,
     ) -> (Self, TextureBindingModel) {
         let (texture_bind_layout, texture_binder, shader_source) = if context
             .supports_bindless_textures
@@ -2007,6 +2040,7 @@ impl RenderPipeline {
                         depth_test,
                         depth_write,
                         alpha_blend,
+                        sample_count,
                     );
                     pipelines.insert(key, pipeline);
                 }
@@ -2032,6 +2066,7 @@ impl RenderPipeline {
         depth_test: bool,
         depth_write: bool,
         alpha_blend: bool,
+        sample_count: u32,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
             wgpu::CompareFunction::LessEqual
@@ -2081,7 +2116,7 @@ impl RenderPipeline {
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 multisample: wgpu::MultisampleState {
-                    count: SAMPLE_COUNT,
+                    count: sample_count,
                     mask: !0,
                     alpha_to_coverage_enabled: false,
                 },

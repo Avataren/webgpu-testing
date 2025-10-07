@@ -715,8 +715,6 @@ impl Scene {
         ));
         created += 1;
 
-
-
         //// Rim spot light from behind
         let rim_position = Vec3::new(-2.0, 6.0, -5.0);
         let rim_direction = (Vec3::ZERO - rim_position).normalize();
@@ -735,7 +733,6 @@ impl Scene {
             CanCastShadow(true),
         ));
         created += 1;
-
 
         created
     }

@@ -31,7 +31,7 @@ fn main() {}
 #[wasm_bindgen]
 pub fn start_app() {
     web_sys::console::log_1(&"[Rust] start_app() called".into());
-    
+
     match wgpu_cube::run(build_app()) {
         Ok(_) => {
             web_sys::console::log_1(&"[Rust] Application started successfully".into());
