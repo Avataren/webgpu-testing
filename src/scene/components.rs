@@ -193,6 +193,18 @@ pub struct OrbitAnimation {
 }
 
 // ============================================================================
+// glTF Metadata Components
+// ============================================================================
+
+/// Stores the originating glTF node index for an entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GltfNode(pub usize);
+
+/// Stores the originating glTF material index for an entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GltfMaterial(pub usize);
+
+// ============================================================================
 // Hierarchy Components (for future use)
 // ============================================================================
 
