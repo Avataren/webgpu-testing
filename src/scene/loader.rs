@@ -14,6 +14,8 @@ use crate::scene::{Scene, Transform};
 use gltf::json::validation::Checked;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
+use std::io;
 
 pub struct SceneLoader;
 
@@ -21,6 +23,38 @@ pub struct SceneLoader;
 struct MaterialPointerTarget {
     material_index: usize,
     property: MaterialProperty,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SceneLoader;
+    use serde_json::Value;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn pointer_animation_gltf_is_patched_and_loaded() {
+        let path = Path::new("web/assets/animated/AnimatedColorsCube.gltf");
+
+        let standard_import = gltf::import(path);
+        assert!(matches!(standard_import, Err(gltf::Error::Deserialize(_))));
+
+        let (document, _, _) = SceneLoader::import_gltf_native(path).expect("patched import");
+        assert_eq!(document.animations().len(), 1);
+
+        let original_nodes: Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let original_node_count = original_nodes
+            .get("nodes")
+            .and_then(|value| value.as_array())
+            .map(|nodes| nodes.len())
+            .unwrap_or(0);
+
+        let animation = document.animations().next().unwrap();
+        let pointer_channel = animation.channels().nth(2).unwrap();
+        assert!(SceneLoader::is_pointer_channel(&document, 0, 2));
+        assert_eq!(pointer_channel.target().node().index(), original_node_count);
+    }
 }
 
 impl SceneLoader {
@@ -203,7 +237,7 @@ impl SceneLoader {
 
         #[cfg(not(target_arch = "wasm32"))]
         let (document, buffers, images) =
-            gltf::import(path).map_err(|e| format!("Failed to load glTF: {}", e))?;
+            Self::import_gltf_native(path).map_err(|e| format!("Failed to load glTF: {}", e))?;
 
         log::info!(
             "Document info: {} meshes, {} materials, {} textures, {} scenes",
@@ -306,6 +340,148 @@ impl SceneLoader {
         log::info!("  Entities with children: {}", children_count);
 
         Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_gltf_native(
+        path: &Path,
+    ) -> Result<
+        (
+            gltf::Document,
+            Vec<gltf::buffer::Data>,
+            Vec<gltf::image::Data>,
+        ),
+        gltf::Error,
+    > {
+        match gltf::import(path) {
+            Ok(result) => Ok(result),
+            Err(gltf::Error::Deserialize(original))
+                if path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext.eq_ignore_ascii_case("gltf"))
+                    .unwrap_or(false) =>
+            {
+                match Self::import_gltf_with_pointer_patch(path)? {
+                    Some(result) => Ok(result),
+                    None => Err(gltf::Error::Deserialize(original)),
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_gltf_with_pointer_patch(
+        path: &Path,
+    ) -> Result<
+        Option<(
+            gltf::Document,
+            Vec<gltf::buffer::Data>,
+            Vec<gltf::image::Data>,
+        )>,
+        gltf::Error,
+    > {
+        use gltf::{import_buffers, import_images};
+
+        let json_text = fs::read_to_string(path).map_err(gltf::Error::Io)?;
+        let mut root: Value = serde_json::from_str(&json_text).map_err(gltf::Error::Deserialize)?;
+
+        let mut channels_to_patch: Vec<(usize, usize)> = Vec::new();
+
+        if let Some(animations) = root.get("animations").and_then(|value| value.as_array()) {
+            for (animation_index, animation) in animations.iter().enumerate() {
+                if let Some(channels) = animation.get("channels").and_then(|value| value.as_array())
+                {
+                    for (channel_index, channel) in channels.iter().enumerate() {
+                        let Some(target_value) = channel.get("target") else {
+                            continue;
+                        };
+
+                        let Some(target_object) = target_value.as_object() else {
+                            continue;
+                        };
+
+                        if target_object.contains_key("node") {
+                            continue;
+                        }
+
+                        let pointer = target_object
+                            .get("extensions")
+                            .and_then(Value::as_object)
+                            .and_then(|extensions| extensions.get("KHR_animation_pointer"))
+                            .and_then(Value::as_object)
+                            .and_then(|pointer| pointer.get("pointer"))
+                            .and_then(Value::as_str);
+
+                        if pointer.is_some() {
+                            channels_to_patch.push((animation_index, channel_index));
+                        }
+                    }
+                }
+            }
+        }
+
+        if channels_to_patch.is_empty() {
+            return Ok(None);
+        }
+
+        let placeholder_index = Self::insert_placeholder_node(&mut root).ok_or_else(|| {
+            gltf::Error::Deserialize(serde_json::Error::io(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to create placeholder node for pointer animation",
+            )))
+        })?;
+
+        for (animation_index, channel_index) in channels_to_patch {
+            let Some(animation) = root
+                .get_mut("animations")
+                .and_then(|value| value.as_array_mut())
+                .and_then(|animations| animations.get_mut(animation_index))
+            else {
+                continue;
+            };
+
+            let Some(channel) = animation
+                .get_mut("channels")
+                .and_then(|value| value.as_array_mut())
+                .and_then(|channels| channels.get_mut(channel_index))
+            else {
+                continue;
+            };
+
+            let Some(target_value) = channel.get_mut("target") else {
+                continue;
+            };
+
+            let Some(target_object) = target_value.as_object_mut() else {
+                continue;
+            };
+
+            target_object.insert(
+                "node".to_string(),
+                Value::Number(serde_json::Number::from(placeholder_index as u64)),
+            );
+        }
+
+        let patched_bytes = serde_json::to_vec(&root).map_err(gltf::Error::Deserialize)?;
+        let gltf::Gltf { document, blob } = gltf::Gltf::from_slice(&patched_bytes)?;
+        let base_dir = path.parent().unwrap_or_else(|| Path::new("./"));
+        let buffers = import_buffers(&document, Some(base_dir), blob)?;
+        let images = import_images(&document, Some(base_dir), &buffers)?;
+        Ok(Some((document, buffers, images)))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn insert_placeholder_node(root: &mut Value) -> Option<usize> {
+        let root_object = root.as_object_mut()?;
+        let nodes_entry = root_object
+            .entry("nodes".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+
+        let nodes = nodes_entry.as_array_mut()?;
+        nodes.push(Value::Object(serde_json::Map::new()));
+        Some(nodes.len() - 1)
     }
 
     fn load_animations(
