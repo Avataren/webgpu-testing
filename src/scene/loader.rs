@@ -496,7 +496,7 @@ impl SceneLoader {
             return Ok(());
         }
 
-        let pointer_targets = Self::extract_pointer_targets(path);
+        let pointer_targets = Self::extract_pointer_targets(document, Some(path));
         let mut loaded_clips = 0usize;
 
         for (animation_index, animation) in document.animations().enumerate() {
@@ -806,25 +806,35 @@ impl SceneLoader {
         Ok(values)
     }
 
-    fn extract_pointer_targets(path: &Path) -> HashMap<(usize, usize), MaterialPointerTarget> {
+    fn extract_pointer_targets(
+        document: &gltf::Document,
+        path: Option<&Path>,
+    ) -> HashMap<(usize, usize), MaterialPointerTarget> {
         let mut targets = HashMap::new();
 
-        let Ok(bytes) = crate::io::load_binary(path) else {
-            return targets;
-        };
+        if let Ok(root) = gltf::json::serialize::to_value(document.as_json()) {
+            Self::collect_pointer_targets_from_json(&root, &mut targets);
+        }
 
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(text) => text,
-            Err(_) => return targets,
-        };
+        if targets.is_empty() {
+            if let Some(path) = path {
+                if let Ok(bytes) = crate::io::load_binary(path) {
+                    if let Ok(root) = serde_json::from_slice::<Value>(&bytes) {
+                        Self::collect_pointer_targets_from_json(&root, &mut targets);
+                    }
+                }
+            }
+        }
 
-        let Ok(root) = serde_json::from_str::<Value>(text) else {
-            return targets;
-        };
+        targets
+    }
 
-        let animations = match root.get("animations").and_then(|value| value.as_array()) {
-            Some(list) => list,
-            None => return targets,
+    fn collect_pointer_targets_from_json(
+        root: &Value,
+        targets: &mut HashMap<(usize, usize), MaterialPointerTarget>,
+    ) {
+        let Some(animations) = root.get("animations").and_then(|value| value.as_array()) else {
+            return;
         };
 
         for (animation_index, animation) in animations.iter().enumerate() {
@@ -857,8 +867,6 @@ impl SceneLoader {
                 }
             }
         }
-
-        targets
     }
 
     fn parse_pointer_target(pointer: &str) -> Option<MaterialPointerTarget> {
