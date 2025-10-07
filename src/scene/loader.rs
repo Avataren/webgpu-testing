@@ -28,7 +28,14 @@ struct MaterialPointerTarget {
 #[cfg(test)]
 mod tests {
     use super::SceneLoader;
+    use crate::scene::animation::{
+        AnimationInterpolation, AnimationOutput, AnimationTarget, TransformProperty,
+    };
+    use crate::scene::components::{Name, TransformComponent, Visible};
+    use crate::scene::{Scene, Transform};
+    use glam::Vec3;
     use serde_json::Value;
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
 
@@ -55,9 +62,211 @@ mod tests {
         assert!(SceneLoader::is_pointer_channel(&document, 0, 2));
         assert_eq!(pointer_channel.target().node().index(), original_node_count);
     }
+
+    #[test]
+    fn translation_animation_channels_match_document() {
+        let path = Path::new("web/assets/animated/InterpolationTest.gltf");
+
+        let (document, buffers, _) =
+            SceneLoader::import_gltf_native(path).expect("InterpolationTest import");
+
+        let mut scene = Scene::new();
+
+        let mut node_entities = vec![None; document.nodes().len()];
+        for node in document.nodes() {
+            let entity = scene.world.spawn((
+                Name::new(node.name().unwrap_or("")),
+                TransformComponent(Transform::IDENTITY),
+                Visible(true),
+            ));
+            node_entities[node.index()] = Some(entity);
+        }
+
+        SceneLoader::load_animations(&document, &buffers, &node_entities, &mut scene, path, 1.0)
+            .expect("load animations");
+
+        let clips = scene.animations();
+        let document_animations: Vec<_> = document.animations().collect();
+
+        for clip_name in [
+            "Step Translation",
+            "CubicSpline Translation",
+            "Linear Translation",
+        ] {
+            let clip = clips
+                .iter()
+                .find(|clip| clip.name == clip_name)
+                .unwrap_or_else(|| panic!("Clip '{}' not loaded", clip_name));
+
+            assert_eq!(
+                clip.channels.len(),
+                1,
+                "Clip '{}' should have exactly one channel",
+                clip_name
+            );
+
+            let channel = &clip.channels[0];
+            let (entity, property) = match channel.target {
+                AnimationTarget::Transform { entity, property } => (entity, property),
+                _ => panic!("Clip '{}' should target a transform", clip_name),
+            };
+            assert_eq!(
+                property,
+                TransformProperty::Translation,
+                "Clip '{}' should target translation",
+                clip_name
+            );
+
+            let animation = document_animations
+                .iter()
+                .find(|animation| animation.name() == Some(clip_name))
+                .unwrap_or_else(|| panic!("Missing animation '{}'", clip_name));
+
+            let doc_channel = animation
+                .channels()
+                .next()
+                .expect("Animation should have a channel");
+            let reader = doc_channel.reader(|buffer| Some(&buffers[buffer.index()].0));
+
+            let doc_times: Vec<f32> = reader.read_inputs().expect("animation inputs").collect();
+            let doc_values: Vec<Vec3> = match reader.read_outputs().expect("animation outputs") {
+                gltf::animation::util::ReadOutputs::Translations(iter) => {
+                    iter.map(Vec3::from).collect()
+                }
+                _ => panic!("Unexpected outputs for {}", clip_name),
+            };
+
+            assert_eq!(
+                channel.sampler.times, doc_times,
+                "Clip '{}' keyframe times mismatch",
+                clip_name
+            );
+
+            match &channel.sampler.output {
+                AnimationOutput::Vec3(values) => {
+                    assert_eq!(
+                        values.len(),
+                        doc_values.len(),
+                        "Clip '{}' translation value length mismatch",
+                        clip_name
+                    );
+
+                    for (index, (actual, expected)) in
+                        values.iter().zip(doc_values.iter()).enumerate()
+                    {
+                        assert!(
+                            actual.abs_diff_eq(*expected, 1e-6),
+                            "Clip '{}' translation value {} mismatch: {:?} vs {:?}",
+                            clip_name,
+                            index,
+                            actual,
+                            expected
+                        );
+                    }
+                }
+                _ => panic!("Clip '{}' should produce Vec3 outputs", clip_name),
+            }
+
+            let final_time = *channel
+                .sampler
+                .times
+                .last()
+                .expect("Keyframe times should not be empty");
+
+            let mut transform_updates = HashMap::new();
+            let mut material_updates = HashMap::new();
+            clip.sample(final_time, &mut transform_updates, &mut material_updates);
+
+            let update = transform_updates
+                .get(&entity)
+                .unwrap_or_else(|| panic!("No transform update for '{}'", clip_name));
+
+            let expected_final = match channel.sampler.interpolation {
+                AnimationInterpolation::CubicSpline => {
+                    let keyframe_index = channel.sampler.times.len() - 1;
+                    doc_values[keyframe_index * 3 + 1]
+                }
+                AnimationInterpolation::Linear | AnimationInterpolation::Step => *doc_values
+                    .last()
+                    .expect("Translation outputs should not be empty"),
+            };
+
+            assert!(
+                update
+                    .translation
+                    .expect("Translation update missing")
+                    .abs_diff_eq(expected_final, 1e-5),
+                "Clip '{}' final translation mismatch",
+                clip_name
+            );
+        }
+    }
 }
 
 impl SceneLoader {
+    fn reconcile_keyframe_lengths<T>(
+        times: &mut Vec<f32>,
+        values: &mut Vec<T>,
+        interpolation: AnimationInterpolation,
+        clip_name: &str,
+        channel_index: usize,
+        property_label: &str,
+    ) -> bool {
+        if times.is_empty() || values.is_empty() {
+            return false;
+        }
+
+        let components_per_keyframe = match interpolation {
+            AnimationInterpolation::CubicSpline => 3,
+            AnimationInterpolation::Step | AnimationInterpolation::Linear => 1,
+        };
+
+        if values.len() < components_per_keyframe {
+            log::warn!(
+                "{} animation '{}' channel {} has insufficient output data ({} values)",
+                property_label,
+                clip_name,
+                channel_index,
+                values.len()
+            );
+            return false;
+        }
+
+        if values.len() % components_per_keyframe != 0 {
+            let valid_values = values.len() / components_per_keyframe * components_per_keyframe;
+            log::warn!(
+                "{} animation '{}' channel {} outputs ({}) are not a multiple of {} - truncating",
+                property_label,
+                clip_name,
+                channel_index,
+                values.len(),
+                components_per_keyframe
+            );
+            values.truncate(valid_values);
+        }
+
+        let available_keyframes = values.len() / components_per_keyframe;
+        if available_keyframes == 0 {
+            return false;
+        }
+
+        if available_keyframes != times.len() {
+            log::warn!(
+                "{} animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                property_label,
+                clip_name,
+                channel_index,
+                times.len(),
+                available_keyframes
+            );
+            let min_keyframes = times.len().min(available_keyframes);
+            times.truncate(min_keyframes);
+            values.truncate(min_keyframes * components_per_keyframe);
+        }
+
+        !times.is_empty() && values.len() >= times.len() * components_per_keyframe
+    }
+
     fn load_node(
         node: &gltf::Node,
         parent: Option<hecs::Entity>,
@@ -325,7 +534,7 @@ impl SceneLoader {
         }
 
         log::info!("Loading animations...");
-        Self::load_animations(&document, &buffers, &node_entities, scene, path)?;
+        Self::load_animations(&document, &buffers, &node_entities, scene, path, scale)?;
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());
@@ -490,6 +699,7 @@ impl SceneLoader {
         node_entities: &[Option<hecs::Entity>],
         scene: &mut Scene,
         path: &Path,
+        scale_multiplier: f32,
     ) -> Result<(), String> {
         if document.animations().len() == 0 {
             log::info!("No animations in glTF document");
@@ -527,7 +737,9 @@ impl SceneLoader {
                 let interpolation = match channel.sampler().interpolation() {
                     gltf::animation::Interpolation::Step => AnimationInterpolation::Step,
                     gltf::animation::Interpolation::Linear => AnimationInterpolation::Linear,
-                    gltf::animation::Interpolation::CubicSpline => AnimationInterpolation::CubicSpline,
+                    gltf::animation::Interpolation::CubicSpline => {
+                        AnimationInterpolation::CubicSpline
+                    }
                 };
 
                 if Self::is_pointer_channel(document, animation_index, channel_index) {
@@ -614,20 +826,21 @@ impl SceneLoader {
                     gltf::animation::Property::Translation => match reader.read_outputs() {
                         Some(gltf::animation::util::ReadOutputs::Translations(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Translation animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
+
+                            if scale_multiplier != 1.0 {
+                                for value in &mut values {
+                                    *value *= scale_multiplier;
+                                }
                             }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Translation",
+                            ) {
                                 continue;
                             }
 
@@ -645,20 +858,15 @@ impl SceneLoader {
                     gltf::animation::Property::Scale => match reader.read_outputs() {
                         Some(gltf::animation::util::ReadOutputs::Scales(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Scale animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
-                            }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Scale",
+                            ) {
                                 continue;
                             }
 
@@ -679,20 +887,15 @@ impl SceneLoader {
                                 .into_f32()
                                 .map(|r| Quat::from_xyzw(r[0], r[1], r[2], r[3]))
                                 .collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Rotation animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
-                            }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Rotation",
+                            ) {
                                 continue;
                             }
 
