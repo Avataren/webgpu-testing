@@ -479,42 +479,6 @@ impl Scene {
         }
     }
 
-    // fn build_directional_shadow(camera_pos: Vec3, direction: Vec3) -> DirectionalShadowData {
-    //     const SHADOW_DISTANCE: f32 = 20.0;
-    //     const NEAR_PLANE: f32 = 0.1;
-
-    //     let focus = Vec3::ZERO;
-    //     let light_position = focus - direction * SHADOW_DISTANCE;
-    //     let up = Self::shadow_up(direction);
-    //     let view = Mat4::look_at_rh(light_position, focus, up);
-
-    //     // Custom orthographic for wgpu [0,1] depth range
-    //     let left = -SHADOW_DISTANCE;
-    //     let right = SHADOW_DISTANCE;
-    //     let bottom = -SHADOW_DISTANCE;
-    //     let top = SHADOW_DISTANCE;
-    //     let near = NEAR_PLANE;
-    //     let far = SHADOW_DISTANCE * 2.0;
-
-    //     // This creates a matrix that maps depth to [0, 1] for wgpu
-    //     let projection = Mat4::from_cols(
-    //         glam::Vec4::new(2.0 / (right - left), 0.0, 0.0, 0.0),
-    //         glam::Vec4::new(0.0, 2.0 / (top - bottom), 0.0, 0.0),
-    //         glam::Vec4::new(0.0, 0.0, 1.0 / (near - far), 0.0), // Changed for [0,1] depth
-    //         glam::Vec4::new(
-    //             -(right + left) / (right - left),
-    //             -(top + bottom) / (top - bottom),
-    //             near / (near - far), // Changed for [0,1] depth
-    //             1.0,
-    //         ),
-    //     );
-
-    //     DirectionalShadowData {
-    //         view_proj: projection * view,
-    //         bias: 0.001,
-    //     }
-    // }
-
     fn build_point_shadow(position: Vec3, range: f32) -> PointShadowData {
         use std::f32::consts::FRAC_PI_2;
 
@@ -596,108 +560,6 @@ impl Scene {
         }
     }
 
-    // Ensure the scene has a reasonable default lighting setup.
-    //
-    // Returns the number of lights that were created. If the scene already
-    // contains any light components, no additional lights will be spawned.
-    //
-    // pub fn add_default_lighting(&mut self) -> usize {
-    //     if self.has_any_lights() {
-    //         return 0;
-    //     }
-
-    //     log::info!("No lights found in scene - adding default directional lighting");
-
-    //     let mut created = 0usize;
-
-    //     // Single directional light from above
-    //     let key_direction = Vec3::new(0.5, -0.8, 0.3).normalize();
-    //     let key_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, key_direction);
-
-    //     self.world.spawn((
-    //         Name::new("Default Key Light"),
-    //         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
-    //         DirectionalLight {
-    //             color: Vec3::splat(1.0),
-    //             intensity: 2.5,
-    //         },
-    //         CanCastShadow(true),
-    //     ));
-    //     created += 1;
-
-    //     created
-    // }
-    // pub fn add_default_lighting(&mut self) -> usize {
-    //     if self.has_any_lights() {
-    //         return 0;
-    //     }
-
-    //     log::info!("No lights found in scene - adding default SPOT lighting setup");
-
-    //     let mut created = 0usize;
-
-    //     // Key spot light from above-right, pointing at origin
-    //     let key_position = Vec3::new(5.0, 8.0, 3.0);
-    //     let key_direction = (Vec3::ZERO - key_position).normalize();
-    //     // FIX: Don't use rotation_from_light_direction - it negates the direction!
-    //     let key_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, key_direction);
-
-    //     self.world.spawn((
-    //         Name::new("Default Key Spot Light"),
-    //         TransformComponent(Transform::from_trs(key_position, key_rotation, Vec3::ONE)),
-    //         SpotLight {
-    //             color: Vec3::splat(1.0),
-    //             intensity: 1000.0,
-    //             range: 30.0,
-    //             inner_angle: 30f32.to_radians(),
-    //             outer_angle: 45f32.to_radians(),
-    //         },
-    //         CanCastShadow(true),
-    //     ));
-    //     created += 1;
-
-    //     // // Fill spot light from camera-ish position
-    //     // let fill_position = Vec3::new(-3.0, 5.0, 6.0);
-    //     // let fill_direction = (Vec3::ZERO - fill_position).normalize();
-    //     // let fill_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, fill_direction);
-
-    //     // self.world.spawn((
-    //     //     Name::new("Default Fill Spot Light"),
-    //     //     TransformComponent(Transform::from_trs(fill_position, fill_rotation, Vec3::ONE)),
-    //     //     SpotLight {
-    //     //         color: Vec3::new(0.9, 0.95, 1.0),
-    //     //         intensity: 65.0,
-    //     //         range: 30.0,
-    //     //         inner_angle: 30f32.to_radians(),
-    //     //         outer_angle: 45f32.to_radians(),
-    //     //     },
-    //     //     CanCastShadow(true),
-    //     // ));
-    //     // created += 1;
-
-    //     // // Rim spot light from behind
-    //     // let rim_position = Vec3::new(-2.0, 3.0, -5.0);
-    //     // let rim_direction = (Vec3::ZERO - rim_position).normalize();
-    //     // let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);
-
-    //     // self.world.spawn((
-    //     //     Name::new("Default Rim Spot Light"),
-    //     //     TransformComponent(Transform::from_trs(rim_position, rim_rotation, Vec3::ONE)),
-    //     //     SpotLight {
-    //     //         color: Vec3::new(1.0, 0.95, 0.9),
-    //     //         intensity: 65.0,
-    //     //         range: 30.0,
-    //     //         inner_angle: 20f32.to_radians(),
-    //     //         outer_angle: 30f32.to_radians(),
-    //     //     },
-    //     //     CanCastShadow(true),
-    //     // ));
-    //     // created += 1;
-
-    //     log::info!("Created {} spot lights", created);
-    //     created
-    // }
-
     pub fn add_default_lighting(&mut self) -> usize {
         if self.has_any_lights() {
             return 0;
@@ -707,22 +569,6 @@ impl Scene {
 
         let mut created = 0usize;
 
-        // Main directional light (sun) from above-right - warm sunlight
-        // let sun_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
-        // let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
-
-        // self.world.spawn((
-        //     Name::new("Default Sun"),
-        //     TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
-        //     DirectionalLight {
-        //         color: Vec3::new(1.0, 0.98, 0.95), // Slightly warm
-        //         intensity: 0.5,
-        //     },
-        //     CanCastShadow(true),
-        // ));
-        // created += 1;
-
-        // Second directional light from different angle - cooler sky light
         let sun2_direction = Vec3::new(-0.4, -1.0, 0.25).normalize();
         let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
 
@@ -754,7 +600,7 @@ impl Scene {
         ));
         created += 1;
 
-        //// Rim spot light from behind
+        // Rim spot light from behind
         let rim_position = Vec3::new(-2.0, 6.0, -5.0);
         let rim_direction = (Vec3::ZERO - rim_position).normalize();
         let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);

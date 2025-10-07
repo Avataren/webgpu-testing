@@ -331,8 +331,7 @@ impl ApplicationHandler for App {
             log::info!("Initializing application...");
 
             // Build window attributes with web-specific configuration
-            #[allow(unused_mut)]
-            let mut window_attrs = Window::default_attributes()
+            let base_window_attrs = Window::default_attributes()
                 .with_title("wgpu hecs Renderer")
                 .with_inner_size(winit::dpi::LogicalSize::new(
                     f64::from(self.settings.resolution.width),
@@ -340,10 +339,13 @@ impl ApplicationHandler for App {
                 ));
 
             #[cfg(target_arch = "wasm32")]
-            {
+            let window_attrs = {
                 use winit::platform::web::WindowAttributesExtWebSys;
-                window_attrs = window_attrs.with_append(true);
-            }
+                base_window_attrs.with_append(true)
+            };
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let window_attrs = base_window_attrs;
 
             let window = event_loop
                 .create_window(window_attrs)

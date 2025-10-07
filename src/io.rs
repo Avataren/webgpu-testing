@@ -76,10 +76,6 @@ pub(crate) fn load_binary_from_str(path: &str) -> Result<Vec<u8>, String> {
     load_web_bytes(&path_buf)
 }
 
-// This helper is only used by our WebAssembly code paths but remains available on
-// native builds to keep the API surface consistent, so silence the unused warning
-// when it is compiled but not referenced.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn load_binary(path: &Path) -> Result<Vec<u8>, String> {
     #[cfg(target_arch = "wasm32")]
     {
