@@ -147,7 +147,7 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(mix(1.0, ao_pow * 1, strength), 1.0, 1.0, 1.0);
 }
 
-// Bloom prefilter
+// Bloom prefilter - uses group 0 for scene texture
 @group(0) @binding(0)
 var scene_texture : texture_2d<f32>;
 @group(0) @binding(1)
@@ -163,7 +163,7 @@ fn fs_bloom_prefilter(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(color.rgb * intensity, 1.0);
 }
 
-// Bloom blur horizontal
+// Bloom blur - uses group 0 for blur texture
 @group(0) @binding(0)
 var blur_texture : texture_2d<f32>;
 @group(0) @binding(1)
@@ -204,19 +204,25 @@ fn fs_bloom_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(result / total, 1.0);
 }
 
+// Composite - uses group 0 for all textures with one sampler (matching non-MSAA version)
+@group(0) @binding(0)
+var composite_scene : texture_2d<f32>;
+@group(0) @binding(1)
+var composite_ssao : texture_2d<f32>;
+@group(0) @binding(2)
+var composite_bloom : texture_2d<f32>;
+@group(0) @binding(3)
+var composite_sampler : sampler;
+
+@group(1) @binding(0)
+var<uniform> composite_uniform : PostUniform;
+
 @fragment
-fn fs_composite(
-    in : VertexOutput,
-    @group(1) @binding(0) ssao_texture : texture_2d<f32>,
-    @group(1) @binding(1) ssao_sampler : sampler,
-    @group(2) @binding(0) bloom_texture : texture_2d<f32>,
-    @group(2) @binding(1) bloom_sampler : sampler
-) -> @location(0) vec4<f32> {
-    let scene_color = textureSample(scene_texture, scene_sampler, in.uv);
-    let ssao = textureSample(ssao_texture, ssao_sampler, in.uv).r;
-    let bloom = textureSample(bloom_texture, bloom_sampler, in.uv).rgb;
-    let ao = ssao;
-    let color = scene_color.rgb * ao;
-    let final_color = color + bloom;
-    return vec4<f32>(final_color, scene_color.a);
+fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
+    let base = textureSample(composite_scene, composite_sampler, in.uv);
+    let ssao = textureSample(composite_ssao, composite_sampler, in.uv).r;
+    let bloom = textureSample(composite_bloom, composite_sampler, in.uv).rgb;
+    let shaded = base.rgb * ssao;
+    let result = shaded + bloom;
+    return vec4<f32>(result, base.a);
 }
