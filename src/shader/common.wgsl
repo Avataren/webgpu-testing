@@ -31,6 +31,7 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
+const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 
 const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
 const MAX_POINT_LIGHTS: u32 = 4u;
@@ -751,11 +752,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // }
 
     // ALWAYS sample all textures (uniform control flow)
-    let base_color_sample = sample_base_color_texture(obj.base_color_texture, in.uv);
-    let mr_sample = sample_metallic_roughness_texture(obj.metallic_roughness_texture, in.uv);
-    let normal_sample = sample_normal_texture(obj.normal_texture, in.uv);
-    let emissive_sample = sample_emissive_texture(obj.emissive_texture, in.uv);
-    let occlusion_sample = sample_occlusion_texture(obj.occlusion_texture, in.uv);
+    let use_nearest_sampler = (obj.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
+    let base_color_sample =
+        sample_base_color_texture(obj.base_color_texture, in.uv, use_nearest_sampler);
+    let mr_sample = sample_metallic_roughness_texture(
+        obj.metallic_roughness_texture,
+        in.uv,
+        use_nearest_sampler,
+    );
+    let normal_sample = sample_normal_texture(obj.normal_texture, in.uv, use_nearest_sampler);
+    let emissive_sample = sample_emissive_texture(obj.emissive_texture, in.uv, use_nearest_sampler);
+    let occlusion_sample =
+        sample_occlusion_texture(obj.occlusion_texture, in.uv, use_nearest_sampler);
     
     // Then conditionally USE the samples (non-uniform control flow is OK here)
     var base_color: vec4<f32>;
