@@ -3,6 +3,7 @@ pub mod asset;
 pub mod io;
 pub mod renderer;
 pub mod scene;
+pub mod settings;
 pub mod time;
 
 pub use app::{
