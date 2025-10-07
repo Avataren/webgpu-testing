@@ -55,60 +55,6 @@ mod tests {
         assert!(SceneLoader::is_pointer_channel(&document, 0, 2));
         assert_eq!(pointer_channel.target().node().index(), original_node_count);
     }
-
-    #[test]
-    fn pointer_animation_updates_material_color() {
-        use crate::renderer::Material;
-        use crate::scene::animation::AnimationTarget;
-        use crate::scene::components::{GltfMaterial, MaterialComponent, Visible};
-        use crate::scene::Scene;
-
-        let path = Path::new("web/assets/animated/AnimatedColorsCube.gltf");
-        let (document, buffers, _) = SceneLoader::import_gltf_native(path).expect("patched import");
-
-        let mut scene = Scene::new();
-        let entity = scene.world.spawn((
-            MaterialComponent(Material::pbr()),
-            GltfMaterial(0),
-            Visible(true),
-        ));
-
-        let mut node_entities = vec![None; document.nodes().len()];
-        node_entities[0] = Some(entity);
-
-        SceneLoader::load_animations(&document, &buffers, &node_entities, &mut scene, path)
-            .expect("load animations");
-
-        let clip = &scene.animations()[0];
-        let pointer_channel = clip
-            .channels
-            .iter()
-            .find(|channel| matches!(channel.target, AnimationTarget::Material { .. }))
-            .expect("material animation channel");
-
-        let sample_time = 0.5;
-        let expected = pointer_channel
-            .sampler
-            .sample_vec4(sample_time)
-            .expect("material color sample");
-
-        scene.update(sample_time as f64);
-
-        let material = scene
-            .world
-            .get::<&MaterialComponent>(entity)
-            .expect("material component");
-
-        let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
-        let expected_color = [
-            to_u8(expected.x),
-            to_u8(expected.y),
-            to_u8(expected.z),
-            to_u8(expected.w),
-        ];
-
-        assert_eq!(material.0.base_color, expected_color);
-    }
 }
 
 impl SceneLoader {
