@@ -58,6 +58,69 @@ mod tests {
 }
 
 impl SceneLoader {
+    fn reconcile_keyframe_lengths<T>(
+        times: &mut Vec<f32>,
+        values: &mut Vec<T>,
+        interpolation: AnimationInterpolation,
+        clip_name: &str,
+        channel_index: usize,
+        property_label: &str,
+    ) -> bool {
+        if times.is_empty() || values.is_empty() {
+            return false;
+        }
+
+        let components_per_keyframe = match interpolation {
+            AnimationInterpolation::CubicSpline => 3,
+            AnimationInterpolation::Step | AnimationInterpolation::Linear => 1,
+        };
+
+        if values.len() < components_per_keyframe {
+            log::warn!(
+                "{} animation '{}' channel {} has insufficient output data ({} values)",
+                property_label,
+                clip_name,
+                channel_index,
+                values.len()
+            );
+            return false;
+        }
+
+        if values.len() % components_per_keyframe != 0 {
+            let valid_values = values.len() / components_per_keyframe * components_per_keyframe;
+            log::warn!(
+                "{} animation '{}' channel {} outputs ({}) are not a multiple of {} - truncating",
+                property_label,
+                clip_name,
+                channel_index,
+                values.len(),
+                components_per_keyframe
+            );
+            values.truncate(valid_values);
+        }
+
+        let available_keyframes = values.len() / components_per_keyframe;
+        if available_keyframes == 0 {
+            return false;
+        }
+
+        if available_keyframes != times.len() {
+            log::warn!(
+                "{} animation '{}' channel {} has {} inputs but {} outputs - truncating",
+                property_label,
+                clip_name,
+                channel_index,
+                times.len(),
+                available_keyframes
+            );
+            let min_keyframes = times.len().min(available_keyframes);
+            times.truncate(min_keyframes);
+            values.truncate(min_keyframes * components_per_keyframe);
+        }
+
+        !times.is_empty() && values.len() >= times.len() * components_per_keyframe
+    }
+
     fn load_node(
         node: &gltf::Node,
         parent: Option<hecs::Entity>,
@@ -527,7 +590,9 @@ impl SceneLoader {
                 let interpolation = match channel.sampler().interpolation() {
                     gltf::animation::Interpolation::Step => AnimationInterpolation::Step,
                     gltf::animation::Interpolation::Linear => AnimationInterpolation::Linear,
-                    gltf::animation::Interpolation::CubicSpline => AnimationInterpolation::CubicSpline,
+                    gltf::animation::Interpolation::CubicSpline => {
+                        AnimationInterpolation::CubicSpline
+                    }
                 };
 
                 if Self::is_pointer_channel(document, animation_index, channel_index) {
@@ -614,20 +679,15 @@ impl SceneLoader {
                     gltf::animation::Property::Translation => match reader.read_outputs() {
                         Some(gltf::animation::util::ReadOutputs::Translations(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Translation animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
-                            }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Translation",
+                            ) {
                                 continue;
                             }
 
@@ -645,20 +705,15 @@ impl SceneLoader {
                     gltf::animation::Property::Scale => match reader.read_outputs() {
                         Some(gltf::animation::util::ReadOutputs::Scales(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Scale animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
-                            }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Scale",
+                            ) {
                                 continue;
                             }
 
@@ -679,20 +734,15 @@ impl SceneLoader {
                                 .into_f32()
                                 .map(|r| Quat::from_xyzw(r[0], r[1], r[2], r[3]))
                                 .collect();
-                            if values.len() != times.len() {
-                                let min_len = times.len().min(values.len());
-                                log::warn!(
-                                    "Rotation animation '{}' channel {} has {} inputs but {} outputs - truncating",
-                                    clip_name,
-                                    channel_index,
-                                    times.len(),
-                                    values.len()
-                                );
-                                times.truncate(min_len);
-                                values.truncate(min_len);
-                            }
 
-                            if times.is_empty() || values.is_empty() {
+                            if !Self::reconcile_keyframe_lengths(
+                                &mut times,
+                                &mut values,
+                                interpolation,
+                                &clip_name,
+                                channel_index,
+                                "Rotation",
+                            ) {
                                 continue;
                             }
 
