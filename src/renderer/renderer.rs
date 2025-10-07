@@ -51,6 +51,7 @@ struct RenderContext {
 
 struct RenderPipeline {
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    depth_prepass: wgpu::RenderPipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -92,8 +93,12 @@ impl PreparedBatches {
         &self.batches
     }
 
-    fn geometry(&self) -> &[OrderedBatch] {
-        &self.batches[self.opaque_range.start..self.transparent_range.end]
+    fn opaque(&self) -> &[OrderedBatch] {
+        &self.batches[self.opaque_range.clone()]
+    }
+
+    fn transparent(&self) -> &[OrderedBatch] {
+        &self.batches[self.transparent_range.clone()]
     }
 
     fn overlay(&self) -> &[OrderedBatch] {
@@ -351,6 +356,54 @@ impl Renderer {
 
         let (scene_view, resolve_target) = self.postprocess.scene_color_views();
 
+        let depth_view = &self.context.depth.view;
+        let sampled_depth_view = &self.context.depth.sampled_view;
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("DepthPrepass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(self.pipeline.depth_prepass());
+            pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+            pass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+
+            for batch in prepared_batches.opaque() {
+                if batch.alpha_blend
+                    || !batch.depth_state.depth_write
+                    || !batch.depth_state.depth_test
+                {
+                    continue;
+                }
+
+                let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                    log::warn!("Skipping batch with invalid mesh handle");
+                    continue;
+                };
+
+                pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+
+                let instance_count = batch.instances.len() as u32;
+                pass.draw_indexed(
+                    0..mesh.index_count(),
+                    0,
+                    batch.first_instance..(batch.first_instance + instance_count),
+                );
+            }
+        }
+
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
@@ -369,9 +422,9 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.context.depth.view,
+                    view: depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -382,7 +435,11 @@ impl Renderer {
 
             match &mut self.texture_binder {
                 TextureBindingModel::Bindless(bindless) => {
-                    for batch in prepared_batches.geometry() {
+                    for batch in prepared_batches
+                        .opaque()
+                        .iter()
+                        .chain(prepared_batches.transparent().iter())
+                    {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
                             continue;
@@ -411,7 +468,11 @@ impl Renderer {
                     }
                 }
                 TextureBindingModel::Classic(classic) => {
-                    for batch in prepared_batches.geometry() {
+                    for batch in prepared_batches
+                        .opaque()
+                        .iter()
+                        .chain(prepared_batches.transparent().iter())
+                    {
                         let Some(mesh) = assets.meshes.get(batch.mesh) else {
                             log::warn!("Skipping batch with invalid mesh handle");
                             continue;
@@ -467,7 +528,7 @@ impl Renderer {
         self.postprocess.execute(
             &mut encoder,
             &self.context.device,
-            &self.context.depth.sampled_view,
+            sampled_depth_view,
             &view,
         );
 
@@ -484,7 +545,7 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.context.depth.view,
+                    view: depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Discard,
@@ -2047,7 +2108,35 @@ impl RenderPipeline {
             }
         }
 
-        (Self { pipelines }, texture_binder)
+        let depth_shader_src = include_str!("../shader/depth_prepass.wgsl");
+        let depth_shader = context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("DepthPrepassShader"),
+                source: wgpu::ShaderSource::Wgsl(depth_shader_src.into()),
+            });
+        let depth_pipeline_layout =
+            context
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("DepthPrepassLayout"),
+                    bind_group_layouts: &[&camera.bind_layout, &objects.bind_layout],
+                    push_constant_ranges: &[],
+                });
+        let depth_prepass = Self::create_depth_prepass_pipeline(
+            context,
+            &depth_pipeline_layout,
+            &depth_shader,
+            sample_count,
+        );
+
+        (
+            Self {
+                pipelines,
+                depth_prepass,
+            },
+            texture_binder,
+        )
     }
 
     fn shader_source(bindless: bool) -> String {
@@ -2127,5 +2216,51 @@ impl RenderPipeline {
 
     fn pipeline(&self, key: PipelineKey) -> &wgpu::RenderPipeline {
         self.pipelines.get(&key).expect("missing pipeline variant")
+    }
+
+    fn create_depth_prepass_pipeline(
+        context: &RenderContext,
+        pipeline_layout: &wgpu::PipelineLayout,
+        shader: &wgpu::ShaderModule,
+        sample_count: u32,
+    ) -> wgpu::RenderPipeline {
+        context
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("DepthPrepassPipeline"),
+                layout: Some(pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Vertex::layout()],
+                    compilation_options: Default::default(),
+                },
+                fragment: None,
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    front_face: wgpu::FrontFace::Ccw,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: context.depth.format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: sample_count,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            })
+    }
+
+    fn depth_prepass(&self) -> &wgpu::RenderPipeline {
+        &self.depth_prepass
     }
 }
