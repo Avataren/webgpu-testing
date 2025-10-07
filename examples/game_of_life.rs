@@ -11,8 +11,8 @@ use wgpu_cube::scene::{EntityBuilder, Transform};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const GRID_WIDTH: u32 = 256;
-const GRID_HEIGHT: u32 = 256;
+const GRID_WIDTH: u32 = 1920;
+const GRID_HEIGHT: u32 = 1080;
 const STEP_INTERVAL: f64 = 0.05;
 const WORKGROUP_SIZE: u32 = 8;
 
@@ -82,8 +82,8 @@ fn spawn_billboard(
     let mesh = renderer.create_mesh(&vertices, &indices);
     let mesh_handle = scene.assets.meshes.insert(mesh);
 
-    let scale_x = (width as f32) / 32.0;
-    let scale_y = (height as f32) / 32.0;
+    let scale_x = (width as f32) / 128.0;
+    let scale_y = (height as f32) / 128.0;
 
     let entity = EntityBuilder::new(&mut scene.world)
         .with_name("Game of Life Board")
@@ -309,11 +309,11 @@ impl GameOfLifeState {
     }
 
     fn update(&mut self, ctx: &mut GpuUpdateContext<'_>) {
-        self.accumulator += ctx.dt;
-        while self.accumulator >= self.step_interval {
-            self.accumulator -= self.step_interval;
+        //self.accumulator += ctx.dt;
+        //while self.accumulator >= self.step_interval {
+            //self.accumulator -= self.step_interval;
             self.run_step(ctx);
-        }
+        //}
     }
 
     fn run_step(&mut self, ctx: &mut GpuUpdateContext<'_>) {
