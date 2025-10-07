@@ -534,7 +534,14 @@ impl SceneLoader {
         }
 
         log::info!("Loading animations...");
-        Self::load_animations(&document, &buffers, &node_entities, scene, path, scale)?;
+        Self::load_animations(
+            &document,
+            &buffers,
+            &node_entities,
+            scene,
+            path,
+            scale,
+        )?;
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());
@@ -826,12 +833,6 @@ impl SceneLoader {
                     gltf::animation::Property::Translation => match reader.read_outputs() {
                         Some(gltf::animation::util::ReadOutputs::Translations(iter)) => {
                             let mut values: Vec<Vec3> = iter.map(Vec3::from).collect();
-
-                            if scale_multiplier != 1.0 {
-                                for value in &mut values {
-                                    *value *= scale_multiplier;
-                                }
-                            }
 
                             if !Self::reconcile_keyframe_lengths(
                                 &mut times,
