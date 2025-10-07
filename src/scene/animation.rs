@@ -71,7 +71,12 @@ impl AnimationSampler {
     }
 
     /// For cubic spline, output array contains [in_tangent, value, out_tangent] for each keyframe
-    fn get_cubic_spline_segment_vec3(&self, values: &[Vec3], lower: usize, upper: usize) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
+    fn get_cubic_spline_segment_vec3(
+        &self,
+        values: &[Vec3],
+        lower: usize,
+        upper: usize,
+    ) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
         if lower == upper {
             let idx = lower * 3 + 1; // Get the value component
             if idx >= values.len() {
@@ -97,7 +102,12 @@ impl AnimationSampler {
         ))
     }
 
-    fn get_cubic_spline_segment_vec4(&self, values: &[Vec4], lower: usize, upper: usize) -> Option<(Vec4, Vec4, Vec4, Vec4)> {
+    fn get_cubic_spline_segment_vec4(
+        &self,
+        values: &[Vec4],
+        lower: usize,
+        upper: usize,
+    ) -> Option<(Vec4, Vec4, Vec4, Vec4)> {
         if lower == upper {
             let idx = lower * 3 + 1;
             if idx >= values.len() {
@@ -123,7 +133,12 @@ impl AnimationSampler {
         ))
     }
 
-    fn get_cubic_spline_segment_quat(&self, values: &[Quat], lower: usize, upper: usize) -> Option<(Quat, Quat, Quat, Quat)> {
+    fn get_cubic_spline_segment_quat(
+        &self,
+        values: &[Quat],
+        lower: usize,
+        upper: usize,
+    ) -> Option<(Quat, Quat, Quat, Quat)> {
         if lower == upper {
             let idx = lower * 3 + 1;
             if idx >= values.len() {
@@ -153,7 +168,7 @@ impl AnimationSampler {
     fn cubic_hermite_vec3(p0: Vec3, m0: Vec3, m1: Vec3, p1: Vec3, t: f32, dt: f32) -> Vec3 {
         let t2 = t * t;
         let t3 = t2 * t;
-        
+
         let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
         let h10 = t3 - 2.0 * t2 + t;
         let h01 = -2.0 * t3 + 3.0 * t2;
@@ -165,7 +180,7 @@ impl AnimationSampler {
     fn cubic_hermite_vec4(p0: Vec4, m0: Vec4, m1: Vec4, p1: Vec4, t: f32, dt: f32) -> Vec4 {
         let t2 = t * t;
         let t3 = t2 * t;
-        
+
         let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
         let h10 = t3 - 2.0 * t2 + t;
         let h01 = -2.0 * t3 + 3.0 * t2;
@@ -177,7 +192,7 @@ impl AnimationSampler {
     fn cubic_hermite_quat(p0: Quat, m0: Quat, m1: Quat, p1: Quat, t: f32, dt: f32) -> Quat {
         let t2 = t * t;
         let t3 = t2 * t;
-        
+
         let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
         let h10 = t3 - 2.0 * t2 + t;
         let h01 = -2.0 * t3 + 3.0 * t2;
@@ -190,7 +205,7 @@ impl AnimationSampler {
             p0.z * h00 + m0.z * h10 * dt + p1.z * h01 + m1.z * h11 * dt,
             p0.w * h00 + m0.w * h10 * dt + p1.w * h01 + m1.w * h11 * dt,
         );
-        
+
         result.normalize()
     }
 
@@ -578,12 +593,12 @@ mod tests {
         let sampler = AnimationSampler {
             times: vec![0.0, 1.0],
             output: AnimationOutput::Vec3(vec![
-                vec3(0.0, 0.0, 0.0),  // in-tangent for keyframe 0
-                vec3(0.0, 0.0, 0.0),  // value for keyframe 0
-                vec3(1.0, 1.0, 1.0),  // out-tangent for keyframe 0
-                vec3(1.0, 1.0, 1.0),  // in-tangent for keyframe 1
-                vec3(2.0, 2.0, 2.0),  // value for keyframe 1
-                vec3(0.0, 0.0, 0.0),  // out-tangent for keyframe 1
+                vec3(0.0, 0.0, 0.0), // in-tangent for keyframe 0
+                vec3(0.0, 0.0, 0.0), // value for keyframe 0
+                vec3(1.0, 1.0, 1.0), // out-tangent for keyframe 0
+                vec3(1.0, 1.0, 1.0), // in-tangent for keyframe 1
+                vec3(2.0, 2.0, 2.0), // value for keyframe 1
+                vec3(0.0, 0.0, 0.0), // out-tangent for keyframe 1
             ]),
             interpolation: AnimationInterpolation::CubicSpline,
         };

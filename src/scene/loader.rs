@@ -28,7 +28,14 @@ struct MaterialPointerTarget {
 #[cfg(test)]
 mod tests {
     use super::SceneLoader;
+    use crate::scene::animation::{
+        AnimationInterpolation, AnimationOutput, AnimationTarget, TransformProperty,
+    };
+    use crate::scene::components::{Name, TransformComponent, Visible};
+    use crate::scene::{Scene, Transform};
+    use glam::Vec3;
     use serde_json::Value;
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
 
@@ -54,6 +61,145 @@ mod tests {
         let pointer_channel = animation.channels().nth(2).unwrap();
         assert!(SceneLoader::is_pointer_channel(&document, 0, 2));
         assert_eq!(pointer_channel.target().node().index(), original_node_count);
+    }
+
+    #[test]
+    fn translation_animation_channels_match_document() {
+        let path = Path::new("web/assets/animated/InterpolationTest.gltf");
+
+        let (document, buffers, _) =
+            SceneLoader::import_gltf_native(path).expect("InterpolationTest import");
+
+        let mut scene = Scene::new();
+
+        let mut node_entities = vec![None; document.nodes().len()];
+        for node in document.nodes() {
+            let entity = scene.world.spawn((
+                Name::new(node.name().unwrap_or("")),
+                TransformComponent(Transform::IDENTITY),
+                Visible(true),
+            ));
+            node_entities[node.index()] = Some(entity);
+        }
+
+        SceneLoader::load_animations(&document, &buffers, &node_entities, &mut scene, path, 1.0)
+            .expect("load animations");
+
+        let clips = scene.animations();
+        let document_animations: Vec<_> = document.animations().collect();
+
+        for clip_name in [
+            "Step Translation",
+            "CubicSpline Translation",
+            "Linear Translation",
+        ] {
+            let clip = clips
+                .iter()
+                .find(|clip| clip.name == clip_name)
+                .unwrap_or_else(|| panic!("Clip '{}' not loaded", clip_name));
+
+            assert_eq!(
+                clip.channels.len(),
+                1,
+                "Clip '{}' should have exactly one channel",
+                clip_name
+            );
+
+            let channel = &clip.channels[0];
+            let (entity, property) = match channel.target {
+                AnimationTarget::Transform { entity, property } => (entity, property),
+                _ => panic!("Clip '{}' should target a transform", clip_name),
+            };
+            assert_eq!(
+                property,
+                TransformProperty::Translation,
+                "Clip '{}' should target translation",
+                clip_name
+            );
+
+            let animation = document_animations
+                .iter()
+                .find(|animation| animation.name() == Some(clip_name))
+                .unwrap_or_else(|| panic!("Missing animation '{}'", clip_name));
+
+            let doc_channel = animation
+                .channels()
+                .next()
+                .expect("Animation should have a channel");
+            let reader = doc_channel.reader(|buffer| Some(&buffers[buffer.index()].0));
+
+            let doc_times: Vec<f32> = reader.read_inputs().expect("animation inputs").collect();
+            let doc_values: Vec<Vec3> = match reader.read_outputs().expect("animation outputs") {
+                gltf::animation::util::ReadOutputs::Translations(iter) => {
+                    iter.map(Vec3::from).collect()
+                }
+                _ => panic!("Unexpected outputs for {}", clip_name),
+            };
+
+            assert_eq!(
+                channel.sampler.times, doc_times,
+                "Clip '{}' keyframe times mismatch",
+                clip_name
+            );
+
+            match &channel.sampler.output {
+                AnimationOutput::Vec3(values) => {
+                    assert_eq!(
+                        values.len(),
+                        doc_values.len(),
+                        "Clip '{}' translation value length mismatch",
+                        clip_name
+                    );
+
+                    for (index, (actual, expected)) in
+                        values.iter().zip(doc_values.iter()).enumerate()
+                    {
+                        assert!(
+                            actual.abs_diff_eq(*expected, 1e-6),
+                            "Clip '{}' translation value {} mismatch: {:?} vs {:?}",
+                            clip_name,
+                            index,
+                            actual,
+                            expected
+                        );
+                    }
+                }
+                _ => panic!("Clip '{}' should produce Vec3 outputs", clip_name),
+            }
+
+            let final_time = *channel
+                .sampler
+                .times
+                .last()
+                .expect("Keyframe times should not be empty");
+
+            let mut transform_updates = HashMap::new();
+            let mut material_updates = HashMap::new();
+            clip.sample(final_time, &mut transform_updates, &mut material_updates);
+
+            let update = transform_updates
+                .get(&entity)
+                .unwrap_or_else(|| panic!("No transform update for '{}'", clip_name));
+
+            let expected_final = match channel.sampler.interpolation {
+                AnimationInterpolation::CubicSpline => {
+                    let keyframe_index = channel.sampler.times.len() - 1;
+                    doc_values[keyframe_index * 3 + 1]
+                }
+                AnimationInterpolation::Linear | AnimationInterpolation::Step => *doc_values
+                    .last()
+                    .expect("Translation outputs should not be empty"),
+            };
+
+            assert!(
+                update
+                    .translation
+                    .expect("Translation update missing")
+                    .abs_diff_eq(expected_final, 1e-5),
+                "Clip '{}' final translation mismatch",
+                clip_name
+            );
+        }
     }
 }
 
