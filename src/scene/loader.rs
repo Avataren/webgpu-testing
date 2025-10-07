@@ -201,6 +201,132 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn translation_animation_respects_scale_multiplier() {
+        let path = Path::new("web/assets/animated/InterpolationTest.gltf");
+
+        let (document, buffers, _) =
+            SceneLoader::import_gltf_native(path).expect("InterpolationTest import");
+
+        let mut scene = Scene::new();
+
+        let mut node_entities = vec![None; document.nodes().len()];
+        for node in document.nodes() {
+            let entity = scene.world.spawn((
+                Name::new(node.name().unwrap_or("")),
+                TransformComponent(Transform::IDENTITY),
+                Visible(true),
+            ));
+            node_entities[node.index()] = Some(entity);
+        }
+
+        let scale_multiplier = 2.5;
+        SceneLoader::load_animations(
+            &document,
+            &buffers,
+            &node_entities,
+            &mut scene,
+            path,
+            scale_multiplier,
+        )
+        .expect("load animations");
+
+        let clips = scene.animations();
+        let document_animations: Vec<_> = document.animations().collect();
+
+        for clip_name in [
+            "Step Translation",
+            "CubicSpline Translation",
+            "Linear Translation",
+        ] {
+            let clip = clips
+                .iter()
+                .find(|clip| clip.name == clip_name)
+                .unwrap_or_else(|| panic!("Clip '{}' not loaded", clip_name));
+
+            let channel = clip
+                .channels
+                .iter()
+                .find(|channel| matches!(
+                    channel.target,
+                    AnimationTarget::Transform {
+                        property: TransformProperty::Translation,
+                        ..
+                    }
+                ))
+                .unwrap_or_else(|| panic!("Clip '{}' missing translation channel", clip_name));
+
+            let animation = document_animations
+                .iter()
+                .find(|animation| animation.name() == Some(clip_name))
+                .unwrap_or_else(|| panic!("Missing animation '{}'", clip_name));
+
+            let doc_channel = animation
+                .channels()
+                .next()
+                .expect("Animation should have a channel");
+            let reader = doc_channel.reader(|buffer| Some(&buffers[buffer.index()].0));
+
+            let doc_times: Vec<f32> = reader.read_inputs().expect("animation inputs").collect();
+            let doc_values: Vec<Vec3> = match reader.read_outputs().expect("animation outputs") {
+                gltf::animation::util::ReadOutputs::Translations(iter) => {
+                    iter.map(Vec3::from).collect()
+                }
+                _ => panic!("Unexpected outputs for {}", clip_name),
+            };
+
+            assert_eq!(channel.sampler.times, doc_times);
+
+            match &channel.sampler.output {
+                AnimationOutput::Vec3(values) => {
+                    assert_eq!(values.len(), doc_values.len());
+
+                    for (actual, expected) in values.iter().zip(doc_values.iter()) {
+                        let expected_scaled = *expected * scale_multiplier;
+                        assert!(actual.abs_diff_eq(expected_scaled, 1e-6));
+                    }
+                }
+                _ => panic!("Clip '{}' should produce Vec3 outputs", clip_name),
+            }
+
+            let final_time = *channel
+                .sampler
+                .times
+                .last()
+                .expect("Keyframe times should not be empty");
+
+            let mut transform_updates = HashMap::new();
+            let mut material_updates = HashMap::new();
+            clip.sample(final_time, &mut transform_updates, &mut material_updates);
+
+            let (entity, _) = match channel.target {
+                AnimationTarget::Transform { entity, property } => (entity, property),
+                _ => unreachable!(),
+            };
+
+            let update = transform_updates
+                .get(&entity)
+                .unwrap_or_else(|| panic!("No transform update for '{}'", clip_name));
+
+            let expected_final = match channel.sampler.interpolation {
+                AnimationInterpolation::CubicSpline => {
+                    let keyframe_index = channel.sampler.times.len() - 1;
+                    doc_values[keyframe_index * 3 + 1] * scale_multiplier
+                }
+                AnimationInterpolation::Linear | AnimationInterpolation::Step => doc_values
+                    .last()
+                    .copied()
+                    .expect("Translation outputs should not be empty")
+                    * scale_multiplier,
+            };
+
+            assert!(update
+                .translation
+                .expect("Translation update missing")
+                .abs_diff_eq(expected_final, 1e-5));
+        }
+    }
 }
 
 impl SceneLoader {
@@ -843,6 +969,12 @@ impl SceneLoader {
                                 "Translation",
                             ) {
                                 continue;
+                            }
+
+                            if scale_multiplier != 1.0 {
+                                for value in &mut values {
+                                    *value *= scale_multiplier;
+                                }
                             }
 
                             AnimationOutput::Vec3(values)
