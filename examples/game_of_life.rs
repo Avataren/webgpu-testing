@@ -490,7 +490,6 @@ fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    env_logger::init();
     if let Err(err) = wgpu_cube::run(build_app()) {
         eprintln!("Application error: {err}");
     }
