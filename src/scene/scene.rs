@@ -1,4 +1,4 @@
-// scene/scene.rs - Fixed version with improved transform propagation
+// scene/scene.rs - Optimized version with Rayon parallelization
 use super::animation::{
     AnimationClip, AnimationState, AnimationTarget, MaterialUpdate, TransformUpdate,
 };
@@ -12,6 +12,7 @@ use crate::scene::{Camera, Transform};
 use crate::time::Instant;
 use glam::{Mat3, Mat4, Quat, Vec3};
 use hecs::World;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 pub struct Scene {
@@ -30,14 +31,13 @@ impl Scene {
             world: World::new(),
             assets: Assets::default(),
             time: 0.0,
-            last_frame: None, // Start as None - will be initialized later
+            last_frame: None,
             animations: Vec::new(),
             animation_states: Vec::new(),
             camera: Camera::default(),
         }
     }
 
-    /// Initialize the timer (must be called before first update)
     pub fn init_timer(&mut self) {
         self.last_frame = Some(Instant::now());
     }
@@ -106,48 +106,31 @@ impl Scene {
         self.system_orbit_animation(dt);
 
         // CRITICAL: Always propagate transforms after animations
+        // This remains sequential due to parent-child dependencies
         self.system_propagate_transforms();
-
-        // for (entity, (name, transform)) in self
-        //     .world
-        //     .query::<(&Name, Option<&WorldTransform>)>()
-        //     .with::<&SpotLight>()
-        //     .iter()
-        // {
-        //     if let Some(wt) = transform {
-        //         log::info!(
-        //             "Spot light '{}' WorldTransform: {:?}",
-        //             name.0,
-        //             wt.0.translation
-        //         );
-        //     } else {
-        //         log::warn!("Spot light '{}' has NO WorldTransform!", name.0);
-        //     }
-        // }
     }
 
     pub fn render(&mut self, renderer: &mut Renderer, batcher: &mut RenderBatcher) {
         batcher.clear();
         let camera_pos = renderer.camera_position();
         let camera_target = renderer.camera_target();
+        let camera_up = renderer.camera_up();
 
-        let mut world_transform_count = 0;
-        let mut local_transform_count = 0;
+        // OPTIMIZED: Parallel render object collection
+        // Collect all data first to avoid borrow checker issues
+        use crate::asset::Handle;
+        use crate::asset::Mesh;
 
-        // Query for all visible renderable entities
-        for (
-            entity,
-            (
-                mesh,
-                material,
-                visible,
-                world_transform,
-                local_transform,
-                name,
-                billboard,
-                depth_state,
-            ),
-        ) in self
+        let render_data: Vec<(
+            Handle<Mesh>,              // mesh handle - FIXED: was u32, should be Handle<Mesh>
+            crate::renderer::Material, // material
+            bool,                      // visible
+            Option<Transform>,         // world transform
+            Option<Transform>,         // local transform
+            Option<String>,            // name (for debug)
+            Option<Billboard>,
+            Option<DepthState>,
+        )> = self
             .world
             .query::<(
                 &MeshComponent,
@@ -160,77 +143,109 @@ impl Scene {
                 Option<&DepthState>,
             )>()
             .iter()
-        {
-            if !visible.0 {
-                continue;
-            }
+            .map(
+                |(
+                    _entity,
+                    (
+                        mesh,
+                        material,
+                        visible,
+                        world_transform,
+                        local_transform,
+                        name,
+                        billboard,
+                        depth_state,
+                    ),
+                )| {
+                    (
+                        mesh.0, // This is Handle<Mesh>, not u32
+                        material.0,
+                        visible.0,
+                        world_transform.map(|wt| wt.0),
+                        local_transform.map(|lt| lt.0),
+                        name.map(|n| n.0.clone()),
+                        billboard.copied(),
+                        depth_state.copied(),
+                    )
+                },
+            )
+            .collect();
 
-            // CRITICAL FIX: Always prefer WorldTransform if it exists
-            // WorldTransform is the authoritative transform after propagation
-            let mut transform = if let Some(world_trans) = world_transform {
-                // Entity is part of a hierarchy or has been processed
-                world_transform_count += 1;
-                world_trans.0
-            } else if let Some(local_trans) = local_transform {
-                // Root entity without children - use local transform directly
-                local_transform_count += 1;
-                if let Some(name) = name {
-                    log::warn!(
-                        "Entity '{}' using LOCAL transform (no WorldTransform)",
-                        name.0.as_str()
-                    );
-                } else {
-                    log::warn!(
-                        "Entity {:?} using LOCAL transform (no WorldTransform)",
-                        entity
-                    );
-                }
-                local_trans.0
-            } else {
-                // Fallback - should rarely happen
-                log::warn!("Entity {:?} without transform", entity);
-                Transform::IDENTITY
-            };
+        let render_objects: Vec<RenderObject> = render_data
+            .par_iter()
+            .filter_map(
+                |(
+                    mesh,
+                    material,
+                    visible,
+                    world_transform,
+                    local_transform,
+                    name,
+                    billboard,
+                    depth_state,
+                )| {
+                    if !*visible {
+                        return None;
+                    }
 
-            let mut material_value = material.0;
+                    // Prefer WorldTransform if it exists
+                    let mut transform = if let Some(world_trans) = world_transform {
+                        *world_trans
+                    } else if let Some(local_trans) = local_transform {
+                        if cfg!(debug_assertions) {
+                            if let Some(name_str) = name {
+                                log::warn!(
+                                    "Entity '{}' using LOCAL transform (no WorldTransform)",
+                                    name_str
+                                );
+                            }
+                        }
+                        *local_trans
+                    } else {
+                        log::warn!("Entity without transform");
+                        Transform::IDENTITY
+                    };
 
-            if let Some(billboard) = billboard {
-                transform = Self::apply_billboard_transform(
-                    transform,
-                    *billboard,
-                    renderer.camera_position(),
-                    renderer.camera_target(),
-                    renderer.camera_up(),
-                );
+                    let mut material_value = *material;
 
-                if billboard.lit {
-                    material_value = material_value.with_lit();
-                } else {
-                    material_value = material_value.with_unlit();
-                }
-            }
+                    if let Some(billboard_val) = billboard {
+                        transform = Self::apply_billboard_transform(
+                            transform,
+                            *billboard_val,
+                            camera_pos,
+                            camera_target,
+                            camera_up,
+                        );
 
-            let depth_state = depth_state.copied().unwrap_or_default();
-            let force_overlay =
-                billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
+                        if billboard_val.lit {
+                            material_value = material_value.with_lit();
+                        } else {
+                            material_value = material_value.with_unlit();
+                        }
+                    }
 
-            batcher.add(RenderObject {
-                mesh: mesh.0,
-                material: material_value,
-                transform,
-                depth_state,
-                force_overlay,
-            });
+                    let depth_state_val = depth_state.unwrap_or_default();
+                    let force_overlay = billboard.is_some()
+                        && !depth_state_val.depth_test
+                        && !depth_state_val.depth_write;
+
+                    Some(RenderObject {
+                        mesh: *mesh, // FIXED: just dereference, it's already Handle<Mesh>
+                        material: material_value,
+                        transform,
+                        depth_state: depth_state_val,
+                        force_overlay,
+                    })
+                },
+            )
+            .collect();
+
+        // Add all collected objects to the batcher
+        for obj in render_objects {
+            batcher.add(obj);
         }
 
-        if local_transform_count > 0 {
-            log::warn!(
-                "Rendering: {} entities with WorldTransform, {} with LOCAL transform (BAD!)",
-                world_transform_count,
-                local_transform_count
-            );
-        }
-
+        // Light collection - remains sequential as it's typically small
         let mut lights = LightsData::default();
 
         for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
@@ -254,17 +269,9 @@ impl Scene {
                 Vec3::new(0.0, -1.0, 0.0)
             };
 
-            let shadow = shadow_flag.filter(|flag| flag.0).map(|_| {
-                let s = Self::build_directional_shadow(camera_pos, camera_target, transform);
-                // log::info!("Built shadow matrix for light direction {:?}", direction);
-                // log::info!("  First COLUMN: {:?}", s.view_proj.col(0)); // Changed to col
-                // log::info!("  As array [0]: {:?}", s.view_proj.to_cols_array_2d()[0]);
-                s
-            });
-
-            // let shadow = shadow_flag
-            //     .filter(|flag| flag.0)
-            //     .map(|_| Self::build_directional_shadow(camera_pos, camera_target, transform));
+            let shadow = shadow_flag
+                .filter(|flag| flag.0)
+                .map(|_| Self::build_directional_shadow(camera_pos, camera_target, transform));
 
             lights.add_directional(direction, light.color, light.intensity, shadow);
         }
@@ -321,10 +328,6 @@ impl Scene {
             let shadow = shadow_flag
                 .filter(|flag| flag.0)
                 .map(|_| Self::build_spot_shadow(transform, light));
-
-            // let shadow = shadow_flag
-            //     .filter(|flag| flag.0)
-            //     .map(|_| Self::build_spot_shadow(transform.translation, direction, light));
 
             lights.add_spot(
                 transform.translation,
@@ -474,7 +477,6 @@ impl Scene {
         let near = 0.1;
         let far = SHADOW_DISTANCE * 2.0;
 
-        // Column-major array for wgpu [0, 1] depth
         let projection = Mat4::from_cols(
             glam::Vec4::new(2.0 / (right - left), 0.0, 0.0, 0.0),
             glam::Vec4::new(0.0, 2.0 / (top - bottom), 0.0, 0.0),
@@ -529,9 +531,8 @@ impl Scene {
         let far = light.range.max(near + 0.1);
         let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
 
-        // Extract direction and up from the transform's rotation
         let position = transform.translation;
-        let mut forward = transform.rotation * Vec3::NEG_Z; // Light looks down -Z
+        let mut forward = transform.rotation * Vec3::NEG_Z;
         if forward.length_squared() < 1e-8 {
             forward = Vec3::NEG_Z;
         }
@@ -542,7 +543,6 @@ impl Scene {
             up = Vec3::Y;
         }
 
-        // Re-orthonormalize the basis to avoid degenerate look_at matrices
         let mut right = forward.cross(up);
         if right.length_squared() < 1e-8 {
             let fallback = if forward.dot(Vec3::X).abs() < 0.9 {
@@ -555,7 +555,6 @@ impl Scene {
         right = right.normalize();
         let up = right.cross(forward).normalize();
 
-        // Build view matrix properly using look_at with a stable basis
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);
 
@@ -590,14 +589,13 @@ impl Scene {
             Name::new("Default Sky Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
             DirectionalLight {
-                color: Vec3::new(0.9, 0.95, 0.4), // Cool blue tint
+                color: Vec3::new(0.9, 0.95, 0.4),
                 intensity: 2.0,
             },
             CanCastShadow(true),
         ));
         created += 1;
 
-        // Soft fill point light - neutral with slight warmth
         self.world.spawn((
             Name::new("Default Fill Light"),
             TransformComponent(Transform::from_trs(
@@ -606,7 +604,7 @@ impl Scene {
                 Vec3::ONE,
             )),
             PointLight {
-                color: Vec3::new(1.0, 0.47, 0.22), // Warm accent
+                color: Vec3::new(1.0, 0.47, 0.22),
                 intensity: 200.0,
                 range: 20.0,
             },
@@ -614,7 +612,6 @@ impl Scene {
         ));
         created += 1;
 
-        // Rim spot light from behind
         let rim_position = Vec3::new(-2.0, 6.0, -5.0);
         let rim_direction = (Vec3::ZERO - rim_position).normalize();
         let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);
@@ -659,7 +656,7 @@ impl Scene {
     }
 
     // ========================================================================
-    // Animation Systems
+    // Animation Systems (OPTIMIZED with Rayon)
     // ========================================================================
 
     fn system_animations(&mut self, dt: f64) {
@@ -739,42 +736,72 @@ impl Scene {
     }
 
     fn system_rotate_animation(&mut self, dt: f64) {
-        for (_entity, (transform, anim)) in self
+        // OPTIMIZED: Collect entities first, then process in parallel
+        let entities: Vec<_> = self
             .world
-            .query::<(&mut TransformComponent, &RotateAnimation)>()
+            .query::<(&TransformComponent, &RotateAnimation)>()
             .iter()
-        {
-            let rotation = Quat::from_axis_angle(anim.axis, anim.speed * dt as f32);
-            transform.0.rotation = rotation * transform.0.rotation;
+            .map(|(entity, (transform, anim))| (entity, transform.0, *anim))
+            .collect();
+
+        // Compute rotations in parallel
+        let updates: Vec<_> = entities
+            .par_iter()
+            .map(|(entity, transform, anim)| {
+                let rotation = Quat::from_axis_angle(anim.axis, anim.speed * dt as f32);
+                let new_rotation = rotation * transform.rotation;
+                (*entity, new_rotation)
+            })
+            .collect();
+
+        // Apply updates sequentially (ECS requirement)
+        for (entity, new_rotation) in updates {
+            if let Ok(mut transform) = self.world.get::<&mut TransformComponent>(entity) {
+                transform.0.rotation = new_rotation;
+            }
         }
     }
 
     fn system_orbit_animation(&mut self, _dt: f64) {
         let time = self.time as f32;
 
-        for (_entity, (transform, orbit)) in self
+        // OPTIMIZED: Collect entities first, then process in parallel
+        let entities: Vec<_> = self
             .world
-            .query::<(&mut TransformComponent, &OrbitAnimation)>()
+            .query::<(&TransformComponent, &OrbitAnimation)>()
             .iter()
-        {
-            let angle = time * orbit.speed + orbit.offset;
-            transform.0.translation = orbit.center
-                + Vec3::new(
-                    angle.cos() * orbit.radius,
-                    (time + orbit.offset).sin() * 0.5,
-                    angle.sin() * orbit.radius,
-                );
+            .map(|(entity, (_, orbit))| (entity, *orbit))
+            .collect();
+
+        // Compute positions in parallel
+        let updates: Vec<_> = entities
+            .par_iter()
+            .map(|(entity, orbit)| {
+                let angle = time * orbit.speed + orbit.offset;
+                let new_translation = orbit.center
+                    + Vec3::new(
+                        angle.cos() * orbit.radius,
+                        (time + orbit.offset).sin() * 0.5,
+                        angle.sin() * orbit.radius,
+                    );
+                (*entity, new_translation)
+            })
+            .collect();
+
+        // Apply updates sequentially (ECS requirement)
+        for (entity, new_translation) in updates {
+            if let Ok(mut transform) = self.world.get::<&mut TransformComponent>(entity) {
+                transform.0.translation = new_translation;
+            }
         }
     }
 
     // ========================================================================
     // Transform Propagation System (CRITICAL)
+    // Remains SEQUENTIAL due to parent-child dependencies
     // ========================================================================
 
-    /// System: Propagate transforms through parent-child hierarchy
-    /// This must run AFTER all animation systems and BEFORE rendering
     fn system_propagate_transforms(&mut self) {
-        // Find all root entities (those without a Parent component)
         let roots: Vec<hecs::Entity> = self
             .world
             .query::<&TransformComponent>()
@@ -791,17 +818,14 @@ impl Scene {
             stack.push((root, Transform::IDENTITY));
 
             while let Some((entity, parent_world)) = stack.pop() {
-                // Get the local transform (copy it to drop the borrow immediately)
                 let local = match self.world.get::<&TransformComponent>(entity) {
                     Ok(t) => t.0,
                     Err(_) => {
-                        // Entity has no transform - skip it and its children
                         log::trace!("Entity {:?} has no TransformComponent, skipping", entity);
                         continue;
                     }
                 };
 
-                // Combine parent and local transforms
                 let world = parent_world.mul_transform(&local);
 
                 log::trace!(
@@ -845,16 +869,11 @@ impl Scene {
     // Scene Composition
     // ========================================================================
 
-    /// Add all entities from another scene as children of a parent entity
-    /// This allows composing complex scenes from smaller scene hierarchies
     pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, other: Scene) {
         log::info!("Merging scene with {} entities as child", other.world.len());
 
-        // Map old entity IDs to new entity IDs
         let mut entity_map = std::collections::HashMap::new();
 
-        // First pass: spawn all entities and build the mapping
-        // Collect all entity IDs first (query with no filter gets all entities)
         let entities_to_copy: Vec<_> = other
             .world
             .iter()
@@ -862,11 +881,8 @@ impl Scene {
             .collect();
 
         for old_entity in entities_to_copy {
-            // Build a new entity with the same components (except Parent/Children for now)
             let mut builder = hecs::EntityBuilder::new();
 
-            // Copy all components except Parent and Children
-            // Clone components to avoid holding borrows
             if let Ok(name) = other.world.get::<&Name>(old_entity) {
                 builder.add(Name(name.0.clone()));
             }
@@ -898,12 +914,10 @@ impl Scene {
                 builder.add(*world_trans);
             }
 
-            // Spawn the new entity
             let new_entity = self.world.spawn(builder.build());
             entity_map.insert(old_entity, new_entity);
         }
 
-        // Second pass: fix up Parent and Children references
         let parent_children_to_fix: Vec<_> = entity_map
             .iter()
             .map(|(old, &new)| {
@@ -913,25 +927,19 @@ impl Scene {
             })
             .collect();
 
-        // Find root entities (those without Parent in the original scene)
         let mut root_entities = Vec::new();
 
         for (new_entity, parent, children) in parent_children_to_fix {
-            // Update Parent component
             if let Some(old_parent) = parent {
-                // This entity had a parent in the original scene
                 if let Some(&new_parent) = entity_map.get(&old_parent) {
                     self.world.insert_one(new_entity, Parent(new_parent)).ok();
                 } else {
-                    // Parent wasn't in the scene (shouldn't happen), make it a root
                     root_entities.push(new_entity);
                 }
             } else {
-                // This was a root entity in the original scene
                 root_entities.push(new_entity);
             }
 
-            // Update Children component
             if let Some(old_children) = children {
                 let new_children: Vec<_> = old_children
                     .iter()
@@ -946,36 +954,29 @@ impl Scene {
             }
         }
 
-        // Make all root entities children of the specified parent
         if !root_entities.is_empty() {
             log::info!(
                 "Setting {} root entities as children of parent",
                 root_entities.len()
             );
 
-            // Set parent reference on all roots
             for &root in &root_entities {
                 self.world.insert_one(root, Parent(parent_entity)).ok();
             }
 
-            // Add roots to parent's children list
-            // Check if parent already has children
             let has_children = self.world.get::<&Children>(parent_entity).is_ok();
 
             if has_children {
-                // Parent has children, extend the list
                 if let Ok(mut parent_children) = self.world.get::<&mut Children>(parent_entity) {
                     parent_children.0.extend(&root_entities);
                 }
             } else {
-                // Parent didn't have children, create new list
                 self.world
                     .insert_one(parent_entity, Children(root_entities))
                     .ok();
             }
         }
 
-        // Merge animation clips and states, remapping entity references
         let animation_offset = self.animations.len();
         for mut clip in other.animations {
             for channel in clip.channels.iter_mut() {
@@ -1001,9 +1002,6 @@ impl Scene {
             self.animation_states.push(state);
         }
 
-        // Merge assets
-        // Note: This just adds new assets, doesn't remap handles
-        // If you need handle remapping, you'd need to track asset handles during copy
         log::info!(
             "Merged {} meshes, {} textures",
             other.assets.meshes.len(),
@@ -1062,7 +1060,6 @@ mod tests {
     fn test_transform_propagation_simple() {
         let mut scene = Scene::new();
 
-        // Create parent at (5, 0, 0)
         let parent = scene.world.spawn((
             Name::new("Parent"),
             TransformComponent(Transform::from_trs(
@@ -1072,7 +1069,6 @@ mod tests {
             )),
         ));
 
-        // Create child at local (2, 0, 0) - should be at world (7, 0, 0)
         let child = scene.world.spawn((
             Name::new("Child"),
             TransformComponent(Transform::from_trs(
@@ -1083,13 +1079,10 @@ mod tests {
             Parent(parent),
         ));
 
-        // Add children list to parent
         scene.world.insert_one(parent, Children(vec![child])).ok();
 
-        // Run propagation
         scene.system_propagate_transforms();
 
-        // Check world transforms
         let parent_world = scene.world.get::<&WorldTransform>(parent).unwrap();
         assert_eq!(parent_world.0.translation, Vec3::new(5.0, 0.0, 0.0));
 
@@ -1101,7 +1094,6 @@ mod tests {
     fn test_transform_propagation_scale() {
         let mut scene = Scene::new();
 
-        // Parent with 2x scale
         let parent = scene.world.spawn((
             Name::new("Parent"),
             TransformComponent(Transform::from_trs(
@@ -1111,8 +1103,6 @@ mod tests {
             )),
         ));
 
-        // Child at local (1, 0, 0) with 0.5x scale
-        // Should be at world (2, 0, 0) with 1.0x scale
         let child = scene.world.spawn((
             Name::new("Child"),
             TransformComponent(Transform::from_trs(
@@ -1263,7 +1253,6 @@ mod tests {
         let actual_view = projection.inverse() * shadow.view_proj;
         assert!(actual_view.abs_diff_eq(expected_view, EPS));
 
-        // The light direction should map to the -Z axis in the light's view space.
         let dir_in_view = (actual_view * direction.extend(0.0)).truncate().normalize();
         assert!(dir_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
     }
