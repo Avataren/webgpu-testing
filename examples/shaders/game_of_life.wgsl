@@ -2,10 +2,10 @@ const WORKGROUP_SIZE_X : u32 = 8u;
 const WORKGROUP_SIZE_Y : u32 = 8u;
 
 @group(0) @binding(0)
-var<storage, read> state_src : texture_storage_2d<rgba8unorm, read>;
+var state_src : texture_storage_2d<rgba8unorm, read>;
 
 @group(0) @binding(1)
-var<storage, write> state_dst : texture_storage_2d<rgba8unorm, write>;
+var state_dst : texture_storage_2d<rgba8unorm, write>;
 
 fn wrap_coord(value : i32, max_value : i32) -> i32 {
     var result = value % max_value;
