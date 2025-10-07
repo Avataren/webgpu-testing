@@ -397,9 +397,12 @@ impl SceneLoader {
             }
 
             // Alpha mode
-            if gltf_mat.alpha_mode() == gltf::material::AlphaMode::Blend {
-                material = material.with_alpha();
-            }
+            material = match gltf_mat.alpha_mode() {
+                gltf::material::AlphaMode::Opaque => material,
+                gltf::material::AlphaMode::Mask | gltf::material::AlphaMode::Blend => {
+                    material.with_alpha()
+                }
+            };
 
             log::debug!(
                 "  Material '{}': metallic={:.2}, roughness={:.2}",
