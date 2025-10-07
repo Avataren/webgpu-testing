@@ -120,9 +120,7 @@ impl PostProcess {
         let postprocess_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PostProcessShader"),
             source: if depth_multisampled {
-                wgpu::ShaderSource::Wgsl(
-                    include_str!("../../shader/postprocess_msaa.wgsl").into(),
-                )
+                wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess_msaa.wgsl").into())
             } else {
                 wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into())
             },
