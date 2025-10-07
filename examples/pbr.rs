@@ -2,8 +2,9 @@ use glam::{Quat, Vec3};
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{Material, Texture};
+use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight, PointLight};
 use wgpu_cube::scene::{
-    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+    MaterialComponent, MeshComponent, Name, Scene, Transform, TransformComponent, Visible,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -11,6 +12,7 @@ use wasm_bindgen::prelude::*;
 
 fn build_app() -> AppBuilder {
     let mut builder = AppBuilder::new();
+    builder.disable_default_lighting();
     builder.add_startup_system(setup_pbr_scene);
     builder.add_system(orbit_camera(8.0, 2.0));
     builder
@@ -77,7 +79,40 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
         }
     }
 
+    spawn_pbr_lighting(scene);
+
     info!("PBR test scene: {} entities", scene.world.len());
+}
+
+fn spawn_pbr_lighting(scene: &mut Scene) {
+    let key_direction = Vec3::new(-0.4, -1.0, 0.25).normalize();
+    let key_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, key_direction);
+
+    scene.world.spawn((
+        Name::new("PBR Key Light"),
+        TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
+        DirectionalLight {
+            color: Vec3::new(1.0, 0.97, 0.9),
+            intensity: 2.2,
+        },
+        CanCastShadow(true),
+    ));
+
+    let fill_position = Vec3::new(0.0, 2.5, 5.5);
+    scene.world.spawn((
+        Name::new("PBR Fill Light"),
+        TransformComponent(Transform::from_trs(
+            fill_position,
+            Quat::IDENTITY,
+            Vec3::ONE,
+        )),
+        PointLight {
+            color: Vec3::new(0.9, 0.95, 1.0),
+            intensity: 220.0,
+            range: 22.0,
+        },
+        CanCastShadow(false),
+    ));
 }
 
 fn orbit_camera(
