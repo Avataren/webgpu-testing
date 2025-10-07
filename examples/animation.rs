@@ -5,17 +5,32 @@ use wgpu_cube::scene::{Camera, SceneLoader};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+use wgpu_cube::UpdateContext;
 
-const CHESS_GLTF_PATH: &str = "web/assets/animated/InterpolationTest.gltf";
-const SCENE_SCALE: f32 = 0.25;
+const CHESS_GLTF_PATH: &str = "web/assets/blender/physics_boxes.gltf";
+const SCENE_SCALE: f32 = 1.0;
 
 fn build_app() -> AppBuilder {
     let mut builder = AppBuilder::new();
     builder.disable_default_textures();
     builder.disable_default_lighting();
     builder.add_startup_system(load_scene);
+    builder.add_system(orbit_camera(5.0, 2.0));
     builder.skip_initial_frames(5);
     builder
+}
+
+fn orbit_camera(
+    radius: f32,
+    height: f32,
+) -> Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static> {
+    Box::new(move |ctx: &mut UpdateContext<'_>| {
+        let t = ctx.scene.time() as f32 * 0.25;
+        let camera = ctx.scene.camera_mut();
+        camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
+        camera.target = Vec3::ZERO;
+        camera.up = Vec3::Y;
+    })
 }
 
 fn load_scene(ctx: &mut StartupContext<'_>) {
@@ -28,7 +43,7 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
         Ok(_) => {
             scene.add_default_lighting();
             scene.set_camera(Camera {
-                eye: Vec3::new(0.1, 0.25, 5.0),
+                eye: Vec3::new(0.1, 3.5, 5.0),
                 target: Vec3::ZERO,
                 up: Vec3::Y,
                 ..Camera::default()
