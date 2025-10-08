@@ -91,35 +91,58 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_base_color_texture(webgpu_handle.index() as u32)
         .with_alpha();
 
-    let ortho_size = renderer.billboard_ortho_size();
+    let resolution = renderer.settings().resolution.clone();
+    let base_ortho = Vec2::new(1920.0, 1080.0);
+    let ortho_size = if resolution.width == 0 || resolution.height == 0 {
+        base_ortho
+    } else {
+        let aspect = resolution.width as f32 / resolution.height as f32;
+        let base_aspect = base_ortho.x / base_ortho.y;
+
+        if aspect >= base_aspect {
+            Vec2::new(base_ortho.y * aspect, base_ortho.y)
+        } else {
+            Vec2::new(base_ortho.x, base_ortho.x / aspect)
+        }
+    };
+    renderer.set_billboard_ortho_size(ortho_size.x, ortho_size.y);
+
+    let resolution_vec = Vec2::new(resolution.width as f32, resolution.height as f32);
+    let units_per_pixel = if resolution.width == 0 || resolution.height == 0 {
+        Vec2::ONE
+    } else {
+        Vec2::new(
+            ortho_size.x / resolution_vec.x,
+            ortho_size.y / resolution_vec.y,
+        )
+    };
+
+    let sprite_pixels = Vec2::splat(256.0);
+    let sprite_scale = Vec3::new(
+        sprite_pixels.x * units_per_pixel.x,
+        sprite_pixels.y * units_per_pixel.y,
+        1.0,
+    );
+
     let half = ortho_size * 0.5;
-    let sprite_scale = Vec3::new(256.0, 256.0, 1.0);
+    let sprite_half = Vec2::new(sprite_scale.x * 0.5, sprite_scale.y * 0.5);
 
     let placements = [
         (
             "Top Left",
-            Vec2::new(
-                -half.x + sprite_scale.x * 0.5,
-                half.y - sprite_scale.y * 0.5,
-            ),
+            Vec2::new(-half.x + sprite_half.x, half.y - sprite_half.y),
         ),
         (
             "Top Right",
-            Vec2::new(half.x - sprite_scale.x * 0.5, half.y - sprite_scale.y * 0.5),
+            Vec2::new(half.x - sprite_half.x, half.y - sprite_half.y),
         ),
         (
             "Bottom Left",
-            Vec2::new(
-                -half.x + sprite_scale.x * 0.5,
-                -half.y + sprite_scale.y * 0.5,
-            ),
+            Vec2::new(-half.x + sprite_half.x, -half.y + sprite_half.y),
         ),
         (
             "Bottom Right",
-            Vec2::new(
-                half.x - sprite_scale.x * 0.5,
-                -half.y + sprite_scale.y * 0.5,
-            ),
+            Vec2::new(half.x - sprite_half.x, -half.y + sprite_half.y),
         ),
     ];
 
