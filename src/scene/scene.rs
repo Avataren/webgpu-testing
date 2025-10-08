@@ -212,13 +212,15 @@ impl Scene {
                     let mut pass_override = None;
 
                     if let Some(billboard_val) = billboard {
-                        transform = Self::apply_billboard_transform(
-                            transform,
-                            *billboard_val,
-                            camera_pos,
-                            camera_target,
-                            camera_up,
-                        );
+                        if !matches!(billboard_val.projection, BillboardProjection::Orthographic) {
+                            transform = Self::apply_billboard_transform(
+                                transform,
+                                *billboard_val,
+                                camera_pos,
+                                camera_target,
+                                camera_up,
+                            );
+                        }
 
                         if billboard_val.lit {
                             material_value = material_value.with_lit();
