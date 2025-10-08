@@ -19,6 +19,22 @@ pub enum BillboardOrientation {
     FaceCameraYAxis,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BillboardProjection {
+    /// Use the scene camera's projection (default behaviour).
+    Perspective,
+    /// Render in a dedicated orthographic pass that treats the transform
+    /// translation as screen-space units and keeps the quad axis-aligned to
+    /// the screen regardless of the scene camera orientation.
+    Orthographic,
+}
+
+impl Default for BillboardProjection {
+    fn default() -> Self {
+        Self::Perspective
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum BillboardSpace {
     /// Use the transform's translation directly in world space.
@@ -39,6 +55,7 @@ pub struct Billboard {
     pub orientation: BillboardOrientation,
     pub space: BillboardSpace,
     pub lit: bool,
+    pub projection: BillboardProjection,
 }
 
 impl Billboard {
@@ -47,6 +64,7 @@ impl Billboard {
             orientation,
             space: BillboardSpace::World,
             lit: false,
+            projection: BillboardProjection::default(),
         }
     }
 
@@ -57,6 +75,11 @@ impl Billboard {
 
     pub fn with_lighting(mut self, enabled: bool) -> Self {
         self.lit = enabled;
+        self
+    }
+
+    pub fn with_projection(mut self, projection: BillboardProjection) -> Self {
+        self.projection = projection;
         self
     }
 }
