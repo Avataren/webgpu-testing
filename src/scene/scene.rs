@@ -450,7 +450,7 @@ impl Scene {
         camera_target: Vec3,
         light_transform: Transform,
     ) -> DirectionalShadowData {
-        const SHADOW_SIZE: f32 = 15.0;
+        const SHADOW_SIZE: f32 = 5.0;
         const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;

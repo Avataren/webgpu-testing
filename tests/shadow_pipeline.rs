@@ -59,7 +59,7 @@ struct DirectionalShadow {
 
 fn build_directional_shadow_matrix(direction: Vec3) -> DirectionalShadow {
     const SHADOW_SIZE: f32 = 5.0;
-    const SHADOW_DISTANCE: f32 = 100.0;
+    const SHADOW_DISTANCE: f32 = 30.0;
 
     let focus = Vec3::ZERO;
     let light_pos = focus - direction * SHADOW_DISTANCE;

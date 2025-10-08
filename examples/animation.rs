@@ -7,7 +7,7 @@ use wgpu_cube::scene::{Camera, SceneLoader};
 use wasm_bindgen::prelude::*;
 use wgpu_cube::UpdateContext;
 
-const CHESS_GLTF_PATH: &str = "web/assets/blender/physics_boxes.gltf";
+const CHESS_GLTF_PATH: &str = "web/assets/blender/physics_boxes2.gltf";
 const SCENE_SCALE: f32 = 1.0;
 
 fn build_app() -> AppBuilder {
@@ -15,7 +15,7 @@ fn build_app() -> AppBuilder {
     builder.disable_default_textures();
     builder.disable_default_lighting();
     builder.add_startup_system(load_scene);
-    builder.add_system(orbit_camera(5.0, 2.0));
+    builder.add_system(orbit_camera(10.0, 4.0));
     builder.skip_initial_frames(5);
     builder
 }

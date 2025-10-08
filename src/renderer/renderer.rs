@@ -15,7 +15,7 @@ use glam::Vec3;
 use std::cmp::Ordering;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const INITIAL_OBJECTS_CAPACITY: u32 = 1024;
+const INITIAL_OBJECTS_CAPACITY: u32 = 1024*10;
 
 pub struct Renderer {
     context: RenderContext,

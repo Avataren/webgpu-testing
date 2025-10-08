@@ -115,11 +115,11 @@ impl RenderSettings {
     }
 
     const fn default_sample_count() -> u32 {
-        1
+        8
     }
 
     const fn default_shadow_map_size() -> u32 {
-        1024
+        4096
     }
 }
 
