@@ -1,10 +1,12 @@
 use std::path::Path;
 
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{Material, Texture};
-use wgpu_cube::scene::components::{Billboard, BillboardOrientation, BillboardSpace, DepthState};
+use wgpu_cube::scene::components::{
+    Billboard, BillboardOrientation, BillboardProjection, BillboardSpace, DepthState,
+};
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
@@ -89,23 +91,55 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_base_color_texture(webgpu_handle.index() as u32)
         .with_alpha();
 
-    let sprite_offset = Vec3::new(3.0, 2.2, 8.0);
-    let sprite_transform = Transform::from_trs(sprite_offset, Quat::IDENTITY, Vec3::splat(2.5));
+    let ortho_size = renderer.billboard_ortho_size();
+    let half = ortho_size * 0.5;
+    let sprite_scale = Vec3::new(256.0, 256.0, 1.0);
 
-    let billboard =
-        Billboard::new(BillboardOrientation::FaceCamera).with_space(BillboardSpace::View {
-            offset: sprite_offset,
-        });
+    let placements = [
+        (
+            "Top Left",
+            Vec2::new(
+                -half.x + sprite_scale.x * 0.5,
+                half.y - sprite_scale.y * 0.5,
+            ),
+        ),
+        (
+            "Top Right",
+            Vec2::new(half.x - sprite_scale.x * 0.5, half.y - sprite_scale.y * 0.5),
+        ),
+        (
+            "Bottom Left",
+            Vec2::new(
+                -half.x + sprite_scale.x * 0.5,
+                -half.y + sprite_scale.y * 0.5,
+            ),
+        ),
+        (
+            "Bottom Right",
+            Vec2::new(
+                half.x - sprite_scale.x * 0.5,
+                -half.y + sprite_scale.y * 0.5,
+            ),
+        ),
+    ];
 
-    scene.world.spawn((
-        Name::new("Shadow Test Sprite"),
-        TransformComponent(sprite_transform),
-        MeshComponent(quad_handle),
-        MaterialComponent(sprite_material),
-        billboard,
-        DepthState::new(false, false),
-        Visible(true),
-    ));
+    for (label, pos) in placements {
+        let translation = Vec3::new(pos.x, pos.y, 0.0);
+        let transform = Transform::from_trs(translation, Quat::IDENTITY, sprite_scale);
+        let billboard = Billboard::new(BillboardOrientation::FaceCamera)
+            .with_projection(BillboardProjection::Orthographic)
+            .with_space(BillboardSpace::World);
+
+        scene.world.spawn((
+            Name::new(format!("Shadow Test {} Billboard", label)),
+            TransformComponent(transform),
+            MeshComponent(quad_handle),
+            MaterialComponent(sprite_material),
+            billboard,
+            DepthState::new(false, false),
+            Visible(true),
+        ));
+    }
 
     renderer.update_texture_bind_group(&scene.assets);
 
