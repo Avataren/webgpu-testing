@@ -24,8 +24,7 @@ pub enum BillboardProjection {
     /// Use the scene camera's projection (default behaviour).
     Perspective,
     /// Render in a dedicated orthographic pass that treats the transform
-    /// translation as screen-space units and keeps the quad axis-aligned to
-    /// the screen regardless of the scene camera orientation.
+    /// translation as screen-space units.
     Orthographic,
 }
 

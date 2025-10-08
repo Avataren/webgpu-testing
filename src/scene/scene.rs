@@ -212,13 +212,15 @@ impl Scene {
                     let mut pass_override = None;
 
                     if let Some(billboard_val) = billboard {
-                        transform = Self::apply_billboard_transform(
-                            transform,
-                            *billboard_val,
-                            camera_pos,
-                            camera_target,
-                            camera_up,
-                        );
+                        if !matches!(billboard_val.projection, BillboardProjection::Orthographic) {
+                            transform = Self::apply_billboard_transform(
+                                transform,
+                                *billboard_val,
+                                camera_pos,
+                                camera_target,
+                                camera_up,
+                            );
+                        }
 
                         if billboard_val.lit {
                             material_value = material_value.with_lit();
@@ -392,17 +394,26 @@ impl Scene {
             view_up = view_up.normalize();
         }
 
-        let translation = match billboard.space {
-            BillboardSpace::World => transform.translation,
-            BillboardSpace::View { offset } => {
+        let translation = match (billboard.projection, billboard.space) {
+            (BillboardProjection::Perspective, BillboardSpace::World)
+            | (BillboardProjection::Orthographic, BillboardSpace::World) => transform.translation,
+            (BillboardProjection::Perspective, BillboardSpace::View { offset }) => {
                 camera_position
+                    + view_right * offset.x
+                    + view_up * offset.y
+                    + view_forward * offset.z
+            }
+            (BillboardProjection::Orthographic, BillboardSpace::View { offset }) => {
+                transform.translation
                     + view_right * offset.x
                     + view_up * offset.y
                     + view_forward * offset.z
             }
         };
 
-        let rotation_matrix = if matches!(billboard.space, BillboardSpace::View { .. }) {
+        let rotation_matrix = if billboard.projection == BillboardProjection::Orthographic {
+            Mat3::from_cols(view_right, view_up, -view_forward)
+        } else if matches!(billboard.space, BillboardSpace::View { .. }) {
             Mat3::from_cols(view_right, view_up, -view_forward)
         } else {
             match billboard.orientation {
