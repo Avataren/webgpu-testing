@@ -369,6 +369,16 @@ impl Scene {
     ) -> Transform {
         let mut result = transform;
 
+        if billboard.projection == BillboardProjection::Orthographic {
+            let translation = match billboard.space {
+                BillboardSpace::World => transform.translation,
+                BillboardSpace::View { offset } => transform.translation + offset,
+            };
+            result.translation = translation;
+            result.rotation = Quat::IDENTITY;
+            return result;
+        }
+
         let view_forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
         let mut view_up = Self::safe_normalize(camera_up, Vec3::Y);
         let mut view_right = view_forward.cross(view_up);
