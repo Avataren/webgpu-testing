@@ -91,6 +91,8 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_base_color_texture(webgpu_handle.index() as u32)
         .with_alpha();
 
+    let resolution = renderer.settings().resolution.clone();
+    renderer.set_billboard_ortho_size(resolution.width as f32, resolution.height as f32);
     let ortho_size = renderer.billboard_ortho_size();
     let half = ortho_size * 0.5;
     let sprite_scale = Vec3::new(256.0, 256.0, 1.0);
@@ -124,7 +126,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (label, pos) in placements {
-        let translation = Vec3::new(pos.x, pos.y, 0.0);
+        let translation = Vec3::new(pos.x, pos.y, -0.5);
         let transform = Transform::from_trs(translation, Quat::IDENTITY, sprite_scale);
         let billboard = Billboard::new(BillboardOrientation::FaceCamera)
             .with_projection(BillboardProjection::Orthographic)
