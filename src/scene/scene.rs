@@ -5,8 +5,8 @@ use super::animation::{
 use super::components::*;
 use crate::asset::Assets;
 use crate::renderer::{
-    DirectionalShadowData, LightsData, PointShadowData, RenderBatcher, RenderObject, Renderer,
-    SpotShadowData,
+    DirectionalShadowData, LightsData, PointShadowData, RenderBatcher, RenderObject, RenderPass,
+    Renderer, SpotShadowData,
 };
 use crate::scene::{Camera, Transform};
 use crate::time::Instant;
@@ -207,6 +207,9 @@ impl Scene {
                     };
 
                     let mut material_value = *material;
+                    let depth_state_val = depth_state.unwrap_or_default();
+                    let mut force_overlay = false;
+                    let mut pass_override = None;
 
                     if let Some(billboard_val) = billboard {
                         transform = Self::apply_billboard_transform(
@@ -222,12 +225,18 @@ impl Scene {
                         } else {
                             material_value = material_value.with_unlit();
                         }
-                    }
 
-                    let depth_state_val = depth_state.unwrap_or_default();
-                    let force_overlay = billboard.is_some()
-                        && !depth_state_val.depth_test
-                        && !depth_state_val.depth_write;
+                        match billboard_val.projection {
+                            BillboardProjection::Orthographic => {
+                                pass_override = Some(RenderPass::BillboardOrtho);
+                            }
+                            BillboardProjection::Perspective => {
+                                if !depth_state_val.depth_test && !depth_state_val.depth_write {
+                                    force_overlay = true;
+                                }
+                            }
+                        }
+                    }
 
                     Some(RenderObject {
                         mesh: *mesh, // FIXED: just dereference, it's already Handle<Mesh>
@@ -235,6 +244,7 @@ impl Scene {
                         transform,
                         depth_state: depth_state_val,
                         force_overlay,
+                        pass_override,
                     })
                 },
             )
@@ -372,17 +382,26 @@ impl Scene {
             view_up = view_up.normalize();
         }
 
-        let translation = match billboard.space {
-            BillboardSpace::World => transform.translation,
-            BillboardSpace::View { offset } => {
+        let translation = match (billboard.projection, billboard.space) {
+            (BillboardProjection::Perspective, BillboardSpace::World)
+            | (BillboardProjection::Orthographic, BillboardSpace::World) => transform.translation,
+            (BillboardProjection::Perspective, BillboardSpace::View { offset }) => {
                 camera_position
+                    + view_right * offset.x
+                    + view_up * offset.y
+                    + view_forward * offset.z
+            }
+            (BillboardProjection::Orthographic, BillboardSpace::View { offset }) => {
+                transform.translation
                     + view_right * offset.x
                     + view_up * offset.y
                     + view_forward * offset.z
             }
         };
 
-        let rotation_matrix = if matches!(billboard.space, BillboardSpace::View { .. }) {
+        let rotation_matrix = if billboard.projection == BillboardProjection::Orthographic {
+            Mat3::from_cols(view_right, view_up, -view_forward)
+        } else if matches!(billboard.space, BillboardSpace::View { .. }) {
             Mat3::from_cols(view_right, view_up, -view_forward)
         } else {
             match billboard.orientation {
@@ -1096,14 +1115,10 @@ mod tests {
             view_up = view_up.normalize();
         }
 
-        let expected_translation = camera_pos
-            + view_right * offset.x
-            + view_up * offset.y
-            + view_forward * offset.z;
+        let expected_translation =
+            camera_pos + view_right * offset.x + view_up * offset.y + view_forward * offset.z;
 
-        assert!(result
-            .translation
-            .abs_diff_eq(expected_translation, 1e-5));
+        assert!(result.translation.abs_diff_eq(expected_translation, 1e-5));
         assert!((result.rotation * Vec3::X).abs_diff_eq(view_right, 1e-5));
         assert!((result.rotation * Vec3::Y).abs_diff_eq(view_up, 1e-5));
         assert!((result.rotation * Vec3::Z).abs_diff_eq(-view_forward, 1e-5));
@@ -1111,11 +1126,8 @@ mod tests {
 
     #[test]
     fn world_space_billboard_faces_camera_position() {
-        let transform = Transform::from_trs(
-            Vec3::new(-2.0, 1.0, -5.0),
-            Quat::IDENTITY,
-            Vec3::splat(1.5),
-        );
+        let transform =
+            Transform::from_trs(Vec3::new(-2.0, 1.0, -5.0), Quat::IDENTITY, Vec3::splat(1.5));
         let billboard = Billboard::new(BillboardOrientation::FaceCamera);
         let camera_pos = Vec3::new(4.0, 3.0, 2.0);
         let camera_target = Vec3::new(0.0, 0.0, 0.0);
