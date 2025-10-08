@@ -248,13 +248,15 @@ mod tests {
             let channel = clip
                 .channels
                 .iter()
-                .find(|channel| matches!(
-                    channel.target,
-                    AnimationTarget::Transform {
-                        property: TransformProperty::Translation,
-                        ..
-                    }
-                ))
+                .find(|channel| {
+                    matches!(
+                        channel.target,
+                        AnimationTarget::Transform {
+                            property: TransformProperty::Translation,
+                            ..
+                        }
+                    )
+                })
                 .unwrap_or_else(|| panic!("Clip '{}' missing translation channel", clip_name));
 
             let animation = document_animations
@@ -314,11 +316,13 @@ mod tests {
                     let keyframe_index = channel.sampler.times.len() - 1;
                     doc_values[keyframe_index * 3 + 1] * scale_multiplier
                 }
-                AnimationInterpolation::Linear | AnimationInterpolation::Step => doc_values
-                    .last()
-                    .copied()
-                    .expect("Translation outputs should not be empty")
-                    * scale_multiplier,
+                AnimationInterpolation::Linear | AnimationInterpolation::Step => {
+                    doc_values
+                        .last()
+                        .copied()
+                        .expect("Translation outputs should not be empty")
+                        * scale_multiplier
+                }
             };
 
             assert!(update
@@ -660,14 +664,7 @@ impl SceneLoader {
         }
 
         log::info!("Loading animations...");
-        Self::load_animations(
-            &document,
-            &buffers,
-            &node_entities,
-            scene,
-            path,
-            scale,
-        )?;
+        Self::load_animations(&document, &buffers, &node_entities, scene, path, scale)?;
 
         log::info!("=== glTF loaded successfully ===");
         log::info!("Total entities in scene: {}", scene.world.len());

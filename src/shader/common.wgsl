@@ -372,7 +372,7 @@ fn project_shadow_with_normal_offset(
 fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.directionals[index];
     let proj = project_shadow(info.view_proj, world_pos);
-    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    let depth = clamp(proj.z, 0.0, 1.0);
     let texel = shadow_texel_size(directional_shadow_maps);
     
     // ALWAYS sample in uniform control flow
@@ -459,7 +459,7 @@ fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let matrix = info.view_proj[face];
     let proj = project_shadow(matrix, world_pos);
     let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
-    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+    let depth = clamp(proj.z, 0.0, 1.0);
     let texel = shadow_texel_size(point_shadow_maps);
     
     // ALWAYS sample in uniform control flow

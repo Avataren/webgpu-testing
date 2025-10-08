@@ -130,7 +130,6 @@ impl DirectionalLightRaw {
 #[derive(Clone, Copy)]
 pub struct DirectionalShadowData {
     pub view_proj: Mat4,
-    //pub bias: f32,
 }
 
 #[repr(C, align(16))]
@@ -154,7 +153,7 @@ impl DirectionalShadowRaw {
         if let Some(data) = data {
             Self {
                 view_proj: data.view_proj.to_cols_array_2d(),
-                params: [1.0, 0.0 /*data.bias*/, 0.0, 0.0],
+                params: [1.0, 0.0, 0.0, 0.0],
                 _padding: [0.0; 4],
             }
         } else {
@@ -182,7 +181,6 @@ impl PointLightRaw {
 #[derive(Clone, Copy)]
 pub struct PointShadowData {
     pub view_proj: [Mat4; 6],
-    pub bias: f32,
     pub near: f32,
     pub far: f32,
 }
@@ -206,7 +204,7 @@ impl PointShadowRaw {
         if let Some(data) = data {
             Self {
                 view_proj: data.view_proj.map(|mat| mat.to_cols_array_2d()),
-                params: [1.0, data.bias, data.near, data.far],
+                params: [1.0, 0.0, data.near, data.far],
             }
         } else {
             Self::disabled()
@@ -252,7 +250,7 @@ impl SpotLightRaw {
 #[derive(Clone, Copy)]
 pub struct SpotShadowData {
     pub view_proj: Mat4,
-    //pub bias: f32,
+    pub far: f32,
 }
 
 #[repr(C, align(16))]
@@ -275,9 +273,8 @@ impl SpotShadowRaw {
             Self {
                 view_proj: data.view_proj.to_cols_array_2d(),
                 params: [
-                    1.0, 0.0, /*data.bias*/
-                    0.0, /*(receiver offset in world units; start at 0 if you don’t need it) */
-                    2.0, /*pcf scale*/
+                    1.0, data.far, 0.0, /* receiver offset (world units) */
+                    2.0, /* pcf scale */
                 ],
             }
         } else {
@@ -409,10 +406,12 @@ mod tests {
         let outer = 0.6;
 
         let view = Mat4::look_at_rh(position, position + direction, Vec3::Y);
-        let proj = Mat4::perspective_rh(outer * 2.0, 1.0, 0.1, range);
+        let near = 0.1;
+        let far = range;
+        let proj = Mat4::perspective_rh(outer * 2.0, 1.0, near, far);
         let shadow = SpotShadowData {
             view_proj: proj * view,
-            //bias: 0.005,
+            far,
         };
 
         data.add_spot(
@@ -441,7 +440,7 @@ mod tests {
         let shadows = ShadowsUniform::from_data(&data);
         assert_eq!(shadows.counts[2], 1);
         assert_eq!(shadows.spots[0].params[0], 1.0);
-        assert_eq!(shadows.spots[0].params[1], 0.005);
+        assert_eq!(shadows.spots[0].params[1], far);
         let stored_view = Mat4::from_cols_array_2d(&shadows.spots[0].view_proj);
         assert!(stored_view.abs_diff_eq(proj * view, 1e-6));
     }

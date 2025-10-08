@@ -1,5 +1,6 @@
 pub mod batch;
 pub mod depth;
+pub(crate) mod internal;
 pub mod lights;
 pub mod material;
 pub mod objects;
