@@ -14,7 +14,7 @@ use crate::scene::Camera;
 use crate::settings::RenderSettings;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
+use glam::{Mat4, Vec2, Vec3};
 use std::{cmp::Ordering, collections::HashMap, mem, num::NonZeroU64};
 use wgpu::util::DeviceExt;
 use winit::{dpi::PhysicalSize, window::Window};
@@ -35,6 +35,8 @@ pub struct Renderer {
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
+    billboard_ortho_size: Vec2,
+    main_camera_uniform: CameraUniform,
     settings: RenderSettings,
 }
 
@@ -88,6 +90,7 @@ struct PreparedBatches {
     opaque_range: std::ops::Range<usize>,
     transparent_range: std::ops::Range<usize>,
     overlay_range: std::ops::Range<usize>,
+    billboard_ortho_range: std::ops::Range<usize>,
 }
 
 impl PreparedBatches {
@@ -105,6 +108,10 @@ impl PreparedBatches {
 
     fn overlay(&self) -> &[OrderedBatch] {
         &self.batches[self.overlay_range.clone()]
+    }
+
+    fn billboard_ortho(&self) -> &[OrderedBatch] {
+        &self.batches[self.billboard_ortho_range.clone()]
     }
 }
 
@@ -164,6 +171,8 @@ impl Renderer {
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
+            billboard_ortho_size: Vec2::new(1920.0, 1080.0),
+            main_camera_uniform: CameraUniform::new(),
             settings,
         }
     }
@@ -178,6 +187,14 @@ impl Renderer {
 
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
+    }
+
+    pub fn set_billboard_ortho_size(&mut self, width: f32, height: f32) {
+        self.billboard_ortho_size = Vec2::new(width, height);
+    }
+
+    pub fn billboard_ortho_size(&self) -> Vec2 {
+        self.billboard_ortho_size
     }
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -201,6 +218,7 @@ impl Renderer {
         self.camera_up = camera.up;
         let vp = camera.view_proj(aspect);
         let uni = CameraUniform::from_matrix(vp, camera.position());
+        self.main_camera_uniform = uni;
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
@@ -225,6 +243,7 @@ impl Renderer {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
+        let mut billboard_ortho = Vec::new();
         let camera_pos = self.camera_position;
 
         for batch in batcher.iter() {
@@ -256,6 +275,7 @@ impl Renderer {
                 RenderPass::Opaque => opaque.push(ordered),
                 RenderPass::Transparent => transparent.push(ordered),
                 RenderPass::Overlay => overlay.push(ordered),
+                RenderPass::BillboardOrtho => billboard_ortho.push(ordered),
             }
         }
 
@@ -287,7 +307,9 @@ impl Renderer {
             db.partial_cmp(&da).unwrap_or(Ordering::Equal)
         });
 
-        let mut batches = Vec::with_capacity(opaque.len() + transparent.len() + overlay.len());
+        let mut batches = Vec::with_capacity(
+            opaque.len() + transparent.len() + overlay.len() + billboard_ortho.len(),
+        );
         let opaque_start = 0;
         batches.extend(opaque);
         let opaque_end = batches.len();
@@ -297,6 +319,9 @@ impl Renderer {
         let overlay_start = batches.len();
         batches.extend(overlay);
         let overlay_end = batches.len();
+        let billboard_start = batches.len();
+        batches.extend(billboard_ortho);
+        let billboard_end = batches.len();
 
         let mut offset = 0u32;
         for batch in &mut batches {
@@ -309,7 +334,21 @@ impl Renderer {
             opaque_range: opaque_start..opaque_end,
             transparent_range: transparent_start..transparent_end,
             overlay_range: overlay_start..overlay_end,
+            billboard_ortho_range: billboard_start..billboard_end,
         }
+    }
+
+    fn billboard_ortho_view_proj_matrix(&self) -> Mat4 {
+        let half_width = self.billboard_ortho_size.x * 0.5;
+        let half_height = self.billboard_ortho_size.y * 0.5;
+        Mat4::orthographic_rh(
+            -half_width,
+            half_width,
+            -half_height,
+            half_height,
+            -1.0,
+            1.0,
+        )
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {
@@ -637,6 +676,127 @@ impl Renderer {
                     }
                 }
             }
+        }
+
+        if !prepared_batches.billboard_ortho().is_empty() {
+            let ortho_uniform = CameraUniform::from_matrix(
+                self.billboard_ortho_view_proj_matrix(),
+                self.camera_position,
+            );
+            self.context.queue.write_buffer(
+                &self.camera_buffer.buffer,
+                0,
+                bytemuck::bytes_of(&ortho_uniform),
+            );
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("BillboardOrthoPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            match &mut self.texture_binder {
+                TextureBindingModel::Bindless(bindless) => {
+                    for batch in prepared_batches.billboard_ortho() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            continue;
+                        };
+
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                            1,
+                        );
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+                        rpass.set_bind_group(3, bindless.global_bind_group(), &[]);
+
+                        let instance_count = batch.instances.len() as u32;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+                        rpass.draw_indexed(
+                            0..mesh.index_count(),
+                            0,
+                            batch.first_instance..(batch.first_instance + instance_count),
+                        );
+                    }
+                }
+                TextureBindingModel::Classic(classic) => {
+                    for batch in prepared_batches.billboard_ortho() {
+                        let Some(mesh) = assets.meshes.get(batch.mesh) else {
+                            log::warn!("Skipping batch with invalid mesh handle");
+                            continue;
+                        };
+
+                        let pipeline_key = PipelineKey::new(
+                            batch.depth_state.depth_test,
+                            batch.depth_state.depth_write,
+                            batch.alpha_blend,
+                            1,
+                        );
+                        let pipeline = self.pipeline.pipeline(pipeline_key);
+                        rpass.set_pipeline(pipeline);
+                        rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+                        rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
+                        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+
+                        let instances = &batch.instances;
+                        rpass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+                        rpass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+
+                        let mut local_offset = 0usize;
+                        while local_offset < instances.len() {
+                            let material = instances[local_offset].material;
+                            let bind_group = classic.bind_group_for_material(
+                                &self.context.device,
+                                assets,
+                                material,
+                            );
+                            rpass.set_bind_group(3, bind_group, &[]);
+
+                            let mut run_length = 1usize;
+                            while local_offset + run_length < instances.len()
+                                && instances[local_offset + run_length].material == material
+                            {
+                                run_length += 1;
+                            }
+
+                            let start_instance = batch.first_instance + local_offset as u32;
+                            let end_instance = start_instance + run_length as u32;
+                            rpass.draw_indexed(
+                                0..mesh.index_count(),
+                                0,
+                                start_instance..end_instance,
+                            );
+
+                            local_offset += run_length;
+                        }
+                    }
+                }
+            }
+
+            drop(rpass);
+
+            self.context.queue.write_buffer(
+                &self.camera_buffer.buffer,
+                0,
+                bytemuck::bytes_of(&self.main_camera_uniform),
+            );
         }
 
         self.context.queue.submit(Some(encoder.finish()));

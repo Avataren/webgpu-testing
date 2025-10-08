@@ -9,9 +9,10 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderPass {
-    Opaque,      // Normal opaque geometry
-    Transparent, // Alpha blended (needs sorting)
-    Overlay,     // Draw last, typically with depth disabled
+    Opaque,         // Normal opaque geometry
+    Transparent,    // Alpha blended (needs sorting)
+    Overlay,        // Draw last, typically with depth disabled
+    BillboardOrtho, // Screen-space billboards rendered with orthographic projection
 }
 
 /// A single renderable object instance
@@ -21,6 +22,7 @@ pub struct RenderObject {
     pub transform: Transform, // Changed from Mat4
     pub depth_state: DepthState,
     pub force_overlay: bool,
+    pub pass_override: Option<RenderPass>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,7 +61,9 @@ impl RenderBatcher {
     /// Add an object to be rendered
     pub fn add(&mut self, obj: RenderObject) {
         // Determine which pass this object belongs to
-        let pass = if obj.force_overlay {
+        let pass = if let Some(pass) = obj.pass_override {
+            pass
+        } else if obj.force_overlay {
             RenderPass::Overlay
         } else if obj.material.requires_separate_pass() {
             RenderPass::Transparent
