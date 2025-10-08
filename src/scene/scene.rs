@@ -450,8 +450,8 @@ impl Scene {
         camera_target: Vec3,
         light_transform: Transform,
     ) -> DirectionalShadowData {
-        const SHADOW_SIZE: f32 = 15.0;
-        const SHADOW_DISTANCE: f32 = 30.0;
+        const SHADOW_SIZE: f32 = 5.0;
+        const SHADOW_DISTANCE: f32 = 100.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
         let direction = if raw_dir.length_squared() > 0.0 {
@@ -498,7 +498,7 @@ impl Scene {
 
         DirectionalShadowData {
             view_proj: projection * view,
-            bias: 0.001,
+            //bias: 0.0000,
         }
     }
 
@@ -534,9 +534,9 @@ impl Scene {
     }
 
     fn build_spot_shadow(transform: Transform, light: &SpotLight) -> SpotShadowData {
-        let near = 0.1f32;
+        let near = 0.01f32;
         let far = light.range.max(near + 0.1);
-        let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
+        let fov = (light.outer_angle * 2.0 * 1.02).clamp(0.1, std::f32::consts::PI - 0.1);
 
         let position = transform.translation;
         let mut forward = transform.rotation * Vec3::NEG_Z;
@@ -567,7 +567,7 @@ impl Scene {
 
         SpotShadowData {
             view_proj: projection * view,
-            bias: 0.001,
+            //bias: 0.001,
         }
     }
 
@@ -589,53 +589,67 @@ impl Scene {
 
         let mut created = 0usize;
 
-        let sun2_direction = Vec3::new(-0.4, -1.0, 0.25).normalize();
+        let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
+        let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
+
+        self.world.spawn((
+            Name::new("Default Sky Light"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, sun1_rotation, Vec3::ONE)),
+            DirectionalLight {
+                color: Vec3::new(0.49, 0.95, 0.85),
+                intensity: 2.5,
+            },
+            CanCastShadow(true),
+        ));
+        created += 1;
+
+        let sun2_direction = Vec3::new(-1.4, -1.0, 1.25).normalize();
         let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
 
         self.world.spawn((
             Name::new("Default Sky Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
             DirectionalLight {
-                color: Vec3::new(0.9, 0.95, 0.4),
-                intensity: 2.0,
+                color: Vec3::new(0.9, 0.95, 0.5),
+                intensity: 2.5,
             },
             CanCastShadow(true),
         ));
         created += 1;
 
-        self.world.spawn((
-            Name::new("Default Fill Light"),
-            TransformComponent(Transform::from_trs(
-                Vec3::new(3.0, 4.0, 2.0),
-                Quat::IDENTITY,
-                Vec3::ONE,
-            )),
-            PointLight {
-                color: Vec3::new(1.0, 0.47, 0.22),
-                intensity: 200.0,
-                range: 20.0,
-            },
-            CanCastShadow(true),
-        ));
-        created += 1;
+        // self.world.spawn((
+        //     Name::new("Default Fill Light"),
+        //     TransformComponent(Transform::from_trs(
+        //         Vec3::new(3.0, 4.0, 2.0),
+        //         Quat::IDENTITY,
+        //         Vec3::ONE,
+        //     )),
+        //     PointLight {
+        //         color: Vec3::new(1.0, 0.47, 0.22),
+        //         intensity: 200.0,
+        //         range: 20.0,
+        //     },
+        //     CanCastShadow(true),
+        // ));
+        // created += 1;
 
-        let rim_position = Vec3::new(-2.0, 6.0, -5.0);
-        let rim_direction = (Vec3::ZERO - rim_position).normalize();
-        let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);
+        // let rim_position = Vec3::new(-2.0, 6.0, -5.0);
+        // let rim_direction = (Vec3::ZERO - rim_position).normalize();
+        // let rim_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, rim_direction);
 
-        self.world.spawn((
-            Name::new("Default Rim Spot Light"),
-            TransformComponent(Transform::from_trs(rim_position, rim_rotation, Vec3::ONE)),
-            SpotLight {
-                color: Vec3::new(0.3, 0.55, 0.9),
-                intensity: 200.0,
-                range: 20.0,
-                inner_angle: 20f32.to_radians(),
-                outer_angle: 30f32.to_radians(),
-            },
-            CanCastShadow(true),
-        ));
-        created += 1;
+        // self.world.spawn((
+        //     Name::new("Default Rim Spot Light"),
+        //     TransformComponent(Transform::from_trs(rim_position, rim_rotation, Vec3::ONE)),
+        //     SpotLight {
+        //         color: Vec3::new(0.3, 0.55, 0.9),
+        //         intensity: 200.0,
+        //         range: 20.0,
+        //         inner_angle: 20f32.to_radians(),
+        //         outer_angle: 30f32.to_radians(),
+        //     },
+        //     CanCastShadow(true),
+        // ));
+        // created += 1;
 
         created
     }
@@ -1096,14 +1110,10 @@ mod tests {
             view_up = view_up.normalize();
         }
 
-        let expected_translation = camera_pos
-            + view_right * offset.x
-            + view_up * offset.y
-            + view_forward * offset.z;
+        let expected_translation =
+            camera_pos + view_right * offset.x + view_up * offset.y + view_forward * offset.z;
 
-        assert!(result
-            .translation
-            .abs_diff_eq(expected_translation, 1e-5));
+        assert!(result.translation.abs_diff_eq(expected_translation, 1e-5));
         assert!((result.rotation * Vec3::X).abs_diff_eq(view_right, 1e-5));
         assert!((result.rotation * Vec3::Y).abs_diff_eq(view_up, 1e-5));
         assert!((result.rotation * Vec3::Z).abs_diff_eq(-view_forward, 1e-5));
@@ -1111,11 +1121,8 @@ mod tests {
 
     #[test]
     fn world_space_billboard_faces_camera_position() {
-        let transform = Transform::from_trs(
-            Vec3::new(-2.0, 1.0, -5.0),
-            Quat::IDENTITY,
-            Vec3::splat(1.5),
-        );
+        let transform =
+            Transform::from_trs(Vec3::new(-2.0, 1.0, -5.0), Quat::IDENTITY, Vec3::splat(1.5));
         let billboard = Billboard::new(BillboardOrientation::FaceCamera);
         let camera_pos = Vec3::new(4.0, 3.0, 2.0);
         let camera_target = Vec3::new(0.0, 0.0, 0.0);

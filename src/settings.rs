@@ -115,11 +115,11 @@ impl RenderSettings {
     }
 
     const fn default_sample_count() -> u32 {
-        8
+        1
     }
 
     const fn default_shadow_map_size() -> u32 {
-        2048
+        1024
     }
 }
 
@@ -132,8 +132,8 @@ pub struct Resolution {
 impl Default for Resolution {
     fn default() -> Self {
         Self {
-            width: 1920,
-            height: 1080,
+            width: 1280,
+            height: 720,
         }
     }
 }

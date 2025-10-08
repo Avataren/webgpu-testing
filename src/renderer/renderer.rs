@@ -1224,8 +1224,8 @@ impl ShadowResources {
                 depth_compare: wgpu::CompareFunction::LessEqual,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 0,
-                    slope_scale: 0.0,
+                    constant: 2,
+                    slope_scale: 2.0,
                     clamp: 0.0,
                 },
             }),

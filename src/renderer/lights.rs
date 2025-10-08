@@ -130,7 +130,7 @@ impl DirectionalLightRaw {
 #[derive(Clone, Copy)]
 pub struct DirectionalShadowData {
     pub view_proj: Mat4,
-    pub bias: f32,
+    //pub bias: f32,
 }
 
 #[repr(C, align(16))]
@@ -154,7 +154,7 @@ impl DirectionalShadowRaw {
         if let Some(data) = data {
             Self {
                 view_proj: data.view_proj.to_cols_array_2d(),
-                params: [1.0, data.bias, 0.0, 0.0],
+                params: [1.0, 0.0 /*data.bias*/, 0.0, 0.0],
                 _padding: [0.0; 4],
             }
         } else {
@@ -252,7 +252,7 @@ impl SpotLightRaw {
 #[derive(Clone, Copy)]
 pub struct SpotShadowData {
     pub view_proj: Mat4,
-    pub bias: f32,
+    //pub bias: f32,
 }
 
 #[repr(C, align(16))]
@@ -274,7 +274,11 @@ impl SpotShadowRaw {
         if let Some(data) = data {
             Self {
                 view_proj: data.view_proj.to_cols_array_2d(),
-                params: [1.0, data.bias, 0.0, 0.0],
+                params: [
+                    1.0, 0.0, /*data.bias*/
+                    0.0, /*(receiver offset in world units; start at 0 if you don’t need it) */
+                    2.0, /*pcf scale*/
+                ],
             }
         } else {
             Self::disabled()
@@ -408,7 +412,7 @@ mod tests {
         let proj = Mat4::perspective_rh(outer * 2.0, 1.0, 0.1, range);
         let shadow = SpotShadowData {
             view_proj: proj * view,
-            bias: 0.005,
+            //bias: 0.005,
         };
 
         data.add_spot(

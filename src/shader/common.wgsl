@@ -330,7 +330,44 @@ fn sample_shadow_pcf(
     return result;
 }
 
+// PCF with view-depth scaling: keep penumbra roughly constant in world units
+fn sample_shadow_pcf_viewdepth(
+    texture: texture_depth_2d_array,
+    smp: sampler_comparison,
+    proj_xy: vec2<f32>,    // from project_shadow(...)
+    layer: i32,
+    depth: f32,            // compare value in [0,1]
+    base_texel: vec2<f32>,
+    view_depth_norm: f32,  // ~ viewDepth / far (0..1)
+    pcf_scale: f32         // 1.0–3.0 typically
+) -> f32 {
+    let radius = base_texel * max(view_depth_norm, 0.0) * pcf_scale;
 
+    var acc = 0.0;
+    var samples = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * radius;
+            acc += textureSampleCompare(texture, smp, proj_xy + offset, layer, depth);
+            samples = samples + 1.0;
+        }
+    }
+    return acc / max(samples, 1.0);
+}
+
+// Optional tiny receiver normal offset to counter self-shadow acne without double-biasing
+fn project_shadow_with_normal_offset(
+    matrix: mat4x4<f32>,
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    receiver_offset: f32
+) -> vec3<f32> {
+    let p = world_pos + N * receiver_offset; // 0.0–0.004 in your world units
+    let clip = matrix * vec4<f32>(p, 1.0);
+    if (clip.w <= 0.0) { return vec3<f32>(-1.0, -1.0, -1.0); }
+    let ndc = clip.xyz / clip.w;
+    return vec3<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5, ndc.z);
+}
 
 fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.directionals[index];
@@ -357,30 +394,57 @@ fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     return select(1.0, shadow_sample, valid);
 }
 
-fn sample_spot_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
-    let info = shadow_info.spots[index];
-    let proj = project_shadow(info.view_proj, world_pos);
-    let depth = clamp(proj.z - info.params.y, 0.0, 1.0);
+// ---- Spot shadow using view-depth-scaled PCF (wgpu) ----
+// Assumes: glam Mat4::perspective_rh used when building view_proj (depth 0..1)
+fn sample_spot_shadow(index: u32, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
+    let info  = shadow_info.spots[index];
+    let light = lights.spots[index];
+
+    // params.x: has_data (!=0)
+    // params.y: far (store your spot shadow far here for proper normalization)
+    // params.z: receiver normal offset (0..0.004)
+    // params.w: pcf_scale (1.5..3.0)
+    let far_plane       = max(info.params.y, 0.0001);
+    let receiver_offset = info.params.z;
+    let pcf_scale       = select(2.0, info.params.w, info.params.w > 0.0);
+
+    // Project into shadow map (with tiny receiver offset)
+    let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, receiver_offset);
+
+    // Compare depth: no extra bias here (you already use DepthBiasState in the shadow pass)
+    let depth = clamp(proj.z, 0.0, 1.0);
+
+    // Approximate view-space depth along the spotlight forward axis:
+    // world vector from light to fragment
+    let to_frag   = world_pos - light.position_range.xyz;
+    // spotlight points along +light.direction.xyz (your build uses look_at_rh(position, position + forward, up))
+    let Lfwd      = normalize(light.direction.xyz);
+    // projection of to_frag on the forward axis is the light-space Z (positive in front)
+    let view_depth = max(dot(to_frag, Lfwd), 0.0);
+    let view_depth_norm = clamp(view_depth / far_plane, 0.0, 1.0);
+
+    // Always sample in uniform control flow
     let texel = shadow_texel_size(spot_shadow_maps);
-    
-    // ALWAYS sample in uniform control flow
-    let shadow_sample = sample_shadow_pcf(
+    let shadow_sample = sample_shadow_pcf_viewdepth(
         spot_shadow_maps,
         spot_shadow_sampler,
         proj.xy,
         i32(index),
         depth,
         texel,
+        view_depth_norm,
+        pcf_scale
     );
-    
-    // Then conditionally return based on validity checks
+
+    // Validity checks after sampling
     let has_shadow_data = info.params.x != 0.0;
-    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
-    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
-    let valid = has_shadow_data && in_depth_range && in_bounds;
-    
+    let in_depth_range  = proj.z >= 0.0 && proj.z <= 1.0;
+    let in_bounds       = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
+    let valid           = has_shadow_data && in_depth_range && in_bounds;
+
     return select(1.0, shadow_sample, valid);
 }
+
 
 fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.points[index];
@@ -624,7 +688,7 @@ fn calculate_scene_lighting(
         let distance = length(to_light);
         
         // ALWAYS sample shadow in uniform control flow
-        let shadow = sample_spot_shadow(i, world_pos);
+        let shadow = sample_spot_shadow(i, world_pos, N);
         
         // Then conditionally use the result
         if (distance > 0.0001) {
@@ -810,7 +874,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
-    let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
+    let ambient = vec3<f32>(0.025) * base_color.rgb * occlusion;
     
     // Then conditionally use lighting based on material flags
     var color: vec3<f32>;
