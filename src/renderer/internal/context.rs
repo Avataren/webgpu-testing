@@ -23,7 +23,16 @@ impl RenderContext {
         size: PhysicalSize<u32>,
         settings: &RenderSettings,
     ) -> Self {
-        let instance = wgpu::Instance::default();
+        let backends = if cfg!(target_arch = "wasm32") {
+            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+        } else {
+            wgpu::Backends::all()
+        };
+
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
         let surface = instance
             .create_surface(window)
             .expect("Failed to create surface");
