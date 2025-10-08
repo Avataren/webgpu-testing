@@ -450,8 +450,8 @@ impl Scene {
         camera_target: Vec3,
         light_transform: Transform,
     ) -> DirectionalShadowData {
-        const SHADOW_SIZE: f32 = 5.0;
-        const SHADOW_DISTANCE: f32 = 100.0;
+        const SHADOW_SIZE: f32 = 15.0;
+        const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
         let direction = if raw_dir.length_squared() > 0.0 {
@@ -498,7 +498,6 @@ impl Scene {
 
         DirectionalShadowData {
             view_proj: projection * view,
-            //bias: 0.0000,
         }
     }
 
@@ -527,16 +526,15 @@ impl Scene {
 
         PointShadowData {
             view_proj: matrices,
-            bias: 0.001,
             near,
             far,
         }
     }
 
     fn build_spot_shadow(transform: Transform, light: &SpotLight) -> SpotShadowData {
-        let near = 0.01f32;
+        let near = 0.1f32;
         let far = light.range.max(near + 0.1);
-        let fov = (light.outer_angle * 2.0 * 1.02).clamp(0.1, std::f32::consts::PI - 0.1);
+        let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
 
         let position = transform.translation;
         let mut forward = transform.rotation * Vec3::NEG_Z;
@@ -567,7 +565,7 @@ impl Scene {
 
         SpotShadowData {
             view_proj: projection * view,
-            //bias: 0.001,
+            far,
         }
     }
 
