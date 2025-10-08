@@ -92,38 +92,8 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_alpha();
 
     let resolution = renderer.settings().resolution.clone();
-    let base_ortho = Vec2::new(1920.0, 1080.0);
-    let ortho_size = if resolution.width == 0 || resolution.height == 0 {
-        base_ortho
-    } else {
-        let aspect = resolution.width as f32 / resolution.height as f32;
-        let base_aspect = base_ortho.x / base_ortho.y;
-
-        if aspect >= base_aspect {
-            Vec2::new(base_ortho.y * aspect, base_ortho.y)
-        } else {
-            Vec2::new(base_ortho.x, base_ortho.x / aspect)
-        }
-    };
-    renderer.set_billboard_ortho_size(ortho_size.x, ortho_size.y);
-
-    let resolution_vec = Vec2::new(resolution.width as f32, resolution.height as f32);
-    let units_per_pixel = if resolution.width == 0 || resolution.height == 0 {
-        Vec2::ONE
-    } else {
-        Vec2::new(
-            ortho_size.x / resolution_vec.x,
-            ortho_size.y / resolution_vec.y,
-        )
-    };
-
-    let sprite_pixels = Vec2::splat(256.0);
-    let sprite_scale = Vec3::new(
-        sprite_pixels.x * units_per_pixel.x,
-        sprite_pixels.y * units_per_pixel.y,
-        1.0,
-    );
-
+    renderer.set_billboard_ortho_size(resolution.width as f32, resolution.height as f32);
+    let ortho_size = renderer.billboard_ortho_size();
     let half = ortho_size * 0.5;
     let sprite_half = Vec2::new(sprite_scale.x * 0.5, sprite_scale.y * 0.5);
 
@@ -147,7 +117,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (label, pos) in placements {
-        let translation = Vec3::new(pos.x, pos.y, 0.0);
+        let translation = Vec3::new(pos.x, pos.y, -0.5);
         let transform = Transform::from_trs(translation, Quat::IDENTITY, sprite_scale);
         let billboard = Billboard::new(BillboardOrientation::FaceCamera)
             .with_projection(BillboardProjection::Orthographic)
