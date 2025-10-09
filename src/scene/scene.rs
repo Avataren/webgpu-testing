@@ -417,10 +417,8 @@ impl Scene {
     ) -> Transform {
         let mut result = transform;
 
-        let view_forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
-        let mut view_up = Self::safe_normalize(camera_up, Vec3::Y);
-        let view_right = Self::safe_normalize(view_forward.cross(view_up), Vec3::X);
-        view_up = Self::safe_normalize(view_right.cross(view_forward), Vec3::Y);
+        let (view_right, view_up, view_forward) =
+            Self::build_view_basis(camera_position, camera_target, camera_up);
 
         let translation = match billboard.space {
             BillboardSpace::World => transform.translation,
@@ -432,31 +430,14 @@ impl Scene {
             }
         };
 
-        let rotation_matrix = if matches!(billboard.space, BillboardSpace::View { .. }) {
-            Mat3::from_cols(view_right, view_up, -view_forward)
-        } else {
-            match billboard.orientation {
-                BillboardOrientation::FaceCamera => {
-                    let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
-                    let mut up_dir = Self::safe_normalize(camera_up, Vec3::Y);
-                    let right = Self::safe_normalize(up_dir.cross(forward), Vec3::X);
-                    up_dir = Self::safe_normalize(forward.cross(right), Vec3::Y);
-                    Mat3::from_cols(right, up_dir, forward)
-                }
-                BillboardOrientation::FaceCameraYAxis => {
-                    let forward = Self::safe_normalize(
-                        Vec3::new(
-                            camera_position.x - translation.x,
-                            0.0,
-                            camera_position.z - translation.z,
-                        ),
-                        Vec3::Z,
-                    );
-                    let right = Self::safe_normalize(Vec3::Y.cross(forward), Vec3::X);
-                    let up_dir = Self::safe_normalize(forward.cross(right), Vec3::Y);
-                    Mat3::from_cols(right, up_dir, forward)
-                }
-            }
+        let rotation_matrix = match billboard.space {
+            BillboardSpace::View { .. } => Mat3::from_cols(view_right, view_up, -view_forward),
+            BillboardSpace::World => Self::billboard_world_matrix(
+                billboard.orientation,
+                translation,
+                camera_position,
+                camera_up,
+            ),
         };
 
         let billboard_rotation = Quat::from_mat3(&rotation_matrix);
@@ -471,6 +452,81 @@ impl Scene {
         } else {
             fallback
         }
+    }
+
+    fn build_view_basis(
+        camera_position: Vec3,
+        camera_target: Vec3,
+        camera_up: Vec3,
+    ) -> (Vec3, Vec3, Vec3) {
+        let view_forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
+        let view_up_hint = Self::safe_normalize(camera_up, Vec3::Y);
+        let (view_right, view_up) = Self::basis_from_forward_up(view_forward, view_up_hint);
+        (view_right, view_up, view_forward)
+    }
+
+    fn billboard_world_matrix(
+        orientation: BillboardOrientation,
+        translation: Vec3,
+        camera_position: Vec3,
+        camera_up: Vec3,
+    ) -> Mat3 {
+        match orientation {
+            BillboardOrientation::FaceCamera => {
+                let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
+                let up_hint = Self::safe_normalize(camera_up, Vec3::Y);
+                let (right, up) = Self::basis_from_up_forward(up_hint, forward);
+                Mat3::from_cols(right, up, forward)
+            }
+            BillboardOrientation::FaceCameraYAxis => {
+                let forward = Self::safe_normalize(
+                    Vec3::new(
+                        camera_position.x - translation.x,
+                        0.0,
+                        camera_position.z - translation.z,
+                    ),
+                    Vec3::Z,
+                );
+                let (right, up) = Self::basis_from_up_forward(Vec3::Y, forward);
+                Mat3::from_cols(right, up, forward)
+            }
+        }
+    }
+
+    fn basis_from_forward_up(forward: Vec3, up_hint: Vec3) -> (Vec3, Vec3) {
+        let mut right = forward.cross(up_hint);
+        if right.length_squared() < 1e-6 {
+            right = Vec3::X;
+        } else {
+            right = right.normalize();
+        }
+
+        let mut up = right.cross(forward);
+        if up.length_squared() < 1e-6 {
+            up = Vec3::Y;
+        } else {
+            up = up.normalize();
+        }
+
+        (right, up)
+    }
+
+    fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
+        let mut right = up_hint.cross(forward);
+        if right.length_squared() < 1e-6 {
+            right = Vec3::X;
+        } else {
+            right = right.normalize();
+        }
+
+        let mut up = forward.cross(right);
+        if up.length_squared() < 1e-6 {
+            up = Vec3::Y;
+        } else {
+            up = up.normalize();
+        }
+
+        (right, up)
     }
 
     fn build_directional_shadow(
