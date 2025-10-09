@@ -18,7 +18,7 @@ pub use lights::{
     MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 pub use material::Material;
-pub use objects::{MaterialData, ObjectData};
+pub use objects::ObjectData;
 pub use primitives::*;
 pub use renderer::{RenderFrame, Renderer, RendererStats};
 pub use texture::Texture;
