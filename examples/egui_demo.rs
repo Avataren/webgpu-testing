@@ -21,8 +21,8 @@ fn main() {
         let mut log_window = LogWindow::new(log_handle);
 
         app.set_egui_ui(move |ctx| {
-            stats_window.show(ctx);
-            log_window.show(ctx);
+            stats_window.show(ctx, None);
+            log_window.show(ctx, None);
         });
 
         wgpu_cube::run_with_app(app).unwrap();

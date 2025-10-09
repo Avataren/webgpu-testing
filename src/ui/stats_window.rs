@@ -156,7 +156,11 @@ impl StatsWindow {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
+    /// Display the stats window using the provided egui context.
+    ///
+    /// Supplying [`Some`] for `open` adds a close button that toggles the provided
+    /// handle when the user dismisses the window.
+    pub fn show(&mut self, ctx: &egui::Context, open: Option<&mut bool>) {
         let snapshot = {
             let stats = self.stats.lock().ok();
             stats
@@ -165,32 +169,35 @@ impl StatsWindow {
                 .unwrap_or_else(FrameStatsSnapshot::empty)
         };
 
-        egui::Window::new(&self.title)
-            .default_width(320.0)
-            .show(ctx, |ui| {
-                if let Some(latest) = snapshot.latest() {
-                    ui.heading("Frame timings");
-                    ui.label(format!("FPS: {:.1}", latest.fps));
-                    ui.label(format!("Frame time: {:.2} ms", latest.frame_time * 1000.0));
-                    let span = snapshot.span_seconds().max(1e-6);
-                    ui.label(format!(
-                        "Average FPS (last {:.1}s): {:.1}",
-                        span.min(snapshot.max_history()),
-                        snapshot.average_fps()
-                    ));
+        let mut window = egui::Window::new(&self.title).default_width(320.0);
+        if let Some(open) = open {
+            window = window.open(open);
+        }
 
-                    ui.separator();
-                    self.draw_fps_plot(ui, &snapshot);
+        window.show(ctx, |ui| {
+            if let Some(latest) = snapshot.latest() {
+                ui.heading("Frame timings");
+                ui.label(format!("FPS: {:.1}", latest.fps));
+                ui.label(format!("Frame time: {:.2} ms", latest.frame_time * 1000.0));
+                let span = snapshot.span_seconds().max(1e-6);
+                ui.label(format!(
+                    "Average FPS (last {:.1}s): {:.1}",
+                    span.min(snapshot.max_history()),
+                    snapshot.average_fps()
+                ));
 
-                    ui.add_space(8.0);
-                    self.draw_frametime_plot(ui, &snapshot);
+                ui.separator();
+                self.draw_fps_plot(ui, &snapshot);
 
-                    ui.separator();
-                    self.draw_renderer_stats(ui, latest.renderer);
-                } else {
-                    ui.label("Waiting for frames...");
-                }
-            });
+                ui.add_space(8.0);
+                self.draw_frametime_plot(ui, &snapshot);
+
+                ui.separator();
+                self.draw_renderer_stats(ui, latest.renderer);
+            } else {
+                ui.label("Waiting for frames...");
+            }
+        });
     }
 
     fn draw_fps_plot(&mut self, ui: &mut egui::Ui, snapshot: &FrameStatsSnapshot) {
