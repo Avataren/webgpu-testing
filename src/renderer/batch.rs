@@ -14,6 +14,30 @@ pub enum RenderPass {
     Overlay,     // Draw last, typically with depth disabled
 }
 
+impl RenderPass {
+    /// Returns true when instances in this pass should be sorted from back to
+    /// front relative to the camera.  Transparent and overlay elements need
+    /// back-to-front ordering so blending behaves as expected.
+    pub fn requires_back_to_front_sort(self) -> bool {
+        matches!(self, Self::Transparent | Self::Overlay)
+    }
+
+    /// Returns true when the pass intrinsically requires alpha blending.
+    pub fn uses_alpha_blending(self) -> bool {
+        matches!(self, Self::Transparent | Self::Overlay)
+    }
+
+    /// Sample count for the color attachment used by this pass.  Overlay
+    /// passes are resolved directly into the swap chain, so MSAA is not used.
+    pub fn color_sample_count(self, msaa_samples: u32) -> u32 {
+        if matches!(self, Self::Overlay) {
+            1
+        } else {
+            msaa_samples
+        }
+    }
+}
+
 /// A single renderable object instance
 pub struct RenderObject {
     pub mesh: Handle<Mesh>,
