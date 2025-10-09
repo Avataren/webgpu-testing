@@ -4,7 +4,7 @@
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
 #[cfg(feature = "egui")]
-use crate::ui::{init_log_recorder, LogBufferHandle, LogWindow, StatsWindow, FrameStatsHandle};
+use crate::ui::{init_log_recorder, FrameStatsHandle, LogBufferHandle, LogWindow, StatsWindow};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -127,6 +127,7 @@ where
         });
     }
 
+    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
 
     #[cfg(feature = "egui")]
@@ -188,6 +189,7 @@ where
         });
     }
 
+    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
 
     #[cfg(feature = "egui")]

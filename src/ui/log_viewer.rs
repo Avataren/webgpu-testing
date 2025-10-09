@@ -1,5 +1,5 @@
 #[cfg(feature = "egui")]
-use egui::{Color32, Label, Layout, RichText, TextWrapMode};
+use egui::{pos2, Color32, Label, Layout, RichText, TextWrapMode};
 #[cfg(feature = "egui")]
 use egui::{ScrollArea, Ui};
 #[cfg(feature = "egui")]
@@ -241,21 +241,21 @@ fn render_entry(ui: &mut Ui, entry: &LogEntry) {
                 .wrap_mode(TextWrapMode::Truncate),
         );
         ui.add_space(6.0);
-        
+
         // Level - fixed width, no wrap
         ui.colored_label(
             level_color(entry.level),
             RichText::new(entry.level.as_str()).monospace(),
         );
         ui.add_space(6.0);
-        
+
         // Target - can truncate if too long
         ui.add(
             Label::new(RichText::new(entry.target.as_str()).monospace())
                 .wrap_mode(TextWrapMode::Truncate),
         );
         ui.add_space(12.0);
-        
+
         // Message - this should wrap
         ui.add(Label::new(entry.message.as_str()).wrap_mode(TextWrapMode::Wrap));
     });
@@ -292,7 +292,8 @@ impl LogWindow {
         let mut window = egui::Window::new(&self.title)
             .default_width(800.0)
             .min_width(360.0)
-            .min_height(180.0);
+            .min_height(180.0)
+            .default_pos(pos2(360.0, 16.0));
         if let Some(open) = open {
             window = window.open(open);
         }

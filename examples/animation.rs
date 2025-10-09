@@ -1,36 +1,41 @@
 use glam::Vec3;
 use log::info;
-use wgpu_cube::app::{AppBuilder, StartupContext};
+use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
+use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::scene::{Camera, SceneLoader};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-use wgpu_cube::UpdateContext;
 
 const GLTF_PATH: &str = "web/assets/blender/physics_boxes2.gltf";
 const SCENE_SCALE: f32 = 1.0;
+const CAMERA_RADIUS: f32 = 10.0;
+const CAMERA_HEIGHT: f32 = 4.0;
 
-fn build_app() -> AppBuilder {
-    let mut builder = AppBuilder::new();
-    builder.disable_default_textures();
-    builder.disable_default_lighting();
-    builder.add_startup_system(load_scene);
-    builder.add_system(orbit_camera(10.0, 4.0));
-    builder.skip_initial_frames(5);
-    builder
+struct ExampleApp;
+
+impl RenderApplication for ExampleApp {
+    fn configure(&self, builder: &mut AppBuilder) {
+        builder.disable_default_textures();
+        builder.disable_default_lighting();
+        builder.skip_initial_frames(5);
+    }
+
+    fn setup(&mut self, ctx: &mut StartupContext) {
+        load_scene(ctx);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        orbit_camera(ctx, CAMERA_RADIUS, CAMERA_HEIGHT);
+    }
 }
 
-fn orbit_camera(
-    radius: f32,
-    height: f32,
-) -> Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static> {
-    Box::new(move |ctx: &mut UpdateContext<'_>| {
-        let t = ctx.scene.time() as f32 * 0.25;
-        let camera = ctx.scene.camera_mut();
-        camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
-        camera.target = Vec3::ZERO;
-        camera.up = Vec3::Y;
-    })
+fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {
+    let t = ctx.scene.time() as f32 * 0.25;
+    let camera = ctx.scene.camera_mut();
+    camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
+    camera.target = Vec3::ZERO;
+    camera.up = Vec3::Y;
 }
 
 fn load_scene(ctx: &mut StartupContext<'_>) {
@@ -58,9 +63,7 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    if let Err(err) = wgpu_cube::run(build_app()) {
-        eprintln!("Application error: {err}");
-    }
+    run_application(ExampleApp).unwrap();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -71,7 +74,7 @@ fn main() {}
 pub fn start_app() {
     web_sys::console::log_1(&"[Rust] start_app() called".into());
 
-    match wgpu_cube::run(build_app()) {
+    match run_application(ExampleApp) {
         Ok(_) => {
             web_sys::console::log_1(&"[Rust] Application started successfully".into());
         }

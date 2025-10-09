@@ -1,9 +1,7 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use glam::{Quat, Vec3};
-use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::asset::Handle;
+use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, BillboardSpace};
 use wgpu_cube::scene::{EntityBuilder, Transform};
@@ -15,37 +13,38 @@ const GRID_WIDTH: u32 = 1920;
 const GRID_HEIGHT: u32 = 1080;
 const STEP_INTERVAL: f64 = 0.05;
 const WORKGROUP_SIZE: u32 = 8;
+const CAMERA_RADIUS: f32 = 6.5;
+const CAMERA_HEIGHT: f32 = 2.5;
+const CAMERA_SPEED: f32 = 0.2;
 
-fn build_app() -> AppBuilder {
-    let mut builder = AppBuilder::new();
-    let state: Rc<RefCell<Option<GameOfLifeState>>> = Rc::new(RefCell::new(None));
+struct ExampleApp {
+    state: Option<GameOfLifeState>,
+}
 
-    {
-        let state_ref = state.clone();
-        builder.add_startup_system(move |ctx| {
-            let gol_state = GameOfLifeState::new(ctx, GRID_WIDTH, GRID_HEIGHT, STEP_INTERVAL);
-            spawn_billboard(
-                ctx,
-                gol_state.display_texture_handle(),
-                GRID_WIDTH,
-                GRID_HEIGHT,
-            );
-            configure_camera(ctx);
-            *state_ref.borrow_mut() = Some(gol_state);
-        });
+impl Default for ExampleApp {
+    fn default() -> Self {
+        Self { state: None }
+    }
+}
+
+impl RenderApplication for ExampleApp {
+    fn setup(&mut self, ctx: &mut StartupContext) {
+        let mut gol_state = GameOfLifeState::new(ctx, GRID_WIDTH, GRID_HEIGHT, STEP_INTERVAL);
+        let display_handle = gol_state.display_texture_handle();
+        spawn_billboard(ctx, display_handle, GRID_WIDTH, GRID_HEIGHT);
+        configure_camera(ctx);
+        self.state = Some(gol_state);
     }
 
-    {
-        let state_ref = state.clone();
-        builder.add_gpu_system(move |ctx| {
-            if let Some(state) = state_ref.borrow_mut().as_mut() {
-                state.update(ctx);
-            }
-        });
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        orbit_camera(ctx, CAMERA_RADIUS, CAMERA_HEIGHT, CAMERA_SPEED);
     }
 
-    builder.add_system(orbit_camera(6.5, 2.5, 0.2));
-    builder
+    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        if let Some(state) = self.state.as_mut() {
+            state.update(ctx);
+        }
+    }
 }
 
 fn configure_camera(ctx: &mut StartupContext<'_>) {
@@ -55,18 +54,12 @@ fn configure_camera(ctx: &mut StartupContext<'_>) {
     camera.up = Vec3::Y;
 }
 
-fn orbit_camera(
-    radius: f32,
-    height: f32,
-    speed: f32,
-) -> Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static> {
-    Box::new(move |ctx: &mut UpdateContext<'_>| {
-        let t = ctx.scene.time() as f32 * speed;
-        let camera = ctx.scene.camera_mut();
-        camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
-        camera.target = Vec3::ZERO;
-        camera.up = Vec3::Y;
-    })
+fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32, speed: f32) {
+    let t = ctx.scene.time() as f32 * speed;
+    let camera = ctx.scene.camera_mut();
+    camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
+    camera.target = Vec3::ZERO;
+    camera.up = Vec3::Y;
 }
 
 fn spawn_billboard(
@@ -311,8 +304,8 @@ impl GameOfLifeState {
     fn update(&mut self, ctx: &mut GpuUpdateContext<'_>) {
         //self.accumulator += ctx.dt;
         //while self.accumulator >= self.step_interval {
-            //self.accumulator -= self.step_interval;
-            self.run_step(ctx);
+        //self.accumulator -= self.step_interval;
+        self.run_step(ctx);
         //}
     }
 
@@ -490,9 +483,7 @@ fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    if let Err(err) = wgpu_cube::run(build_app()) {
-        eprintln!("Application error: {err}");
-    }
+    run_application(ExampleApp::default()).unwrap();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -501,8 +492,12 @@ fn main() {}
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn start_app() {
-    match wgpu_cube::run(build_app()) {
-        Ok(_) => {}
+    web_sys::console::log_1(&"[Rust] start_app() called".into());
+
+    match run_application(ExampleApp::default()) {
+        Ok(_) => {
+            web_sys::console::log_1(&"[Rust] Application started successfully".into());
+        }
         Err(e) => {
             web_sys::console::error_1(&format!("[Rust] Error: {:?}", e).into());
         }
