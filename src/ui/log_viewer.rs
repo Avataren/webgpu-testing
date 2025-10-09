@@ -243,7 +243,7 @@ fn render_entry(ui: &mut Ui, entry: &LogEntry) {
             );
             ui.label(RichText::new(entry.target.clone()).monospace());
         });
-        ui.add(Label::new(entry.message.as_str()).wrap());
+        ui.add(Label::new(entry.message.as_str()).wrap(true));
     });
 }
 
