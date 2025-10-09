@@ -17,7 +17,7 @@ impl EguiContext {
     pub fn new(
         device: &wgpu::Device,
         output_format: wgpu::TextureFormat,
-        sample_count: u32,
+        _sample_count: u32,
         window: &Window,
     ) -> Self {
         let ctx = egui::Context::default();
@@ -34,14 +34,15 @@ impl EguiContext {
         );
 
         // egui-wgpu 0.33
-        let sample_count = sample_count.max(1);
-
         let renderer = egui_wgpu::Renderer::new(
             device,
             output_format,
             egui_wgpu::RendererOptions {
                 depth_stencil_format: None,
-                msaa_samples: sample_count,
+                // egui overlays resolve directly into the surface, which is always single-sampled.
+                // Using the scene's MSAA sample count here would make the pipeline incompatible
+                // with the surface view when MSAA > 1, triggering validation errors.
+                msaa_samples: 1,
                 dithering: true,
                 predictable_texture_filtering: false,
             },
@@ -90,11 +91,15 @@ impl EguiContext {
         encoder: &mut wgpu::CommandEncoder,
         window: &Window,
         view: &wgpu::TextureView,
+        surface_size: [u32; 2],
         output: egui::FullOutput,
     ) {
-        let size = window.inner_size();
+        if surface_size[0] == 0 || surface_size[1] == 0 {
+            return;
+        }
+
         let screen_descriptor = ScreenDescriptor {
-            size_in_pixels: [size.width, size.height],
+            size_in_pixels: surface_size,
             pixels_per_point: window.scale_factor() as f32,
         };
 

@@ -354,6 +354,10 @@ impl Renderer {
         self.context.config.format
     }
 
+    pub fn surface_size(&self) -> PhysicalSize<u32> {
+        self.context.size
+    }
+
     pub fn sample_count(&self) -> u32 {
         self.context.sample_count
     }
