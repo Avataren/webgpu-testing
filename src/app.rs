@@ -629,12 +629,14 @@ impl ApplicationHandler for App {
                                                 },
                                             );
 
+                                        let surface_size = renderer.surface_size();
                                         egui.render(
                                             renderer.get_device(),
                                             renderer.get_queue(),
                                             &mut encoder,
                                             window,
                                             &view,
+                                            [surface_size.width, surface_size.height],
                                             egui_output,
                                         );
 
