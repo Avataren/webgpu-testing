@@ -9,6 +9,12 @@ struct Globals {
 
 struct Object {
     model: mat4x4<f32>,
+    material_index: u32,
+    _padding: vec3<u32>,
+};
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+
+struct MaterialData {
     color: vec4<f32>,
     base_color_texture: u32,
     metallic_roughness_texture: u32,
@@ -19,9 +25,9 @@ struct Object {
     metallic_factor: f32,
     roughness_factor: f32,
     emissive_strength: f32,
-    _padding: u32,
+    _padding: vec3<u32>,
 };
-@group(1) @binding(0) var<storage, read> objects: array<Object>;
+@group(2) @binding(0) var<storage, read> materials: array<MaterialData>;
 
 // Material flags
 const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
@@ -62,7 +68,7 @@ struct Lights {
     spots: array<SpotLight, MAX_SPOT_LIGHTS>,
 };
 
-@group(2) @binding(0) var<storage, read> lights: Lights;
+@group(3) @binding(0) var<storage, read> lights: Lights;
 
 struct DirectionalShadow {
     view_proj: mat4x4<f32>,
@@ -87,14 +93,14 @@ struct Shadows {
     spots: array<SpotShadow, MAX_SPOT_LIGHTS>,
 };
 
-@group(2) @binding(1) var<uniform> shadow_info: Shadows;
+@group(3) @binding(1) var<uniform> shadow_info: Shadows;
 
-@group(2) @binding(2) var directional_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(3) var directional_shadow_sampler: sampler_comparison;
-@group(2) @binding(4) var spot_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(5) var spot_shadow_sampler: sampler_comparison;
-@group(2) @binding(6) var point_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
+@group(3) @binding(2) var directional_shadow_maps: texture_depth_2d_array;
+@group(3) @binding(3) var directional_shadow_sampler: sampler_comparison;
+@group(3) @binding(4) var spot_shadow_maps: texture_depth_2d_array;
+@group(3) @binding(5) var spot_shadow_sampler: sampler_comparison;
+@group(3) @binding(6) var point_shadow_maps: texture_depth_2d_array;
+@group(3) @binding(7) var point_shadow_sampler: sampler_comparison;
 
 const PI: f32 = 3.14159265359;
 
@@ -808,6 +814,7 @@ fn calculate_scene_lighting(
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let obj = objects[in.instance_id];
+    let material = materials[obj.material_index];
 
     // shadow debug    
     // let shadow = sample_directional_shadow(0u, in.world_pos);
@@ -816,40 +823,41 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // }
 
     // ALWAYS sample all textures (uniform control flow)
-    let use_nearest_sampler = (obj.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
+    let use_nearest_sampler = (material.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
     let base_color_sample =
-        sample_base_color_texture(obj.base_color_texture, in.uv, use_nearest_sampler);
+        sample_base_color_texture(material.base_color_texture, in.uv, use_nearest_sampler);
     let mr_sample = sample_metallic_roughness_texture(
-        obj.metallic_roughness_texture,
+        material.metallic_roughness_texture,
         in.uv,
         use_nearest_sampler,
     );
-    let normal_sample = sample_normal_texture(obj.normal_texture, in.uv, use_nearest_sampler);
-    let emissive_sample = sample_emissive_texture(obj.emissive_texture, in.uv, use_nearest_sampler);
+    let normal_sample = sample_normal_texture(material.normal_texture, in.uv, use_nearest_sampler);
+    let emissive_sample =
+        sample_emissive_texture(material.emissive_texture, in.uv, use_nearest_sampler);
     let occlusion_sample =
-        sample_occlusion_texture(obj.occlusion_texture, in.uv, use_nearest_sampler);
+        sample_occlusion_texture(material.occlusion_texture, in.uv, use_nearest_sampler);
     
     // Then conditionally USE the samples (non-uniform control flow is OK here)
     var base_color: vec4<f32>;
-    if ((obj.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
-        base_color = base_color_sample * obj.color;
+    if ((material.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
+        base_color = base_color_sample * material.color;
     } else {
-        base_color = obj.color;
+        base_color = material.color;
     }
     
     var metallic: f32;
     var roughness: f32;
-    if ((obj.material_flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u) {
-        metallic = mr_sample.b * obj.metallic_factor;
-        roughness = mr_sample.g * obj.roughness_factor;
+    if ((material.material_flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u) {
+        metallic = mr_sample.b * material.metallic_factor;
+        roughness = mr_sample.g * material.roughness_factor;
     } else {
-        metallic = obj.metallic_factor;
-        roughness = obj.roughness_factor;
+        metallic = material.metallic_factor;
+        roughness = material.roughness_factor;
     }
     roughness = max(roughness, 0.01);
     
     var N: vec3<f32>;
-    if ((obj.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
+    if ((material.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
         let tangent_normal = normal_sample * 2.0 - 1.0;
         let T = normalize(in.tangent);
         let B = normalize(in.bitangent);
@@ -859,15 +867,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else {
         N = normalize(in.normal);
     }
-    
+
     var occlusion = 1.0;
-    if ((obj.material_flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u) {
+    if ((material.material_flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u) {
         occlusion = occlusion_sample;
     }
-    
+
     var emissive = vec3<f32>(0.0);
-    if ((obj.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
-        emissive = emissive_sample * obj.emissive_strength;
+    if ((material.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
+        emissive = emissive_sample * material.emissive_strength;
     }
 
   // Always calculate lighting in uniform control flow (required for shadow sampling)
@@ -878,7 +886,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     // Then conditionally use lighting based on material flags
     var color: vec3<f32>;
-    if ((obj.material_flags & FLAG_UNLIT) != 0u) {
+    if ((material.material_flags & FLAG_UNLIT) != 0u) {
         color = base_color.rgb + emissive;
     } else {
         color = ambient + Lo + emissive;
@@ -889,7 +897,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     color = pow(color, vec3<f32>(1.0 / 2.2));
     return vec4<f32>(color, base_color.a);   
 
-//     if ((obj.material_flags & FLAG_UNLIT) != 0u) {
+//     if ((material.material_flags & FLAG_UNLIT) != 0u) {
 //         var color = base_color.rgb + emissive;
 //         color = color / (color + vec3<f32>(1.0));
 //         color = pow(color, vec3<f32>(1.0 / 2.2));

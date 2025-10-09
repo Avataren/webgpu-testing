@@ -1,8 +1,8 @@
 const MAX_TEXTURES: u32 = 256u;
 
-@group(3) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
-@group(3) @binding(1) var tex_sampler_linear: sampler;
-@group(3) @binding(2) var tex_sampler_nearest: sampler;
+@group(4) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
+@group(4) @binding(1) var tex_sampler_linear: sampler;
+@group(4) @binding(2) var tex_sampler_nearest: sampler;
 
 fn sample_base_color_texture(index: u32, uv: vec2<f32>, use_nearest: bool) -> vec4<f32> {
     if (use_nearest) {

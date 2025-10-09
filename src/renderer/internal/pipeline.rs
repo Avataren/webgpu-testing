@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use crate::asset::Assets;
-use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
+use crate::renderer::internal::{
+    CameraBuffer, DynamicMaterialsBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext,
+};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{Material, Vertex};
 
@@ -56,6 +58,7 @@ impl RenderPipeline {
         context: &RenderContext,
         camera: &CameraBuffer,
         objects: &DynamicObjectsBuffer,
+        materials: &DynamicMaterialsBuffer,
         lights: &LightsBuffer,
         sample_count: u32,
     ) -> (Self, TextureBindingModel) {
@@ -182,6 +185,7 @@ impl RenderPipeline {
                     bind_group_layouts: &[
                         &camera.bind_layout,
                         &objects.bind_layout,
+                        &materials.bind_layout,
                         &lights.bind_layout,
                         &texture_bind_layout,
                     ],
