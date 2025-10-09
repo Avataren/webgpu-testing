@@ -234,24 +234,30 @@ fn level_color(level: Level) -> Color32 {
 
 #[cfg(feature = "egui")]
 fn render_entry(ui: &mut Ui, entry: &LogEntry) {
-    let layout = Layout::left_to_right(egui::Align::Min).with_main_wrap(false);
-    ui.with_layout(layout, |ui| {
+    ui.horizontal_wrapped(|ui| {
+        // Timestamp - fixed width, no wrap
         ui.add(
             Label::new(RichText::new(format_timestamp(entry.timestamp)).monospace())
-                .wrap_mode(TextWrapMode::Extend),
+                .wrap_mode(TextWrapMode::Truncate),
         );
         ui.add_space(6.0);
+        
+        // Level - fixed width, no wrap
         ui.colored_label(
             level_color(entry.level),
             RichText::new(entry.level.as_str()).monospace(),
         );
         ui.add_space(6.0);
+        
+        // Target - can truncate if too long
         ui.add(
             Label::new(RichText::new(entry.target.as_str()).monospace())
-                .wrap_mode(TextWrapMode::Extend),
+                .wrap_mode(TextWrapMode::Truncate),
         );
         ui.add_space(12.0);
-        ui.add(Label::new(entry.message.as_str()).wrap_mode(TextWrapMode::Extend));
+        
+        // Message - this should wrap
+        ui.add(Label::new(entry.message.as_str()).wrap_mode(TextWrapMode::Wrap));
     });
 }
 
@@ -284,7 +290,7 @@ impl LogWindow {
     pub fn show(&mut self, ctx: &egui::Context, open: Option<&mut bool>) {
         let entries = self.entries_snapshot();
         let mut window = egui::Window::new(&self.title)
-            .default_width(480.0)
+            .default_width(800.0)
             .min_width(360.0)
             .min_height(180.0);
         if let Some(open) = open {
