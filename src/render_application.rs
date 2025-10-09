@@ -64,7 +64,7 @@ impl DefaultUI {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
             stats_open: true,
-            log_open: true,
+            log_open: false,
         }
     }
 
