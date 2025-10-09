@@ -538,11 +538,7 @@ impl Scene {
         const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
-        let direction = if raw_dir.length_squared() > 0.0 {
-            raw_dir.normalize()
-        } else {
-            Vec3::new(0.0, -1.0, 0.0)
-        };
+        let direction = Self::safe_normalize(raw_dir, Vec3::new(0.0, -1.0, 0.0));
 
         let focus = if (camera_target - camera_pos).length_squared() > 1e-4 {
             camera_target

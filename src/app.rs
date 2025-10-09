@@ -150,6 +150,21 @@ impl AppBuilder {
     }
 }
 
+struct FrameStep {
+    dt: f64,
+    skip_rendering: bool,
+}
+
+impl FrameStep {
+    fn dt(&self) -> f64 {
+        self.dt
+    }
+
+    fn should_render(&self) -> bool {
+        !self.skip_rendering
+    }
+}
+
 pub struct App {
     renderer: Option<Renderer>,
     window: Option<WindowHandle>,
@@ -172,6 +187,27 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         AppBuilder::default().build()
+    }
+
+    fn begin_frame(&mut self) -> FrameStep {
+        self.frame_counter += 1;
+
+        let skip_rendering = if let Some(skip_until) = self.skip_rendering_until_frame {
+            if self.frame_counter < skip_until {
+                true
+            } else {
+                self.skip_rendering_until_frame = None;
+                false
+            }
+        } else {
+            false
+        };
+
+        let now = Instant::now();
+        let dt = (now - self.scene.last_frame()).as_secs_f64();
+        self.scene.set_last_frame(now);
+
+        FrameStep { dt, skip_rendering }
     }
 
     fn init_default_textures(&mut self, renderer: &mut Renderer) {
@@ -454,24 +490,9 @@ impl ApplicationHandler for App {
                 #[cfg(target_arch = "wasm32")]
                 self.try_finish_async_initialization();
 
-                self.frame_counter += 1;
+                let frame = self.begin_frame();
 
-                let should_skip = if let Some(skip_until) = self.skip_rendering_until_frame {
-                    if self.frame_counter < skip_until {
-                        true
-                    } else {
-                        self.skip_rendering_until_frame = None;
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                let now = Instant::now();
-                let dt = (now - self.scene.last_frame()).as_secs_f64();
-                self.scene.set_last_frame(now);
-
-                self.update_scene(dt);
+                self.update_scene(frame.dt());
 
                 if let Some(renderer) = self.renderer.as_mut() {
                     {
@@ -480,13 +501,13 @@ impl ApplicationHandler for App {
                             let mut ctx = GpuUpdateContext {
                                 scene,
                                 renderer,
-                                dt,
+                                dt: frame.dt(),
                             };
                             (system)(&mut ctx);
                         }
                     }
 
-                    if !should_skip {
+                    if frame.should_render() {
                         let aspect = renderer.aspect_ratio();
                         renderer.set_camera(self.scene.camera(), aspect);
                         self.scene.render(renderer, &mut self.batcher);
