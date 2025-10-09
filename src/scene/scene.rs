@@ -419,18 +419,8 @@ impl Scene {
 
         let view_forward = Self::safe_normalize(camera_target - camera_position, Vec3::NEG_Z);
         let mut view_up = Self::safe_normalize(camera_up, Vec3::Y);
-        let mut view_right = view_forward.cross(view_up);
-        if view_right.length_squared() < 1e-6 {
-            view_right = Vec3::X;
-        } else {
-            view_right = view_right.normalize();
-        }
-        view_up = view_right.cross(view_forward);
-        if view_up.length_squared() < 1e-6 {
-            view_up = Vec3::Y;
-        } else {
-            view_up = view_up.normalize();
-        }
+        let view_right = Self::safe_normalize(view_forward.cross(view_up), Vec3::X);
+        view_up = Self::safe_normalize(view_right.cross(view_forward), Vec3::Y);
 
         let translation = match billboard.space {
             BillboardSpace::World => transform.translation,
@@ -449,43 +439,21 @@ impl Scene {
                 BillboardOrientation::FaceCamera => {
                     let forward = Self::safe_normalize(camera_position - translation, Vec3::Z);
                     let mut up_dir = Self::safe_normalize(camera_up, Vec3::Y);
-                    let mut right = up_dir.cross(forward);
-                    if right.length_squared() < 1e-6 {
-                        right = Vec3::X;
-                    } else {
-                        right = right.normalize();
-                    }
-                    up_dir = forward.cross(right);
-                    if up_dir.length_squared() < 1e-6 {
-                        up_dir = Vec3::Y;
-                    } else {
-                        up_dir = up_dir.normalize();
-                    }
+                    let right = Self::safe_normalize(up_dir.cross(forward), Vec3::X);
+                    up_dir = Self::safe_normalize(forward.cross(right), Vec3::Y);
                     Mat3::from_cols(right, up_dir, forward)
                 }
                 BillboardOrientation::FaceCameraYAxis => {
-                    let mut forward = Vec3::new(
-                        camera_position.x - translation.x,
-                        0.0,
-                        camera_position.z - translation.z,
+                    let forward = Self::safe_normalize(
+                        Vec3::new(
+                            camera_position.x - translation.x,
+                            0.0,
+                            camera_position.z - translation.z,
+                        ),
+                        Vec3::Z,
                     );
-                    if forward.length_squared() < 1e-6 {
-                        forward = Vec3::Z;
-                    } else {
-                        forward = forward.normalize();
-                    }
-                    let mut right = Vec3::Y.cross(forward);
-                    if right.length_squared() < 1e-6 {
-                        right = Vec3::X;
-                    } else {
-                        right = right.normalize();
-                    }
-                    let mut up_dir = forward.cross(right);
-                    if up_dir.length_squared() < 1e-6 {
-                        up_dir = Vec3::Y;
-                    } else {
-                        up_dir = up_dir.normalize();
-                    }
+                    let right = Self::safe_normalize(Vec3::Y.cross(forward), Vec3::X);
+                    let up_dir = Self::safe_normalize(forward.cross(right), Vec3::Y);
                     Mat3::from_cols(right, up_dir, forward)
                 }
             }
@@ -514,11 +482,7 @@ impl Scene {
         const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
-        let direction = if raw_dir.length_squared() > 0.0 {
-            raw_dir.normalize()
-        } else {
-            Vec3::new(0.0, -1.0, 0.0)
-        };
+        let direction = Self::safe_normalize(raw_dir, Vec3::new(0.0, -1.0, 0.0));
 
         let focus = if (camera_target - camera_pos).length_squared() > 1e-4 {
             camera_target
@@ -527,11 +491,8 @@ impl Scene {
         };
         let light_pos = focus - direction * SHADOW_DISTANCE;
 
-        let mut up = light_transform.rotation * Vec3::Y;
-        if up.length_squared() > 0.0 {
-            up = up.normalize();
-        }
-        if up.length_squared() <= 0.0 || up.abs().dot(direction).abs() > 0.999 {
+        let mut up = Self::safe_normalize(light_transform.rotation * Vec3::Y, Vec3::Y);
+        if up.abs().dot(direction).abs() > 0.999 {
             up = Self::shadow_up(direction);
         }
 
@@ -609,8 +570,8 @@ impl Scene {
             };
             right = forward.cross(fallback);
         }
-        right = right.normalize();
-        up = right.cross(forward).normalize();
+        right = Self::safe_normalize(right, Vec3::X);
+        up = Self::safe_normalize(right.cross(forward), Vec3::Y);
 
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);

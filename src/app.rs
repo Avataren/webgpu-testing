@@ -174,6 +174,40 @@ impl App {
         AppBuilder::default().build()
     }
 
+    fn should_skip_rendering(&mut self) -> bool {
+        match self.skip_rendering_until_frame {
+            Some(skip_until) if self.frame_counter < skip_until => true,
+            Some(_) => {
+                self.skip_rendering_until_frame = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn update_frame_timing(&mut self) -> f64 {
+        let now = Instant::now();
+        let dt = (now - self.scene.last_frame()).as_secs_f64();
+        self.scene.set_last_frame(now);
+        dt
+    }
+
+    fn run_gpu_systems(
+        scene: &mut Scene,
+        renderer: &mut Renderer,
+        systems: &mut [GpuUpdateSystem],
+        dt: f64,
+    ) {
+        for system in systems {
+            let mut ctx = GpuUpdateContext {
+                scene,
+                renderer,
+                dt,
+            };
+            (system)(&mut ctx);
+        }
+    }
+
     fn init_default_textures(&mut self, renderer: &mut Renderer) {
         let white = Texture::white(renderer.get_device(), renderer.get_queue());
         self.scene.assets.textures.insert(white);
@@ -455,35 +489,16 @@ impl ApplicationHandler for App {
                 self.try_finish_async_initialization();
 
                 self.frame_counter += 1;
-
-                let should_skip = if let Some(skip_until) = self.skip_rendering_until_frame {
-                    if self.frame_counter < skip_until {
-                        true
-                    } else {
-                        self.skip_rendering_until_frame = None;
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                let now = Instant::now();
-                let dt = (now - self.scene.last_frame()).as_secs_f64();
-                self.scene.set_last_frame(now);
+                let should_skip = self.should_skip_rendering();
+                let dt = self.update_frame_timing();
 
                 self.update_scene(dt);
 
                 if let Some(renderer) = self.renderer.as_mut() {
                     {
                         let scene = &mut self.scene;
-                        for system in &mut self.gpu_systems {
-                            let mut ctx = GpuUpdateContext {
-                                scene,
-                                renderer,
-                                dt,
-                            };
-                            (system)(&mut ctx);
-                        }
+                        let systems = &mut self.gpu_systems;
+                        Self::run_gpu_systems(scene, renderer, systems, dt);
                     }
 
                     if !should_skip {
