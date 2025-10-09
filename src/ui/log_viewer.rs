@@ -1,5 +1,5 @@
 #[cfg(feature = "egui")]
-use egui::{Color32, Label, RichText};
+use egui::{Color32, Label, Layout, RichText, TextWrapMode};
 #[cfg(feature = "egui")]
 use egui::{ScrollArea, Ui};
 #[cfg(feature = "egui")]
@@ -201,7 +201,7 @@ fn install_logger_once(handle: &LogBufferHandle) {
 /// # }
 /// ```
 pub fn init_log_recorder() -> LogBufferHandle {
-    let handle = LOG_HANDLE.get_or_init(|| LogBuffer::handle()).clone();
+    let handle = LOG_HANDLE.get_or_init(LogBuffer::handle).clone();
     install_logger_once(&handle);
     handle
 }
@@ -234,16 +234,24 @@ fn level_color(level: Level) -> Color32 {
 
 #[cfg(feature = "egui")]
 fn render_entry(ui: &mut Ui, entry: &LogEntry) {
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format_timestamp(entry.timestamp)).monospace());
-            ui.colored_label(
-                level_color(entry.level),
-                RichText::new(entry.level.as_str()).monospace(),
-            );
-            ui.label(RichText::new(entry.target.clone()).monospace());
-        });
-        ui.add(Label::new(entry.message.as_str()).wrap());
+    let layout = Layout::left_to_right(egui::Align::Min).with_main_wrap(false);
+    ui.with_layout(layout, |ui| {
+        ui.add(
+            Label::new(RichText::new(format_timestamp(entry.timestamp)).monospace())
+                .wrap_mode(TextWrapMode::Extend),
+        );
+        ui.add_space(6.0);
+        ui.colored_label(
+            level_color(entry.level),
+            RichText::new(entry.level.as_str()).monospace(),
+        );
+        ui.add_space(6.0);
+        ui.add(
+            Label::new(RichText::new(entry.target.as_str()).monospace())
+                .wrap_mode(TextWrapMode::Extend),
+        );
+        ui.add_space(12.0);
+        ui.add(Label::new(entry.message.as_str()).wrap_mode(TextWrapMode::Extend));
     });
 }
 
