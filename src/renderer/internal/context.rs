@@ -121,6 +121,39 @@ impl RenderContext {
                     .unwrap_or(surface_caps.formats[0])
             });
 
+        let format_features = adapter.get_texture_format_features(format);
+        let supported_sample_counts = format_features.flags.supported_sample_counts();
+        let requested_samples = settings.sample_count.max(1);
+        let mut sample_count =
+            Self::choose_supported_sample_count(requested_samples, &supported_sample_counts);
+        if sample_count != requested_samples {
+            let max_supported = supported_sample_counts.iter().copied().max().unwrap_or(1);
+            if requested_samples > max_supported {
+                log::warn!(
+                    "Requested MSAA sample count {} exceeds format capability (max {}). Using {} instead.",
+                    requested_samples,
+                    max_supported,
+                    sample_count
+                );
+            } else {
+                log::warn!(
+                    "MSAA sample count {} is not supported for format {:?}. Using {} instead.",
+                    requested_samples,
+                    format,
+                    sample_count
+                );
+            }
+        }
+
+        if sample_count > 1 && !format_features.flags.sample_count_supported(sample_count) {
+            log::warn!(
+                "Surface format {:?} reports unsupported sample count {}. Falling back to 1 sample.",
+                format,
+                sample_count
+            );
+            sample_count = 1;
+        }
+
         let present_mode = settings.present_mode(&surface_caps.present_modes);
 
         let config = wgpu::SurfaceConfiguration {
@@ -135,7 +168,7 @@ impl RenderContext {
         };
         surface.configure(&device, &config);
 
-        let depth = Depth::new(&device, size, settings.sample_count);
+        let depth = Depth::new(&device, size, sample_count);
 
         Self {
             surface,
@@ -145,8 +178,18 @@ impl RenderContext {
             size,
             depth,
             supports_bindless_textures,
-            sample_count: settings.sample_count,
+            sample_count,
         }
+    }
+
+    fn choose_supported_sample_count(requested: u32, supported: &[u32]) -> u32 {
+        supported
+            .iter()
+            .copied()
+            .filter(|&count| count <= requested)
+            .max()
+            .or_else(|| supported.iter().copied().min())
+            .unwrap_or(1)
     }
 
     pub(crate) fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -158,5 +201,37 @@ impl RenderContext {
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
         self.depth = Depth::new(&self.device, new_size, self.sample_count);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RenderContext;
+
+    #[test]
+    fn choose_supported_sample_count_prefers_highest_not_exceeding_request() {
+        let supported = [1, 2, 4, 8];
+        assert_eq!(
+            RenderContext::choose_supported_sample_count(4, &supported),
+            4
+        );
+        assert_eq!(
+            RenderContext::choose_supported_sample_count(3, &supported),
+            2
+        );
+    }
+
+    #[test]
+    fn choose_supported_sample_count_handles_empty_and_small_requests() {
+        assert_eq!(RenderContext::choose_supported_sample_count(1, &[]), 1);
+        let supported = [2, 4, 8];
+        assert_eq!(
+            RenderContext::choose_supported_sample_count(1, &supported),
+            2
+        );
+        assert_eq!(
+            RenderContext::choose_supported_sample_count(16, &supported),
+            8
+        );
     }
 }
