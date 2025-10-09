@@ -29,6 +29,10 @@ impl PreparedBatches {
         let mut overlay = Vec::new();
 
         for batch in batcher.iter() {
+            if batch.instances.is_empty() {
+                continue;
+            }
+
             let mut instances = batch.instances.to_vec();
 
             if batch.pass.requires_back_to_front_sort() {
@@ -92,6 +96,39 @@ impl PreparedBatches {
 
     pub(crate) fn overlay(&self) -> &[OrderedBatch] {
         &self.batches[self.overlay_range.clone()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset::Handle;
+    use crate::renderer::batch::RenderObject;
+    use crate::renderer::material::Material;
+    use crate::scene::components::DepthState;
+    use crate::scene::transform::Transform;
+    use glam::Vec3;
+
+    #[test]
+    fn empty_batches_are_skipped() {
+        let mut batcher = RenderBatcher::new();
+
+        batcher.add(RenderObject {
+            mesh: Handle::new(0),
+            material: Material::white(),
+            transform: Transform::IDENTITY,
+            depth_state: DepthState::default(),
+            force_overlay: false,
+        });
+
+        batcher.clear();
+
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+
+        assert!(
+            prepared.all().is_empty(),
+            "empty batch entries should not produce draw calls"
+        );
     }
 }
 
