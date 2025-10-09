@@ -1,5 +1,6 @@
 // renderer/renderer.rs
 use crate::asset::{Assets, Mesh};
+use crate::renderer::batch::InstanceData;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
     RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
@@ -391,7 +392,7 @@ impl Renderer {
                 let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
                     continue;
                 };
-                draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch);
+                draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch) as u32;
             }
         }
         draw_calls
@@ -434,32 +435,49 @@ impl Renderer {
         assets: &Assets,
         mesh: &Mesh,
         batch: &OrderedBatch,
-    ) -> u32 {
+    ) -> usize {
         self.set_geometry_buffers(pass, mesh);
 
-        let Some(bind_group) = self.texture_binder.bind_group_for_material(
-            &self.context.device,
-            assets,
-            batch.material,
-        ) else {
-            return 0;
-        };
+        let instances = &batch.instances;
+        let mut local_offset = 0usize;
+        let mut draw_calls = 0usize;
 
-        pass.set_bind_group(3, bind_group, &[]);
-        let instance_count = batch.instances.len() as u32;
-        pass.draw_indexed(
-            0..mesh.index_count(),
-            0,
-            batch.first_instance..(batch.first_instance + instance_count),
-        );
+        while local_offset < instances.len() {
+            let material = instances[local_offset].material;
+            let Some(bind_group) =
+                self.texture_binder
+                    .bind_group_for_material(&self.context.device, assets, material)
+            else {
+                local_offset += 1;
+                continue;
+            };
 
-        1
+            let run_length = material_run_length(instances, local_offset);
+            let start_instance = batch.first_instance + local_offset as u32;
+            let end_instance = start_instance + run_length as u32;
+
+            pass.set_bind_group(3, bind_group, &[]);
+            pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
+
+            local_offset += run_length;
+            draw_calls += 1;
+        }
+        draw_calls
     }
 
     fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
     }
+}
+
+fn material_run_length(instances: &[InstanceData], start: usize) -> usize {
+    let material = instances[start].material;
+    let mut length = 1usize;
+    while start + length < instances.len() && instances[start + length].material == material {
+        length += 1;
+    }
+    length
 }
 
 fn estimate_shadow_draw_calls(batches: &[OrderedBatch], lights: &LightsData) -> u32 {
@@ -504,11 +522,25 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch) -> u32 {
         return 0;
     }
 
-    if batch.material.is_unlit() || batch.instances.is_empty() {
-        0
-    } else {
-        1
+    let mut draws = 0u32;
+    let mut run_active = false;
+
+    for instance in &batch.instances {
+        if instance.material.is_unlit() {
+            if run_active {
+                draws += 1;
+                run_active = false;
+            }
+        } else if !run_active {
+            run_active = true;
+        }
     }
+
+    if run_active {
+        draws += 1;
+    }
+
+    draws
 }
 
 fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {
