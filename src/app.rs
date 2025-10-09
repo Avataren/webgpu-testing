@@ -24,7 +24,7 @@ type WindowHandle = Window;
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
 #[cfg(feature = "egui")]
-use crate::ui::egui;
+use crate::ui::{egui, FrameStatsHandle, FrameStatsHistory};
 
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
 use crate::time::Instant;
@@ -153,6 +153,8 @@ impl AppBuilder {
             egui_context: None,
             #[cfg(feature = "egui")]
             egui_pending_ui: None,
+            #[cfg(feature = "egui")]
+            frame_stats: FrameStatsHistory::handle(),
         }
     }
 }
@@ -193,6 +195,8 @@ pub struct App {
     egui_context: Option<crate::ui::EguiContext>,
     #[cfg(feature = "egui")]
     egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
+    #[cfg(feature = "egui")]
+    frame_stats: FrameStatsHandle,
 }
 
 impl App {
@@ -219,6 +223,11 @@ impl App {
             egui.set_ui_box(callback);
         }
         self.egui_context = Some(egui);
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn frame_stats_handle(&self) -> FrameStatsHandle {
+        self.frame_stats.clone()
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -635,6 +644,11 @@ impl ApplicationHandler for App {
 
                                 // Present after UI has been drawn
                                 render_frame.frame.present();
+
+                                #[cfg(feature = "egui")]
+                                if let Ok(mut history) = self.frame_stats.lock() {
+                                    history.record(frame.dt() as f32, renderer.last_frame_stats());
+                                }
                             }
                             Err(e) => {
                                 log::error!("Render error: {:?}", e);

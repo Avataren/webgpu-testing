@@ -5,7 +5,11 @@ use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
     RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
 };
-use crate::renderer::{postprocess::PostProcess, CameraUniform, LightsData, RenderBatcher, Vertex};
+use crate::renderer::{
+    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
+    postprocess::PostProcess,
+    CameraUniform, LightsData, RenderBatcher, RenderPass, Vertex,
+};
 use crate::scene::Camera;
 use crate::settings::RenderSettings;
 
@@ -13,12 +17,34 @@ use glam::Vec3;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 10;
+const POINT_SHADOW_FACE_COUNT: u32 = 6;
 
 #[cfg(feature = "egui")]
 type UiHook =
     Box<dyn FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView)>;
 pub struct RenderFrame {
     pub frame: wgpu::SurfaceTexture,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RendererStats {
+    pub batch_count: u32,
+    pub instance_count: u32,
+    pub depth_prepass_draw_calls: u32,
+    pub opaque_draw_calls: u32,
+    pub transparent_draw_calls: u32,
+    pub overlay_draw_calls: u32,
+    pub shadow_draw_calls: u32,
+}
+
+impl RendererStats {
+    pub fn total_draw_calls(&self) -> u32 {
+        self.depth_prepass_draw_calls
+            + self.opaque_draw_calls
+            + self.transparent_draw_calls
+            + self.overlay_draw_calls
+            + self.shadow_draw_calls
+    }
 }
 
 pub struct Renderer {
@@ -36,6 +62,7 @@ pub struct Renderer {
     settings: RenderSettings,
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
+    stats: RendererStats,
 }
 
 impl Renderer {
@@ -78,6 +105,7 @@ impl Renderer {
             settings,
             #[cfg(feature = "egui")]
             ui_hook: None,
+            stats: RendererStats::default(),
         }
     }
 
@@ -172,6 +200,14 @@ impl Renderer {
 
         let prepared_batches = PreparedBatches::from_batcher(batcher, self.camera_position);
 
+        let mut frame_stats = RendererStats::default();
+        frame_stats.batch_count = prepared_batches.all().len() as u32;
+        frame_stats.instance_count = prepared_batches
+            .all()
+            .iter()
+            .map(|batch| batch.instances.len() as u32)
+            .sum();
+
         self.objects_buffer
             .update(&self.context, prepared_batches.all())?;
         self.lights_buffer.update(&self.context.queue, lights);
@@ -221,6 +257,7 @@ impl Renderer {
                     continue;
                 };
                 self.draw_full_batch(&mut pass, mesh, batch);
+                frame_stats.depth_prepass_draw_calls += 1;
             }
         }
 
@@ -254,8 +291,10 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            self.record_batches(&mut rpass, assets, prepared_batches.opaque());
-            self.record_batches(&mut rpass, assets, prepared_batches.transparent());
+            frame_stats.opaque_draw_calls +=
+                self.record_batches(&mut rpass, assets, prepared_batches.opaque());
+            frame_stats.transparent_draw_calls +=
+                self.record_batches(&mut rpass, assets, prepared_batches.transparent());
         }
 
         // Resolve scene → swapchain
@@ -285,7 +324,8 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            self.record_batches(&mut rpass, assets, prepared_batches.overlay());
+            frame_stats.overlay_draw_calls +=
+                self.record_batches(&mut rpass, assets, prepared_batches.overlay());
         }
 
         // --- EGUI (optional) ---
@@ -301,6 +341,10 @@ impl Renderer {
             );
         }
 
+        frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(prepared_batches.all(), lights);
+
+        self.stats = frame_stats;
+
         self.context.queue.submit(Some(encoder.finish()));
         Ok(RenderFrame { frame })
     }
@@ -314,15 +358,21 @@ impl Renderer {
         self.context.sample_count
     }
 
+    pub fn last_frame_stats(&self) -> RendererStats {
+        self.stats
+    }
+
     fn record_batches(
         &mut self,
         rpass: &mut wgpu::RenderPass<'_>,
         assets: &Assets,
         batches: &[OrderedBatch],
-    ) {
+    ) -> u32 {
         if batches.is_empty() {
-            return;
+            return 0;
         }
+
+        let mut draw_calls = 0u32;
 
         if let Some(bindless_group) = self.texture_binder.global_bind_group() {
             for batch in batches {
@@ -331,15 +381,17 @@ impl Renderer {
                 };
                 rpass.set_bind_group(3, bindless_group, &[]);
                 self.draw_full_batch(rpass, mesh, batch);
+                draw_calls += 1;
             }
         } else {
             for batch in batches {
                 let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
                     continue;
                 };
-                self.draw_classic_batch(rpass, assets, mesh, batch);
+                draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch) as u32;
             }
         }
+        draw_calls
     }
 
     fn setup_batch_state<'a>(
@@ -379,11 +431,12 @@ impl Renderer {
         assets: &Assets,
         mesh: &Mesh,
         batch: &OrderedBatch,
-    ) {
+    ) -> usize {
         self.set_geometry_buffers(pass, mesh);
 
         let instances = &batch.instances;
         let mut local_offset = 0usize;
+        let mut draw_calls = 0usize;
 
         while local_offset < instances.len() {
             let material = instances[local_offset].material;
@@ -403,7 +456,9 @@ impl Renderer {
             pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
 
             local_offset += run_length;
+            draw_calls += 1;
         }
+        draw_calls
     }
 
     fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
@@ -419,6 +474,69 @@ fn material_run_length(instances: &[InstanceData], start: usize) -> usize {
         length += 1;
     }
     length
+}
+
+fn estimate_shadow_draw_calls(batches: &[OrderedBatch], lights: &LightsData) -> u32 {
+    if batches.is_empty() {
+        return 0;
+    }
+
+    let per_pass_draws: u32 = batches.iter().map(count_shadow_draws_for_batch).sum();
+
+    if per_pass_draws == 0 {
+        return 0;
+    }
+
+    let directional_passes = lights
+        .directional_shadows()
+        .iter()
+        .take(MAX_DIRECTIONAL_LIGHTS)
+        .filter(|shadow| shadow.params[0] != 0.0)
+        .count() as u32;
+
+    let spot_passes = lights
+        .spot_shadows()
+        .iter()
+        .take(MAX_SPOT_LIGHTS)
+        .filter(|shadow| shadow.params[0] != 0.0)
+        .count() as u32;
+
+    let point_passes = lights
+        .point_shadows()
+        .iter()
+        .take(MAX_POINT_LIGHTS)
+        .filter(|shadow| shadow.params[0] != 0.0)
+        .count() as u32
+        * POINT_SHADOW_FACE_COUNT;
+
+    let total_passes = directional_passes + spot_passes + point_passes;
+    per_pass_draws * total_passes
+}
+
+fn count_shadow_draws_for_batch(batch: &OrderedBatch) -> u32 {
+    if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
+        return 0;
+    }
+
+    let mut draws = 0u32;
+    let mut run_active = false;
+
+    for instance in &batch.instances {
+        if instance.material.is_unlit() {
+            if run_active {
+                draws += 1;
+                run_active = false;
+            }
+        } else if !run_active {
+            run_active = true;
+        }
+    }
+
+    if run_active {
+        draws += 1;
+    }
+
+    draws
 }
 
 fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {

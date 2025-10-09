@@ -1,5 +1,8 @@
 use wgpu_cube::*;
 
+#[cfg(feature = "egui")]
+use wgpu_cube::ui::StatsWindow;
+
 fn main() {
     #[cfg(not(feature = "egui"))]
     {
@@ -11,42 +14,11 @@ fn main() {
     #[cfg(feature = "egui")]
     {
         let mut app = App::new();
+        let stats_handle = app.frame_stats_handle();
+        let mut stats_window = StatsWindow::new(stats_handle);
 
-        // Set up the egui UI
-        app.set_egui_ui(|ctx| {
-            egui::Window::new("Demo Window")
-                .default_pos([10.0, 10.0])
-                .show(ctx, |ui| {
-                    ui.heading("Hello egui 0.32!");
-                    ui.separator();
-
-                    ui.label("This is rendered as an overlay on top of your 3D scene.");
-
-                    if ui.button("Click me!").clicked() {
-                        println!("Button clicked!");
-                    }
-
-                    ui.separator();
-
-                    // Frame time display
-                    let frame_time = ctx.input(|i| i.stable_dt * 1000.0);
-                    ui.label(format!("Frame time: {:.2}ms", frame_time));
-                    ui.label(format!("FPS: {:.0}", 1000.0 / frame_time));
-                });
-
-            // Example of a side panel
-            egui::SidePanel::left("left_panel")
-                .default_width(200.0)
-                .show(ctx, |ui| {
-                    ui.heading("Side Panel");
-                    ui.label("You can add controls here");
-
-                    ui.separator();
-
-                    if ui.button("Reset").clicked() {
-                        println!("Reset clicked!");
-                    }
-                });
+        app.set_egui_ui(move |ctx| {
+            stats_window.show(ctx);
         });
 
         wgpu_cube::run_with_app(app).unwrap();
