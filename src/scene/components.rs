@@ -140,7 +140,7 @@ pub struct DirectionalLight {
 }
 
 impl DirectionalLight {
-    pub const DEFAULT_SHADOW_SIZE: f32 = 5.0;
+    pub const DEFAULT_SHADOW_SIZE: f32 = 8.0;
 
     pub fn new(color: Vec3, intensity: f32) -> Self {
         Self {

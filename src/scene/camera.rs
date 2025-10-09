@@ -32,7 +32,7 @@ impl Default for Camera {
             target: Vec3::ZERO,
             up: Vec3::Y,
             fov_y_radians: 60f32.to_radians(),
-            near: 0.01,
+            near: 0.1,
             far: 100.0,
         }
     }
