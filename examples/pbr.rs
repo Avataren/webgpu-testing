@@ -103,10 +103,7 @@ fn spawn_pbr_lighting(scene: &mut Scene) {
     scene.world.spawn((
         Name::new("PBR Key Light"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
-        DirectionalLight {
-            color: Vec3::new(1.0, 0.97, 0.9),
-            intensity: 2.2,
-        },
+        DirectionalLight::new(Vec3::new(1.0, 0.97, 0.9), 2.2),
         CanCastShadow(true),
     ));
 

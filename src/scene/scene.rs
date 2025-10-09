@@ -270,6 +270,7 @@ impl Scene {
                     camera.position,
                     camera.target,
                     transform,
+                    light.shadow_size,
                 ))
             } else {
                 None
@@ -538,8 +539,8 @@ impl Scene {
         camera_pos: Vec3,
         camera_target: Vec3,
         light_transform: Transform,
+        shadow_size: f32,
     ) -> DirectionalShadowData {
-        const SHADOW_SIZE: f32 = 5.0;
         const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
@@ -562,10 +563,11 @@ impl Scene {
 
         let view = Mat4::look_at_rh(light_pos, focus, up);
 
-        let left = -SHADOW_SIZE;
-        let right = SHADOW_SIZE;
-        let bottom = -SHADOW_SIZE;
-        let top = SHADOW_SIZE;
+        let extent = shadow_size.max(0.1);
+        let left = -extent;
+        let right = extent;
+        let bottom = -extent;
+        let top = extent;
         let near = 0.1;
         let far = SHADOW_DISTANCE * 2.0;
 
@@ -670,10 +672,7 @@ impl Scene {
         self.world.spawn((
             Name::new("Default Sky Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun1_rotation, Vec3::ONE)),
-            DirectionalLight {
-                color: Vec3::new(0.49, 0.95, 0.85),
-                intensity: 2.5,
-            },
+            DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
             CanCastShadow(true),
         ));
         created += 1;
@@ -684,10 +683,7 @@ impl Scene {
         self.world.spawn((
             Name::new("Default Sky Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
-            DirectionalLight {
-                color: Vec3::new(0.9, 0.95, 0.5),
-                intensity: 2.5,
-            },
+            DirectionalLight::new(Vec3::new(0.9, 0.95, 0.5), 2.5),
             CanCastShadow(true),
         ));
         created += 1;
@@ -1345,10 +1341,11 @@ mod tests {
     const EPS: f32 = 1e-5;
 
     fn build_directional_projection() -> Mat4 {
-        let left = -15.0;
-        let right = 15.0;
-        let bottom = -15.0;
-        let top = 15.0;
+        let extent = DirectionalLight::DEFAULT_SHADOW_SIZE;
+        let left = -extent;
+        let right = extent;
+        let bottom = -extent;
+        let top = extent;
         let near = 0.1;
         let far = 60.0;
 
@@ -1373,7 +1370,12 @@ mod tests {
             * Quat::from_euler(EulerRot::ZXY, 0.2, 0.0, 0.1);
         let transform = Transform::from_trs(Vec3::new(1.5, 3.0, -2.0), rotation, Vec3::ONE);
 
-        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+        let shadow = Scene::build_directional_shadow(
+            camera_pos,
+            camera_target,
+            transform,
+            DirectionalLight::DEFAULT_SHADOW_SIZE,
+        );
 
         let direction = (rotation * Vec3::NEG_Z).normalize();
         let up = (rotation * Vec3::Y).normalize();
@@ -1404,7 +1406,12 @@ mod tests {
         let rotation = Quat::from_euler(EulerRot::YXZ, -0.2, -0.9, 0.3);
         let transform = Transform::from_trs(Vec3::ZERO, rotation, Vec3::ONE);
 
-        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+        let shadow = Scene::build_directional_shadow(
+            camera_pos,
+            camera_target,
+            transform,
+            DirectionalLight::DEFAULT_SHADOW_SIZE,
+        );
 
         let clip = shadow.view_proj * camera_target.extend(1.0);
         assert!(clip.w > 0.0);
@@ -1425,7 +1432,12 @@ mod tests {
         let rotation = Quat::from_euler(EulerRot::ZXY, 0.3, -0.5, 0.9);
         let transform = Transform::from_trs(Vec3::new(-1.0, 2.0, 0.5), rotation, Vec3::splat(1.0));
 
-        let shadow = Scene::build_directional_shadow(camera_pos, camera_target, transform);
+        let shadow = Scene::build_directional_shadow(
+            camera_pos,
+            camera_target,
+            transform,
+            DirectionalLight::DEFAULT_SHADOW_SIZE,
+        );
 
         let projection = build_directional_projection();
         let actual_view = projection.inverse() * shadow.view_proj;
@@ -1441,6 +1453,41 @@ mod tests {
         assert!(forward_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
         assert!(up_in_view.abs_diff_eq(Vec3::Y, EPS));
         assert!(right_in_view.abs_diff_eq(Vec3::X, EPS));
+    }
+
+    #[test]
+    fn directional_shadow_scales_with_per_light_extent() {
+        let camera_pos = Vec3::new(0.0, 4.0, 12.0);
+        let camera_target = Vec3::ZERO;
+        let transform = Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+        let world_point = Vec3::new(6.0, 0.0, 0.0);
+
+        let small = Scene::build_directional_shadow(
+            camera_pos,
+            camera_target,
+            transform,
+            DirectionalLight::DEFAULT_SHADOW_SIZE,
+        );
+        let large = Scene::build_directional_shadow(camera_pos, camera_target, transform, 12.0);
+
+        let project_to_uv = |matrix: Mat4| {
+            let clip = matrix * world_point.extend(1.0);
+            assert!(clip.w > 0.0);
+            let ndc = clip.truncate() / clip.w;
+            Vec2::new(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5)
+        };
+
+        let small_uv = project_to_uv(small.view_proj);
+        let large_uv = project_to_uv(large.view_proj);
+
+        assert!(
+            small_uv.x > 1.0 + 1e-4,
+            "expected point outside default shadow extent, uv={small_uv:?}"
+        );
+        assert!(
+            large_uv.x <= 1.0 + 1e-4,
+            "expected point within larger shadow extent, uv={large_uv:?}"
+        );
     }
 
     #[test]

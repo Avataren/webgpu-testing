@@ -155,7 +155,6 @@ impl AppBuilder {
             window: None,
             window_id: None,
             renderer: None,
-
         }
     }
 }
@@ -198,7 +197,6 @@ pub struct App {
     frame_stats: FrameStatsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
-
 }
 
 impl App {

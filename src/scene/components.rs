@@ -136,6 +136,24 @@ pub struct PointLight {
 pub struct DirectionalLight {
     pub color: Vec3,
     pub intensity: f32,
+    pub shadow_size: f32,
+}
+
+impl DirectionalLight {
+    pub const DEFAULT_SHADOW_SIZE: f32 = 5.0;
+
+    pub fn new(color: Vec3, intensity: f32) -> Self {
+        Self {
+            color,
+            intensity,
+            shadow_size: Self::DEFAULT_SHADOW_SIZE,
+        }
+    }
+
+    pub fn with_shadow_size(mut self, shadow_size: f32) -> Self {
+        self.shadow_size = shadow_size;
+        self
+    }
 }
 
 /// Spot light component
