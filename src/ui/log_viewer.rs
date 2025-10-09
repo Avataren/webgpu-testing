@@ -1,5 +1,5 @@
 #[cfg(feature = "egui")]
-use egui::{Color32, RichText};
+use egui::{Color32, Label, RichText};
 #[cfg(feature = "egui")]
 use egui::{ScrollArea, Ui};
 #[cfg(feature = "egui")]
@@ -234,14 +234,16 @@ fn level_color(level: Level) -> Color32 {
 
 #[cfg(feature = "egui")]
 fn render_entry(ui: &mut Ui, entry: &LogEntry) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format_timestamp(entry.timestamp)).monospace());
-        ui.colored_label(
-            level_color(entry.level),
-            RichText::new(entry.level.as_str()).monospace(),
-        );
-        ui.label(RichText::new(entry.target.clone()).monospace());
-        ui.label(&entry.message);
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format_timestamp(entry.timestamp)).monospace());
+            ui.colored_label(
+                level_color(entry.level),
+                RichText::new(entry.level.as_str()).monospace(),
+            );
+            ui.label(RichText::new(entry.target.clone()).monospace());
+        });
+        ui.add(Label::new(entry.message.as_str()).wrap());
     });
 }
 
@@ -268,26 +270,35 @@ impl LogWindow {
     }
 
     /// Display the log window using the provided egui context.
-    pub fn show(&mut self, ctx: &egui::Context) {
+    ///
+    /// If `open` is supplied the window will render a close button and update the
+    /// handle when it is pressed.
+    pub fn show(&mut self, ctx: &egui::Context, open: Option<&mut bool>) {
         let entries = self.entries_snapshot();
-        egui::Window::new(&self.title)
-            .default_width(420.0)
-            .min_height(180.0)
-            .show(ctx, |ui| {
-                self.level_controls(ui);
-                ui.separator();
-                let filtered: Vec<_> = entries
-                    .iter()
-                    .filter(|entry| self.enabled_levels.contains(&entry.level))
-                    .collect();
-                ScrollArea::vertical()
-                    .stick_to_bottom(self.auto_scroll)
-                    .show(ui, |ui| {
-                        for entry in filtered {
-                            render_entry(ui, entry);
-                        }
-                    });
-            });
+        let mut window = egui::Window::new(&self.title)
+            .default_width(480.0)
+            .min_width(360.0)
+            .min_height(180.0);
+        if let Some(open) = open {
+            window = window.open(open);
+        }
+
+        window.show(ctx, |ui| {
+            self.level_controls(ui);
+            ui.separator();
+            let filtered: Vec<_> = entries
+                .iter()
+                .filter(|entry| self.enabled_levels.contains(&entry.level))
+                .collect();
+            ScrollArea::vertical()
+                .stick_to_bottom(self.auto_scroll)
+                .show(ui, |ui| {
+                    for entry in filtered {
+                        render_entry(ui, entry);
+                        ui.add_space(4.0);
+                    }
+                });
+        });
     }
 
     fn entries_snapshot(&self) -> Vec<LogEntry> {

@@ -19,10 +19,12 @@ fn main() {
         let stats_handle = app.frame_stats_handle();
         let mut stats_window = StatsWindow::new(stats_handle);
         let mut log_window = LogWindow::new(log_handle);
+        let mut stats_open = true;
+        let mut log_open = true;
 
         app.set_egui_ui(move |ctx| {
-            stats_window.show(ctx);
-            log_window.show(ctx);
+            stats_window.show(ctx, Some(&mut stats_open));
+            log_window.show(ctx, Some(&mut log_open));
         });
 
         wgpu_cube::run_with_app(app).unwrap();
