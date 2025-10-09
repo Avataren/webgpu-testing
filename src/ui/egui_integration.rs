@@ -14,7 +14,12 @@ pub struct EguiContext {
 }
 
 impl EguiContext {
-    pub fn new(device: &wgpu::Device, output_format: wgpu::TextureFormat, window: &Window) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        output_format: wgpu::TextureFormat,
+        sample_count: u32,
+        window: &Window,
+    ) -> Self {
         let ctx = egui::Context::default();
         let viewport_id = ctx.viewport_id();
 
@@ -29,12 +34,14 @@ impl EguiContext {
         );
 
         // egui-wgpu 0.33
+        let sample_count = sample_count.max(1);
+
         let renderer = egui_wgpu::Renderer::new(
             device,
             output_format,
             egui_wgpu::RendererOptions {
                 depth_stencil_format: None,
-                msaa_samples: 1,
+                msaa_samples: sample_count,
                 dithering: true,
                 predictable_texture_filtering: false,
             },

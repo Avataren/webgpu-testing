@@ -282,6 +282,7 @@ impl App {
                     let egui = crate::ui::EguiContext::new(
                         renderer.get_device(),
                         renderer.surface_format(),
+                        renderer.sample_count(),
                         window,
                     );
                     self.install_egui_context(egui);
@@ -458,6 +459,7 @@ impl ApplicationHandler for App {
                     let egui = crate::ui::EguiContext::new(
                         renderer.get_device(),
                         renderer.surface_format(),
+                        renderer.sample_count(),
                         &window,
                     );
                     self.install_egui_context(egui);

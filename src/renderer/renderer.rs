@@ -310,6 +310,10 @@ impl Renderer {
         self.context.config.format
     }
 
+    pub fn sample_count(&self) -> u32 {
+        self.context.sample_count
+    }
+
     fn record_batches(
         &mut self,
         rpass: &mut wgpu::RenderPass<'_>,
