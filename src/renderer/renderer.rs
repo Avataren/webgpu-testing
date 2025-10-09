@@ -48,8 +48,6 @@ impl RendererStats {
 }
 
 pub struct Renderer {
-    context: RenderContext,
-    pipeline: RenderPipeline,
     texture_binder: TextureBindingModel,
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
@@ -63,6 +61,8 @@ pub struct Renderer {
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
     stats: RendererStats,
+    pipeline: RenderPipeline,
+    context: RenderContext,
 }
 
 impl Renderer {
