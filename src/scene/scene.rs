@@ -491,8 +491,11 @@ impl Scene {
         };
         let light_pos = focus - direction * SHADOW_DISTANCE;
 
-        let mut up = Self::safe_normalize(light_transform.rotation * Vec3::Y, Vec3::Y);
-        if up.abs().dot(direction).abs() > 0.999 {
+        let mut up = light_transform.rotation * Vec3::Y;
+        if up.length_squared() > 0.0 {
+            up = up.normalize();
+        }
+        if up.length_squared() <= 0.0 || up.abs().dot(direction).abs() > 0.999 {
             up = Self::shadow_up(direction);
         }
 
@@ -570,8 +573,8 @@ impl Scene {
             };
             right = forward.cross(fallback);
         }
-        right = Self::safe_normalize(right, Vec3::X);
-        up = Self::safe_normalize(right.cross(forward), Vec3::Y);
+        right = right.normalize();
+        up = right.cross(forward).normalize();
 
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);
