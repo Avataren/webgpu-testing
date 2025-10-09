@@ -5,9 +5,14 @@ pub mod renderer;
 pub mod scene;
 pub mod settings;
 pub mod time;
+pub mod render_application;
 
 #[cfg(feature = "egui")]
 pub mod ui;
+
+pub use render_application::{RenderApplication, run_application};
+#[cfg(feature = "egui")]
+pub use render_application::DefaultUI;
 
 pub use app::{
     App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,

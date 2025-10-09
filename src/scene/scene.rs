@@ -235,7 +235,7 @@ impl Scene {
             }
             local
         } else {
-            log::warn!("Entity without transform");
+            //log::warn!("Entity without transform");
             Transform::IDENTITY
         }
     }
