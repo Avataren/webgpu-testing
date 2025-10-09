@@ -133,9 +133,6 @@ impl AppBuilder {
 
     pub fn build(self) -> App {
         App {
-            renderer: None,
-            window: None,
-            window_id: None,
             scene: Scene::new(),
             batcher: RenderBatcher::new(),
             startup_systems: self.startup_systems,
@@ -155,6 +152,10 @@ impl AppBuilder {
             egui_pending_ui: None,
             #[cfg(feature = "egui")]
             frame_stats: FrameStatsHistory::handle(),
+            window: None,
+            window_id: None,
+            renderer: None,
+
         }
     }
 }
@@ -175,10 +176,8 @@ impl FrameStep {
 }
 
 pub struct App {
-    renderer: Option<Renderer>,
     window: Option<WindowHandle>,
     window_id: Option<WindowId>,
-    scene: Scene,
     batcher: RenderBatcher,
     startup_systems: Vec<StartupSystem>,
     update_systems: Vec<UpdateSystem>,
@@ -197,6 +196,9 @@ pub struct App {
     egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
     #[cfg(feature = "egui")]
     frame_stats: FrameStatsHandle,
+    scene: Scene,
+    renderer: Option<Renderer>,
+
 }
 
 impl App {
