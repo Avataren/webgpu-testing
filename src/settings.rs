@@ -164,7 +164,7 @@ impl PresentModeSetting {
 
 impl Default for PresentModeSetting {
     fn default() -> Self {
-        PresentModeSetting::Fifo
+        PresentModeSetting::Mailbox
     }
 }
 
