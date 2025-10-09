@@ -110,7 +110,11 @@ impl Scene {
         self.system_propagate_transforms();
     }
 
-    pub fn render(&mut self, renderer: &mut Renderer, batcher: &mut RenderBatcher) {
+    pub fn render(
+        &mut self,
+        renderer: &mut Renderer,
+        batcher: &mut RenderBatcher,
+    ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         batcher.clear();
         let camera = CameraVectors::from_renderer(renderer);
 
@@ -124,9 +128,10 @@ impl Scene {
 
         renderer.set_lights(&lights);
 
-        if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
-            log::error!("Render error: {:?}", e);
-        }
+        renderer.render(&self.assets, batcher, &lights)
+        // if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
+        //     log::error!("Render error: {:?}", e);
+        // }
     }
 
     fn build_render_objects(&self, camera: CameraVectors) -> Vec<RenderObject> {

@@ -6,6 +6,9 @@ pub mod scene;
 pub mod settings;
 pub mod time;
 
+#[cfg(feature = "egui")]
+pub mod ui;
+
 pub use app::{
     App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,
     UpdateContext, UpdateSystem,

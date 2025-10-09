@@ -14,6 +14,13 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 10;
 
+#[cfg(feature = "egui")]
+type UiHook =
+    Box<dyn FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView)>;
+pub struct RenderFrame {
+    pub frame: wgpu::SurfaceTexture,
+}
+
 pub struct Renderer {
     context: RenderContext,
     pipeline: RenderPipeline,
@@ -27,6 +34,8 @@ pub struct Renderer {
     camera_target: Vec3,
     camera_up: Vec3,
     settings: RenderSettings,
+    #[cfg(feature = "egui")]
+    ui_hook: Option<UiHook>,
 }
 
 impl Renderer {
@@ -67,7 +76,15 @@ impl Renderer {
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
             settings,
+            #[cfg(feature = "egui")]
+            ui_hook: None,
         }
+    }
+
+    // Setter to install the per-frame hook (only compiled with egui feature)
+    #[cfg(feature = "egui")]
+    pub fn set_ui_hook(&mut self, hook: UiHook) {
+        self.ui_hook = Some(hook);
     }
 
     pub fn get_device(&self) -> &wgpu::Device {
@@ -140,7 +157,7 @@ impl Renderer {
         assets: &Assets,
         batcher: &RenderBatcher,
         lights: &LightsData,
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<RenderFrame, wgpu::SurfaceError> {
         let frame = self.context.surface.get_current_texture()?;
         let view = frame
             .texture
@@ -157,7 +174,6 @@ impl Renderer {
 
         self.objects_buffer
             .update(&self.context, prepared_batches.all())?;
-
         self.lights_buffer.update(&self.context.queue, lights);
 
         self.shadows.render(
@@ -170,10 +186,10 @@ impl Renderer {
         );
 
         let (scene_view, resolve_target) = self.postprocess.scene_color_views();
-
         let depth_view = self.context.depth.view.clone();
         let sampled_depth_view = self.context.depth.sampled_view.clone();
 
+        // Depth-only prepass
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("DepthPrepass"),
@@ -201,15 +217,14 @@ impl Renderer {
                 {
                     continue;
                 }
-
                 let Some(mesh) = mesh_for_batch(assets, batch) else {
                     continue;
                 };
-
                 self.draw_full_batch(&mut pass, mesh, batch);
             }
         }
 
+        // Main color pass (to postprocess scene target)
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
@@ -243,6 +258,7 @@ impl Renderer {
             self.record_batches(&mut rpass, assets, prepared_batches.transparent());
         }
 
+        // Resolve scene → swapchain
         self.postprocess.execute(
             &mut encoder,
             &self.context.device,
@@ -250,6 +266,8 @@ impl Renderer {
             &view,
         );
 
+        // Overlay pass (your overlays draw after UI if you keep it here;
+        // if you want UI on top of overlays, move this block above ui_hook).
         if !prepared_batches.overlay().is_empty() {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OverlayPass"),
@@ -270,9 +288,26 @@ impl Renderer {
             self.record_batches(&mut rpass, assets, prepared_batches.overlay());
         }
 
+        // --- EGUI (optional) ---
+        #[cfg(feature = "egui")]
+        if let Some(hook) = self.ui_hook.take() {
+            // The hook will create a render pass on `view`,
+            // call `forget_lifetime()`, and render egui.
+            hook(
+                &self.context.device,
+                &self.context.queue,
+                &mut encoder,
+                &view,
+            );
+        }
+
         self.context.queue.submit(Some(encoder.finish()));
-        frame.present();
-        Ok(())
+        Ok(RenderFrame { frame })
+    }
+
+    // Add helper method to get surface format
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.context.config.format
     }
 
     fn record_batches(

@@ -20,7 +20,7 @@ pub use lights::{
 pub use material::Material;
 pub use objects::ObjectData;
 pub use primitives::*;
-pub use renderer::Renderer;
+pub use renderer::{RenderFrame, Renderer};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;
 pub use vertex::Vertex;

@@ -146,6 +146,8 @@ impl AppBuilder {
             settings: self.settings,
             #[cfg(target_arch = "wasm32")]
             pending_renderer: None,
+            #[cfg(feature = "egui")]
+            egui_context: None,
         }
     }
 }
@@ -182,11 +184,23 @@ pub struct App {
     settings: RenderSettings,
     #[cfg(target_arch = "wasm32")]
     pending_renderer: Option<PendingRenderer>,
+    #[cfg(feature = "egui")]
+    egui_context: Option<crate::ui::EguiContext>,
 }
 
 impl App {
     pub fn new() -> Self {
         AppBuilder::default().build()
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn set_egui_ui<F>(&mut self, callback: F)
+    where
+        F: FnMut(&egui::Context) + 'static,
+    {
+        if let Some(egui) = &mut self.egui_context {
+            egui.set_ui(callback);
+        }
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -242,6 +256,20 @@ impl App {
 
         if let Some(mut renderer) = renderer_opt {
             log::info!("Completing asynchronous renderer initialization");
+
+            // ADD THIS:
+            #[cfg(feature = "egui")]
+            {
+                if let Some(window) = &self.window {
+                    let egui = crate::ui::EguiContext::new(
+                        renderer.get_device(),
+                        renderer.surface_format(),
+                        window,
+                    );
+                    self.egui_context = Some(egui);
+                    log::info!("Egui context initialized (async)");
+                }
+            }
 
             self.scene.init_timer();
             self.run_startup_systems(&mut renderer);
@@ -381,7 +409,6 @@ impl ApplicationHandler for App {
         if self.window.is_none() {
             log::info!("Initializing application...");
 
-            // Build window attributes with web-specific configuration
             let base_window_attrs = Window::default_attributes()
                 .with_title("wgpu hecs Renderer")
                 .with_inner_size(winit::dpi::LogicalSize::new(
@@ -407,6 +434,17 @@ impl ApplicationHandler for App {
             {
                 let mut renderer =
                     pollster::block_on(Renderer::new(&window, self.settings.clone()));
+
+                #[cfg(feature = "egui")]
+                {
+                    let egui = crate::ui::EguiContext::new(
+                        renderer.get_device(),
+                        renderer.surface_format(),
+                        &window,
+                    );
+                    self.egui_context = Some(egui);
+                    log::info!("Egui context initialized");
+                }
 
                 self.scene.init_timer();
                 self.run_startup_systems(&mut renderer);
@@ -466,6 +504,16 @@ impl ApplicationHandler for App {
         #[cfg(target_arch = "wasm32")]
         self.try_finish_async_initialization();
 
+        // Let egui handle the event first
+        #[cfg(feature = "egui")]
+        {
+            if let (Some(egui), Some(window)) = (&mut self.egui_context, &self.window) {
+                if egui.handle_event(window, &event) {
+                    return; // Event was consumed by egui
+                }
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => {
                 log::info!("Closing application");
@@ -492,6 +540,7 @@ impl ApplicationHandler for App {
 
                 let frame = self.begin_frame();
 
+                // --------- 1) Update scene logic first ----------
                 self.update_scene(frame.dt());
 
                 if let Some(renderer) = self.renderer.as_mut() {
@@ -510,7 +559,67 @@ impl ApplicationHandler for App {
                     if frame.should_render() {
                         let aspect = renderer.aspect_ratio();
                         renderer.set_camera(self.scene.camera(), aspect);
-                        self.scene.render(renderer, &mut self.batcher);
+
+                        // --------- 2) Begin/run/end egui BEFORE scene render ----------
+                        // so UI state can influence the just-in-time scene rendering
+                        #[cfg(feature = "egui")]
+                        let egui_output = {
+                            if let (Some(egui), Some(window)) =
+                                (&mut self.egui_context, &self.window)
+                            {
+                                egui.begin_frame(window);
+                                egui.run_ui(); // your panels/widgets
+                                Some(egui.end_frame(window)) // capture FullOutput for this frame
+                            } else {
+                                None
+                            }
+                        };
+
+                        // --------- 3) Render the 3D scene ----------
+                        match self.scene.render(renderer, &mut self.batcher) {
+                            Ok(render_frame) => {
+                                // --------- 4) Render egui on top (unchanged in spirit) ----------
+                                #[cfg(feature = "egui")]
+                                {
+                                    if let (Some(egui), Some(window), Some(egui_output)) =
+                                        (&mut self.egui_context, &self.window, egui_output)
+                                    {
+                                        // Reuse the swapchain view from the scene frame
+                                        let view = render_frame
+                                            .frame
+                                            .texture
+                                            .create_view(&wgpu::TextureViewDescriptor::default());
+
+                                        // NOTE: egui_integration.rs MUST call
+                                        // `let mut pass_static = pass.forget_lifetime();`
+                                        // inside its `render(...)` implementation.
+                                        let mut encoder =
+                                            renderer.get_device().create_command_encoder(
+                                                &wgpu::CommandEncoderDescriptor {
+                                                    label: Some("egui_encoder"),
+                                                },
+                                            );
+
+                                        egui.render(
+                                            renderer.get_device(),
+                                            renderer.get_queue(),
+                                            &mut encoder,
+                                            window,
+                                            &view,
+                                            egui_output,
+                                        );
+
+                                        renderer.get_queue().submit(Some(encoder.finish()));
+                                    }
+                                }
+
+                                // Present after UI has been drawn
+                                render_frame.frame.present();
+                            }
+                            Err(e) => {
+                                log::error!("Render error: {:?}", e);
+                            }
+                        }
                     }
                 }
 
@@ -532,7 +641,6 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                 }
                 Key::Character(c) if c.as_str() == "h" => {
-                    // Print hierarchy on 'h' key
                     self.debug_print_hierarchy();
                 }
                 _ => {}
