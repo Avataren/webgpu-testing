@@ -62,49 +62,88 @@ fn fetch_depth(uv : vec2<f32>) -> f32 {
 
 fn view_normal(uv : vec2<f32>, view_pos : vec3<f32>) -> vec3<f32> {
     let texel = 1.0 / post_uniform.resolution;
+
+    let depth_left = fetch_depth(uv - vec2<f32>(texel.x, 0.0));
     let depth_right = fetch_depth(uv + vec2<f32>(texel.x, 0.0));
+    let depth_down = fetch_depth(uv - vec2<f32>(0.0, texel.y));
     let depth_up = fetch_depth(uv + vec2<f32>(0.0, texel.y));
-    let pos_right = reconstruct_view_position(uv + vec2<f32>(texel.x, 0.0), depth_right);
-    let pos_up = reconstruct_view_position(uv + vec2<f32>(0.0, texel.y), depth_up);
-    let tangent = pos_right - view_pos;
-    let bitangent = pos_up - view_pos;
-    return normalize(cross(tangent, bitangent));
+
+    var pos_left = view_pos;
+    if (depth_left < 1.0) {
+        pos_left = reconstruct_view_position(uv - vec2<f32>(texel.x, 0.0), depth_left);
+    }
+
+    var pos_right = view_pos;
+    if (depth_right < 1.0) {
+        pos_right = reconstruct_view_position(uv + vec2<f32>(texel.x, 0.0), depth_right);
+    }
+
+    var pos_down = view_pos;
+    if (depth_down < 1.0) {
+        pos_down = reconstruct_view_position(uv - vec2<f32>(0.0, texel.y), depth_down);
+    }
+
+    var pos_up = view_pos;
+    if (depth_up < 1.0) {
+        pos_up = reconstruct_view_position(uv + vec2<f32>(0.0, texel.y), depth_up);
+    }
+
+    var dx = pos_right - pos_left;
+    var dy = pos_up - pos_down;
+    let eps = 1e-5;
+    if (dot(dx, dx) < eps) {
+        dx = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    if (dot(dy, dy) < eps) {
+        dy = vec3<f32>(0.0, 1.0, 0.0);
+    }
+
+    var normal = normalize(cross(dx, dy));
+    var view_dir = -view_pos;
+    if (dot(view_dir, view_dir) < 1e-6) {
+        view_dir = vec3<f32>(0.0, 0.0, 1.0);
+    }
+    view_dir = normalize(view_dir);
+    if (dot(normal, view_dir) <= 0.0) {
+        normal = -normal;
+    }
+    return normal;
 }
 
 fn ssao_kernel() -> array<vec3<f32>, 32> {
     return array<vec3<f32>, 32>(
-        vec3<f32>(0.5381, 0.1856, 0.4319),
-        vec3<f32>(0.1379, 0.2486, 0.4430),
-        vec3<f32>(0.3371, 0.5679, 0.0057),
-        vec3<f32>(-0.6999, -0.0451, -0.0019),
-        vec3<f32>(0.0689, -0.1598, 0.8547),
-        vec3<f32>(0.0560, 0.0069, -0.1843),
-        vec3<f32>(-0.0146, 0.1402, 0.0762),
-        vec3<f32>(0.0100, -0.1924, -0.0344),
-        vec3<f32>(-0.3577, -0.5301, -0.4358),
-        vec3<f32>(-0.3169, 0.1063, 0.0158),
-        vec3<f32>(0.0103, -0.5869, 0.0046),
-        vec3<f32>(-0.0897, -0.4940, 0.3287),
-        vec3<f32>(0.7119, -0.0154, -0.0918),
-        vec3<f32>(-0.0533, 0.0596, -0.5411),
-        vec3<f32>(0.0352, -0.0631, 0.5460),
-        vec3<f32>(-0.4776, 0.2847, -0.0271),
-        vec3<f32>(0.3333, -0.3596, 0.3830),
-        vec3<f32>(-0.2941, 0.2513, 0.1042),
-        vec3<f32>(0.2624, 0.5570, -0.0846),
-        vec3<f32>(0.1248, 0.1221, -0.5559),
-        vec3<f32>(-0.6291, 0.1545, 0.2803),
-        vec3<f32>(0.3933, 0.5746, -0.0978),
-        vec3<f32>(-0.4925, 0.2801, -0.2511),
-        vec3<f32>(-0.1279, -0.4738, -0.0977),
-        vec3<f32>(-0.2346, 0.0931, 0.3024),
-        vec3<f32>(0.0035, -0.1466, -0.3281),
-        vec3<f32>(0.1647, 0.2177, 0.2720),
-        vec3<f32>(0.4625, -0.1217, -0.4370),
-        vec3<f32>(0.0702, 0.4898, -0.1250),
-        vec3<f32>(-0.0441, -0.3091, 0.2510),
-        vec3<f32>(-0.3645, -0.1065, 0.4305),
-        vec3<f32>(0.0207, -0.1306, -0.2221)
+        vec3<f32>(-0.0559, 0.0179, 0.0810),
+        vec3<f32>(-0.0735, 0.0456, 0.0520),
+        vec3<f32>(-0.0271, -0.0585, 0.0813),
+        vec3<f32>(-0.0401, -0.1000, 0.0119),
+        vec3<f32>(0.0736, 0.0220, 0.0855),
+        vec3<f32>(0.0526, 0.0083, 0.1113),
+        vec3<f32>(-0.0373, 0.0160, 0.1274),
+        vec3<f32>(0.0362, 0.1105, 0.0882),
+        vec3<f32>(0.0640, -0.1422, 0.0357),
+        vec3<f32>(-0.0765, -0.1526, 0.0423),
+        vec3<f32>(-0.1389, -0.0773, 0.1106),
+        vec3<f32>(-0.1343, -0.1290, 0.1041),
+        vec3<f32>(-0.0925, 0.1734, 0.1286),
+        vec3<f32>(0.0560, -0.1689, 0.1872),
+        vec3<f32>(-0.1564, -0.0560, 0.2298),
+        vec3<f32>(0.1163, 0.0473, 0.2842),
+        vec3<f32>(0.2561, 0.2062, 0.0856),
+        vec3<f32>(-0.3332, -0.1314, 0.0953),
+        vec3<f32>(-0.1698, 0.2602, 0.2574),
+        vec3<f32>(-0.2598, 0.2179, 0.2773),
+        vec3<f32>(0.4501, -0.0447, 0.1438),
+        vec3<f32>(-0.4453, 0.1078, 0.2309),
+        vec3<f32>(0.1033, 0.4858, 0.2439),
+        vec3<f32>(-0.2672, 0.4736, 0.2425),
+        vec3<f32>(-0.4269, -0.4726, 0.0572),
+        vec3<f32>(0.2285, 0.5237, 0.3785),
+        vec3<f32>(-0.4756, -0.1290, 0.5427),
+        vec3<f32>(0.0357, 0.5773, 0.5274),
+        vec3<f32>(-0.6415, 0.2899, 0.4476),
+        vec3<f32>(0.0824, -0.5200, 0.7146),
+        vec3<f32>(-0.8058, -0.1353, 0.4706),
+        vec3<f32>(0.7516, 0.6225, 0.2181)
     );
 }
 
@@ -123,18 +162,26 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
 
     let view_pos = reconstruct_view_position(in.uv, depth);
     let normal = view_normal(in.uv, view_pos);
-    let noise = textureSample(noise_texture, clamp_sampler, in.uv * post_uniform.noise_scale);
-    let tangent = normalize(noise.xyz * 2.0 - vec3<f32>(1.0, 1.0, 1.0));
+    let noise_sample = textureSample(noise_texture, clamp_sampler, in.uv * post_uniform.noise_scale);
+    var tangent = vec3<f32>(noise_sample.xy, 0.0);
+    if (dot(tangent, tangent) < 1e-4) {
+        tangent = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    tangent = normalize(tangent);
     let bitangent = normalize(cross(normal, tangent));
     let tbn = mat3x3<f32>(tangent, bitangent, normal);
 
+    let radius = post_uniform.radius_bias.x;
+    let bias = post_uniform.radius_bias.y;
+
     var occlusion = 0.0;
     let samples = ssao_kernel();
+    let sample_count = 32.0;
     for (var i : u32 = 0u; i < 32u; i = i + 1u) {
-        var sample = tbn * samples[i];
-        sample = view_pos + sample * post_uniform.radius_bias.x;
+        let rotated = tbn * samples[i];
+        let sample_pos = view_pos + normal * bias + rotated * radius;
 
-        let sample_clip = post_uniform.proj * vec4<f32>(sample, 1.0);
+        let sample_clip = post_uniform.proj * vec4<f32>(sample_pos, 1.0);
         var offset = sample_clip.xyz / sample_clip.w;
         offset = offset * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
         if (offset.z >= 1.0) {
@@ -149,17 +196,17 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         let range_check = smoothstep(
             0.0,
             1.0,
-            post_uniform.radius_bias.x / abs(view_pos.z - sample_view_pos.z),
+            radius / (abs(view_pos.z - sample_view_pos.z) + 1e-4),
         );
-        let bias = post_uniform.radius_bias.y;
-        if (sample_view_pos.z >= sample.z - bias) {
+        if (sample_view_pos.z >= sample_pos.z) {
             occlusion = occlusion + range_check;
         }
     }
-    let ao = 1.0 - occlusion / 32.0;
-    let ao_pow = pow(ao, post_uniform.intensity_power.y);
-    let strength = clamp(post_uniform.intensity_power.x, 0.0, 5.0);
-    return vec4<f32>(mix(1.0, ao_pow * 1, strength), 1.0, 1.0, 1.0);
+    let ao = 1.0 - occlusion / sample_count;
+    let ao_pow = pow(ao, max(post_uniform.intensity_power.y, 0.01));
+    let strength = clamp(post_uniform.intensity_power.x, 0.0, 1.0);
+    let ao_result = mix(1.0, ao_pow, strength);
+    return vec4<f32>(ao_result, ao_result, ao_result, 1.0);
 }
 
 // Bloom prefilter
