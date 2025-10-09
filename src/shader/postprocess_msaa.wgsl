@@ -135,9 +135,18 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
             continue;
         }
         let sample_depth = fetch_depth(offset.xy);
-        let range_check = smoothstep(0.0, 1.0, post_uniform.radius_bias.x / abs(view_pos.z - sample.z));
+        if (sample_depth >= 1.0) {
+            continue;
+        }
+
+        let sample_view_pos = reconstruct_view_position(offset.xy, sample_depth);
+        let range_check = smoothstep(
+            0.0,
+            1.0,
+            post_uniform.radius_bias.x / abs(view_pos.z - sample_view_pos.z),
+        );
         let bias = post_uniform.radius_bias.y;
-        if (sample_depth < offset.z - bias) {
+        if (sample_view_pos.z >= sample.z - bias) {
             occlusion = occlusion + range_check;
         }
     }

@@ -784,10 +784,10 @@ struct PostProcessUniform {
 
 impl PostProcessUniform {
     fn new(proj: Mat4, proj_inv: Mat4, width: f32, height: f32, near: f32, far: f32) -> Self {
-        let radius = 5.5f32;
-        let bias = 0.025f32;
-        let intensity = 3.5f32;
-        let power = 1.5f32;
+        let radius = 0.3f32;
+        let bias = 0.001f32;
+        let intensity = 1.5f32;
+        let power = 0.05f32;
         let noise_scale = [
             width / NOISE_TEXTURE_SIZE as f32,
             height / NOISE_TEXTURE_SIZE as f32,
