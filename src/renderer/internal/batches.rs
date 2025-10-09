@@ -12,6 +12,7 @@ pub(crate) struct OrderedBatch {
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: Vec<InstanceData>,
+    pub material: Material,
     pub alpha_blend: bool,
     pub first_instance: u32,
     pub material_runs: Vec<MaterialRun>,
@@ -48,10 +49,14 @@ impl PreparedBatches {
                 sort_instances_back_to_front(&mut instances, camera_pos);
             }
 
-            let alpha_blend = batch.pass.uses_alpha_blending()
-                || instances
-                    .iter()
-                    .any(|inst| inst.material.requires_separate_pass());
+            let alpha_blend =
+                batch.pass.uses_alpha_blending() || batch.material.requires_separate_pass();
+
+            let material_runs = compute_material_runs(&instances);
+            let lit_instance_count = instances
+                .iter()
+                .filter(|inst| !inst.material.is_unlit())
+                .count() as u32;
 
             let material_runs = compute_material_runs(&instances);
             let lit_instance_count = instances
@@ -64,6 +69,7 @@ impl PreparedBatches {
                 pass: batch.pass,
                 depth_state: batch.depth_state,
                 instances,
+                material: batch.material,
                 alpha_blend,
                 first_instance: 0,
                 material_runs,

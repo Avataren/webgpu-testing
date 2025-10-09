@@ -435,29 +435,27 @@ impl Renderer {
         mesh: &Mesh,
         batch: &OrderedBatch,
     ) -> usize {
-        self.set_geometry_buffers(pass, mesh);
-        let mut start_instance = batch.first_instance;
-        let mut draw_calls = 0usize;
-
-        for run in &batch.material_runs {
-            let end_instance = start_instance + run.count;
-            let Some(bind_group) = self.texture_binder.bind_group_for_material(
-                &self.context.device,
-                assets,
-                run.material,
-            ) else {
-                start_instance = end_instance;
-                continue;
-            };
-
-            pass.set_bind_group(3, bind_group, &[]);
-            pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
-
-            draw_calls += 1;
-            start_instance = end_instance;
+        let instance_count = batch.instances.len() as u32;
+        if instance_count == 0 {
+            return 0;
         }
 
-        draw_calls
+        self.set_geometry_buffers(pass, mesh);
+        let Some(bind_group) = self.texture_binder.bind_group_for_material(
+            &self.context.device,
+            assets,
+            batch.material,
+        ) else {
+            return 0;
+        };
+        pass.set_bind_group(3, bind_group, &[]);
+        pass.draw_indexed(
+            0..mesh.index_count(),
+            0,
+            batch.first_instance..(batch.first_instance + instance_count),
+        );
+
+        1
     }
 
     fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
@@ -508,7 +506,7 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch) -> u32 {
         return 0;
     }
 
-    if batch.lit_instance_count == 0 {
+    if batch.material.is_unlit() {
         0
     } else {
         1

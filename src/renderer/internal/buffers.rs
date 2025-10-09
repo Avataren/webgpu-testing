@@ -67,7 +67,7 @@ impl DynamicObjectsBuffer {
         self.scratch.clear();
         for batch in batches {
             self.scratch.extend(batch.instances.iter().map(|inst| {
-                crate::renderer::ObjectData::from_material(inst.transform.matrix(), &inst.material)
+                crate::renderer::ObjectData::from_material(inst.transform.matrix(), &batch.material)
             }));
         }
 

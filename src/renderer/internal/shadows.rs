@@ -482,7 +482,7 @@ impl ShadowResources {
             if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
                 continue;
             }
-            if batch.lit_instance_count == 0 {
+            if batch.material.is_unlit() {
                 continue;
             }
             let Some(mesh) = assets.meshes.get(batch.mesh) else {
