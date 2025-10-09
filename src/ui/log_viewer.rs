@@ -1,5 +1,5 @@
 #[cfg(feature = "egui")]
-use egui::{pos2, Color32, Label, Layout, RichText, TextWrapMode};
+use egui::{pos2, Color32, Label, RichText, TextWrapMode};
 #[cfg(feature = "egui")]
 use egui::{ScrollArea, Ui};
 #[cfg(feature = "egui")]

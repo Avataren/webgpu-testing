@@ -2,6 +2,7 @@ use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, Mesh};
 use crate::renderer::batch::{InstanceData, RenderBatcher, RenderPass};
+use crate::renderer::material::Material;
 use crate::scene::components::DepthState;
 use glam::Vec3;
 
@@ -13,6 +14,14 @@ pub(crate) struct OrderedBatch {
     pub instances: Vec<InstanceData>,
     pub alpha_blend: bool,
     pub first_instance: u32,
+    pub material_runs: Vec<MaterialRun>,
+    pub lit_instance_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MaterialRun {
+    pub material: Material,
+    pub count: u32,
 }
 
 pub(crate) struct PreparedBatches {
@@ -44,6 +53,12 @@ impl PreparedBatches {
                     .iter()
                     .any(|inst| inst.material.requires_separate_pass());
 
+            let material_runs = compute_material_runs(&instances);
+            let lit_instance_count = instances
+                .iter()
+                .filter(|inst| !inst.material.is_unlit())
+                .count() as u32;
+
             let ordered = OrderedBatch {
                 mesh: batch.mesh,
                 pass: batch.pass,
@@ -51,6 +66,8 @@ impl PreparedBatches {
                 instances,
                 alpha_blend,
                 first_instance: 0,
+                material_runs,
+                lit_instance_count,
             };
 
             match ordered.pass {
@@ -140,7 +157,7 @@ fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3
     });
 }
 
-fn sort_batches_back_to_front(batches: &mut Vec<OrderedBatch>, camera_pos: Vec3) {
+fn sort_batches_back_to_front(batches: &mut [OrderedBatch], camera_pos: Vec3) {
     batches.sort_by(|a, b| {
         farthest_distance_sq(b, camera_pos)
             .partial_cmp(&farthest_distance_sq(a, camera_pos))
@@ -160,4 +177,34 @@ fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range
     let start = dest.len();
     dest.extend(src);
     start..dest.len()
+}
+
+fn compute_material_runs(instances: &[InstanceData]) -> Vec<MaterialRun> {
+    if instances.is_empty() {
+        return Vec::new();
+    }
+
+    let mut runs = Vec::new();
+    let mut current = instances[0].material;
+    let mut count = 1u32;
+
+    for inst in &instances[1..] {
+        if inst.material == current {
+            count += 1;
+        } else {
+            runs.push(MaterialRun {
+                material: current,
+                count,
+            });
+            current = inst.material;
+            count = 1;
+        }
+    }
+
+    runs.push(MaterialRun {
+        material: current,
+        count,
+    });
+
+    runs
 }
