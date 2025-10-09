@@ -7,14 +7,19 @@ use crate::renderer::Depth;
 use crate::settings::RenderSettings;
 
 pub(crate) struct RenderContext {
-    pub(crate) surface: wgpu::Surface<'static>,
-    pub(crate) device: wgpu::Device,
-    pub(crate) queue: wgpu::Queue,
-    pub(crate) config: wgpu::SurfaceConfiguration,
+    // Drop order: bottom to top
+    // Surface must be dropped LAST (or nearly last, before window)
     pub(crate) size: PhysicalSize<u32>,
-    pub(crate) depth: Depth,
+    pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) supports_bindless_textures: bool,
     pub(crate) sample_count: u32,
+    // GPU resources (drop before device/queue)
+    pub(crate) depth: Depth,
+    // Device and queue (drop before surface)
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) device: wgpu::Device,
+    // Surface dropped last
+    pub(crate) surface: wgpu::Surface<'static>,
 }
 
 impl RenderContext {
