@@ -23,8 +23,8 @@ fn main() {
         let mut log_open = true;
 
         app.set_egui_ui(move |ctx| {
-            stats_window.show(ctx, None);
-            log_window.show(ctx, None);
+            stats_window.show(ctx, Some(&mut stats_open));
+            log_window.show(ctx, Some(&mut log_open));
         });
 
         wgpu_cube::run_with_app(app).unwrap();
