@@ -36,7 +36,7 @@ var depth_texture : texture_depth_2d;
 @group(1) @binding(1)
 var noise_texture : texture_2d<f32>;
 @group(1) @binding(2)
-var clamp_sampler : sampler;
+var noise_sampler : sampler;
 
 fn linearize_depth(depth: f32) -> f32 {
     let near = post_uniform.near_far.x;
@@ -52,11 +52,13 @@ fn reconstruct_view_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
 }
 
 fn fetch_depth(uv : vec2<f32>) -> f32 {
-    if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         return 1.0;
     }
     let tex_size = vec2<f32>(textureDimensions(depth_texture, 0));
-    let coord = vec2<i32>(uv * tex_size);
+    let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
+    let clamped_uv = clamp(uv, vec2<f32>(0.0), max_uv);
+    let coord = vec2<i32>(clamped_uv * tex_size);
     return textureLoad(depth_texture, coord, 0);
 }
 
@@ -162,7 +164,7 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
 
     let view_pos = reconstruct_view_position(in.uv, depth);
     let normal = view_normal(in.uv, view_pos);
-    let noise_sample = textureSample(noise_texture, clamp_sampler, in.uv * post_uniform.noise_scale);
+    let noise_sample = textureSample(noise_texture, noise_sampler, in.uv * post_uniform.noise_scale);
     var tangent = vec3<f32>(noise_sample.xy, 0.0);
     if (dot(tangent, tangent) < 1e-4) {
         tangent = vec3<f32>(1.0, 0.0, 0.0);

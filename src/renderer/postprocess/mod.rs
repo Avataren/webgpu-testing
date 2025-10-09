@@ -18,7 +18,7 @@ pub struct PostProcess {
     bloom_ping: TextureBundle,
     bloom_pong: TextureBundle,
     sampler_linear: wgpu::Sampler,
-    sampler_clamp: wgpu::Sampler,
+    sampler_noise: wgpu::Sampler,
     _noise_texture: wgpu::Texture,
     noise_view: wgpu::TextureView,
     uniform_buffer: wgpu::Buffer,
@@ -63,14 +63,14 @@ impl PostProcess {
             ..Default::default()
         });
 
-        let sampler_clamp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("PostProcessClampSampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+        let sampler_noise = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("PostProcessNoiseSampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -398,7 +398,7 @@ impl PostProcess {
             bloom_ping,
             bloom_pong,
             sampler_linear,
-            sampler_clamp,
+            sampler_noise,
             _noise_texture: noise_texture,
             noise_view,
             uniform_buffer,
@@ -510,7 +510,7 @@ impl PostProcess {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler_clamp),
+                    resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
                 },
             ],
         });
@@ -785,10 +785,10 @@ struct PostProcessUniform {
 
 impl PostProcessUniform {
     fn new(proj: Mat4, proj_inv: Mat4, width: f32, height: f32, near: f32, far: f32) -> Self {
-        let radius = 0.15f32;
-        let bias = 0.02f32;
-        let intensity = 0.65f32;
-        let power = 1.0f32;
+        let radius = 0.1f32;
+        let bias = 0.03f32;
+        let intensity = 0.75f32;
+        let power = 1.25f32;
         let noise_scale = [
             width / NOISE_TEXTURE_SIZE as f32,
             height / NOISE_TEXTURE_SIZE as f32,
