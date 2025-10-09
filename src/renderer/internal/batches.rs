@@ -1,10 +1,8 @@
-use std::{cmp::Ordering, collections::HashMap, ops::Range};
+use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, Mesh};
 use crate::renderer::batch::{InstanceData, RenderBatcher, RenderPass};
-use crate::renderer::Material;
 use crate::scene::components::DepthState;
-use crate::scene::transform::Transform;
 use glam::Vec3;
 
 #[derive(Debug, Clone)]
@@ -12,21 +10,13 @@ pub(crate) struct OrderedBatch {
     pub mesh: Handle<Mesh>,
     pub pass: RenderPass,
     pub depth_state: DepthState,
-    pub instances: Vec<PreparedInstance>,
+    pub instances: Vec<InstanceData>,
     pub alpha_blend: bool,
     pub first_instance: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct PreparedInstance {
-    pub transform: Transform,
-    pub material_index: u32,
-    pub material: Material,
-}
-
 pub(crate) struct PreparedBatches {
     pub batches: Vec<OrderedBatch>,
-    pub materials: Vec<Material>,
     pub opaque_range: Range<usize>,
     pub transparent_range: Range<usize>,
     pub overlay_range: Range<usize>,
@@ -37,8 +27,6 @@ impl PreparedBatches {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
-        let mut material_lookup = HashMap::new();
-        let mut materials = Vec::new();
 
         for batch in batcher.iter() {
             if batch.instances.is_empty() {
@@ -56,29 +44,11 @@ impl PreparedBatches {
                     .iter()
                     .any(|inst| inst.material.requires_separate_pass());
 
-            let prepared_instances = instances
-                .into_iter()
-                .map(|inst| {
-                    let material_index =
-                        *material_lookup.entry(inst.material).or_insert_with(|| {
-                            let index = materials.len() as u32;
-                            materials.push(inst.material);
-                            index
-                        });
-
-                    PreparedInstance {
-                        transform: inst.transform,
-                        material_index,
-                        material: inst.material,
-                    }
-                })
-                .collect();
-
             let ordered = OrderedBatch {
                 mesh: batch.mesh,
                 pass: batch.pass,
                 depth_state: batch.depth_state,
-                instances: prepared_instances,
+                instances,
                 alpha_blend,
                 first_instance: 0,
             };
@@ -106,7 +76,6 @@ impl PreparedBatches {
 
         Self {
             batches,
-            materials,
             opaque_range,
             transparent_range,
             overlay_range,
@@ -127,10 +96,6 @@ impl PreparedBatches {
 
     pub(crate) fn overlay(&self) -> &[OrderedBatch] {
         &self.batches[self.overlay_range.clone()]
-    }
-
-    pub(crate) fn materials(&self) -> &[Material] {
-        &self.materials
     }
 }
 
