@@ -53,6 +53,15 @@ pub struct InstanceData {
     pub material: Material,
 }
 
+impl InstanceData {
+    pub fn new(transform: Transform, material: Material) -> Self {
+        Self {
+            transform,
+            material,
+        }
+    }
+}
+
 pub struct Batch<'a> {
     pub mesh: Handle<Mesh>,
     pub pass: RenderPass,
@@ -99,11 +108,8 @@ impl RenderBatcher {
 
         self.batches
             .entry(key)
-            .or_insert_with(Vec::new)
-            .push(InstanceData {
-                transform: obj.transform,
-                material: obj.material,
-            });
+            .or_default()
+            .push(InstanceData::new(obj.transform, obj.material));
     }
 
     /// Clear all batches
