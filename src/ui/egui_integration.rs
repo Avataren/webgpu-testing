@@ -55,6 +55,10 @@ impl EguiContext {
         self.ui_callback = Some(Box::new(callback));
     }
 
+    pub fn set_ui_box(&mut self, callback: Box<dyn FnMut(&egui::Context) + 'static>) {
+        self.ui_callback = Some(callback);
+    }
+
     pub fn handle_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
         let response = self.state.on_window_event(window, event);
         response.consumed
