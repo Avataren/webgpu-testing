@@ -7,7 +7,7 @@ use wgpu_cube::scene::{Camera, SceneLoader};
 use wasm_bindgen::prelude::*;
 use wgpu_cube::UpdateContext;
 
-const CHESS_GLTF_PATH: &str = "web/assets/blender/physics_boxes2.gltf";
+const GLTF_PATH: &str = "web/assets/blender/physics_boxes2.gltf";
 const SCENE_SCALE: f32 = 1.0;
 
 fn build_app() -> AppBuilder {
@@ -37,9 +37,9 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
     let renderer = &mut *ctx.renderer;
     let scene = &mut *ctx.scene;
 
-    info!("Loading glTF: {} (scale: {})", CHESS_GLTF_PATH, SCENE_SCALE);
+    info!("Loading glTF: {} (scale: {})", GLTF_PATH, SCENE_SCALE);
 
-    match SceneLoader::load_gltf(CHESS_GLTF_PATH, scene, renderer, SCENE_SCALE) {
+    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, SCENE_SCALE) {
         Ok(_) => {
             scene.add_default_lighting();
             scene.set_camera(Camera {
