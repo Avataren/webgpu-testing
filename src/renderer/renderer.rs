@@ -2,8 +2,9 @@
 use crate::asset::{Assets, Mesh};
 use crate::renderer::batch::InstanceData;
 use crate::renderer::internal::{
-    CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
-    RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
+    CameraBuffer, DynamicMaterialsBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch,
+    PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
+    TextureBindingModel,
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
@@ -17,6 +18,7 @@ use glam::Vec3;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 10;
+const INITIAL_MATERIALS_CAPACITY: u32 = 1024;
 const POINT_SHADOW_FACE_COUNT: u32 = 6;
 
 #[cfg(feature = "egui")]
@@ -52,6 +54,7 @@ pub struct Renderer {
     pipeline: RenderPipeline,
     texture_binder: TextureBindingModel,
     objects_buffer: DynamicObjectsBuffer,
+    materials_buffer: DynamicMaterialsBuffer,
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
     shadows: ShadowResources,
@@ -73,6 +76,8 @@ impl Renderer {
         settings.sample_count = sample_count;
         let camera_buffer = CameraBuffer::new(&context.device);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
+        let materials_buffer =
+            DynamicMaterialsBuffer::new(&context.device, INITIAL_MATERIALS_CAPACITY);
         let shadows =
             ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
         let lights_buffer = LightsBuffer::new(&context.device, &shadows);
@@ -80,6 +85,7 @@ impl Renderer {
             &context,
             &camera_buffer,
             &objects_buffer,
+            &materials_buffer,
             &lights_buffer,
             sample_count,
         );
@@ -95,6 +101,7 @@ impl Renderer {
             pipeline,
             texture_binder,
             objects_buffer,
+            materials_buffer,
             camera_buffer,
             lights_buffer,
             shadows,
@@ -208,8 +215,11 @@ impl Renderer {
             .map(|batch| batch.instances.len() as u32)
             .sum();
 
-        self.objects_buffer
-            .update(&self.context, prepared_batches.all())?;
+        self.objects_buffer.update(
+            &self.context,
+            prepared_batches.all(),
+            &mut self.materials_buffer,
+        )?;
         self.lights_buffer.update(&self.context.queue, lights);
 
         self.shadows.render(
@@ -383,7 +393,7 @@ impl Renderer {
                 let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
                     continue;
                 };
-                rpass.set_bind_group(3, bindless_group, &[]);
+                rpass.set_bind_group(4, bindless_group, &[]);
                 self.draw_full_batch(rpass, mesh, batch);
                 draw_calls += 1;
             }
@@ -415,7 +425,8 @@ impl Renderer {
         rpass.set_pipeline(pipeline);
         rpass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
         rpass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
-        rpass.set_bind_group(2, &self.lights_buffer.bind_group, &[]);
+        rpass.set_bind_group(2, &self.materials_buffer.bind_group, &[]);
+        rpass.set_bind_group(3, &self.lights_buffer.bind_group, &[]);
         Some(mesh)
     }
 
@@ -456,7 +467,7 @@ impl Renderer {
             let start_instance = batch.first_instance + local_offset as u32;
             let end_instance = start_instance + run_length as u32;
 
-            pass.set_bind_group(3, bind_group, &[]);
+            pass.set_bind_group(4, bind_group, &[]);
             pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
 
             local_offset += run_length;
