@@ -15,6 +15,14 @@ pub(crate) struct OrderedBatch {
     pub material: Material,
     pub alpha_blend: bool,
     pub first_instance: u32,
+    pub material_runs: Vec<MaterialRun>,
+    pub lit_instance_count: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MaterialRun {
+    pub material: Material,
+    pub count: u32,
 }
 
 pub(crate) struct PreparedBatches {
@@ -44,6 +52,12 @@ impl PreparedBatches {
             let alpha_blend =
                 batch.pass.uses_alpha_blending() || batch.material.requires_separate_pass();
 
+            let material_runs = compute_material_runs(&instances);
+            let lit_instance_count = instances
+                .iter()
+                .filter(|inst| !inst.material.is_unlit())
+                .count() as u32;
+
             let ordered = OrderedBatch {
                 mesh: batch.mesh,
                 pass: batch.pass,
@@ -52,6 +66,8 @@ impl PreparedBatches {
                 material: batch.material,
                 alpha_blend,
                 first_instance: 0,
+                material_runs,
+                lit_instance_count,
             };
 
             match ordered.pass {
@@ -161,4 +177,34 @@ fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range
     let start = dest.len();
     dest.extend(src);
     start..dest.len()
+}
+
+fn compute_material_runs(instances: &[InstanceData]) -> Vec<MaterialRun> {
+    if instances.is_empty() {
+        return Vec::new();
+    }
+
+    let mut runs = Vec::new();
+    let mut current = instances[0].material;
+    let mut count = 1u32;
+
+    for inst in &instances[1..] {
+        if inst.material == current {
+            count += 1;
+        } else {
+            runs.push(MaterialRun {
+                material: current,
+                count,
+            });
+            current = inst.material;
+            count = 1;
+        }
+    }
+
+    runs.push(MaterialRun {
+        material: current,
+        count,
+    });
+
+    runs
 }
