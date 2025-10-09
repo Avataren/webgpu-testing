@@ -20,6 +20,12 @@ use winit::event_loop::EventLoop;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn init_logging() {
+    #[cfg(feature = "egui")]
+    {
+        ui::init_log_recorder();
+        return;
+    }
+
     let _ = env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .try_init();
@@ -28,6 +34,12 @@ fn init_logging() {
 #[cfg(target_arch = "wasm32")]
 fn init_logging() {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    #[cfg(feature = "egui")]
+    {
+        ui::init_log_recorder();
+        return;
+    }
+
     console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
 }
 
