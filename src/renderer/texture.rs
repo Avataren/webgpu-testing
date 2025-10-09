@@ -43,11 +43,7 @@ impl Texture {
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
 
-        let format = if is_srgb {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
-        };
+        let (texture_format, view_format) = Self::formats_for_color_space(is_srgb);
 
         Ok(Self::from_rgba8(
             device,
@@ -55,7 +51,8 @@ impl Texture {
             &rgba,
             width,
             height,
-            format,
+            texture_format,
+            view_format,
             path.to_str(),
         ))
     }
@@ -67,7 +64,8 @@ impl Texture {
         data: &[u8],
         width: u32,
         height: u32,
-        format: wgpu::TextureFormat,
+        texture_format: wgpu::TextureFormat,
+        view_format: Option<wgpu::TextureFormat>,
         label: Option<&str>,
     ) -> Self {
         let mip_level_count = Self::calculate_mip_levels(width, height);
@@ -78,17 +76,22 @@ impl Texture {
             depth_or_array_layers: 1,
         };
 
+        let mut view_formats = Vec::new();
+        if let Some(format) = view_format {
+            view_formats.push(format);
+        }
+
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size,
             mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format,
+            format: texture_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::RENDER_ATTACHMENT, // Needed for mipmap generation
-            view_formats: &[],
+            view_formats: &view_formats,
         });
 
         // Upload base mip level (mip 0)
@@ -109,9 +112,12 @@ impl Texture {
         );
 
         // Generate mipmaps
-        Self::generate_mipmaps(device, queue, &texture, mip_level_count, format);
+        Self::generate_mipmaps(device, queue, &texture, mip_level_count, texture_format);
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            format: view_format.or(Some(texture_format)),
+            ..Default::default()
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::Repeat,
@@ -340,56 +346,16 @@ impl Texture {
         color: [u8; 4],
         label: Option<&str>,
     ) -> Self {
-        let size = wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label,
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+        Self::from_rgba8(
+            device,
+            queue,
             &color,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            size,
-        );
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        Self {
-            texture,
-            view,
-            sampler,
-        }
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            label,
+        )
     }
 
     /// Create texture from rgba8 image data
@@ -407,7 +373,8 @@ impl Texture {
             bytes,
             width,
             height,
-            wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::TextureFormat::Rgba8Unorm,
+            Some(wgpu::TextureFormat::Rgba8UnormSrgb),
             label,
         )
     }
@@ -458,6 +425,7 @@ impl Texture {
             1,
             1,
             wgpu::TextureFormat::Rgba8Unorm,
+            None,
             label,
         )
     }
@@ -465,18 +433,45 @@ impl Texture {
     /// Create default normal map (1x1, pointing up)
     pub fn default_normal(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // Normal pointing straight up: (0, 0, 1) -> (128, 128, 255) in texture space
-        Self::from_color(device, queue, [128, 128, 255, 255], Some("DefaultNormal"))
+        Self::from_rgba8(
+            device,
+            queue,
+            &[128, 128, 255, 255],
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            None,
+            Some("DefaultNormal"),
+        )
     }
 
     /// Create default metallic-roughness (1x1, non-metallic, mid-roughness)
     pub fn default_metallic_roughness(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // R=occlusion(1.0), G=roughness(0.5), B=metallic(0.0)
-        Self::from_color(
+        Self::from_rgba8(
             device,
             queue,
-            [255, 128, 0, 255],
+            &[255, 128, 0, 255],
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            None,
             Some("DefaultMetallicRoughness"),
         )
+    }
+
+    /// Determine the texture and view formats used for a colour texture.
+    fn formats_for_color_space(
+        is_srgb: bool,
+    ) -> (wgpu::TextureFormat, Option<wgpu::TextureFormat>) {
+        if is_srgb {
+            (
+                wgpu::TextureFormat::Rgba8Unorm,
+                Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            )
+        } else {
+            (wgpu::TextureFormat::Rgba8Unorm, None)
+        }
     }
 }
 
@@ -544,6 +539,17 @@ mod tests {
         assert_eq!(Texture::calculate_mip_levels(1920, 1080), 11); // log2(1920) ≈ 10.90
     }
 
+    #[test]
+    fn srgb_textures_use_renderable_storage_format() {
+        let (storage, view) = Texture::formats_for_color_space(true);
+        assert_eq!(storage, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(view, Some(wgpu::TextureFormat::Rgba8UnormSrgb));
+
+        let (storage_linear, view_linear) = Texture::formats_for_color_space(false);
+        assert_eq!(storage_linear, wgpu::TextureFormat::Rgba8Unorm);
+        assert_eq!(view_linear, None);
+    }
+
     // This test requires a GPU - run with `cargo test --features gpu-tests` or similar
     #[test]
     #[ignore] // Ignore by default since it requires GPU
@@ -577,6 +583,7 @@ mod tests {
                 4,
                 4,
                 wgpu::TextureFormat::Rgba8Unorm,
+                None,
                 Some("Test Texture"),
             );
 
@@ -647,6 +654,7 @@ mod tests {
                 4,
                 4,
                 wgpu::TextureFormat::Rgba8Unorm,
+                None,
                 Some("4x4"),
             );
 
@@ -658,6 +666,7 @@ mod tests {
                 256,
                 256,
                 wgpu::TextureFormat::Rgba8Unorm,
+                None,
                 Some("256x256"),
             );
 
