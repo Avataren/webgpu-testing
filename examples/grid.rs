@@ -1,6 +1,7 @@
 use glam::{Quat, Vec3};
 use log::info;
-use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
+use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
@@ -10,12 +11,19 @@ use wgpu_cube::scene::{
 use wasm_bindgen::prelude::*;
 
 const GRID_SIZE: i32 = 10;
+const CAMERA_RADIUS: f32 = 15.0;
+const CAMERA_HEIGHT: f32 = 8.0;
 
-fn build_app() -> AppBuilder {
-    let mut builder = AppBuilder::new();
-    builder.add_startup_system(setup_grid_scene);
-    builder.add_system(orbit_camera(15.0, 8.0));
-    builder
+struct ExampleApp;
+
+impl RenderApplication for ExampleApp {
+    fn setup(&mut self, ctx: &mut StartupContext) {
+        setup_grid_scene(ctx);
+    }
+
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        orbit_camera(ctx, CAMERA_RADIUS, CAMERA_HEIGHT);
+    }
 }
 
 fn setup_grid_scene(ctx: &mut StartupContext<'_>) {
@@ -60,24 +68,17 @@ fn setup_grid_scene(ctx: &mut StartupContext<'_>) {
     info!("Grid scene: {} entities", scene.world.len());
 }
 
-fn orbit_camera(
-    radius: f32,
-    height: f32,
-) -> Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static> {
-    Box::new(move |ctx: &mut UpdateContext<'_>| {
-        let t = ctx.scene.time() as f32 * 0.25;
-        let camera = ctx.scene.camera_mut();
-        camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
-        camera.target = Vec3::ZERO;
-        camera.up = Vec3::Y;
-    })
+fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {
+    let t = ctx.scene.time() as f32 * 0.25;
+    let camera = ctx.scene.camera_mut();
+    camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
+    camera.target = Vec3::ZERO;
+    camera.up = Vec3::Y;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    if let Err(err) = wgpu_cube::run(build_app()) {
-        eprintln!("Application error: {err}");
-    }
+    run_application(ExampleApp).unwrap();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -88,7 +89,7 @@ fn main() {}
 pub fn start_app() {
     web_sys::console::log_1(&"[Rust] start_app() called".into());
 
-    match wgpu_cube::run(build_app()) {
+    match run_application(ExampleApp) {
         Ok(_) => {
             web_sys::console::log_1(&"[Rust] Application started successfully".into());
         }

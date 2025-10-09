@@ -1,19 +1,19 @@
 use glam::Vec3;
-use wgpu_cube::render_application::{RenderApplication, run_application};
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::EntityBuilder;
 
-struct TestApp;
+struct ExampleApp;
 
-impl RenderApplication for TestApp {
+impl RenderApplication for ExampleApp {
     fn setup(&mut self, ctx: &mut StartupContext) {
         log::info!("Setting up test scene");
-        
+
         let (verts, idx) = wgpu_cube::renderer::cube_mesh();
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-        
+
         EntityBuilder::new(&mut ctx.scene.world)
             .with_name("Test Cube")
             .with_mesh(mesh_handle)
@@ -33,7 +33,7 @@ impl RenderApplication for TestApp {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    run_application(TestApp).unwrap();
+    run_application(ExampleApp).unwrap();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -42,5 +42,5 @@ fn main() {}
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn start_app() {
-    run_application(TestApp).unwrap();
+    run_application(ExampleApp).unwrap();
 }
