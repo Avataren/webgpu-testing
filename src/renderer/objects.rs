@@ -5,7 +5,24 @@ use glam::Mat4;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct ObjectData {
-    pub model: [[f32; 4]; 4],            // 64 bytes
+    pub model: [[f32; 4]; 4], // 64 bytes
+    pub material_index: u32,  // 4 bytes
+    pub _padding: [u32; 3],   // 12 bytes (ensures 80 byte stride)
+}
+
+impl ObjectData {
+    pub fn from_material_index(model: Mat4, material_index: u32) -> Self {
+        Self {
+            model: model.to_cols_array_2d(),
+            material_index,
+            _padding: [0; 3],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+pub struct MaterialData {
     pub color: [f32; 4],                 // 16 bytes
     pub base_color_texture: u32,         // 4 bytes
     pub metallic_roughness_texture: u32, // 4 bytes
@@ -16,14 +33,13 @@ pub struct ObjectData {
     pub metallic_factor: f32,            // 4 bytes
     pub roughness_factor: f32,           // 4 bytes
     pub emissive_strength: f32,          // 4 bytes
-    pub _padding: u32,                   // 4 bytes
-    pub _padding2: [u32; 2],             // 8 bytes (ensures 128 byte stride)
+    pub _padding: f32,                   // 4 bytes
+    pub _padding2: [u32; 2],             // 8 bytes (ensures 64 byte stride)
 }
 
-impl ObjectData {
-    pub fn from_material(model: Mat4, material: &crate::renderer::Material) -> Self {
+impl MaterialData {
+    pub fn from_material(material: &crate::renderer::Material) -> Self {
         Self {
-            model: model.to_cols_array_2d(),
             color: material.color_f32(),
             base_color_texture: material.base_color_texture,
             metallic_roughness_texture: material.metallic_roughness_texture,
@@ -34,7 +50,7 @@ impl ObjectData {
             metallic_factor: material.metallic_f32(),
             roughness_factor: material.roughness_f32(),
             emissive_strength: material.emissive_f32(),
-            _padding: 0,
+            _padding: 0.0,
             _padding2: [0, 0],
         }
     }
@@ -45,14 +61,13 @@ mod tests {
     use super::*;
     #[test]
     fn object_data_size() {
-        // 64 + 16 + 5*4 + 4 + 3*4 + 4 + 8 padding = 128 bytes
-        assert_eq!(std::mem::size_of::<ObjectData>(), 128);
+        // 64 (model) + 4 (index) + 12 padding = 80 bytes
+        assert_eq!(std::mem::size_of::<ObjectData>(), 80);
     }
 
     #[test]
-    fn object_data_pbr_factors() {
+    fn material_data_pbr_factors() {
         use crate::renderer::Material;
-        use glam::{Mat4, Vec3};
 
         let material = Material::new([255, 255, 255, 255])
             .with_metallic(0.75)
@@ -62,12 +77,12 @@ mod tests {
         assert_eq!(material.metallic_factor, 191);
         assert_eq!(material.roughness_factor, 63);
 
-        let object = ObjectData::from_material(Mat4::from_scale(Vec3::ONE), &material);
+        let material_gpu = MaterialData::from_material(&material);
 
-        assert!((object.metallic_factor - 0.75).abs() < 0.01);
-        assert!((object.roughness_factor - 0.25).abs() < 0.01);
-        assert_eq!(object.material_flags & 0b10, 0); // MR texture flag should be off
-        assert_eq!(object.material_flags & 0b1, 0b1); // Base color flag on
+        assert!((material_gpu.metallic_factor - 0.75).abs() < 0.01);
+        assert!((material_gpu.roughness_factor - 0.25).abs() < 0.01);
+        assert_eq!(material_gpu.material_flags & 0b10, 0); // MR texture flag should be off
+        assert_eq!(material_gpu.material_flags & 0b1, 0b1); // Base color flag on
     }
 
     #[test]
@@ -88,8 +103,9 @@ mod tests {
                     .with_roughness(roughness)
                     .with_base_color_texture(0);
 
-                metallic_values.push(material.metallic_f32());
-                roughness_values.push(material.roughness_f32());
+                let material_gpu = MaterialData::from_material(&material);
+                metallic_values.push(material_gpu.metallic_factor);
+                roughness_values.push(material_gpu.roughness_factor);
             }
         }
 
