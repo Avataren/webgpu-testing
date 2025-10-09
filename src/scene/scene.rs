@@ -3,10 +3,10 @@ use super::animation::{
     AnimationClip, AnimationState, AnimationTarget, MaterialUpdate, TransformUpdate,
 };
 use super::components::*;
-use crate::asset::Assets;
+use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::{
-    DirectionalShadowData, LightsData, PointShadowData, RenderBatcher, RenderObject, Renderer,
-    SpotShadowData,
+    DirectionalShadowData, LightsData, Material, PointShadowData, RenderBatcher, RenderObject,
+    Renderer, SpotShadowData,
 };
 use crate::scene::{Camera, Transform};
 use crate::time::Instant;
@@ -112,26 +112,34 @@ impl Scene {
 
     pub fn render(&mut self, renderer: &mut Renderer, batcher: &mut RenderBatcher) {
         batcher.clear();
-        let camera_pos = renderer.camera_position();
-        let camera_target = renderer.camera_target();
-        let camera_up = renderer.camera_up();
+        let camera = CameraVectors::from_renderer(renderer);
 
-        // OPTIMIZED: Parallel render object collection
-        // Collect all data first to avoid borrow checker issues
-        use crate::asset::Handle;
-        use crate::asset::Mesh;
+        let render_objects = self.build_render_objects(camera);
 
-        let render_data: Vec<(
-            Handle<Mesh>,              // mesh handle - FIXED: was u32, should be Handle<Mesh>
-            crate::renderer::Material, // material
-            bool,                      // visible
-            Option<Transform>,         // world transform
-            Option<Transform>,         // local transform
-            Option<String>,            // name (for debug)
-            Option<Billboard>,
-            Option<DepthState>,
-        )> = self
-            .world
+        for obj in render_objects {
+            batcher.add(obj);
+        }
+
+        let lights = self.collect_lights(camera);
+
+        renderer.set_lights(&lights);
+
+        if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
+            log::error!("Render error: {:?}", e);
+        }
+    }
+
+    fn build_render_objects(&self, camera: CameraVectors) -> Vec<RenderObject> {
+        let render_entities = self.collect_render_entities();
+
+        render_entities
+            .into_par_iter()
+            .filter_map(|entity| Self::prepare_render_object(camera, entity))
+            .collect()
+    }
+
+    fn collect_render_entities(&self) -> Vec<RenderEntity> {
+        self.world
             .query::<(
                 &MeshComponent,
                 &MaterialComponent,
@@ -156,98 +164,88 @@ impl Scene {
                         billboard,
                         depth_state,
                     ),
-                )| {
-                    (
-                        mesh.0, // This is Handle<Mesh>, not u32
-                        material.0,
-                        visible.0,
-                        world_transform.map(|wt| wt.0),
-                        local_transform.map(|lt| lt.0),
-                        name.map(|n| n.0.clone()),
-                        billboard.copied(),
-                        depth_state.copied(),
-                    )
+                )| RenderEntity {
+                    mesh: mesh.0,
+                    material: material.0,
+                    visible: visible.0,
+                    world_transform: world_transform.map(|t| t.0),
+                    local_transform: local_transform.map(|t| t.0),
+                    name: name.map(|n| n.0.clone()),
+                    billboard: billboard.copied(),
+                    depth_state: depth_state.copied(),
                 },
             )
-            .collect();
+            .collect()
+    }
 
-        let render_objects: Vec<RenderObject> = render_data
-            .par_iter()
-            .filter_map(
-                |(
-                    mesh,
-                    material,
-                    visible,
-                    world_transform,
-                    local_transform,
-                    name,
-                    billboard,
-                    depth_state,
-                )| {
-                    if !*visible {
-                        return None;
-                    }
-
-                    // Prefer WorldTransform if it exists
-                    let mut transform = if let Some(world_trans) = world_transform {
-                        *world_trans
-                    } else if let Some(local_trans) = local_transform {
-                        if cfg!(debug_assertions) {
-                            if let Some(name_str) = name {
-                                log::warn!(
-                                    "Entity '{}' using LOCAL transform (no WorldTransform)",
-                                    name_str
-                                );
-                            }
-                        }
-                        *local_trans
-                    } else {
-                        log::warn!("Entity without transform");
-                        Transform::IDENTITY
-                    };
-
-                    let mut material_value = *material;
-
-                    if let Some(billboard_val) = billboard {
-                        transform = Self::apply_billboard_transform(
-                            transform,
-                            *billboard_val,
-                            camera_pos,
-                            camera_target,
-                            camera_up,
-                        );
-
-                        if billboard_val.lit {
-                            material_value = material_value.with_lit();
-                        } else {
-                            material_value = material_value.with_unlit();
-                        }
-                    }
-
-                    let depth_state_val = depth_state.unwrap_or_default();
-                    let force_overlay = billboard.is_some()
-                        && !depth_state_val.depth_test
-                        && !depth_state_val.depth_write;
-
-                    Some(RenderObject {
-                        mesh: *mesh, // FIXED: just dereference, it's already Handle<Mesh>
-                        material: material_value,
-                        transform,
-                        depth_state: depth_state_val,
-                        force_overlay,
-                    })
-                },
-            )
-            .collect();
-
-        // Add all collected objects to the batcher
-        for obj in render_objects {
-            batcher.add(obj);
+    fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<RenderObject> {
+        if !entity.visible {
+            return None;
         }
 
-        // Light collection - remains sequential as it's typically small
+        let mut transform = Self::select_render_transform(&entity);
+        let mut material = entity.material;
+        let billboard = entity.billboard;
+
+        if let Some(billboard) = billboard {
+            transform = Self::apply_billboard_transform(
+                transform,
+                billboard,
+                camera.position,
+                camera.target,
+                camera.up,
+            );
+
+            material = if billboard.lit {
+                material.with_lit()
+            } else {
+                material.with_unlit()
+            };
+        }
+
+        let depth_state = entity.depth_state.unwrap_or_default();
+        let force_overlay =
+            billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
+
+        Some(RenderObject {
+            mesh: entity.mesh,
+            material,
+            transform,
+            depth_state,
+            force_overlay,
+        })
+    }
+
+    fn select_render_transform(entity: &RenderEntity) -> Transform {
+        if let Some(world) = entity.world_transform {
+            world
+        } else if let Some(local) = entity.local_transform {
+            if cfg!(debug_assertions) {
+                if let Some(name) = &entity.name {
+                    log::warn!(
+                        "Entity '{}' using LOCAL transform (no WorldTransform)",
+                        name
+                    );
+                }
+            }
+            local
+        } else {
+            log::warn!("Entity without transform");
+            Transform::IDENTITY
+        }
+    }
+
+    fn collect_lights(&self, camera: CameraVectors) -> LightsData {
         let mut lights = LightsData::default();
 
+        self.collect_directional_lights(camera, &mut lights);
+        self.collect_point_lights(&mut lights);
+        self.collect_spot_lights(&mut lights);
+
+        lights
+    }
+
+    fn collect_directional_lights(&self, camera: CameraVectors, lights: &mut LightsData) {
         for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
@@ -258,24 +256,25 @@ impl Scene {
             )>()
             .iter()
         {
-            let transform = world_transform
-                .map(|t| t.0)
-                .or_else(|| local_transform.map(|t| t.0))
-                .unwrap_or(Transform::IDENTITY);
-            let raw_dir = transform.rotation * Vec3::NEG_Z;
-            let direction = if raw_dir.length_squared() > 0.0 {
-                raw_dir.normalize()
-            } else {
-                Vec3::new(0.0, -1.0, 0.0)
-            };
+            let transform = Self::resolve_light_transform(world_transform, local_transform);
+            let direction =
+                Self::safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::new(0.0, -1.0, 0.0));
 
-            let shadow = shadow_flag
-                .filter(|flag| flag.0)
-                .map(|_| Self::build_directional_shadow(camera_pos, camera_target, transform));
+            let shadow = if Self::shadow_enabled(shadow_flag) {
+                Some(Self::build_directional_shadow(
+                    camera.position,
+                    camera.target,
+                    transform,
+                ))
+            } else {
+                None
+            };
 
             lights.add_directional(direction, light.color, light.intensity, shadow);
         }
+    }
 
+    fn collect_point_lights(&self, lights: &mut LightsData) {
         for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
@@ -286,14 +285,13 @@ impl Scene {
             )>()
             .iter()
         {
-            let transform = world_transform
-                .map(|t| t.0)
-                .or_else(|| local_transform.map(|t| t.0))
-                .unwrap_or(Transform::IDENTITY);
+            let transform = Self::resolve_light_transform(world_transform, local_transform);
 
-            let shadow = shadow_flag
-                .filter(|flag| flag.0)
-                .map(|_| Self::build_point_shadow(transform.translation, light.range));
+            let shadow = if Self::shadow_enabled(shadow_flag) {
+                Some(Self::build_point_shadow(transform.translation, light.range))
+            } else {
+                None
+            };
 
             lights.add_point(
                 transform.translation,
@@ -303,7 +301,9 @@ impl Scene {
                 shadow,
             );
         }
+    }
 
+    fn collect_spot_lights(&self, lights: &mut LightsData) {
         for (_entity, (light, world_transform, local_transform, shadow_flag)) in self
             .world
             .query::<(
@@ -314,20 +314,15 @@ impl Scene {
             )>()
             .iter()
         {
-            let transform = world_transform
-                .map(|t| t.0)
-                .or_else(|| local_transform.map(|t| t.0))
-                .unwrap_or(Transform::IDENTITY);
-            let raw_dir = transform.rotation * Vec3::NEG_Z;
-            let direction = if raw_dir.length_squared() > 0.0 {
-                raw_dir.normalize()
-            } else {
-                Vec3::new(0.0, -1.0, 0.0)
-            };
+            let transform = Self::resolve_light_transform(world_transform, local_transform);
+            let direction =
+                Self::safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::new(0.0, -1.0, 0.0));
 
-            let shadow = shadow_flag
-                .filter(|flag| flag.0)
-                .map(|_| Self::build_spot_shadow(transform, light));
+            let shadow = if Self::shadow_enabled(shadow_flag) {
+                Some(Self::build_spot_shadow(transform, light))
+            } else {
+                None
+            };
 
             lights.add_spot(
                 transform.translation,
@@ -340,11 +335,76 @@ impl Scene {
                 shadow,
             );
         }
+    }
 
-        renderer.set_lights(&lights);
+    fn resolve_light_transform(
+        world_transform: Option<&WorldTransform>,
+        local_transform: Option<&TransformComponent>,
+    ) -> Transform {
+        world_transform
+            .map(|t| t.0)
+            .or_else(|| local_transform.map(|t| t.0))
+            .unwrap_or(Transform::IDENTITY)
+    }
 
-        if let Err(e) = renderer.render(&self.assets, batcher, &lights) {
-            log::error!("Render error: {:?}", e);
+    fn shadow_enabled(flag: Option<&CanCastShadow>) -> bool {
+        flag.map(|flag| flag.0).unwrap_or(false)
+    }
+
+    fn apply_transform_update(&mut self, entity: hecs::Entity, update: TransformUpdate) {
+        if let Ok(mut transform) = self.world.get::<&mut TransformComponent>(entity) {
+            if let Some(translation) = update.translation {
+                transform.0.translation = translation;
+            }
+
+            if let Some(rotation) = update.rotation {
+                transform.0.rotation = rotation;
+            }
+
+            if let Some(scale) = update.scale {
+                transform.0.scale = scale;
+            }
+        }
+    }
+
+    fn apply_material_updates(&mut self, material_updates: HashMap<usize, MaterialUpdate>) {
+        if material_updates.is_empty() {
+            return;
+        }
+
+        let mut material_entities: Vec<hecs::Entity> = Vec::new();
+
+        for (material_index, update) in material_updates {
+            let Some(color) = update.base_color else {
+                continue;
+            };
+
+            material_entities.clear();
+            {
+                let mut query = self.world.query::<&GltfMaterial>();
+                for (entity, gltf_material) in query.iter() {
+                    if gltf_material.0 == material_index {
+                        material_entities.push(entity);
+                    }
+                }
+            }
+
+            if material_entities.is_empty() {
+                continue;
+            }
+
+            let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
+
+            for entity in &material_entities {
+                if let Ok(mut material) = self.world.get::<&mut MaterialComponent>(*entity) {
+                    material.0.base_color = [
+                        to_u8(color.x),
+                        to_u8(color.y),
+                        to_u8(color.z),
+                        to_u8(color.w),
+                    ];
+                }
+            }
         }
     }
 
@@ -450,7 +510,7 @@ impl Scene {
         camera_target: Vec3,
         light_transform: Transform,
     ) -> DirectionalShadowData {
-        const SHADOW_SIZE: f32 = 5.0;
+        const SHADOW_SIZE: f32 = 15.0;
         const SHADOW_DISTANCE: f32 = 30.0;
 
         let raw_dir = light_transform.rotation * Vec3::NEG_Z;
@@ -537,16 +597,8 @@ impl Scene {
         let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
 
         let position = transform.translation;
-        let mut forward = transform.rotation * Vec3::NEG_Z;
-        if forward.length_squared() < 1e-8 {
-            forward = Vec3::NEG_Z;
-        }
-        forward = forward.normalize();
-
-        let mut up = transform.rotation * Vec3::Y;
-        if up.length_squared() < 1e-8 {
-            up = Vec3::Y;
-        }
+        let forward = Self::safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
+        let mut up = Self::safe_normalize(transform.rotation * Vec3::Y, Vec3::Y);
 
         let mut right = forward.cross(up);
         if right.length_squared() < 1e-8 {
@@ -558,7 +610,7 @@ impl Scene {
             right = forward.cross(fallback);
         }
         right = right.normalize();
-        let up = right.cross(forward).normalize();
+        up = right.cross(forward).normalize();
 
         let view = Mat4::look_at_rh(position, position + forward, up);
         let projection = Mat4::perspective_rh(fov, 1.0, near, far);
@@ -699,59 +751,10 @@ impl Scene {
         }
 
         for (entity, update) in transform_updates {
-            if let Ok(mut transform) = self.world.get::<&mut TransformComponent>(entity) {
-                if let Some(translation) = update.translation {
-                    transform.0.translation = translation;
-                }
-
-                if let Some(rotation) = update.rotation {
-                    transform.0.rotation = rotation;
-                }
-
-                if let Some(scale) = update.scale {
-                    transform.0.scale = scale;
-                }
-            }
+            self.apply_transform_update(entity, update);
         }
 
-        if material_updates.is_empty() {
-            return;
-        }
-
-        let mut material_entities: Vec<hecs::Entity> = Vec::new();
-
-        for (material_index, update) in material_updates {
-            let Some(color) = update.base_color else {
-                continue;
-            };
-
-            material_entities.clear();
-            {
-                let mut query = self.world.query::<&GltfMaterial>();
-                for (entity, gltf_material) in query.iter() {
-                    if gltf_material.0 == material_index {
-                        material_entities.push(entity);
-                    }
-                }
-            }
-
-            if material_entities.is_empty() {
-                continue;
-            }
-
-            let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
-
-            for entity in &material_entities {
-                if let Ok(mut material) = self.world.get::<&mut MaterialComponent>(*entity) {
-                    material.0.base_color = [
-                        to_u8(color.x),
-                        to_u8(color.y),
-                        to_u8(color.z),
-                        to_u8(color.w),
-                    ];
-                }
-            }
-        }
+        self.apply_material_updates(material_updates);
     }
 
     fn system_rotate_animation(&mut self, dt: f64) {
@@ -1064,6 +1067,34 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+struct RenderEntity {
+    mesh: Handle<Mesh>,
+    material: Material,
+    visible: bool,
+    world_transform: Option<Transform>,
+    local_transform: Option<Transform>,
+    name: Option<String>,
+    billboard: Option<Billboard>,
+    depth_state: Option<DepthState>,
+}
+
+#[derive(Clone, Copy)]
+struct CameraVectors {
+    position: Vec3,
+    target: Vec3,
+    up: Vec3,
+}
+
+impl CameraVectors {
+    fn from_renderer(renderer: &Renderer) -> Self {
+        Self {
+            position: renderer.camera_position(),
+            target: renderer.camera_target(),
+            up: renderer.camera_up(),
+        }
     }
 }
 
