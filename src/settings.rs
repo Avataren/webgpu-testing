@@ -167,3 +167,102 @@ impl Default for PresentModeSetting {
         PresentModeSetting::Fifo
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn invalid_settings() -> RenderSettings {
+        RenderSettings {
+            sample_count: 0,
+            shadow_map_size: 0,
+            resolution: Resolution {
+                width: 0,
+                height: 0,
+            },
+            present_mode: PresentModeSetting::Immediate,
+        }
+    }
+
+    #[test]
+    fn validate_replaces_invalid_values_with_defaults() {
+        let validated = invalid_settings().validate();
+
+        assert_eq!(
+            validated.sample_count,
+            RenderSettings::default().sample_count
+        );
+        assert_eq!(
+            validated.shadow_map_size,
+            RenderSettings::default().shadow_map_size
+        );
+        assert_eq!(validated.resolution.width, Resolution::default().width);
+        assert_eq!(validated.resolution.height, Resolution::default().height);
+    }
+
+    #[test]
+    fn validate_preserves_valid_values() {
+        let valid = RenderSettings {
+            sample_count: 4,
+            shadow_map_size: 2048,
+            resolution: Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            present_mode: PresentModeSetting::Mailbox,
+        };
+
+        let validated = valid.clone().validate();
+
+        assert_eq!(validated.sample_count, valid.sample_count);
+        assert_eq!(validated.shadow_map_size, valid.shadow_map_size);
+        assert_eq!(validated.resolution.width, valid.resolution.width);
+        assert_eq!(validated.resolution.height, valid.resolution.height);
+    }
+
+    #[test]
+    fn present_mode_returns_desired_when_available() {
+        let settings = RenderSettings {
+            present_mode: PresentModeSetting::Mailbox,
+            ..RenderSettings::default()
+        };
+
+        let available = [
+            wgpu::PresentMode::Fifo,
+            wgpu::PresentMode::Mailbox,
+            wgpu::PresentMode::Immediate,
+        ];
+
+        assert_eq!(
+            settings.present_mode(&available),
+            wgpu::PresentMode::Mailbox
+        );
+    }
+
+    #[test]
+    fn present_mode_falls_back_to_fifo_when_desired_missing() {
+        let settings = RenderSettings {
+            present_mode: PresentModeSetting::Mailbox,
+            ..RenderSettings::default()
+        };
+
+        let available = [wgpu::PresentMode::Fifo, wgpu::PresentMode::Immediate];
+
+        assert_eq!(settings.present_mode(&available), wgpu::PresentMode::Fifo);
+    }
+
+    #[test]
+    fn present_mode_uses_first_available_when_fifo_missing() {
+        let settings = RenderSettings {
+            present_mode: PresentModeSetting::Mailbox,
+            ..RenderSettings::default()
+        };
+
+        let available = [wgpu::PresentMode::Immediate];
+
+        assert_eq!(
+            settings.present_mode(&available),
+            wgpu::PresentMode::Immediate
+        );
+    }
+}
