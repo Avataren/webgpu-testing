@@ -205,22 +205,7 @@ impl App {
     where
         F: FnMut(&egui::Context) + 'static,
     {
-        let boxed: Box<dyn FnMut(&egui::Context) + 'static> = Box::new(callback);
-
         if let Some(egui) = &mut self.egui_context {
-            egui.set_ui(boxed);
-            self.pending_egui_ui = None;
-        } else {
-            self.pending_egui_ui = Some(boxed);
-        }
-    }
-
-    #[cfg(feature = "egui")]
-    fn initialize_egui_context(&mut self, renderer: &Renderer, window: &Window, message: &str) {
-        let mut egui =
-            crate::ui::EguiContext::new(renderer.get_device(), renderer.surface_format(), window);
-
-        if let Some(callback) = self.pending_egui_ui.take() {
             egui.set_ui(callback);
             self.egui_pending_ui = None;
         } else {
@@ -294,10 +279,10 @@ impl App {
             #[cfg(feature = "egui")]
             {
                 if let Some(window) = &self.window {
-                    self.initialize_egui_context(
-                        &renderer,
+                    let egui = crate::ui::EguiContext::new(
+                        renderer.get_device(),
+                        renderer.surface_format(),
                         window,
-                        "Egui context initialized (async)",
                     );
                     self.install_egui_context(egui);
                     log::info!("Egui context initialized (async)");
