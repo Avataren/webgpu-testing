@@ -6,7 +6,7 @@ use wgpu_cube::scene::SceneLoader;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const CHESS_GLTF_PATH: &str = "web/assets/chessboard/ABeautifulGame.gltf";
+const GLTF_PATH: &str = "web/assets/chessboard/ABeautifulGame.gltf";
 const CHESS_SCALE: f32 = 15.0;
 
 fn build_app() -> AppBuilder {
@@ -24,9 +24,9 @@ fn load_chess_scene(ctx: &mut StartupContext<'_>) {
     let renderer = &mut *ctx.renderer;
     let scene = &mut *ctx.scene;
 
-    info!("Loading glTF: {} (scale: {})", CHESS_GLTF_PATH, CHESS_SCALE);
+    info!("Loading glTF: {} (scale: {})", GLTF_PATH, CHESS_SCALE);
 
-    match SceneLoader::load_gltf(CHESS_GLTF_PATH, scene, renderer, CHESS_SCALE) {
+    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, CHESS_SCALE) {
         Ok(_) => {
             scene.add_default_lighting();
             info!("glTF loaded: {} entities", scene.world.len());
