@@ -13,7 +13,7 @@ pub mod context;
 pub mod pipeline;
 pub mod shadows;
 
-pub(crate) use batches::{OrderedBatch, PreparedBatches};
+pub(crate) use batches::{OrderedBatch, PreparedBatches, PreparedInstance};
 pub(crate) use buffers::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer};
 pub(crate) use context::RenderContext;
 pub(crate) use pipeline::{PipelineKey, RenderPipeline, TextureBindingModel};
