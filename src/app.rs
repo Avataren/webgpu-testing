@@ -23,6 +23,9 @@ type WindowHandle = Window;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
+#[cfg(feature = "egui")]
+use crate::ui::egui;
+
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
 use crate::time::Instant;
 
@@ -149,7 +152,7 @@ impl AppBuilder {
             #[cfg(feature = "egui")]
             egui_context: None,
             #[cfg(feature = "egui")]
-            pending_egui_ui: None,
+            egui_pending_ui: None,
         }
     }
 }
@@ -189,7 +192,7 @@ pub struct App {
     #[cfg(feature = "egui")]
     egui_context: Option<crate::ui::EguiContext>,
     #[cfg(feature = "egui")]
-    pending_egui_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
+    egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
 }
 
 impl App {
@@ -219,10 +222,18 @@ impl App {
 
         if let Some(callback) = self.pending_egui_ui.take() {
             egui.set_ui(callback);
+            self.egui_pending_ui = None;
+        } else {
+            self.egui_pending_ui = Some(Box::new(callback));
         }
+    }
 
+    #[cfg(feature = "egui")]
+    fn install_egui_context(&mut self, mut egui: crate::ui::EguiContext) {
+        if let Some(callback) = self.egui_pending_ui.take() {
+            egui.set_ui_box(callback);
+        }
         self.egui_context = Some(egui);
-        log::info!("{}", message);
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -288,6 +299,8 @@ impl App {
                         window,
                         "Egui context initialized (async)",
                     );
+                    self.install_egui_context(egui);
+                    log::info!("Egui context initialized (async)");
                 }
             }
 
@@ -457,7 +470,13 @@ impl ApplicationHandler for App {
 
                 #[cfg(feature = "egui")]
                 {
-                    self.initialize_egui_context(&renderer, &window, "Egui context initialized");
+                    let egui = crate::ui::EguiContext::new(
+                        renderer.get_device(),
+                        renderer.surface_format(),
+                        &window,
+                    );
+                    self.install_egui_context(egui);
+                    log::info!("Egui context initialized");
                 }
 
                 self.scene.init_timer();
