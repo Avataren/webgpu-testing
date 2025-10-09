@@ -15,8 +15,8 @@ pub struct Texture {
 impl Texture {
     /// Calculate the number of mip levels for a given texture size
     fn calculate_mip_levels(width: u32, height: u32) -> u32 {
-        let max_dimension = width.max(height);
-        (max_dimension as f32).log2().floor() as u32 + 1
+        let max_dimension = width.max(height).max(1);
+        u32::BITS - max_dimension.leading_zeros()
     }
 
     /// Load texture from file path with mipmaps
@@ -49,7 +49,15 @@ impl Texture {
             wgpu::TextureFormat::Rgba8Unorm
         };
 
-        Self::from_rgba8(device, queue, &rgba, width, height, format, path.to_str())
+        Ok(Self::from_rgba8(
+            device,
+            queue,
+            &rgba,
+            width,
+            height,
+            format,
+            path.to_str(),
+        ))
     }
 
     /// Create texture from rgba8 data with mipmaps
@@ -61,7 +69,7 @@ impl Texture {
         height: u32,
         format: wgpu::TextureFormat,
         label: Option<&str>,
-    ) -> Result<Self, String> {
+    ) -> Self {
         let mip_level_count = Self::calculate_mip_levels(width, height);
 
         let size = wgpu::Extent3d {
@@ -115,11 +123,11 @@ impl Texture {
             ..Default::default()
         });
 
-        Ok(Self {
+        Self {
             texture,
             view,
             sampler,
-        })
+        }
     }
 
     pub fn storage_rgba8(
@@ -177,6 +185,10 @@ impl Texture {
         mip_level_count: u32,
         format: wgpu::TextureFormat,
     ) {
+        if mip_level_count <= 1 {
+            return;
+        }
+
         // Create a simple shader for downsampling
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Blit Shader"),
@@ -398,7 +410,6 @@ impl Texture {
             wgpu::TextureFormat::Rgba8UnormSrgb,
             label,
         )
-        .unwrap()
     }
 
     /// Create a procedural checkerboard texture
@@ -449,7 +460,6 @@ impl Texture {
             wgpu::TextureFormat::Rgba8Unorm,
             label,
         )
-        .unwrap()
     }
 
     /// Create default normal map (1x1, pointing up)
@@ -570,9 +580,6 @@ mod tests {
                 Some("Test Texture"),
             );
 
-            assert!(texture.is_ok());
-            let texture = texture.unwrap();
-
             // Verify the texture has the expected number of mip levels
             // We can't directly query mip levels, but we can verify it was created
             assert_eq!(texture.texture.size().width, 4);
@@ -641,8 +648,7 @@ mod tests {
                 4,
                 wgpu::TextureFormat::Rgba8Unorm,
                 Some("4x4"),
-            )
-            .unwrap();
+            );
 
             let data_256x256 = vec![255u8; 256 * 256 * 4];
             let tex_256x256 = Texture::from_rgba8(
@@ -653,8 +659,7 @@ mod tests {
                 256,
                 wgpu::TextureFormat::Rgba8Unorm,
                 Some("256x256"),
-            )
-            .unwrap();
+            );
 
             // Verify mip counts
             assert_eq!(tex_4x4.texture.mip_level_count(), 3); // 4, 2, 1
