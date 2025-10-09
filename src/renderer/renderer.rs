@@ -1,8 +1,9 @@
 // renderer/renderer.rs
 use crate::asset::{Assets, Mesh};
+use crate::renderer::batch::InstanceData;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
-    PreparedInstance, RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
+    RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
@@ -207,11 +208,8 @@ impl Renderer {
             .map(|batch| batch.instances.len() as u32)
             .sum();
 
-        self.objects_buffer.update(
-            &self.context,
-            prepared_batches.all(),
-            prepared_batches.materials(),
-        )?;
+        self.objects_buffer
+            .update(&self.context, prepared_batches.all())?;
         self.lights_buffer.update(&self.context.queue, lights);
 
         self.shadows.render(
@@ -473,7 +471,7 @@ impl Renderer {
     }
 }
 
-fn material_run_length(instances: &[PreparedInstance], start: usize) -> usize {
+fn material_run_length(instances: &[InstanceData], start: usize) -> usize {
     let material = instances[start].material;
     let mut length = 1usize;
     while start + length < instances.len() && instances[start + length].material == material {
