@@ -30,9 +30,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: &Window, settings: RenderSettings) -> Self {
+    pub async fn new(window: &Window, mut settings: RenderSettings) -> Self {
         let size = window.inner_size();
         let context = RenderContext::new(window, size, &settings).await;
+        let sample_count = context.sample_count;
+        settings.sample_count = sample_count;
         let camera_buffer = CameraBuffer::new(&context.device);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
         let shadows =
@@ -43,13 +45,13 @@ impl Renderer {
             &camera_buffer,
             &objects_buffer,
             &lights_buffer,
-            settings.sample_count,
+            sample_count,
         );
         let postprocess = PostProcess::new(
             &context.device,
             &context.queue,
             &context.config,
-            settings.sample_count,
+            sample_count,
         );
 
         Self {
