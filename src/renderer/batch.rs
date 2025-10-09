@@ -50,13 +50,13 @@ pub struct RenderObject {
 #[derive(Debug, Clone, Copy)]
 pub struct InstanceData {
     pub transform: Transform, // Changed from Mat4
-    pub material: Material,
 }
 
 pub struct Batch<'a> {
     pub mesh: Handle<Mesh>,
     pub pass: RenderPass,
     pub depth_state: DepthState,
+    pub material: Material,
     pub instances: &'a [InstanceData],
 }
 
@@ -66,6 +66,7 @@ struct BatchKey {
     mesh: Handle<Mesh>,
     pass: RenderPass, // Only split if different pipeline needed
     depth_state: DepthState,
+    material: Material,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -95,15 +96,12 @@ impl RenderBatcher {
             mesh: obj.mesh,
             pass,
             depth_state: obj.depth_state,
+            material: obj.material,
         };
 
-        self.batches
-            .entry(key)
-            .or_insert_with(Vec::new)
-            .push(InstanceData {
-                transform: obj.transform,
-                material: obj.material,
-            });
+        self.batches.entry(key).or_default().push(InstanceData {
+            transform: obj.transform,
+        });
     }
 
     /// Clear all batches
@@ -118,6 +116,7 @@ impl RenderBatcher {
             mesh: key.mesh,
             pass: key.pass,
             depth_state: key.depth_state,
+            material: key.material,
             instances: instances.as_slice(),
         })
     }
@@ -129,6 +128,7 @@ impl RenderBatcher {
                     mesh: key.mesh,
                     pass: key.pass,
                     depth_state: key.depth_state,
+                    material: key.material,
                     instances: instances.as_slice(),
                 })
             } else {

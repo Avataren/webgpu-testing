@@ -482,6 +482,9 @@ impl ShadowResources {
             if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
                 continue;
             }
+            if batch.material.is_unlit() {
+                continue;
+            }
             let Some(mesh) = assets.meshes.get(batch.mesh) else {
                 continue;
             };
@@ -489,26 +492,11 @@ impl ShadowResources {
             let instance_count = batch.instances.len() as u32;
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-            let mut current_range_start: Option<u32> = None;
-
-            for (local_index, instance) in batch.instances.iter().enumerate() {
-                let global_index = batch.first_instance + local_index as u32;
-                if instance.material.is_unlit() {
-                    if let Some(start) = current_range_start.take() {
-                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
-                    }
-                } else if current_range_start.is_none() {
-                    current_range_start = Some(global_index);
-                }
-            }
-
-            if let Some(start) = current_range_start.take() {
-                pass.draw_indexed(
-                    0..mesh.index_count(),
-                    0,
-                    start..(batch.first_instance + instance_count),
-                );
-            }
+            pass.draw_indexed(
+                0..mesh.index_count(),
+                0,
+                batch.first_instance..(batch.first_instance + instance_count),
+            );
         }
     }
 }
