@@ -23,6 +23,9 @@ type WindowHandle = Window;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
+#[cfg(feature = "egui")]
+use crate::ui::egui;
+
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
 use crate::time::Instant;
 
@@ -148,6 +151,8 @@ impl AppBuilder {
             pending_renderer: None,
             #[cfg(feature = "egui")]
             egui_context: None,
+            #[cfg(feature = "egui")]
+            egui_pending_ui: None,
         }
     }
 }
@@ -186,6 +191,8 @@ pub struct App {
     pending_renderer: Option<PendingRenderer>,
     #[cfg(feature = "egui")]
     egui_context: Option<crate::ui::EguiContext>,
+    #[cfg(feature = "egui")]
+    egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
 }
 
 impl App {
@@ -200,7 +207,18 @@ impl App {
     {
         if let Some(egui) = &mut self.egui_context {
             egui.set_ui(callback);
+            self.egui_pending_ui = None;
+        } else {
+            self.egui_pending_ui = Some(Box::new(callback));
         }
+    }
+
+    #[cfg(feature = "egui")]
+    fn install_egui_context(&mut self, mut egui: crate::ui::EguiContext) {
+        if let Some(callback) = self.egui_pending_ui.take() {
+            egui.set_ui_box(callback);
+        }
+        self.egui_context = Some(egui);
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -266,7 +284,7 @@ impl App {
                         renderer.surface_format(),
                         window,
                     );
-                    self.egui_context = Some(egui);
+                    self.install_egui_context(egui);
                     log::info!("Egui context initialized (async)");
                 }
             }
@@ -442,7 +460,7 @@ impl ApplicationHandler for App {
                         renderer.surface_format(),
                         &window,
                     );
-                    self.egui_context = Some(egui);
+                    self.install_egui_context(egui);
                     log::info!("Egui context initialized");
                 }
 
