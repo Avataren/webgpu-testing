@@ -18,28 +18,27 @@ pub use app::{
 use wasm_bindgen::prelude::*;
 use winit::event_loop::EventLoop;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "egui"))]
 fn init_logging() {
-    #[cfg(feature = "egui")]
-    {
-        ui::init_log_recorder();
-        return;
-    }
+    ui::init_log_recorder();
+}
 
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "egui")))]
+fn init_logging() {
     let _ = env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
         .try_init();
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "egui"))]
 fn init_logging() {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    #[cfg(feature = "egui")]
-    {
-        ui::init_log_recorder();
-        return;
-    }
+    ui::init_log_recorder();
+}
 
+#[cfg(all(target_arch = "wasm32", not(feature = "egui")))]
+fn init_logging() {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
 }
 
