@@ -6,37 +6,62 @@ use wgpu::util::DeviceExt;
 
 use crate::renderer::internal::{OrderedBatch, RenderContext, ShadowResources};
 use crate::renderer::lights::{LightsData, LightsUniform, ShadowsUniform};
+use crate::renderer::material::Material;
 use crate::renderer::uniforms::CameraUniform;
+use crate::renderer::{MaterialData, ObjectData};
 
 pub(crate) struct DynamicObjectsBuffer {
-    pub(crate) buffer: wgpu::Buffer,
-    pub(crate) capacity: u32,
+    pub(crate) objects: wgpu::Buffer,
+    pub(crate) materials: wgpu::Buffer,
+    pub(crate) object_capacity: u32,
+    pub(crate) material_capacity: u32,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) bind_layout: wgpu::BindGroupLayout,
-    pub(crate) scratch: Vec<crate::renderer::ObjectData>,
+    pub(crate) object_scratch: Vec<ObjectData>,
+    pub(crate) material_scratch: Vec<MaterialData>,
 }
 
 impl DynamicObjectsBuffer {
     pub(crate) fn new(device: &wgpu::Device, capacity: u32) -> Self {
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ObjectsBindLayout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(mem::size_of::<ObjectData>() as u64),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(mem::size_of::<MaterialData>() as u64),
+                    },
+                    count: None,
+                },
+            ],
         });
 
-        let buffer_size =
-            (capacity as usize * mem::size_of::<crate::renderer::ObjectData>()) as u64;
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let object_buffer_size = (capacity as usize * mem::size_of::<ObjectData>()) as u64;
+        let material_buffer_size = (capacity as usize * mem::size_of::<MaterialData>()) as u64;
+
+        let objects = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ObjectsBuffer"),
-            size: buffer_size,
+            size: object_buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let materials = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("MaterialsBuffer"),
+            size: material_buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -44,18 +69,27 @@ impl DynamicObjectsBuffer {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ObjectsBindGroup"),
             layout: &bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: objects.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: materials.as_entire_binding(),
+                },
+            ],
         });
 
         Self {
-            buffer,
-            capacity,
+            objects,
+            materials,
+            object_capacity: capacity,
+            material_capacity: capacity,
             bind_group,
             bind_layout,
-            scratch: Vec::with_capacity(capacity as usize),
+            object_scratch: Vec::with_capacity(capacity as usize),
+            material_scratch: Vec::with_capacity(capacity as usize),
         }
     }
 
@@ -63,57 +97,108 @@ impl DynamicObjectsBuffer {
         &mut self,
         context: &RenderContext,
         batches: &[OrderedBatch],
+        materials: &[Material],
     ) -> Result<(), wgpu::SurfaceError> {
-        self.scratch.clear();
+        self.object_scratch.clear();
         for batch in batches {
-            self.scratch.extend(batch.instances.iter().map(|inst| {
-                crate::renderer::ObjectData::from_material(inst.transform.matrix(), &inst.material)
-            }));
+            self.object_scratch.extend(
+                batch
+                    .instances
+                    .iter()
+                    .map(|inst| ObjectData::new(inst.transform.matrix(), inst.material_index)),
+            );
         }
 
-        let required = self.scratch.len() as u32;
-        if required > self.capacity {
-            self.grow(context, required);
+        let required_objects = self.object_scratch.len() as u32;
+        if required_objects > self.object_capacity {
+            self.grow_objects(context, required_objects);
         }
 
-        if !self.scratch.is_empty() {
-            context
-                .queue
-                .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.scratch));
+        if !self.object_scratch.is_empty() {
+            context.queue.write_buffer(
+                &self.objects,
+                0,
+                bytemuck::cast_slice(&self.object_scratch),
+            );
+        }
+
+        self.material_scratch.clear();
+        self.material_scratch
+            .extend(materials.iter().map(MaterialData::from_material));
+
+        let required_materials = self.material_scratch.len() as u32;
+        if required_materials > self.material_capacity {
+            self.grow_materials(context, required_materials);
+        }
+
+        if !self.material_scratch.is_empty() {
+            context.queue.write_buffer(
+                &self.materials,
+                0,
+                bytemuck::cast_slice(&self.material_scratch),
+            );
         }
 
         Ok(())
     }
 
-    fn grow(&mut self, context: &RenderContext, required: u32) {
-        let new_capacity = required.max(self.capacity * 2);
+    fn grow_objects(&mut self, context: &RenderContext, required: u32) {
+        let new_capacity = required.max(self.object_capacity * 2);
         log::info!(
             "Growing objects buffer: {} -> {}",
-            self.capacity,
+            self.object_capacity,
             new_capacity
         );
 
-        let buffer_size =
-            (new_capacity as usize * mem::size_of::<crate::renderer::ObjectData>()) as u64;
-        self.buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer_size = (new_capacity as usize * mem::size_of::<ObjectData>()) as u64;
+        self.objects = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ObjectsBuffer"),
             size: buffer_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        self.object_capacity = new_capacity;
+        self.rebuild_bind_group(context);
+    }
+
+    fn grow_materials(&mut self, context: &RenderContext, required: u32) {
+        let new_capacity = required.max(self.material_capacity * 2);
+        log::info!(
+            "Growing materials buffer: {} -> {}",
+            self.material_capacity,
+            new_capacity
+        );
+
+        let buffer_size = (new_capacity as usize * mem::size_of::<MaterialData>()) as u64;
+        self.materials = context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("MaterialsBuffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        self.material_capacity = new_capacity;
+        self.rebuild_bind_group(context);
+    }
+
+    fn rebuild_bind_group(&mut self, context: &RenderContext) {
         self.bind_group = context
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ObjectsBindGroup"),
                 layout: &self.bind_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.objects.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.materials.as_entire_binding(),
+                    },
+                ],
             });
-
-        self.capacity = new_capacity;
     }
 }
 

@@ -9,6 +9,7 @@ use crate::renderer::internal::{DynamicObjectsBuffer, OrderedBatch, RenderContex
 use crate::renderer::lights::{
     LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
+use crate::renderer::material::Material;
 use crate::renderer::RenderPass;
 use crate::renderer::Vertex;
 
@@ -278,6 +279,7 @@ impl ShadowResources {
         &self.sampler
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &mut self,
         context: &RenderContext,
@@ -286,6 +288,7 @@ impl ShadowResources {
         batches: &[OrderedBatch],
         lights: &LightsData,
         objects: &DynamicObjectsBuffer,
+        materials: &[Material],
     ) {
         if batches.is_empty() {
             return;
@@ -377,6 +380,7 @@ impl ShadowResources {
                 assets,
                 batches,
                 objects,
+                materials,
             );
 
             staging_offset += uniform_size;
@@ -407,6 +411,7 @@ impl ShadowResources {
                 assets,
                 batches,
                 objects,
+                materials,
             );
 
             spot_staging_offset += uniform_size;
@@ -441,6 +446,7 @@ impl ShadowResources {
                     assets,
                     batches,
                     objects,
+                    materials,
                 );
 
                 point_staging_offset += uniform_size;
@@ -455,6 +461,7 @@ impl ShadowResources {
         assets: &Assets,
         batches: &[OrderedBatch],
         objects: &DynamicObjectsBuffer,
+        materials: &[Material],
     ) {
         if batches.is_empty() {
             return;
@@ -493,7 +500,19 @@ impl ShadowResources {
 
             for (local_index, instance) in batch.instances.iter().enumerate() {
                 let global_index = batch.first_instance + local_index as u32;
-                if instance.material.is_unlit() {
+                let material_index = instance.material_index as usize;
+                let Some(material) = materials.get(material_index) else {
+                    log::warn!(
+                        "Material index {} out of bounds during shadow rendering ({} materials)",
+                        material_index,
+                        materials.len()
+                    );
+                    if let Some(start) = current_range_start.take() {
+                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                    }
+                    continue;
+                };
+                if material.is_unlit() {
                     if let Some(start) = current_range_start.take() {
                         pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
                     }

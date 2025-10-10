@@ -50,7 +50,7 @@ pub struct RenderObject {
 #[derive(Debug, Clone, Copy)]
 pub struct InstanceData {
     pub transform: Transform, // Changed from Mat4
-    pub material: Material,
+    pub material_index: u32,
 }
 
 pub struct Batch<'a> {
@@ -58,6 +58,7 @@ pub struct Batch<'a> {
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
+    pub materials: &'a [Material],
 }
 
 /// Batching key - only splits by what ACTUALLY requires different draw calls
@@ -71,12 +72,16 @@ struct BatchKey {
 /// Collects objects and batches by pipeline requirements
 pub struct RenderBatcher {
     batches: HashMap<BatchKey, Vec<InstanceData>>,
+    materials: Vec<Material>,
+    material_lookup: HashMap<Material, u32>,
 }
 
 impl RenderBatcher {
     pub fn new() -> Self {
         Self {
             batches: HashMap::new(),
+            materials: Vec::new(),
+            material_lookup: HashMap::new(),
         }
     }
 
@@ -97,9 +102,15 @@ impl RenderBatcher {
             depth_state: obj.depth_state,
         };
 
+        let material_index = *self.material_lookup.entry(obj.material).or_insert_with(|| {
+            let index = self.materials.len() as u32;
+            self.materials.push(obj.material);
+            index
+        });
+
         self.batches.entry(key).or_default().push(InstanceData {
             transform: obj.transform,
-            material: obj.material,
+            material_index,
         });
     }
 
@@ -108,6 +119,8 @@ impl RenderBatcher {
         for batch in self.batches.values_mut() {
             batch.clear();
         }
+        self.materials.clear();
+        self.material_lookup.clear();
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Batch<'_>> {
@@ -116,6 +129,7 @@ impl RenderBatcher {
             pass: key.pass,
             depth_state: key.depth_state,
             instances: instances.as_slice(),
+            materials: self.materials.as_slice(),
         })
     }
 
@@ -127,6 +141,7 @@ impl RenderBatcher {
                     pass: key.pass,
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
+                    materials: self.materials.as_slice(),
                 })
             } else {
                 None
@@ -149,6 +164,10 @@ impl RenderBatcher {
 
     pub fn batch_count(&self) -> usize {
         self.batches.len()
+    }
+
+    pub fn materials(&self) -> &[Material] {
+        &self.materials
     }
 }
 
