@@ -573,6 +573,7 @@ impl PostProcess {
             post.last_near,
             post.last_far,
             post.effects,
+            post.sample_count,
         );
         queue.write_buffer(
             &post.uniform_buffer,
@@ -851,6 +852,7 @@ impl PostProcess {
             self.last_near,
             self.last_far,
             self.effects,
+            self.sample_count,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
@@ -1108,6 +1110,7 @@ impl PostProcessUniform {
         near: f32,
         far: f32,
         effects: PostProcessEffects,
+        sample_count: u32,
     ) -> Self {
         let radius = 0.1f32;
         let bias = 0.03f32;
@@ -1117,6 +1120,9 @@ impl PostProcessUniform {
             width / NOISE_TEXTURE_SIZE as f32,
             height / NOISE_TEXTURE_SIZE as f32,
         ];
+        let mut effects_arr = effects.uniform_components();
+        // Store sample_count in w component for MSAA shader to consume.
+        effects_arr[3] = sample_count as f32;
         Self {
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
@@ -1126,7 +1132,7 @@ impl PostProcessUniform {
             noise_scale,
             near_far: [near, far],
             _effects_padding: [0.0, 0.0],
-            effects: effects.uniform_components(),
+            effects: effects_arr,
         }
     }
 }

@@ -46,8 +46,9 @@ fn linearize_depth(depth: f32) -> f32 {
 }
 
 fn reconstruct_view_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
-    // For wgpu, depth is already in [0, 1], don't remap it
-    let clip = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);  // Changed: removed "depth * 2.0 - 1.0"
+    // Convert UV (origin top-left) to NDC (origin center, +Y up)
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
+    let clip = vec4<f32>(ndc, 1.0);
     let view = post_uniform.proj_inv * clip;
     return view.xyz / view.w;
 }
@@ -189,17 +190,18 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         let sample_pos = view_pos + normal * bias + rotated * radius;
 
         let sample_clip = post_uniform.proj * vec4<f32>(sample_pos, 1.0);
-        var offset = sample_clip.xyz / sample_clip.w;
-        offset = offset * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
-        if (offset.z >= 1.0) {
+        let offset_ndc = sample_clip.xyz / sample_clip.w;
+        // Convert NDC to UV (origin top-left)
+        let offset_uv = vec2<f32>(offset_ndc.x * 0.5 + 0.5, 0.5 - offset_ndc.y * 0.5);
+        if (offset_ndc.z >= 1.0) {
             continue;
         }
-        let sample_depth = fetch_depth(offset.xy);
+        let sample_depth = fetch_depth(offset_uv);
         if (sample_depth >= 1.0) {
             continue;
         }
 
-        let sample_view_pos = reconstruct_view_position(offset.xy, sample_depth);
+        let sample_view_pos = reconstruct_view_position(offset_uv, sample_depth);
         let range_check = smoothstep(
             0.0,
             1.0,

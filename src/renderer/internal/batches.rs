@@ -51,10 +51,16 @@ impl PreparedBatches {
                         .unwrap_or(false)
                 });
 
+            let mut depth_state = batch.depth_state;
+            if alpha_blend {
+                // Keep depth testing but avoid writing so blended geometry layers correctly.
+                depth_state.depth_write = false;
+            }
+
             let ordered = OrderedBatch {
                 mesh: batch.mesh,
                 pass: batch.pass,
-                depth_state: batch.depth_state,
+                depth_state,
                 instances,
                 alpha_blend,
                 first_instance: 0,
@@ -96,6 +102,11 @@ impl PreparedBatches {
 
     pub(crate) fn opaque(&self) -> &[OrderedBatch] {
         &self.batches[self.opaque_range.clone()]
+    }
+
+    pub(crate) fn opaque_mut(&mut self) -> &mut [OrderedBatch] {
+        let range = self.opaque_range.clone();
+        &mut self.batches[range]
     }
 
     pub(crate) fn transparent(&self) -> &[OrderedBatch] {

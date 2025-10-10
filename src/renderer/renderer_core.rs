@@ -217,7 +217,7 @@ impl Renderer {
                     label: Some("Encoder"),
                 });
 
-        let prepared_batches = PreparedBatches::from_batcher(batcher, self.camera_position);
+        let mut prepared_batches = PreparedBatches::from_batcher(batcher, self.camera_position);
 
         let batch_count = prepared_batches.all().len() as u32;
         let instance_count = prepared_batches
@@ -257,6 +257,7 @@ impl Renderer {
 
         // Depth-only prepass
         {
+            let opaque_batches = prepared_batches.opaque_mut();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("DepthPrepass"),
                 color_attachments: &[],
@@ -276,7 +277,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
             pass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
 
-            for batch in prepared_batches.opaque() {
+            for batch in opaque_batches {
                 if batch.alpha_blend
                     || !batch.depth_state.depth_write
                     || !batch.depth_state.depth_test
@@ -288,6 +289,7 @@ impl Renderer {
                 };
                 self.draw_full_batch(&mut pass, mesh, batch);
                 frame_stats.depth_prepass_draw_calls += 1;
+                batch.depth_state.depth_write = false;
             }
         }
 
@@ -326,18 +328,47 @@ impl Renderer {
                 assets,
                 prepared_batches.opaque(),
                 prepared_batches.materials(),
-            );
-            frame_stats.transparent_draw_calls += self.record_batches(
-                &mut rpass,
-                assets,
-                prepared_batches.transparent(),
-                prepared_batches.materials(),
+                self.context.sample_count,
             );
         }
 
         // Resolve scene → swapchain
         self.postprocess
             .execute(&mut encoder, &self.context.device, &view);
+
+        // Transparent pass (drawn after post-process so SSAO/Fxaa apply only to opaque surfaces).
+        if !prepared_batches.transparent().is_empty() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("TransparentPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            frame_stats.transparent_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                prepared_batches.transparent(),
+                prepared_batches.materials(),
+                1,
+            );
+        }
 
         // Overlay pass (your overlays draw after UI if you keep it here;
         // if you want UI on top of overlays, move this block above ui_hook).
@@ -363,6 +394,7 @@ impl Renderer {
                 assets,
                 prepared_batches.overlay(),
                 prepared_batches.materials(),
+                1,
             );
         }
 
@@ -422,6 +454,7 @@ impl Renderer {
         assets: &Assets,
         batches: &[OrderedBatch],
         materials: &[Material],
+        color_sample_count: u32,
     ) -> u32 {
         if batches.is_empty() {
             return 0;
@@ -431,7 +464,9 @@ impl Renderer {
 
         if let Some(bindless_group) = self.texture_binder.global_bind_group() {
             for batch in batches {
-                let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
+                let Some(mesh) =
+                    self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                else {
                     continue;
                 };
                 rpass.set_bind_group(3, bindless_group, &[]);
@@ -440,7 +475,9 @@ impl Renderer {
             }
         } else {
             for batch in batches {
-                let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
+                let Some(mesh) =
+                    self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                else {
                     continue;
                 };
                 draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch, materials) as u32;
@@ -454,13 +491,14 @@ impl Renderer {
         rpass: &mut wgpu::RenderPass<'_>,
         assets: &'a Assets,
         batch: &OrderedBatch,
+        color_sample_count: u32,
     ) -> Option<&'a Mesh> {
         let mesh = mesh_for_batch(assets, batch)?;
         let pipeline_key = PipelineKey::new(
             batch.depth_state.depth_test,
             batch.depth_state.depth_write,
             batch.alpha_blend,
-            batch.pass.color_sample_count(self.context.sample_count),
+            color_sample_count,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);
         rpass.set_pipeline(pipeline);

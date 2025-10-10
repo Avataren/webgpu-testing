@@ -46,8 +46,9 @@ fn linearize_depth(depth: f32) -> f32 {
 }
 
 fn reconstruct_view_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
-    // For wgpu, depth is already in [0, 1], don't remap it
-    let clip = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);  // Changed: removed "depth * 2.0 - 1.0"
+    // Convert UV (origin top-left) to NDC (origin center, +Y up)
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
+    let clip = vec4<f32>(ndc, 1.0);
     let view = post_uniform.proj_inv * clip;
     return view.xyz / view.w;
 }
@@ -60,7 +61,20 @@ fn fetch_depth(uv : vec2<f32>) -> f32 {
     let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
     let clamped_uv = clamp(uv, vec2<f32>(0.0), max_uv);
     let coord = vec2<i32>(clamped_uv * tex_size);
-    return textureLoad(depth_texture, coord, 0);
+    // Combine samples to a single depth value to stabilize SSAO.
+    // Use the minimum depth across samples to be conservative (reduces haloing at edges).
+    let max_samples = 8;
+    let count_f = clamp(post_uniform.effects.w, 1.0, f32(max_samples));
+    let count = i32(count_f);
+    var d = 1.0;
+    var i: i32 = 0;
+    loop {
+        if (i >= count) { break; }
+        let s = textureLoad(depth_texture, coord, i);
+        d = min(d, s);
+        i = i + 1;
+    }
+    return d;
 }
 
 fn view_normal(uv : vec2<f32>, view_pos : vec3<f32>) -> vec3<f32> {
@@ -183,17 +197,18 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         let sample_pos = view_pos + normal * bias + rotated * radius;
 
         let sample_clip = post_uniform.proj * vec4<f32>(sample_pos, 1.0);
-        var offset = sample_clip.xyz / sample_clip.w;
-        offset = offset * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
-        if (offset.z >= 1.0) {
+        let offset_ndc = sample_clip.xyz / sample_clip.w;
+        // Convert NDC to UV (origin top-left)
+        let offset_uv = vec2<f32>(offset_ndc.x * 0.5 + 0.5, 0.5 - offset_ndc.y * 0.5);
+        if (offset_ndc.z >= 1.0) {
             continue;
         }
-        let sample_depth = fetch_depth(offset.xy);
+        let sample_depth = fetch_depth(offset_uv);
         if (sample_depth >= 1.0) {
             continue;
         }
 
-        let sample_view_pos = reconstruct_view_position(offset.xy, sample_depth);
+        let sample_view_pos = reconstruct_view_position(offset_uv, sample_depth);
         let range_check = smoothstep(
             0.0,
             1.0,
