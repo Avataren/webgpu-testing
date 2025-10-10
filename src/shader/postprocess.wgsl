@@ -373,11 +373,10 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
         clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0)),
         0.0,
     );
-    let color = if composite_uniform.effects.z > 0.5 {
-        fxaa(in.uv)
-    } else {
-        sample_lit_color(in.uv)
-    };
+    var color = sample_lit_color(in.uv);
+    if composite_uniform.effects.z > 0.5 {
+        color = fxaa(in.uv);
+    }
     return vec4<f32>(color, base.a);
 }
 

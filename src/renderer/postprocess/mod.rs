@@ -921,7 +921,8 @@ impl PostProcess {
     }
 }
 
-#[repr(C)]
+// align(16) keeps the uniform buffer size matching WGSL std140 padding rules.
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PostProcessUniform {
     proj: [[f32; 4]; 4],
@@ -931,6 +932,8 @@ struct PostProcessUniform {
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
+    // Ensure `effects` starts on a 16-byte boundary to match WGSL uniform layout.
+    _effects_padding: [f32; 2],
     effects: [f32; 4],
 }
 
@@ -960,6 +963,7 @@ impl PostProcessUniform {
             intensity_power: [intensity, power],
             noise_scale,
             near_far: [near, far],
+            _effects_padding: [0.0, 0.0],
             effects: effects.uniform_components(),
         }
     }
