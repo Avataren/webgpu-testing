@@ -242,8 +242,8 @@ impl App {
     }
 
     #[cfg(feature = "egui")]
-    fn apply_postprocess_effects(&self, renderer: &mut Renderer) {
-        if let Ok(effects) = self.postprocess_effects.lock() {
+    fn apply_postprocess_effects(handle: &PostProcessEffectsHandle, renderer: &mut Renderer) {
+        if let Ok(effects) = handle.lock() {
             renderer.set_postprocess_effects(*effects);
         }
     }
@@ -322,7 +322,7 @@ impl App {
             renderer.update_texture_bind_group(&self.scene.assets);
 
             #[cfg(feature = "egui")]
-            self.apply_postprocess_effects(&mut renderer);
+            Self::apply_postprocess_effects(&self.postprocess_effects, &mut renderer);
 
             self.renderer = Some(renderer);
             self.pending_renderer = None;
@@ -506,7 +506,7 @@ impl ApplicationHandler for App {
                 );
 
                 #[cfg(feature = "egui")]
-                self.apply_postprocess_effects(&mut renderer);
+                Self::apply_postprocess_effects(&self.postprocess_effects, &mut renderer);
 
                 self.window = Some(window);
                 self.window_id = Some(id);
@@ -596,6 +596,9 @@ impl ApplicationHandler for App {
                 // --------- 1) Update scene logic first ----------
                 self.update_scene(frame.dt());
 
+                #[cfg(feature = "egui")]
+                let postprocess_effects_handle = self.postprocess_effects.clone();
+
                 if let Some(renderer) = self.renderer.as_mut() {
                     {
                         let scene = &mut self.scene;
@@ -614,7 +617,7 @@ impl ApplicationHandler for App {
                         renderer.set_camera(self.scene.camera(), aspect);
 
                         #[cfg(feature = "egui")]
-                        self.apply_postprocess_effects(renderer);
+                        Self::apply_postprocess_effects(&postprocess_effects_handle, renderer);
 
                         // --------- 2) Begin/run/end egui BEFORE scene render ----------
                         // so UI state can influence the just-in-time scene rendering
