@@ -6,6 +6,7 @@ use super::components::*;
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::{Material, Renderer, Texture, Vertex};
+use bytemuck::cast_slice;
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
@@ -303,6 +304,8 @@ impl SceneLoader {
         let mut mesh_handles: Vec<Vec<(Handle<Mesh>, Option<usize>)>> =
             vec![Vec::new(); mesh_count];
 
+        let mut mesh_cache: HashMap<Vec<u8>, Handle<Mesh>> = HashMap::new();
+
         for gltf_mesh in document.meshes() {
             let mesh_index = gltf_mesh.index();
             let mesh_name = gltf_mesh.name().unwrap_or("Unnamed");
@@ -318,7 +321,14 @@ impl SceneLoader {
             let primitives = &mut mesh_handles[mesh_index];
 
             for primitive in gltf_mesh.primitives() {
-                let handle = Self::load_primitive(&primitive, &buffers, scene, renderer, scale)?;
+                let handle = Self::load_primitive(
+                    &primitive,
+                    &buffers,
+                    scene,
+                    renderer,
+                    scale,
+                    &mut mesh_cache,
+                )?;
                 primitives.push((handle, primitive.material().index()));
             }
         }
@@ -1157,6 +1167,7 @@ impl SceneLoader {
         scene: &mut Scene,
         renderer: &mut Renderer,
         scale_multiplier: f32,
+        mesh_cache: &mut HashMap<Vec<u8>, Handle<Mesh>>,
     ) -> Result<Handle<Mesh>, String> {
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
@@ -1221,9 +1232,21 @@ impl SceneLoader {
             })
             .collect::<Vec<_>>();
 
+        let mut signature = Vec::with_capacity(
+            vertices.len() * std::mem::size_of::<Vertex>()
+                + indices.len() * std::mem::size_of::<u32>(),
+        );
+        signature.extend_from_slice(cast_slice(&vertices));
+        signature.extend_from_slice(cast_slice(&indices));
+
+        if let Some(existing) = mesh_cache.get(&signature) {
+            return Ok(*existing);
+        }
+
         // Create mesh and store in assets
         let mesh = renderer.create_mesh(&vertices, &indices);
         let handle = scene.assets.meshes.insert(mesh);
+        mesh_cache.insert(signature, handle);
 
         Ok(handle)
     }

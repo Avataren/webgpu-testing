@@ -41,6 +41,7 @@ impl PreparedBatches {
             if batch.pass.requires_back_to_front_sort() {
                 sort_instances_back_to_front(&mut instances, camera_pos);
             }
+            optimize_instance_order(batch.pass, &mut instances);
 
             let alpha_blend = batch.pass.uses_alpha_blending()
                 || instances.iter().any(|inst| {
@@ -138,6 +139,16 @@ fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range
     let start = dest.len();
     dest.extend(src);
     start..dest.len()
+}
+
+fn optimize_instance_order(pass: RenderPass, instances: &mut Vec<InstanceData>) {
+    if instances.len() <= 1 {
+        return;
+    }
+
+    if matches!(pass, RenderPass::Opaque) {
+        instances.sort_by_key(|inst| inst.material_index);
+    }
 }
 
 #[cfg(test)]

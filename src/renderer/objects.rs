@@ -10,6 +10,7 @@ pub struct ObjectData {
     pub model: [[f32; 4]; 4], // 64 bytes
     pub material_index: u32,  // 4 bytes
     pub _padding: [u32; 3],   // 12 bytes to maintain 16-byte alignment
+    pub _padding2: [u32; 4],  // 16 bytes so the std430 stride matches WGSL expectations (96 bytes total)
 }
 
 impl ObjectData {
@@ -18,6 +19,7 @@ impl ObjectData {
             model: model.to_cols_array_2d(),
             material_index,
             _padding: [0; 3],
+            _padding2: [0; 4],
         }
     }
 }
@@ -63,8 +65,7 @@ mod tests {
     use super::*;
     #[test]
     fn object_data_size() {
-        // 64 + 16 + 5*4 + 4 + 3*4 + 4 + 8 padding = 128 bytes
-        assert_eq!(std::mem::size_of::<ObjectData>(), 80);
+        assert_eq!(std::mem::size_of::<ObjectData>(), 96);
     }
 
     #[test]
