@@ -29,7 +29,7 @@ impl Default for ExampleApp {
 
 impl RenderApplication for ExampleApp {
     fn setup(&mut self, ctx: &mut StartupContext) {
-        let mut gol_state = GameOfLifeState::new(ctx, GRID_WIDTH, GRID_HEIGHT, STEP_INTERVAL);
+        let gol_state = GameOfLifeState::new(ctx, GRID_WIDTH, GRID_HEIGHT, STEP_INTERVAL);
         let display_handle = gol_state.display_texture_handle();
         spawn_billboard(ctx, display_handle, GRID_WIDTH, GRID_HEIGHT);
         configure_camera(ctx);
@@ -302,11 +302,12 @@ impl GameOfLifeState {
     }
 
     fn update(&mut self, ctx: &mut GpuUpdateContext<'_>) {
-        //self.accumulator += ctx.dt;
-        //while self.accumulator >= self.step_interval {
-        //self.accumulator -= self.step_interval;
-        self.run_step(ctx);
-        //}
+        self.accumulator += ctx.dt;
+
+        while self.accumulator >= self.step_interval {
+            self.accumulator -= self.step_interval;
+            self.run_step(ctx);
+        }
     }
 
     fn run_step(&mut self, ctx: &mut GpuUpdateContext<'_>) {
