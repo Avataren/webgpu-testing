@@ -7,7 +7,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::PostProcess,
+    postprocess::{PostProcess, PostProcessSettingsHandle},
     CameraUniform, LightsData, RenderBatcher, RenderPass, Vertex,
 };
 use crate::scene::Camera;
@@ -66,7 +66,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: &Window, mut settings: RenderSettings) -> Self {
+    pub async fn new(
+        window: &Window,
+        mut settings: RenderSettings,
+        postprocess_settings: PostProcessSettingsHandle,
+    ) -> Self {
         let size = window.inner_size();
         let context = RenderContext::new(window, size, &settings).await;
         let sample_count = context.sample_count;
@@ -88,6 +92,7 @@ impl Renderer {
             &context.queue,
             &context.config,
             sample_count,
+            postprocess_settings,
         );
 
         Self {
@@ -298,6 +303,7 @@ impl Renderer {
         }
 
         // Resolve scene → swapchain
+        self.postprocess.sync_settings(&self.context.queue);
         self.postprocess.execute(
             &mut encoder,
             &self.context.device,
@@ -364,6 +370,10 @@ impl Renderer {
 
     pub fn last_frame_stats(&self) -> RendererStats {
         self.stats
+    }
+
+    pub fn postprocess_settings_handle(&self) -> PostProcessSettingsHandle {
+        self.postprocess.settings_handle()
     }
 
     fn record_batches(

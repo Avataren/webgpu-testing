@@ -26,6 +26,7 @@ struct PostUniform {
     intensity_power : vec2<f32>,
     noise_scale : vec2<f32>,
     near_far : vec2<f32>,
+    effects_enabled : vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -151,6 +152,10 @@ fn ssao_kernel() -> array<vec3<f32>, 32> {
 
 @fragment
 fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
+    if (post_uniform.effects_enabled.x < 0.5) {
+        return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    }
+
     let depth = fetch_depth(in.uv);
     if (depth >= 1.0) {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
@@ -288,8 +293,16 @@ fn safe_texel_size() -> vec2<f32> {
 fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
     let uv_clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     let base = textureSampleLevel(composite_scene, composite_sampler, uv_clamped, 0.0);
-    let ssao = textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r;
-    let bloom = textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb;
+    let ssao = if (composite_uniform.effects_enabled.x > 0.5) {
+        textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r
+    } else {
+        1.0
+    };
+    let bloom = if (composite_uniform.effects_enabled.y > 0.5) {
+        textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb
+    } else {
+        vec3<f32>(0.0, 0.0, 0.0)
+    };
     return base.rgb * ssao + bloom;
 }
 
@@ -298,6 +311,10 @@ fn luminance(color : vec3<f32>) -> f32 {
 }
 
 fn fxaa(uv : vec2<f32>) -> vec3<f32> {
+    if (composite_uniform.effects_enabled.z < 0.5) {
+        return sample_lit_color(uv);
+    }
+
     let texel = safe_texel_size();
 
     let rgb_m = sample_lit_color(uv);
