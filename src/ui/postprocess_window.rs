@@ -32,21 +32,23 @@ impl PostProcessWindow {
 
         let mut changed = false;
 
-        Window::new(&self.title)
-            .open(open)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.heading("Post-processing effects");
-                ui.separator();
+        let mut window = Window::new(&self.title);
+        if let Some(open) = open {
+            window = window.open(open);
+        }
 
-                ui.vertical(|ui| {
-                    changed |= ui
-                        .checkbox(&mut effects.ssao, "Screen-space ambient occlusion")
-                        .changed();
-                    changed |= ui.checkbox(&mut effects.bloom, "Bloom").changed();
-                    changed |= ui.checkbox(&mut effects.fxaa, "FXAA").changed();
-                });
+        window.resizable(false).show(ctx, |ui| {
+            ui.heading("Post-processing effects");
+            ui.separator();
+
+            ui.vertical(|ui| {
+                changed |= ui
+                    .checkbox(&mut effects.ssao, "Screen-space ambient occlusion")
+                    .changed();
+                changed |= ui.checkbox(&mut effects.bloom, "Bloom").changed();
+                changed |= ui.checkbox(&mut effects.fxaa, "FXAA").changed();
             });
+        });
 
         if changed {
             if let Ok(mut guard) = self.handle.lock() {
