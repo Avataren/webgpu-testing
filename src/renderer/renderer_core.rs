@@ -8,7 +8,7 @@ use crate::renderer::internal::{
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessEffects},
-    CameraUniform, LightsData, RenderBatcher, RenderPass, Vertex,
+    CameraUniform, LightsData, Material, RenderBatcher, RenderPass, Vertex,
 };
 use crate::scene::Camera;
 use crate::settings::RenderSettings;
@@ -213,8 +213,11 @@ impl Renderer {
             ..RendererStats::default()
         };
 
-        self.objects_buffer
-            .update(&self.context, prepared_batches.all())?;
+        self.objects_buffer.update(
+            &self.context,
+            prepared_batches.all(),
+            prepared_batches.materials(),
+        )?;
         self.lights_buffer.update(&self.context.queue, lights);
 
         self.shadows.render(
@@ -224,6 +227,7 @@ impl Renderer {
             prepared_batches.all(),
             lights,
             &self.objects_buffer,
+            prepared_batches.materials(),
         );
 
         let (scene_view, resolve_target) = self.postprocess.scene_color_views();
@@ -296,10 +300,18 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            frame_stats.opaque_draw_calls +=
-                self.record_batches(&mut rpass, assets, prepared_batches.opaque());
-            frame_stats.transparent_draw_calls +=
-                self.record_batches(&mut rpass, assets, prepared_batches.transparent());
+            frame_stats.opaque_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                prepared_batches.opaque(),
+                prepared_batches.materials(),
+            );
+            frame_stats.transparent_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                prepared_batches.transparent(),
+                prepared_batches.materials(),
+            );
         }
 
         // Resolve scene → swapchain
@@ -329,8 +341,12 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            frame_stats.overlay_draw_calls +=
-                self.record_batches(&mut rpass, assets, prepared_batches.overlay());
+            frame_stats.overlay_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                prepared_batches.overlay(),
+                prepared_batches.materials(),
+            );
         }
 
         // --- EGUI (optional) ---
@@ -346,7 +362,11 @@ impl Renderer {
             );
         }
 
-        frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(prepared_batches.all(), lights);
+        frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(
+            prepared_batches.all(),
+            prepared_batches.materials(),
+            lights,
+        );
 
         self.stats = frame_stats;
 
@@ -384,6 +404,7 @@ impl Renderer {
         rpass: &mut wgpu::RenderPass<'_>,
         assets: &Assets,
         batches: &[OrderedBatch],
+        materials: &[Material],
     ) -> u32 {
         if batches.is_empty() {
             return 0;
@@ -405,7 +426,7 @@ impl Renderer {
                 let Some(mesh) = self.setup_batch_state(rpass, assets, batch) else {
                     continue;
                 };
-                draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch) as u32;
+                draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch, materials) as u32;
             }
         }
         draw_calls
@@ -448,6 +469,7 @@ impl Renderer {
         assets: &Assets,
         mesh: &Mesh,
         batch: &OrderedBatch,
+        materials: &[Material],
     ) -> usize {
         self.set_geometry_buffers(pass, mesh);
 
@@ -456,11 +478,21 @@ impl Renderer {
         let mut draw_calls = 0usize;
 
         while local_offset < instances.len() {
-            let material = instances[local_offset].material;
-            let Some(bind_group) =
-                self.texture_binder
-                    .bind_group_for_material(&self.context.device, assets, material)
-            else {
+            let material_index = instances[local_offset].material_index as usize;
+            let Some(material) = materials.get(material_index) else {
+                log::warn!(
+                    "Material index {} out of bounds ({} materials)",
+                    material_index,
+                    materials.len()
+                );
+                local_offset += 1;
+                continue;
+            };
+            let Some(bind_group) = self.texture_binder.bind_group_for_material(
+                &self.context.device,
+                assets,
+                *material,
+            ) else {
                 local_offset += 1;
                 continue;
             };
@@ -485,20 +517,27 @@ impl Renderer {
 }
 
 fn material_run_length(instances: &[InstanceData], start: usize) -> usize {
-    let material = instances[start].material;
+    let material = instances[start].material_index;
     let mut length = 1usize;
-    while start + length < instances.len() && instances[start + length].material == material {
+    while start + length < instances.len() && instances[start + length].material_index == material {
         length += 1;
     }
     length
 }
 
-fn estimate_shadow_draw_calls(batches: &[OrderedBatch], lights: &LightsData) -> u32 {
+fn estimate_shadow_draw_calls(
+    batches: &[OrderedBatch],
+    materials: &[Material],
+    lights: &LightsData,
+) -> u32 {
     if batches.is_empty() {
         return 0;
     }
 
-    let per_pass_draws: u32 = batches.iter().map(count_shadow_draws_for_batch).sum();
+    let per_pass_draws: u32 = batches
+        .iter()
+        .map(|batch| count_shadow_draws_for_batch(batch, materials))
+        .sum();
 
     if per_pass_draws == 0 {
         return 0;
@@ -530,7 +569,7 @@ fn estimate_shadow_draw_calls(batches: &[OrderedBatch], lights: &LightsData) -> 
     per_pass_draws * total_passes
 }
 
-fn count_shadow_draws_for_batch(batch: &OrderedBatch) -> u32 {
+fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) -> u32 {
     if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
         return 0;
     }
@@ -539,7 +578,20 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch) -> u32 {
     let mut run_active = false;
 
     for instance in &batch.instances {
-        if instance.material.is_unlit() {
+        let material_index = instance.material_index as usize;
+        let Some(material) = materials.get(material_index) else {
+            log::warn!(
+                "Material index {} out of bounds while counting shadows ({} materials)",
+                material_index,
+                materials.len()
+            );
+            if run_active {
+                draws += 1;
+                run_active = false;
+            }
+            continue;
+        };
+        if material.is_unlit() {
             if run_active {
                 draws += 1;
                 run_active = false;

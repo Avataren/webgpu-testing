@@ -2,6 +2,7 @@ use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, Mesh};
 use crate::renderer::batch::{InstanceData, RenderBatcher, RenderPass};
+use crate::renderer::material::Material;
 use crate::scene::components::DepthState;
 use glam::Vec3;
 
@@ -20,6 +21,7 @@ pub(crate) struct PreparedBatches {
     pub opaque_range: Range<usize>,
     pub transparent_range: Range<usize>,
     pub overlay_range: Range<usize>,
+    pub materials: Vec<Material>,
 }
 
 impl PreparedBatches {
@@ -27,6 +29,7 @@ impl PreparedBatches {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
+        let materials = batcher.materials();
 
         for batch in batcher.iter() {
             if batch.instances.is_empty() {
@@ -40,9 +43,12 @@ impl PreparedBatches {
             }
 
             let alpha_blend = batch.pass.uses_alpha_blending()
-                || instances
-                    .iter()
-                    .any(|inst| inst.material.requires_separate_pass());
+                || instances.iter().any(|inst| {
+                    materials
+                        .get(inst.material_index as usize)
+                        .map(|mat| mat.requires_separate_pass())
+                        .unwrap_or(false)
+                });
 
             let ordered = OrderedBatch {
                 mesh: batch.mesh,
@@ -79,6 +85,7 @@ impl PreparedBatches {
             opaque_range,
             transparent_range,
             overlay_range,
+            materials: materials.to_vec(),
         }
     }
 
@@ -96,6 +103,10 @@ impl PreparedBatches {
 
     pub(crate) fn overlay(&self) -> &[OrderedBatch] {
         &self.batches[self.overlay_range.clone()]
+    }
+
+    pub(crate) fn materials(&self) -> &[Material] {
+        &self.materials
     }
 }
 

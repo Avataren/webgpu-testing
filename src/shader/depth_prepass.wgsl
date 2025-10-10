@@ -7,6 +7,12 @@ struct Globals {
 
 struct Object {
     model: mat4x4<f32>,
+    material_index: u32,
+    _padding: vec3<u32>,
+};
+@group(1) @binding(0) var<storage, read> objects: array<Object>;
+
+struct MaterialData {
     color: vec4<f32>,
     base_color_texture: u32,
     metallic_roughness_texture: u32,
@@ -20,7 +26,7 @@ struct Object {
     _padding: u32,
     _padding2: vec2<u32>,
 };
-@group(1) @binding(0) var<storage, read> objects: array<Object>;
+@group(1) @binding(1) var<storage, read> materials: array<MaterialData>;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
