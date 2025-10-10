@@ -915,7 +915,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     // Tone mapping and gamma correction
     color = color / (color + vec3<f32>(1.0));
-    color = pow(color, vec3<f32>(1.0 / 2.2));
+    //color = pow(color, vec3<f32>(1.0 / 2.2));
     return vec4<f32>(color, base_color.a);   
 
 //     if ((material.material_flags & FLAG_UNLIT) != 0u) {
