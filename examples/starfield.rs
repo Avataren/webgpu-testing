@@ -14,10 +14,10 @@ use wasm_bindgen::prelude::*;
 const STAR_COUNT: usize = 50_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
-const FAR_PLANE: f32 = 250.0;
+const FAR_PLANE: f32 = 150.0;
 const FAR_RESET_BAND: f32 = 25.0;
-const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..25.0;
-const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.0..3.5;
+const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
+const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.1..3.5;
 const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.25..0.75;
 
 #[derive(Clone, Copy)]
@@ -68,7 +68,7 @@ impl RenderApplication for StarfieldApp {
         let (verts, idx) = wgpu_cube::renderer::cube_mesh();
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-        let material = Material::white();
+        let material = Material::checker();
         ctx.scene.set_camera(Camera {
             eye: Vec3::ZERO,
             target: Vec3::new(0.0, 0.0, -1.0),
