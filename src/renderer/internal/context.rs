@@ -1,14 +1,24 @@
-use std::mem;
-
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
+use std::ops::Deref;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
+
+use winit::raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle,
+    WindowHandle as WinitWindowHandle,
+};
 
 use crate::renderer::Depth;
 use crate::settings::RenderSettings;
 
 pub(crate) struct RenderContext {
-    // Drop order: bottom to top
-    // Surface must be dropped LAST (or nearly last, before window)
+    // Drop order: bottom to top (fields declared earlier drop last)
+    // Keep instance alive for the lifetime of the surface and drop the surface before the window.
+    pub(crate) instance: wgpu::Instance,
     pub(crate) size: PhysicalSize<u32>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) supports_bindless_textures: bool,
@@ -22,9 +32,63 @@ pub(crate) struct RenderContext {
     pub(crate) surface: wgpu::Surface<'static>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type SharedWindow = Arc<Window>;
+#[cfg(target_arch = "wasm32")]
+type SharedWindow = Rc<Window>;
+
+#[derive(Clone)]
+struct OwnedWindowHandle {
+    window: SharedWindow,
+}
+
+impl OwnedWindowHandle {
+    fn new(window: SharedWindow) -> Self {
+        Self { window }
+    }
+}
+
+impl Deref for OwnedWindowHandle {
+    type Target = Window;
+
+    fn deref(&self) -> &Self::Target {
+        &self.window
+    }
+}
+
+impl HasWindowHandle for OwnedWindowHandle {
+    fn window_handle(&self) -> Result<WinitWindowHandle<'_>, HandleError> {
+        self.window.window_handle()
+    }
+}
+
+impl HasDisplayHandle for OwnedWindowHandle {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        self.window.display_handle()
+    }
+}
+
 impl RenderContext {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn new(
-        window: &Window,
+        window: Arc<Window>,
+        size: PhysicalSize<u32>,
+        settings: &RenderSettings,
+    ) -> Self {
+        Self::new_internal(OwnedWindowHandle::new(window), size, settings).await
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn new(
+        window: Rc<Window>,
+        size: PhysicalSize<u32>,
+        settings: &RenderSettings,
+    ) -> Self {
+        Self::new_internal(OwnedWindowHandle::new(window), size, settings).await
+    }
+
+    async fn new_internal(
+        window_handle: OwnedWindowHandle,
         size: PhysicalSize<u32>,
         settings: &RenderSettings,
     ) -> Self {
@@ -39,10 +103,8 @@ impl RenderContext {
             ..Default::default()
         });
         let surface = instance
-            .create_surface(window)
+            .create_surface(window_handle)
             .expect("Failed to create surface");
-
-        let surface: wgpu::Surface<'static> = unsafe { mem::transmute(surface) };
 
         log::info!("Surface created successfully!");
 
@@ -116,15 +178,8 @@ impl RenderContext {
             .formats
             .iter()
             .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or_else(|| {
-                surface_caps
-                    .formats
-                    .iter()
-                    .copied()
-                    .find(|f| f.is_srgb())
-                    .unwrap_or(surface_caps.formats[0])
-            });
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
 
         let format_features = adapter.get_texture_format_features(format);
         let supported_sample_counts = format_features.flags.supported_sample_counts();
@@ -176,6 +231,7 @@ impl RenderContext {
         let depth = Depth::new(&device, size, sample_count);
 
         Self {
+            instance,
             surface,
             device,
             queue,

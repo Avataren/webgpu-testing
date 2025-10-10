@@ -9,6 +9,8 @@ use winit::{
 
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
@@ -19,7 +21,7 @@ use crate::settings::RenderSettings;
 #[cfg(target_arch = "wasm32")]
 type WindowHandle = Rc<Window>;
 #[cfg(not(target_arch = "wasm32"))]
-type WindowHandle = Window;
+type WindowHandle = std::sync::Arc<Window>;
 #[cfg(target_arch = "wasm32")]
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
@@ -303,7 +305,6 @@ impl App {
         if let Some(mut renderer) = renderer_opt {
             log::info!("Completing asynchronous renderer initialization");
 
-            // ADD THIS:
             #[cfg(feature = "egui")]
             {
                 if let Some(window) = &self.window {
@@ -311,7 +312,7 @@ impl App {
                         renderer.get_device(),
                         renderer.surface_format(),
                         renderer.sample_count(),
-                        window,
+                        window.as_ref(),
                     );
                     self.install_egui_context(egui);
                     log::info!("Egui context initialized (async)");
@@ -465,9 +466,43 @@ impl App {
         }
     }
 
-    fn render_scene(&mut self, renderer: &mut Renderer, frame: &FrameStep) {
+    fn handle_surface_error(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        renderer: &mut Renderer,
+        error: wgpu::SurfaceError,
+    ) -> bool {
+        match error {
+            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                log::warn!("Surface lost/outdated; resizing swapchain");
+                if let Some(window) = &self.window {
+                    renderer.resize(window.inner_size());
+                }
+                true
+            }
+            wgpu::SurfaceError::Timeout => {
+                log::warn!("Surface timeout; will retry next frame");
+                true
+            }
+            wgpu::SurfaceError::OutOfMemory => {
+                log::error!("Surface out of memory; shutting down");
+                event_loop.exit();
+                false
+            }
+            err @ wgpu::SurfaceError::Other => {
+                log::error!("Unexpected surface error: {err:?}");
+                true
+            }
+        }
+    }
+
+    fn render_scene(
+        &mut self,
+        renderer: &mut Renderer,
+        frame: &FrameStep,
+    ) -> Result<(), wgpu::SurfaceError> {
         if !frame.should_render() {
-            return;
+            return Ok(());
         }
 
         let aspect = renderer.aspect_ratio();
@@ -479,58 +514,55 @@ impl App {
         #[cfg(feature = "egui")]
         let egui_output = {
             if let (Some(egui), Some(window)) = (&mut self.egui_context, &self.window) {
-                egui.begin_frame(window);
+                egui.begin_frame(window.as_ref());
                 egui.run_ui();
-                Some(egui.end_frame(window))
+                Some(egui.end_frame(window.as_ref()))
             } else {
                 None
             }
         };
 
-        match self.scene.render(renderer, &mut self.batcher) {
-            Ok(render_frame) => {
-                #[cfg(feature = "egui")]
-                {
-                    if let (Some(egui), Some(window), Some(egui_output)) =
-                        (&mut self.egui_context, &self.window, egui_output)
-                    {
-                        let view = render_frame
-                            .frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
+        let render_frame = self.scene.render(renderer, &mut self.batcher)?;
 
-                        let mut encoder = renderer.get_device().create_command_encoder(
-                            &wgpu::CommandEncoderDescriptor {
-                                label: Some("egui_encoder"),
-                            },
-                        );
+        #[cfg(feature = "egui")]
+        {
+            if let (Some(egui), Some(window), Some(egui_output)) =
+                (&mut self.egui_context, &self.window, egui_output)
+            {
+                let view = render_frame
+                    .frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                let mut encoder = renderer.get_device().create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("egui_encoder"),
+                    },
+                );
 
                         let surface_size = renderer.surface_size();
                         let mut target = EguiRenderTarget {
                             device: renderer.get_device(),
                             queue: renderer.get_queue(),
                             encoder: &mut encoder,
-                            window,
+                            window: window.as_ref(),
                             view: &view,
                             surface_size: [surface_size.width, surface_size.height],
                         };
                         egui.render(&mut target, egui_output);
 
-                        renderer.get_queue().submit(Some(encoder.finish()));
-                    }
-                }
-
-                render_frame.frame.present();
-
-                #[cfg(feature = "egui")]
-                if let Ok(mut history) = self.frame_stats.lock() {
-                    history.record(frame.dt() as f32, renderer.last_frame_stats());
-                }
-            }
-            Err(e) => {
-                log::error!("Render error: {:?}", e);
+                renderer.get_queue().submit(Some(encoder.finish()));
             }
         }
+
+        render_frame.frame.present();
+
+        #[cfg(feature = "egui")]
+        if let Ok(mut history) = self.frame_stats.lock() {
+            history.record(frame.dt() as f32, renderer.last_frame_stats());
+        }
+
+        Ok(())
     }
 }
 
@@ -568,12 +600,14 @@ impl ApplicationHandler for App {
             let window = event_loop
                 .create_window(window_attrs)
                 .expect("Failed to create window");
-            let id = window.id();
 
             #[cfg(not(target_arch = "wasm32"))]
             {
+                let window = Arc::new(window);
+                let id = window.id();
+
                 let mut renderer =
-                    pollster::block_on(Renderer::new(&window, self.settings.clone()));
+                    pollster::block_on(Renderer::new(window.clone(), self.settings.clone()));
 
                 #[cfg(feature = "egui")]
                 {
@@ -581,7 +615,7 @@ impl ApplicationHandler for App {
                         renderer.get_device(),
                         renderer.surface_format(),
                         renderer.sample_count(),
-                        &window,
+                        window.as_ref(),
                     );
                     self.install_egui_context(egui);
                     log::info!("Egui context initialized");
@@ -612,6 +646,7 @@ impl ApplicationHandler for App {
 
             #[cfg(target_arch = "wasm32")]
             {
+                let id = window.id();
                 let window_handle = Rc::new(window);
                 let pending_renderer: PendingRenderer = Rc::new(RefCell::new(None));
                 let renderer_cell = pending_renderer.clone();
@@ -621,7 +656,7 @@ impl ApplicationHandler for App {
                 log::info!("Spawning asynchronous renderer initialization");
 
                 spawn_local(async move {
-                    let renderer = Renderer::new(&window_for_renderer, settings).await;
+                    let renderer = Renderer::new(window_for_renderer.clone(), settings).await;
                     renderer_cell.borrow_mut().replace(renderer);
                     window_for_renderer.request_redraw();
                 });
@@ -652,7 +687,7 @@ impl ApplicationHandler for App {
         #[cfg(feature = "egui")]
         {
             if let (Some(egui), Some(window)) = (&mut self.egui_context, &self.window) {
-                if egui.handle_event(window, &event) {
+                if egui.handle_event(window.as_ref(), &event) {
                     return; // Event was consumed by egui
                 }
             }
@@ -694,8 +729,15 @@ impl ApplicationHandler for App {
                         &mut renderer,
                         frame.dt(),
                     );
-                    self.render_scene(&mut renderer, &frame);
+                    let should_continue =
+                        match self.render_scene(&mut renderer, &frame) {
+                            Ok(()) => true,
+                            Err(err) => self.handle_surface_error(event_loop, &mut renderer, err),
+                        };
                     self.renderer = Some(renderer);
+                    if !should_continue {
+                        return;
+                    }
                 }
 
                 if let Some(window) = &self.window {

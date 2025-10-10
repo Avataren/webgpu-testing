@@ -120,6 +120,13 @@ pub struct PostProcess {
     composite_pipeline: wgpu::RenderPipeline,
     size: wgpu::Extent3d,
     effects: PostProcessEffects,
+    ssao_bind_group: Option<wgpu::BindGroup>,
+    bloom_prefilter_bind_group: Option<wgpu::BindGroup>,
+    bloom_horizontal_bind_group: Option<wgpu::BindGroup>,
+    bloom_vertical_bind_group: Option<wgpu::BindGroup>,
+    composite_bind_group: Option<wgpu::BindGroup>,
+    cached_depth_view: Option<wgpu::TextureView>,
+    bind_groups_dirty: bool,
     last_proj: Mat4,
     last_near: f32,
     last_far: f32,
@@ -501,6 +508,13 @@ impl PostProcess {
             composite_pipeline,
             size,
             effects: PostProcessEffects::default(),
+            ssao_bind_group: None,
+            bloom_prefilter_bind_group: None,
+            bloom_horizontal_bind_group: None,
+            bloom_vertical_bind_group: None,
+            composite_bind_group: None,
+            cached_depth_view: None,
+            bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
             last_near: 0.01,
             last_far: 100.0,
@@ -548,6 +562,7 @@ impl PostProcess {
         self.ssao = TextureBundle::ssao(device, &self.size);
         self.bloom_ping = TextureBundle::bloom(device, &self.size, "BloomPing");
         self.bloom_pong = TextureBundle::bloom(device, &self.size, "BloomPong");
+        self.mark_bind_groups_dirty();
         self.upload_uniform(queue);
     }
 
@@ -577,6 +592,11 @@ impl PostProcess {
         &self.bloom_ping.view
     }
 
+    pub fn set_depth_view(&mut self, depth_view: &wgpu::TextureView) {
+        self.cached_depth_view = Some(depth_view.clone());
+        self.mark_bind_groups_dirty();
+    }
+
     pub fn set_effects(&mut self, queue: &wgpu::Queue, effects: PostProcessEffects) {
         if self.effects != effects {
             self.effects = effects;
@@ -589,33 +609,18 @@ impl PostProcess {
     }
 
     pub fn execute(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
-        depth_view: &wgpu::TextureView,
         target: &wgpu::TextureView,
     ) {
-        // SSAO
-        if self.effects.ssao {
-            let ssao_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SsaoBindGroup"),
-                layout: &self.ssao_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.noise_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
-                    },
-                ],
-            });
+        self.ensure_cached_bind_groups(device);
 
+        if self.effects.ssao {
+            let ssao_bind_group = self
+                .ssao_bind_group
+                .as_ref()
+                .expect("SSAO bind group not initialized");
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SsaoPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -633,7 +638,7 @@ impl PostProcess {
             });
             pass.set_pipeline(&self.ssao_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            pass.set_bind_group(1, &ssao_bind_group, &[]);
+            pass.set_bind_group(1, ssao_bind_group, &[]);
             pass.draw(0..3, 0..1);
         } else {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -654,20 +659,18 @@ impl PostProcess {
         }
 
         if self.effects.bloom {
-            let bloom_prefilter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("BloomPrefilterBindGroup"),
-                layout: &self.bloom_prefilter_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.scene.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
-                    },
-                ],
-            });
+            let bloom_prefilter = self
+                .bloom_prefilter_bind_group
+                .as_ref()
+                .expect("Bloom prefilter bind group not initialized");
+            let bloom_horizontal = self
+                .bloom_horizontal_bind_group
+                .as_ref()
+                .expect("Bloom horizontal bind group not initialized");
+            let bloom_vertical = self
+                .bloom_vertical_bind_group
+                .as_ref()
+                .expect("Bloom vertical bind group not initialized");
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -686,24 +689,9 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_prefilter_pipeline);
-                pass.set_bind_group(0, &bloom_prefilter_bind_group, &[]);
+                pass.set_bind_group(0, bloom_prefilter, &[]);
                 pass.draw(0..3, 0..1);
             }
-
-            let horizontal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("BloomHorizontalBindGroup"),
-                layout: &self.bloom_blur_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.bloom_ping.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
-                    },
-                ],
-            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -722,24 +710,9 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_blur_horizontal);
-                pass.set_bind_group(0, &horizontal_bind_group, &[]);
+                pass.set_bind_group(0, bloom_horizontal, &[]);
                 pass.draw(0..3, 0..1);
             }
-
-            let vertical_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("BloomVerticalBindGroup"),
-                layout: &self.bloom_blur_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.bloom_pong.view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
-                    },
-                ],
-            });
 
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -758,7 +731,7 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_blur_vertical);
-                pass.set_bind_group(0, &vertical_bind_group, &[]);
+                pass.set_bind_group(0, bloom_vertical, &[]);
                 pass.draw(0..3, 0..1);
             }
         } else {
@@ -795,7 +768,136 @@ impl PostProcess {
             });
         }
 
-        let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let composite_bind_group = self
+            .composite_bind_group
+            .as_ref()
+            .expect("Composite bind group not initialized");
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("CompositePass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.composite_pipeline);
+            pass.set_bind_group(0, composite_bind_group, &[]);
+            pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+}
+
+impl PostProcess {
+    fn upload_uniform(&self, queue: &wgpu::Queue) {
+        let proj_inv = self.last_proj.inverse();
+        let uniform = PostProcessUniform::new(
+            self.last_proj,
+            proj_inv,
+            self.size.width as f32,
+            self.size.height as f32,
+            self.last_near,
+            self.last_far,
+            self.effects,
+        );
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    fn mark_bind_groups_dirty(&mut self) {
+        self.ssao_bind_group = None;
+        self.bloom_prefilter_bind_group = None;
+        self.bloom_horizontal_bind_group = None;
+        self.bloom_vertical_bind_group = None;
+        self.composite_bind_group = None;
+        self.bind_groups_dirty = true;
+    }
+
+    fn ensure_cached_bind_groups(&mut self, device: &wgpu::Device) {
+        if !self.bind_groups_dirty {
+            return;
+        }
+
+        let depth_view = self
+            .cached_depth_view
+            .as_ref()
+            .expect("Depth view must be set before executing post process");
+
+        self.ssao_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SsaoBindGroup"),
+            layout: &self.ssao_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
+                },
+            ],
+        }));
+
+        self.bloom_prefilter_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("BloomPrefilterBindGroup"),
+            layout: &self.bloom_prefilter_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.scene.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                },
+            ],
+        }));
+
+        self.bloom_horizontal_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("BloomHorizontalBindGroup"),
+                layout: &self.bloom_blur_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.bloom_ping.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                    },
+                ],
+            }));
+
+        self.bloom_vertical_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("BloomVerticalBindGroup"),
+                layout: &self.bloom_blur_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.bloom_pong.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                    },
+                ],
+            }));
+
+        self.composite_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CompositeBindGroup"),
             layout: &self.composite_layout,
             entries: &[
@@ -816,45 +918,9 @@ impl PostProcess {
                     resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                 },
             ],
-        });
+        }));
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("CompositePass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.composite_pipeline);
-            pass.set_bind_group(0, &composite_bind_group, &[]);
-            pass.set_bind_group(1, &self.uniform_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
-    }
-}
-
-impl PostProcess {
-    fn upload_uniform(&self, queue: &wgpu::Queue) {
-        let proj_inv = self.last_proj.inverse();
-        let uniform = PostProcessUniform::new(
-            self.last_proj,
-            proj_inv,
-            self.size.width as f32,
-            self.size.height as f32,
-            self.last_near,
-            self.last_far,
-            self.effects,
-        );
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        self.bind_groups_dirty = false;
     }
 
     fn create_noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Texture {

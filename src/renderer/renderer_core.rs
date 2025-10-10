@@ -14,6 +14,10 @@ use crate::scene::Camera;
 use crate::settings::RenderSettings;
 
 use glam::Vec3;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use std::rc::Rc;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 10;
@@ -66,9 +70,21 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(window: &Window, mut settings: RenderSettings) -> Self {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn new(window: Arc<Window>, settings: RenderSettings) -> Self {
         let size = window.inner_size();
         let context = RenderContext::new(window, size, &settings).await;
+        Self::from_context(context, settings)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn new(window: Rc<Window>, settings: RenderSettings) -> Self {
+        let size = window.inner_size();
+        let context = RenderContext::new(window, size, &settings).await;
+        Self::from_context(context, settings)
+    }
+
+    fn from_context(context: RenderContext, mut settings: RenderSettings) -> Self {
         let sample_count = context.sample_count;
         settings.sample_count = sample_count;
         let camera_buffer = CameraBuffer::new(&context.device);
@@ -83,12 +99,13 @@ impl Renderer {
             &lights_buffer,
             sample_count,
         );
-        let postprocess = PostProcess::new(
+        let mut postprocess = PostProcess::new(
             &context.device,
             &context.queue,
             &context.config,
             sample_count,
         );
+        postprocess.set_depth_view(&context.depth.sampled_view);
 
         Self {
             context,
@@ -136,6 +153,8 @@ impl Renderer {
             self.context.config.height,
             self.context.config.format,
         );
+        self.postprocess
+            .set_depth_view(&self.context.depth.sampled_view);
     }
 
     pub fn aspect_ratio(&self) -> f32 {
@@ -230,9 +249,11 @@ impl Renderer {
             prepared_batches.materials(),
         );
 
-        let (scene_view, resolve_target) = self.postprocess.scene_color_views();
+        let (scene_view, resolve_target) = {
+            let (view, resolve) = self.postprocess.scene_color_views();
+            (view.clone(), resolve.map(|rt| rt.clone()))
+        };
         let depth_view = self.context.depth.view.clone();
-        let sampled_depth_view = self.context.depth.sampled_view.clone();
 
         // Depth-only prepass
         {
@@ -275,9 +296,9 @@ impl Renderer {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: scene_view,
+                    view: &scene_view,
                     depth_slice: None,
-                    resolve_target,
+                    resolve_target: resolve_target.as_ref(),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.231,
@@ -315,12 +336,8 @@ impl Renderer {
         }
 
         // Resolve scene → swapchain
-        self.postprocess.execute(
-            &mut encoder,
-            &self.context.device,
-            &sampled_depth_view,
-            &view,
-        );
+        self.postprocess
+            .execute(&mut encoder, &self.context.device, &view);
 
         // Overlay pass (your overlays draw after UI if you keep it here;
         // if you want UI on top of overlays, move this block above ui_hook).
