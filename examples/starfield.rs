@@ -3,8 +3,9 @@ use rand::{rngs::SmallRng, Rng, SeedableRng};
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
+use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    Camera, MaterialComponent, MeshComponent, Transform, TransformComponent, Visible,
+    Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -77,6 +78,16 @@ impl RenderApplication for StarfieldApp {
             far: FAR_PLANE,
             ..Camera::default()
         });
+
+        let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
+        let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
+
+        ctx.scene.world.spawn((
+            Name::new("Default Sky Light"),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, sun1_rotation, Vec3::ONE)),
+            DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
+            CanCastShadow(false),
+        ));
 
         for _ in 0..STAR_COUNT {
             let mut transform = Transform::from_trs(
