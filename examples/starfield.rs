@@ -5,7 +5,7 @@ use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible
+    Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -69,6 +69,12 @@ impl RenderApplication for StarfieldApp {
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
         let material = Material::checker();
+        ctx.scene.environment_mut().set_clear_color(wgpu::Color {
+            r: 0.01,
+            g: 0.02,
+            b: 0.05,
+            a: 1.0,
+        });
         ctx.scene.set_camera(Camera {
             eye: Vec3::ZERO,
             target: Vec3::new(0.0, 0.0, -1.0),

@@ -1,5 +1,6 @@
 pub mod app;
 pub mod asset;
+pub mod environment;
 pub mod io;
 pub mod render_application;
 pub mod renderer;
@@ -13,6 +14,8 @@ pub mod ui;
 #[cfg(feature = "egui")]
 pub use render_application::DefaultUI;
 pub use render_application::{run_application, RenderApplication};
+
+pub use environment::Environment;
 
 pub use app::{
     App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,
