@@ -70,9 +70,9 @@ impl RenderApplication for StarfieldApp {
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
         let material = Material::checker();
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
-            r: 0.01,
-            g: 0.02,
-            b: 0.05,
+            r: 0.001,
+            g: 0.005,
+            b: 0.01,
             a: 1.0,
         });
         ctx.scene.set_camera(Camera {

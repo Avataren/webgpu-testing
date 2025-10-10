@@ -63,6 +63,7 @@ impl MaterialData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::texture::DEFAULT_WHITE_TEXTURE_INDEX;
     #[test]
     fn object_data_size() {
         assert_eq!(std::mem::size_of::<ObjectData>(), 96);
@@ -75,7 +76,7 @@ mod tests {
         let material = Material::new([255, 255, 255, 255])
             .with_metallic(0.75)
             .with_roughness(0.25)
-            .with_base_color_texture(0);
+            .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX);
 
         assert_eq!(material.metallic_factor, 191);
         assert_eq!(material.roughness_factor, 63);
@@ -99,7 +100,7 @@ mod tests {
                 let material = Material::new([220, 220, 220, 255])
                     .with_metallic(metallic)
                     .with_roughness(roughness)
-                    .with_base_color_texture(0);
+                    .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX);
 
                 metallic_values.push(material.metallic_f32());
                 roughness_values.push(material.roughness_f32());

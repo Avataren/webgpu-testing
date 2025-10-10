@@ -88,7 +88,11 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(1.0),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::new([60, 200, 120, 200]).with_roughness(0.2).with_alpha()),
+        MaterialComponent(
+            Material::new([60, 200, 120, 200])
+                .with_roughness(0.2)
+                .with_alpha(),
+        ),
         //DepthState::new(true, false),
         Visible(true),
     ));
@@ -128,7 +132,11 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
             base_plate.scale,
         )),
         MeshComponent(quad_handle),
-        MaterialComponent(Material::new([200, 60, 60, 180]).with_roughness(0.3).with_alpha()),
+        MaterialComponent(
+            Material::new([200, 60, 60, 180])
+                .with_roughness(0.3)
+                .with_alpha(),
+        ),
         DepthState::new(true, true),
         Visible(true),
     ));

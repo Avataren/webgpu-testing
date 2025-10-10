@@ -2,6 +2,7 @@ use glam::{Quat, Vec3};
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::render_application::{run_application, RenderApplication};
+use wgpu_cube::renderer::texture::DEFAULT_WHITE_TEXTURE_INDEX;
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight, PointLight};
 use wgpu_cube::scene::{
@@ -74,7 +75,7 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
             let material = Material::new(color)
                 .with_metallic(metallic)
                 .with_roughness(roughness)
-                .with_base_color_texture(0)
+                .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX)
                 .with_metallic_roughness_texture(unit_mr_handle.index() as u32);
 
             scene.world.spawn((

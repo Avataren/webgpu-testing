@@ -1,5 +1,12 @@
 // renderer/texture.rs (with mipmaps)
 
+/// Indices for textures inserted by `App::init_default_textures`.
+/// Keeping these in sync avoids scattering magic numbers across the codebase.
+pub const DEFAULT_WHITE_TEXTURE_INDEX: u32 = 0;
+pub const DEFAULT_NORMAL_TEXTURE_INDEX: u32 = 1;
+pub const DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX: u32 = 2;
+pub const DEFAULT_CHECKER_TEXTURE_INDEX: u32 = 3;
+
 use std::path::Path;
 
 #[cfg(target_arch = "wasm32")]

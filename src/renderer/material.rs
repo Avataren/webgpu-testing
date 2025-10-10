@@ -1,5 +1,7 @@
 // renderer/material.rs (PBR version)
 
+use crate::renderer::texture::DEFAULT_CHECKER_TEXTURE_INDEX;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Material {
     pub base_color: [u8; 4],
@@ -181,7 +183,7 @@ impl Material {
     }
 
     pub fn checker() -> Self {
-        Self::new([255, 255, 255, 255]).with_base_color_texture(0)
+        Self::new([255, 255, 255, 255]).with_base_color_texture(DEFAULT_CHECKER_TEXTURE_INDEX)
     }
 
     pub fn color_f32(&self) -> [f32; 4] {

@@ -15,7 +15,13 @@ use std::{cell::RefCell, rc::Rc};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
 
-use crate::renderer::{RenderBatcher, Renderer, Texture};
+use crate::renderer::{
+    texture::{
+        DEFAULT_CHECKER_TEXTURE_INDEX, DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX,
+        DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
+    },
+    RenderBatcher, Renderer, Texture,
+};
 use crate::settings::RenderSettings;
 
 #[cfg(target_arch = "wasm32")]
@@ -273,16 +279,52 @@ impl App {
     }
 
     fn init_default_textures(&mut self, renderer: &mut Renderer) {
-        let white = Texture::white(renderer.get_device(), renderer.get_queue());
-        self.scene.assets.textures.insert(white);
+        let device = renderer.get_device();
+        let queue = renderer.get_queue();
 
-        let normal = Texture::default_normal(renderer.get_device(), renderer.get_queue());
-        self.scene.assets.textures.insert(normal);
+        let white = Texture::white(device, queue);
+        let white_handle = self.scene.assets.textures.insert(white);
+        debug_assert_eq!(
+            white_handle.index() as u32,
+            DEFAULT_WHITE_TEXTURE_INDEX,
+            "Default white texture index changed; update the constants in renderer::texture"
+        );
 
-        let mr = Texture::default_metallic_roughness(renderer.get_device(), renderer.get_queue());
-        self.scene.assets.textures.insert(mr);
+        let normal = Texture::default_normal(device, queue);
+        let normal_handle = self.scene.assets.textures.insert(normal);
+        debug_assert_eq!(
+            normal_handle.index() as u32,
+            DEFAULT_NORMAL_TEXTURE_INDEX,
+            "Default normal texture index changed; update the constants in renderer::texture"
+        );
 
-        log::info!("Initialized default PBR textures");
+        let mr = Texture::default_metallic_roughness(device, queue);
+        let mr_handle = self.scene.assets.textures.insert(mr);
+        debug_assert_eq!(
+            mr_handle.index() as u32,
+            DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX,
+            "Default metallic-roughness texture index changed; update the constants in renderer::texture"
+        );
+
+        let checker = Texture::checkerboard(
+            device,
+            queue,
+            128,
+            16,
+            [255, 255, 255, 255],
+            [24, 24, 24, 255],
+            Some("DefaultCheckerboard"),
+        );
+        let checker_handle = self.scene.assets.textures.insert(checker);
+        debug_assert_eq!(
+            checker_handle.index() as u32,
+            DEFAULT_CHECKER_TEXTURE_INDEX,
+            "Default checker texture index changed; update the constants in renderer::texture"
+        );
+
+        log::info!(
+            "Initialized default textures (white, normal, metallic-roughness, checkerboard)"
+        );
     }
 
     #[cfg(target_arch = "wasm32")]
