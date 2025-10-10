@@ -1,5 +1,9 @@
 use glam::{Quat, Vec3};
+use rand::thread_rng;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rayon::prelude::*; // rayon = "1"
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
@@ -7,9 +11,6 @@ use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
     Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 
 const STAR_COUNT: usize = 50_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
@@ -19,7 +20,7 @@ const FAR_RESET_BAND: f32 = 25.0;
 const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
 const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.1..3.5;
 const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.25..0.75;
-
+const MIN_SIZE_FROM_CENTER:f32 = 0.5;
 #[derive(Clone, Copy)]
 struct StarfieldMotion {
     speed: f32,
@@ -122,39 +123,59 @@ impl RenderApplication for StarfieldApp {
             return;
         }
 
-        let query = ctx
+        let batch: u32 = 1024*4;
+
+        // Note: `into_iter_batched` (not `iter_batched`)
+        let q = ctx
             .scene
             .world
             .query_mut::<(&mut TransformComponent, &mut StarfieldMotion)>();
 
-        let rng = &mut self.rng;
+        q.into_iter_batched(batch)
+            .par_bridge()
+            .for_each(|mut chunk| {
+                // One SmallRng per batch (fast, avoids contention, satisfies signature)
+                let mut rng = SmallRng::from_rng(thread_rng()).expect("rng");
 
-        for (_, (transform, motion)) in query.into_iter() {
-            transform.0.translation.z += motion.speed * dt;
+                for (_, (transform, motion)) in &mut chunk {
+                    transform.0.translation.z += motion.speed * dt;
 
-            if motion.angular_speed > 0.0 {
-                let delta = Quat::from_axis_angle(motion.angular_axis, motion.angular_speed * dt);
-                transform.0.rotation = (delta * transform.0.rotation).normalize();
-            }
+                    if motion.angular_speed > 0.0 {
+                        let delta =
+                            Quat::from_axis_angle(motion.angular_axis, motion.angular_speed * dt);
+                        transform.0.rotation = (delta * transform.0.rotation).normalize();
+                    }
 
-            if transform.0.translation.z > -NEAR_PLANE {
-                respawn_star(&mut transform.0, motion, rng);
-            }
-        }
+                    if transform.0.translation.z > -NEAR_PLANE {
+                        // `respawn_star` expects &mut SmallRng
+                        respawn_star(&mut transform.0, motion, &mut rng);
+                    }
+                }
+            });
     }
 }
 
 fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
-    let x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
-    let y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
+    let mut x:f32 = 0.0;
+    let mut y:f32 = 0.0;
+    while (x*x+y*y).sqrt() < MIN_SIZE_FROM_CENTER
+    {
+        x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
+        y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
+    }
+
     let z = -rng.gen_range(NEAR_PLANE..FAR_PLANE);
     Vec3::new(x, y, z)
 }
 
 fn random_far_position(rng: &mut SmallRng) -> Vec3 {
-    let x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
-    let y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
-    let z = -FAR_PLANE - rng.gen_range(0.0..FAR_RESET_BAND);
+    let mut x:f32 = 0.0;
+    let mut y:f32 = 0.0;
+    while (x*x+y*y).sqrt() < MIN_SIZE_FROM_CENTER
+    {
+        x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
+        y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
+    }    let z = -FAR_PLANE - rng.gen_range(0.0..FAR_RESET_BAND);
     Vec3::new(x, y, z)
 }
 

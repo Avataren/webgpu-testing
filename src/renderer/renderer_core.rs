@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 50;
+const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 150;
 const POINT_SHADOW_FACE_COUNT: u32 = 6;
 
 #[cfg(feature = "egui")]
