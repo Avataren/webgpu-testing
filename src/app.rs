@@ -7,10 +7,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-#[cfg(target_arch = "wasm32")]
-use std::{cell::RefCell, rc::Rc};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
@@ -534,22 +534,23 @@ impl App {
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
 
-                let mut encoder = renderer.get_device().create_command_encoder(
-                    &wgpu::CommandEncoderDescriptor {
-                        label: Some("egui_encoder"),
-                    },
-                );
+                let mut encoder =
+                    renderer
+                        .get_device()
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("egui_encoder"),
+                        });
 
-                        let surface_size = renderer.surface_size();
-                        let mut target = EguiRenderTarget {
-                            device: renderer.get_device(),
-                            queue: renderer.get_queue(),
-                            encoder: &mut encoder,
-                            window: window.as_ref(),
-                            view: &view,
-                            surface_size: [surface_size.width, surface_size.height],
-                        };
-                        egui.render(&mut target, egui_output);
+                let surface_size = renderer.surface_size();
+                let mut target = EguiRenderTarget {
+                    device: renderer.get_device(),
+                    queue: renderer.get_queue(),
+                    encoder: &mut encoder,
+                    window: window.as_ref(),
+                    view: &view,
+                    surface_size: [surface_size.width, surface_size.height],
+                };
+                egui.render(&mut target, egui_output);
 
                 renderer.get_queue().submit(Some(encoder.finish()));
             }
@@ -729,11 +730,10 @@ impl ApplicationHandler for App {
                         &mut renderer,
                         frame.dt(),
                     );
-                    let should_continue =
-                        match self.render_scene(&mut renderer, &frame) {
-                            Ok(()) => true,
-                            Err(err) => self.handle_surface_error(event_loop, &mut renderer, err),
-                        };
+                    let should_continue = match self.render_scene(&mut renderer, &frame) {
+                        Ok(()) => true,
+                        Err(err) => self.handle_surface_error(event_loop, &mut renderer, err),
+                    };
                     self.renderer = Some(renderer);
                     if !should_continue {
                         return;

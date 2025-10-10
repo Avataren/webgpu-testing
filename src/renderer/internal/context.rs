@@ -1,11 +1,11 @@
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
 use std::ops::Deref;
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 
 use winit::raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle,

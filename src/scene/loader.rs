@@ -6,12 +6,12 @@ use super::components::*;
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::{Material, Renderer, Texture, Vertex};
-use bytemuck::cast_slice;
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
 };
 use crate::scene::{Scene, Transform};
+use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
 use std::collections::HashMap;

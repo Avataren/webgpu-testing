@@ -141,7 +141,7 @@ fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range
     start..dest.len()
 }
 
-fn optimize_instance_order(pass: RenderPass, instances: &mut Vec<InstanceData>) {
+fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
     if instances.len() <= 1 {
         return;
     }

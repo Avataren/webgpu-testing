@@ -14,10 +14,10 @@ use crate::scene::Camera;
 use crate::settings::RenderSettings;
 
 use glam::Vec3;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 10;
@@ -251,7 +251,7 @@ impl Renderer {
 
         let (scene_view, resolve_target) = {
             let (view, resolve) = self.postprocess.scene_color_views();
-            (view.clone(), resolve.map(|rt| rt.clone()))
+            (view.clone(), resolve.cloned())
         };
         let depth_view = self.context.depth.view.clone();
 

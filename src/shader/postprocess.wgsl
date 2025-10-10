@@ -224,53 +224,93 @@ var scene_sampler : sampler;
 
 @fragment
 fn fs_bloom_prefilter(in : VertexOutput) -> @location(0) vec4<f32> {
-    let color = textureSample(scene_texture, scene_sampler, in.uv);
+    let color = textureSample(scene_texture, scene_sampler, in.uv).rgb;
     let brightness = max(max(color.r, color.g), color.b);
-    let threshold = 1.0;
-    let soft = 0.8;
-    let intensity = clamp((brightness - threshold * soft) / max(0.0001, 1.0 - soft), 0.0, 1.0);
-    return vec4<f32>(color.rgb * intensity, 1.0);
+    let threshold = 0.8;
+    let knee = threshold * 0.5;
+    let soft = brightness - threshold + knee;
+    let clamped = clamp(soft, 0.0, 2.0 * knee);
+    let soft_curve = clamped * clamped / (4.0 * max(knee, 1e-4) + 1e-5);
+    let contribution = max(soft_curve, brightness - threshold);
+    let weight = contribution / max(brightness, 1e-4);
+    return vec4<f32>(color * weight, 1.0);
 }
 
-// Bloom blur horizontal
+// Bloom downsample
 @group(0) @binding(0)
-var blur_texture : texture_2d<f32>;
+var bloom_down_texture : texture_2d<f32>;
 @group(0) @binding(1)
-var blur_sampler : sampler;
+var bloom_down_sampler : sampler;
 
-fn gaussian_weight(x : f32) -> f32 {
-    let sigma = 4.0;
-    return exp(-(x * x) / (2.0 * sigma * sigma));
+fn bloom_gaussian_weight(offset : vec2<f32>, sigma : f32) -> f32 {
+    return exp(-(dot(offset, offset)) / (2.0 * sigma * sigma));
 }
 
 @fragment
-fn fs_bloom_blur_horizontal(in : VertexOutput) -> @location(0) vec4<f32> {
-    let tex_size = vec2<f32>(textureDimensions(blur_texture, 0));
-    let texel = vec2<f32>(1.0 / tex_size.x, 0.0);
+fn fs_bloom_downsample(in : VertexOutput) -> @location(0) vec4<f32> {
+    let tex_size = vec2<f32>(textureDimensions(bloom_down_texture, 0));
+    let texel = 1.0 / tex_size;
     var result = vec3<f32>(0.0);
     var total = 0.0;
-    for (var i : i32 = -8; i <= 8; i = i + 1) {
-        let w = gaussian_weight(f32(i));
-        let color = textureSample(blur_texture, blur_sampler, in.uv + texel * f32(i)).rgb;
-        result = result + color * w;
-        total = total + w;
+    for (var x : i32 = -2; x <= 2; x = x + 1) {
+        for (var y : i32 = -2; y <= 2; y = y + 1) {
+            let offset = vec2<f32>(f32(x), f32(y));
+            let weight = bloom_gaussian_weight(offset, 2.5);
+            let sample_uv = clamp(in.uv + offset * texel, vec2<f32>(0.0), vec2<f32>(1.0));
+            let color = textureSampleLevel(
+                bloom_down_texture,
+                bloom_down_sampler,
+                sample_uv,
+                0.0,
+            )
+                .rgb;
+            result = result + color * weight;
+            total = total + weight;
+        }
     }
-    return vec4<f32>(result / total, 1.0);
+    return vec4<f32>(result / max(total, 1e-4), 1.0);
 }
 
+// Bloom upsample
+@group(0) @binding(0)
+var bloom_upsample_texture : texture_2d<f32>;
+@group(0) @binding(1)
+var bloom_upsample_base : texture_2d<f32>;
+@group(0) @binding(2)
+var bloom_upsample_sampler : sampler;
+
 @fragment
-fn fs_bloom_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
-    let tex_size = vec2<f32>(textureDimensions(blur_texture, 0));
-    let texel = vec2<f32>(0.0, 1.0 / tex_size.y);
-    var result = vec3<f32>(0.0);
+fn fs_bloom_upsample(in : VertexOutput) -> @location(0) vec4<f32> {
+    let tex_size = vec2<f32>(textureDimensions(bloom_upsample_texture, 0));
+    let texel = 1.0 / tex_size;
+    var filtered = vec3<f32>(0.0);
     var total = 0.0;
-    for (var i : i32 = -8; i <= 8; i = i + 1) {
-        let w = gaussian_weight(f32(i));
-        let color = textureSample(blur_texture, blur_sampler, in.uv + texel * f32(i)).rgb;
-        result = result + color * w;
-        total = total + w;
+    for (var x : i32 = -1; x <= 1; x = x + 1) {
+        for (var y : i32 = -1; y <= 1; y = y + 1) {
+            let offset = vec2<f32>(f32(x), f32(y));
+            let weight = bloom_gaussian_weight(offset, 1.5);
+            let sample_uv = clamp(in.uv + offset * texel, vec2<f32>(0.0), vec2<f32>(1.0));
+            let color = textureSampleLevel(
+                bloom_upsample_texture,
+                bloom_upsample_sampler,
+                sample_uv,
+                0.0,
+            )
+                .rgb;
+            filtered = filtered + color * weight;
+            total = total + weight;
+        }
     }
-    return vec4<f32>(result / total, 1.0);
+    filtered = filtered / max(total, 1e-4);
+    let base = textureSampleLevel(
+        bloom_upsample_base,
+        bloom_upsample_sampler,
+        clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0)),
+        0.0,
+    )
+        .rgb;
+    let scatter = 0.95;
+    return vec4<f32>(base + filtered * scatter, 1.0);
 }
 
 @group(0) @binding(0)

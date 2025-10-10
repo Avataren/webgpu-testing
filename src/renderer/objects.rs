@@ -10,7 +10,7 @@ pub struct ObjectData {
     pub model: [[f32; 4]; 4], // 64 bytes
     pub material_index: u32,  // 4 bytes
     pub _padding: [u32; 3],   // 12 bytes to maintain 16-byte alignment
-    pub _padding2: [u32; 4],  // 16 bytes so the std430 stride matches WGSL expectations (96 bytes total)
+    pub _padding2: [u32; 4], // 16 bytes so the std430 stride matches WGSL expectations (96 bytes total)
 }
 
 impl ObjectData {
