@@ -18,7 +18,7 @@ use crate::settings::RenderSettings;
 pub(crate) struct RenderContext {
     // Drop order: bottom to top (fields declared earlier drop last)
     // Keep instance alive for the lifetime of the surface and drop the surface before the window.
-    pub(crate) instance: wgpu::Instance,
+    pub(crate) _instance: wgpu::Instance,
     pub(crate) size: PhysicalSize<u32>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) supports_bindless_textures: bool,
@@ -231,7 +231,7 @@ impl RenderContext {
         let depth = Depth::new(&device, size, sample_count);
 
         Self {
-            instance,
+            _instance: instance,
             surface,
             device,
             queue,
