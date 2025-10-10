@@ -4,6 +4,7 @@ pub mod animation;
 pub mod builder;
 pub mod camera;
 pub mod components;
+pub(crate) mod internal;
 pub mod loader;
 pub mod scene;
 pub mod transform;
