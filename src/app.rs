@@ -24,7 +24,9 @@ type WindowHandle = Window;
 type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
 #[cfg(feature = "egui")]
-use crate::ui::{egui, FrameStatsHandle, FrameStatsHistory};
+use crate::ui::{
+    egui, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle, PostProcessWindow,
+};
 
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
 use crate::time::Instant;
@@ -152,6 +154,8 @@ impl AppBuilder {
             egui_pending_ui: None,
             #[cfg(feature = "egui")]
             frame_stats: FrameStatsHistory::handle(),
+            #[cfg(feature = "egui")]
+            postprocess_effects: PostProcessWindow::handle(),
             window: None,
             window_id: None,
             renderer: None,
@@ -195,6 +199,8 @@ pub struct App {
     egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
     #[cfg(feature = "egui")]
     frame_stats: FrameStatsHandle,
+    #[cfg(feature = "egui")]
+    postprocess_effects: PostProcessEffectsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
 }
@@ -228,6 +234,18 @@ impl App {
     #[cfg(feature = "egui")]
     pub fn frame_stats_handle(&self) -> FrameStatsHandle {
         self.frame_stats.clone()
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn postprocess_effects_handle(&self) -> PostProcessEffectsHandle {
+        self.postprocess_effects.clone()
+    }
+
+    #[cfg(feature = "egui")]
+    fn apply_postprocess_effects(&self, renderer: &mut Renderer) {
+        if let Ok(effects) = self.postprocess_effects.lock() {
+            renderer.set_postprocess_effects(*effects);
+        }
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -302,6 +320,9 @@ impl App {
             self.scene.init_timer();
             self.run_startup_systems(&mut renderer);
             renderer.update_texture_bind_group(&self.scene.assets);
+
+            #[cfg(feature = "egui")]
+            self.apply_postprocess_effects(&mut renderer);
 
             self.renderer = Some(renderer);
             self.pending_renderer = None;
@@ -484,6 +505,9 @@ impl ApplicationHandler for App {
                     self.scene.assets.textures.len()
                 );
 
+                #[cfg(feature = "egui")]
+                self.apply_postprocess_effects(&mut renderer);
+
                 self.window = Some(window);
                 self.window_id = Some(id);
                 self.renderer = Some(renderer);
@@ -588,6 +612,9 @@ impl ApplicationHandler for App {
                     if frame.should_render() {
                         let aspect = renderer.aspect_ratio();
                         renderer.set_camera(self.scene.camera(), aspect);
+
+                        #[cfg(feature = "egui")]
+                        self.apply_postprocess_effects(renderer);
 
                         // --------- 2) Begin/run/end egui BEFORE scene render ----------
                         // so UI state can influence the just-in-time scene rendering
