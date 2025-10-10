@@ -7,7 +7,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::PostProcess,
+    postprocess::{PostProcess, PostProcessEffects},
     CameraUniform, LightsData, RenderBatcher, RenderPass, Vertex,
 };
 use crate::scene::Camera;
@@ -360,6 +360,14 @@ impl Renderer {
 
     pub fn sample_count(&self) -> u32 {
         self.context.sample_count
+    }
+
+    pub fn set_postprocess_effects(&mut self, effects: PostProcessEffects) {
+        self.postprocess.set_effects(&self.context.queue, effects);
+    }
+
+    pub fn postprocess_effects(&self) -> PostProcessEffects {
+        self.postprocess.effects()
     }
 
     pub fn last_frame_stats(&self) -> RendererStats {
