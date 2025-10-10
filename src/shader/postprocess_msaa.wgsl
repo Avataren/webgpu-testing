@@ -295,16 +295,14 @@ fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
     let base = textureSampleLevel(composite_scene, composite_sampler, uv_clamped, 0.0);
     let ssao_enabled = composite_uniform.effects.x > 0.5;
     let bloom_enabled = composite_uniform.effects.y > 0.5;
-    let ssao = if ssao_enabled {
-        textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r
-    } else {
-        1.0
-    };
-    let bloom = if bloom_enabled {
-        textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb
-    } else {
-        vec3<f32>(0.0)
-    };
+    var ssao = 1.0;
+    if ssao_enabled {
+        ssao = textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r;
+    }
+    var bloom = vec3<f32>(0.0);
+    if bloom_enabled {
+        bloom = textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb;
+    }
     return base.rgb * ssao + bloom;
 }
 
