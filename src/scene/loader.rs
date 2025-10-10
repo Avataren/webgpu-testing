@@ -60,7 +60,7 @@ impl SceneLoader {
             return false;
         }
 
-        if values.len() % components_per_keyframe != 0 {
+        if !values.len().is_multiple_of(components_per_keyframe) {
             let valid_values = values.len() / components_per_keyframe * components_per_keyframe;
             log::warn!(
                 "{} animation '{}' channel {} outputs ({}) are not a multiple of {} - truncating",

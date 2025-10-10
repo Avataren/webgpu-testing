@@ -423,7 +423,7 @@ impl Texture {
             for x in 0..size {
                 let checker_x = (x / checker_size) % 2;
                 let checker_y = (y / checker_size) % 2;
-                let is_color1 = (checker_x + checker_y) % 2 == 0;
+                let is_color1 = (checker_x + checker_y).is_multiple_of(2);
 
                 let color = if is_color1 { color1 } else { color2 };
                 let idx = ((y * size + x) * 4) as usize;
