@@ -700,7 +700,8 @@ fn calculate_environment_lighting(
         let spec_sample =
             sample_environment_hdr(reflected, rough_lod) * environment_hdr_intensity();
         let specular_color = mix(vec3<f32>(0.04), base_color, vec3<f32>(metallic));
-        let specular_strength = pow(clamp(1.0 - roughness, 0.0, 1.0), 4.0);
+        var specular_strength = pow(clamp(1.0 - roughness, 0.0, 1.0), 4.0);
+        specular_strength = max(specular_strength, 0.05);
         let specular = spec_sample * specular_color * specular_strength;
 
         return (diffuse + specular) * occlusion;
