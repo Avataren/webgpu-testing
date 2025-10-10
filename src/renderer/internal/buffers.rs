@@ -4,7 +4,7 @@ use std::num::NonZeroU64;
 use bytemuck::Zeroable;
 use wgpu::util::DeviceExt;
 
-use crate::renderer::internal::{OrderedBatch, RenderContext, ShadowResources};
+use crate::renderer::internal::{environment::EnvironmentResources, OrderedBatch, RenderContext, ShadowResources};
 use crate::renderer::lights::{LightsData, LightsUniform, ShadowsUniform};
 use crate::renderer::material::Material;
 use crate::renderer::uniforms::CameraUniform;
@@ -258,7 +258,11 @@ pub(crate) struct LightsBuffer {
 }
 
 impl LightsBuffer {
-    pub(crate) fn new(device: &wgpu::Device, shadows: &ShadowResources) -> Self {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+    ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("LightsBindLayout"),
             entries: &[
@@ -334,6 +338,32 @@ impl LightsBuffer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -351,13 +381,38 @@ impl LightsBuffer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = Self::create_bind_group(
+            device,
+            &layout,
+            &buffer,
+            &shadow_buffer,
+            shadows,
+            environment,
+        );
+
+        Self {
+            buffer,
+            shadow_buffer,
+            bind_group,
+            bind_layout: layout,
+        }
+    }
+
+    fn create_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        lights_buffer: &wgpu::Buffer,
+        shadow_buffer: &wgpu::Buffer,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("LightsBindGroup"),
-            layout: &layout,
+            layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: buffer.as_entire_binding(),
+                    resource: lights_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -387,15 +442,20 @@ impl LightsBuffer {
                     binding: 7,
                     resource: wgpu::BindingResource::Sampler(shadows.sampler()),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: environment.uniform_buffer().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(environment.texture_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::Sampler(environment.sampler()),
+                },
             ],
-        });
-
-        Self {
-            buffer,
-            shadow_buffer,
-            bind_group,
-            bind_layout: layout,
-        }
+        })
     }
 
     pub(crate) fn update(&self, queue: &wgpu::Queue, lights: &LightsData) {
@@ -404,5 +464,21 @@ impl LightsBuffer {
         let shadow_data = ShadowsUniform::from_data(lights);
 
         queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
+    }
+
+    pub(crate) fn rebuild_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+    ) {
+        self.bind_group = Self::create_bind_group(
+            device,
+            &self.bind_layout,
+            &self.buffer,
+            &self.shadow_buffer,
+            shadows,
+            environment,
+        );
     }
 }

@@ -3,8 +3,9 @@ use crate::asset::{Assets, Mesh};
 use crate::environment::Environment;
 use crate::renderer::batch::InstanceData;
 use crate::renderer::internal::{
-    CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
-    RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
+    CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, OrderedBatch,
+    PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
+    TextureBindingModel,
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
@@ -57,6 +58,7 @@ pub struct Renderer {
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
+    environment: EnvironmentResources,
     shadows: ShadowResources,
     postprocess: PostProcess,
     camera_position: Vec3,
@@ -89,10 +91,11 @@ impl Renderer {
         let sample_count = context.sample_count;
         settings.sample_count = sample_count;
         let camera_buffer = CameraBuffer::new(&context.device);
+        let environment = EnvironmentResources::new(&context.device, &context.queue);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
         let shadows =
             ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
-        let lights_buffer = LightsBuffer::new(&context.device, &shadows);
+        let lights_buffer = LightsBuffer::new(&context.device, &shadows, &environment);
         let (pipeline, texture_binder) = RenderPipeline::new(
             &context,
             &camera_buffer,
@@ -115,6 +118,7 @@ impl Renderer {
             objects_buffer,
             camera_buffer,
             lights_buffer,
+            environment,
             shadows,
             postprocess,
             camera_position: Vec3::ZERO,
@@ -167,7 +171,8 @@ impl Renderer {
         self.camera_target = camera.target;
         self.camera_up = camera.up;
         let vp = camera.view_proj(aspect);
-        let uni = CameraUniform::from_matrix(vp, camera.position());
+        let inv_vp = vp.inverse();
+        let uni = CameraUniform::from_matrices(vp, inv_vp, camera.position());
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
@@ -233,6 +238,18 @@ impl Renderer {
             instance_count,
             ..RendererStats::default()
         };
+
+        let env_texture_changed = self
+            .environment
+            .update(&self.context.device, &self.context.queue, environment);
+
+        if env_texture_changed {
+            self.lights_buffer.rebuild_bind_group(
+                &self.context.device,
+                &self.shadows,
+                &self.environment,
+            );
+        }
 
         self.objects_buffer.update(
             &self.context,
@@ -319,6 +336,10 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if environment.is_hdr_enabled() {
+                self.draw_environment_background(&mut rpass);
+            }
 
             frame_stats.opaque_draw_calls += self.record_batches(
                 &mut rpass,
@@ -563,6 +584,13 @@ impl Renderer {
     fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+    }
+
+    fn draw_environment_background(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(self.pipeline.background());
+        pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
+        pass.set_bind_group(1, &self.lights_buffer.bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }
 

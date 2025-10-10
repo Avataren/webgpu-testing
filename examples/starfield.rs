@@ -75,6 +75,7 @@ impl RenderApplication for StarfieldApp {
             b: 0.01,
             a: 1.0,
         });
+        ctx.scene.environment_mut().disable_hdr_background();
         ctx.scene.set_camera(Camera {
             eye: Vec3::ZERO,
             target: Vec3::new(0.0, 0.0, -1.0),

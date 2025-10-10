@@ -2,10 +2,19 @@
 
 struct Globals {
     view_proj: mat4x4<f32>,
+    inverse_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _padding: f32,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
+
+struct EnvironmentSettings {
+    flags_intensity: vec4<f32>,
+    ambient_color: vec4<f32>,
+};
+@group(2) @binding(8) var<uniform> environment_settings: EnvironmentSettings;
+@group(2) @binding(9) var environment_map: texture_2d<f32>;
+@group(2) @binding(10) var environment_sampler: sampler;
 
 struct Object {
     model: mat4x4<f32>,
@@ -105,6 +114,7 @@ struct Shadows {
 @group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
 
 const PI: f32 = 3.14159265359;
+const TWO_PI: f32 = 6.28318530718;
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -644,6 +654,62 @@ fn select_point_face(direction: vec3<f32>) -> u32 {
 //     return Lo;
 // }
 
+fn environment_hdr_enabled() -> bool {
+    return environment_settings.flags_intensity.x > 0.5;
+}
+
+fn environment_hdr_intensity() -> f32 {
+    return environment_settings.flags_intensity.y;
+}
+
+fn environment_ambient_intensity() -> f32 {
+    return environment_settings.flags_intensity.z;
+}
+
+fn direction_to_equirect(direction: vec3<f32>) -> vec2<f32> {
+    let dir = normalize(direction);
+    let theta = atan2(dir.z, dir.x);
+    let phi = acos(clamp(dir.y, -1.0, 1.0));
+    let u = fract(0.5 - theta / TWO_PI);
+    let v = clamp(phi / PI, 0.0, 1.0);
+    return vec2<f32>(u, v);
+}
+
+fn sample_environment_hdr(direction: vec3<f32>, lod: f32) -> vec3<f32> {
+    let uv = direction_to_equirect(direction);
+    return textureSampleLevel(environment_map, environment_sampler, uv, lod).rgb;
+}
+
+fn calculate_environment_lighting(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    occlusion: f32,
+) -> vec3<f32> {
+    if (environment_hdr_enabled()) {
+        let max_lod = environment_settings.flags_intensity.w;
+        let irradiance =
+            sample_environment_hdr(N, max_lod) * environment_hdr_intensity();
+        let diffuse_color = base_color * (1.0 - metallic);
+        let diffuse = irradiance * diffuse_color;
+
+        let reflected = normalize(reflect(-V, normalize(N)));
+        let rough_lod = max_lod * roughness * roughness;
+        let spec_sample =
+            sample_environment_hdr(reflected, rough_lod) * environment_hdr_intensity();
+        let specular_color = mix(vec3<f32>(0.04), base_color, vec3<f32>(metallic));
+        let specular_strength = pow(clamp(1.0 - roughness, 0.0, 1.0), 4.0);
+        let specular = spec_sample * specular_color * specular_strength;
+
+        return (diffuse + specular) * occlusion;
+    }
+
+    let ambient_base = environment_settings.ambient_color.rgb * environment_ambient_intensity();
+    return ambient_base * base_color * occlusion;
+}
+
 fn calculate_scene_lighting(
     world_pos: vec3<f32>,
     N: vec3<f32>,
@@ -899,18 +965,25 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         emissive = emissive_sample * in.material_factors.z;
     }
 
-  // Always calculate lighting in uniform control flow (required for shadow sampling)
+    // Always calculate lighting in uniform control flow (required for shadow sampling)
     let V = normalize(globals.camera_pos - in.world_pos);
     let Lo =
         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
-    let ambient = vec3<f32>(0.025) * base_color.rgb * occlusion;
+    let environment_light = calculate_environment_lighting(
+        N,
+        V,
+        base_color.rgb,
+        metallic,
+        roughness,
+        occlusion,
+    );
     
     // Then conditionally use lighting based on material flags
     var color: vec3<f32>;
     if ((material_flags & FLAG_UNLIT) != 0u) {
         color = base_color.rgb + emissive;
     } else {
-        color = ambient + Lo + emissive;
+        color = environment_light + Lo + emissive;
     }
     
     // Tone mapping and gamma correction

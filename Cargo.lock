@@ -3426,6 +3426,7 @@ dependencies = [
  "env_logger",
  "glam",
  "gltf",
+ "half",
  "hecs",
  "image",
  "instant",

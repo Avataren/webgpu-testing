@@ -1,5 +1,6 @@
 struct Globals {
     view_proj: mat4x4<f32>,
+    inverse_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
     _padding: f32,
 };
