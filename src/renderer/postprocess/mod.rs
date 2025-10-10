@@ -1,108 +1,15 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
-use std::sync::{Arc, Mutex};
 
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as usize] = [
-    -0.6401949,
-    -0.76821256,
-    0.0,
-    0.0,
-    0.98767775,
-    0.1565012,
-    0.0,
-    0.0,
-    -0.1566164,
-    0.9876595,
-    0.0,
-    0.0,
-    0.1675282,
-    0.98586726,
-    0.0,
-    0.0,
-    -0.08490153,
-    -0.9963893,
-    0.0,
-    0.0,
-    -0.44445047,
-    -0.89580345,
-    0.0,
-    0.0,
-    0.77917,
-    -0.62681264,
-    0.0,
-    0.0,
-    0.85447717,
-    0.519489,
-    0.0,
-    0.0,
-    -0.88205993,
-    0.47113729,
-    0.0,
-    0.0,
-    0.98252517,
-    0.18612963,
-    0.0,
-    0.0,
-    0.19578062,
-    0.98064774,
-    0.0,
-    0.0,
-    -0.99943393,
-    -0.03364192,
-    0.0,
-    0.0,
-    0.9861326,
-    0.165959,
-    0.0,
-    0.0,
-    0.3159545,
-    0.94877434,
-    0.0,
-    0.0,
-    -0.5883725,
-    -0.80859,
-    0.0,
-    0.0,
-    -0.96039623,
-    -0.278638,
-    0.0,
-    0.0,
+    -0.6401949, -0.76821256, 0.0, 0.0, 0.98767775, 0.1565012, 0.0, 0.0, -0.1566164, 0.9876595, 0.0,
+    0.0, 0.1675282, 0.98586726, 0.0, 0.0, -0.08490153, -0.9963893, 0.0, 0.0, -0.44445047,
+    -0.89580345, 0.0, 0.0, 0.77917, -0.62681264, 0.0, 0.0, 0.85447717, 0.519489, 0.0, 0.0,
+    -0.88205993, 0.47113729, 0.0, 0.0, 0.98252517, 0.18612963, 0.0, 0.0, 0.19578062, 0.98064774,
+    0.0, 0.0, -0.99943393, -0.03364192, 0.0, 0.0, 0.9861326, 0.165959, 0.0, 0.0, 0.3159545,
+    0.94877434, 0.0, 0.0, -0.5883725, -0.80859, 0.0, 0.0, -0.96039623, -0.278638, 0.0, 0.0,
 ];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PostProcessSettings {
-    pub ssao_enabled: bool,
-    pub bloom_enabled: bool,
-    pub fxaa_enabled: bool,
-}
-
-impl Default for PostProcessSettings {
-    fn default() -> Self {
-        Self {
-            ssao_enabled: true,
-            bloom_enabled: true,
-            fxaa_enabled: true,
-        }
-    }
-}
-
-impl PostProcessSettings {
-    pub fn handle() -> PostProcessSettingsHandle {
-        Arc::new(Mutex::new(Self::default()))
-    }
-
-    fn effect_mask(&self) -> [f32; 4] {
-        [
-            if self.ssao_enabled { 1.0 } else { 0.0 },
-            if self.bloom_enabled { 1.0 } else { 0.0 },
-            if self.fxaa_enabled { 1.0 } else { 0.0 },
-            0.0,
-        ]
-    }
-}
-
-pub type PostProcessSettingsHandle = Arc<Mutex<PostProcessSettings>>;
 
 pub struct PostProcess {
     scene: TextureBundle,
@@ -130,8 +37,6 @@ pub struct PostProcess {
     last_near: f32,
     last_far: f32,
     sample_count: u32,
-    settings: PostProcessSettings,
-    settings_handle: PostProcessSettingsHandle,
 }
 
 impl PostProcess {
@@ -140,7 +45,6 @@ impl PostProcess {
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
         sample_count: u32,
-        settings_handle: PostProcessSettingsHandle,
     ) -> Self {
         let size = wgpu::Extent3d {
             width: config.width.max(1),
@@ -487,11 +391,6 @@ impl PostProcess {
             cache: None,
         });
 
-        let settings = settings_handle
-            .lock()
-            .map(|settings| *settings)
-            .unwrap_or_default();
-
         let post = Self {
             scene,
             scene_msaa,
@@ -518,11 +417,22 @@ impl PostProcess {
             last_near: 0.01,
             last_far: 100.0,
             sample_count,
-            settings,
-            settings_handle,
         };
 
-        post.upload_uniform(queue);
+        let initial_uniform = PostProcessUniform::new(
+            post.last_proj,
+            post.last_proj.inverse(),
+            post.size.width as f32,
+            post.size.height as f32,
+            post.last_near,
+            post.last_far,
+        );
+        queue.write_buffer(
+            &post.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&initial_uniform),
+        );
+
         post
     }
 
@@ -621,12 +531,10 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if self.settings.ssao_enabled {
-                pass.set_pipeline(&self.ssao_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, &ssao_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            pass.set_pipeline(&self.ssao_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, &ssao_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         let bloom_prefilter_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -660,11 +568,9 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if self.settings.bloom_enabled {
-                pass.set_pipeline(&self.bloom_prefilter_pipeline);
-                pass.set_bind_group(0, &bloom_prefilter_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            pass.set_pipeline(&self.bloom_prefilter_pipeline);
+            pass.set_bind_group(0, &bloom_prefilter_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         let horizontal_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -698,11 +604,9 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if self.settings.bloom_enabled {
-                pass.set_pipeline(&self.bloom_blur_horizontal);
-                pass.set_bind_group(0, &horizontal_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            pass.set_pipeline(&self.bloom_blur_horizontal);
+            pass.set_bind_group(0, &horizontal_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         let vertical_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -736,11 +640,9 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if self.settings.bloom_enabled {
-                pass.set_pipeline(&self.bloom_blur_vertical);
-                pass.set_bind_group(0, &vertical_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            pass.set_pipeline(&self.bloom_blur_vertical);
+            pass.set_bind_group(0, &vertical_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
 
         let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -791,23 +693,6 @@ impl PostProcess {
 }
 
 impl PostProcess {
-    pub fn sync_settings(&mut self, queue: &wgpu::Queue) {
-        let Ok(settings) = self.settings_handle.lock() else {
-            return;
-        };
-        let next_settings = *settings;
-        drop(settings);
-
-        if next_settings != self.settings {
-            self.settings = next_settings;
-            self.upload_uniform(queue);
-        }
-    }
-
-    pub fn settings_handle(&self) -> PostProcessSettingsHandle {
-        self.settings_handle.clone()
-    }
-
     fn upload_uniform(&self, queue: &wgpu::Queue) {
         let proj_inv = self.last_proj.inverse();
         let uniform = PostProcessUniform::new(
@@ -817,7 +702,6 @@ impl PostProcess {
             self.size.height as f32,
             self.last_near,
             self.last_far,
-            &self.settings,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
@@ -896,19 +780,11 @@ struct PostProcessUniform {
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
-    effects_enabled: [f32; 4],
+    _padding: [f32; 2],
 }
 
 impl PostProcessUniform {
-    fn new(
-        proj: Mat4,
-        proj_inv: Mat4,
-        width: f32,
-        height: f32,
-        near: f32,
-        far: f32,
-        settings: &PostProcessSettings,
-    ) -> Self {
+    fn new(proj: Mat4, proj_inv: Mat4, width: f32, height: f32, near: f32, far: f32) -> Self {
         let radius = 0.1f32;
         let bias = 0.03f32;
         let intensity = 0.75f32;
@@ -925,7 +801,7 @@ impl PostProcessUniform {
             intensity_power: [intensity, power],
             noise_scale,
             near_far: [near, far],
-            effects_enabled: settings.effect_mask(),
+            _padding: [0.0, 0.0],
         }
     }
 }

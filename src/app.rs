@@ -13,10 +13,7 @@ use std::{cell::RefCell, rc::Rc};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
 
-use crate::renderer::{
-    postprocess::{PostProcessSettings, PostProcessSettingsHandle},
-    RenderBatcher, Renderer, Texture,
-};
+use crate::renderer::{RenderBatcher, Renderer, Texture};
 use crate::settings::RenderSettings;
 
 #[cfg(target_arch = "wasm32")]
@@ -135,8 +132,6 @@ impl AppBuilder {
     }
 
     pub fn build(self) -> App {
-        let postprocess_settings = PostProcessSettings::handle();
-
         App {
             scene: Scene::new(),
             batcher: RenderBatcher::new(),
@@ -157,7 +152,6 @@ impl AppBuilder {
             egui_pending_ui: None,
             #[cfg(feature = "egui")]
             frame_stats: FrameStatsHistory::handle(),
-            postprocess_settings,
             window: None,
             window_id: None,
             renderer: None,
@@ -201,7 +195,6 @@ pub struct App {
     egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
     #[cfg(feature = "egui")]
     frame_stats: FrameStatsHandle,
-    postprocess_settings: PostProcessSettingsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
 }
@@ -235,10 +228,6 @@ impl App {
     #[cfg(feature = "egui")]
     pub fn frame_stats_handle(&self) -> FrameStatsHandle {
         self.frame_stats.clone()
-    }
-
-    pub fn postprocess_settings_handle(&self) -> PostProcessSettingsHandle {
-        self.postprocess_settings.clone()
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -471,11 +460,8 @@ impl ApplicationHandler for App {
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let mut renderer = pollster::block_on(Renderer::new(
-                    &window,
-                    self.settings.clone(),
-                    self.postprocess_settings.clone(),
-                ));
+                let mut renderer =
+                    pollster::block_on(Renderer::new(&window, self.settings.clone()));
 
                 #[cfg(feature = "egui")]
                 {
@@ -516,13 +502,11 @@ impl ApplicationHandler for App {
                 let renderer_cell = pending_renderer.clone();
                 let window_for_renderer = window_handle.clone();
                 let settings = self.settings.clone();
-                let postprocess_settings = self.postprocess_settings.clone();
 
                 log::info!("Spawning asynchronous renderer initialization");
 
                 spawn_local(async move {
-                    let renderer =
-                        Renderer::new(&window_for_renderer, settings, postprocess_settings).await;
+                    let renderer = Renderer::new(&window_for_renderer, settings).await;
                     renderer_cell.borrow_mut().replace(renderer);
                     window_for_renderer.request_redraw();
                 });

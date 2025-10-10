@@ -14,13 +14,7 @@ mod stats_window;
 mod log_viewer;
 
 #[cfg(feature = "egui")]
-mod postprocess_window;
-
-#[cfg(feature = "egui")]
 pub use stats_window::{FrameSample, FrameStatsHandle, FrameStatsHistory, StatsWindow};
 
 #[cfg(feature = "egui")]
 pub use log_viewer::{init_log_recorder, LogBufferHandle, LogEntry, LogWindow};
-
-#[cfg(feature = "egui")]
-pub use postprocess_window::PostProcessWindow;
