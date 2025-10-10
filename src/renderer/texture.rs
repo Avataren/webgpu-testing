@@ -5,6 +5,15 @@ use std::path::Path;
 #[cfg(target_arch = "wasm32")]
 use crate::io;
 
+struct RgbaTextureSource<'a> {
+    data: &'a [u8],
+    width: u32,
+    height: u32,
+    texture_format: wgpu::TextureFormat,
+    view_format: Option<wgpu::TextureFormat>,
+    label: Option<&'a str>,
+}
+
 #[derive(Debug)]
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -17,6 +26,24 @@ impl Texture {
     fn calculate_mip_levels(width: u32, height: u32) -> u32 {
         let max_dimension = width.max(height).max(1);
         u32::BITS - max_dimension.leading_zeros()
+    }
+
+    fn rgba_source<'a>(
+        data: &'a [u8],
+        width: u32,
+        height: u32,
+        texture_format: wgpu::TextureFormat,
+        view_format: Option<wgpu::TextureFormat>,
+        label: Option<&'a str>,
+    ) -> RgbaTextureSource<'a> {
+        RgbaTextureSource {
+            data,
+            width,
+            height,
+            texture_format,
+            view_format,
+            label,
+        }
     }
 
     /// Load texture from file path with mipmaps
@@ -45,49 +72,44 @@ impl Texture {
 
         let (texture_format, view_format) = Self::formats_for_color_space(is_srgb);
 
-        Ok(Self::from_rgba8(
-            device,
-            queue,
+        let source = Self::rgba_source(
             &rgba,
             width,
             height,
             texture_format,
             view_format,
             path.to_str(),
-        ))
+        );
+
+        Ok(Self::from_rgba8(device, queue, source))
     }
 
     /// Create texture from rgba8 data with mipmaps
     fn from_rgba8(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        data: &[u8],
-        width: u32,
-        height: u32,
-        texture_format: wgpu::TextureFormat,
-        view_format: Option<wgpu::TextureFormat>,
-        label: Option<&str>,
+        source: RgbaTextureSource<'_>,
     ) -> Self {
-        let mip_level_count = Self::calculate_mip_levels(width, height);
+        let mip_level_count = Self::calculate_mip_levels(source.width, source.height);
 
         let size = wgpu::Extent3d {
-            width,
-            height,
+            width: source.width,
+            height: source.height,
             depth_or_array_layers: 1,
         };
 
         let mut view_formats = Vec::new();
-        if let Some(format) = view_format {
+        if let Some(format) = source.view_format {
             view_formats.push(format);
         }
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label,
+            label: source.label,
             size,
             mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: texture_format,
+            format: source.texture_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::RENDER_ATTACHMENT, // Needed for mipmap generation
@@ -102,20 +124,26 @@ impl Texture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            data,
+            source.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * width),
-                rows_per_image: Some(height),
+                bytes_per_row: Some(4 * source.width),
+                rows_per_image: Some(source.height),
             },
             size,
         );
 
         // Generate mipmaps
-        Self::generate_mipmaps(device, queue, &texture, mip_level_count, texture_format);
+        Self::generate_mipmaps(
+            device,
+            queue,
+            &texture,
+            mip_level_count,
+            source.texture_format,
+        );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            format: view_format.or(Some(texture_format)),
+            format: source.view_format.or(Some(source.texture_format)),
             ..Default::default()
         });
 
@@ -346,16 +374,16 @@ impl Texture {
         color: [u8; 4],
         label: Option<&str>,
     ) -> Self {
-        Self::from_rgba8(
-            device,
-            queue,
+        let source = Self::rgba_source(
             &color,
             1,
             1,
             wgpu::TextureFormat::Rgba8Unorm,
             Some(wgpu::TextureFormat::Rgba8UnormSrgb),
             label,
-        )
+        );
+
+        Self::from_rgba8(device, queue, source)
     }
 
     /// Create texture from rgba8 image data
@@ -367,16 +395,16 @@ impl Texture {
         height: u32,
         label: Option<&str>,
     ) -> Self {
-        Self::from_rgba8(
-            device,
-            queue,
+        let source = Self::rgba_source(
             bytes,
             width,
             height,
             wgpu::TextureFormat::Rgba8Unorm,
             Some(wgpu::TextureFormat::Rgba8UnormSrgb),
             label,
-        )
+        );
+
+        Self::from_rgba8(device, queue, source)
     }
 
     /// Create a procedural checkerboard texture
@@ -418,46 +446,39 @@ impl Texture {
         color: [u8; 4],
         label: Option<&str>,
     ) -> Self {
-        Self::from_rgba8(
-            device,
-            queue,
-            &color,
-            1,
-            1,
-            wgpu::TextureFormat::Rgba8Unorm,
-            None,
-            label,
-        )
+        let source = Self::rgba_source(&color, 1, 1, wgpu::TextureFormat::Rgba8Unorm, None, label);
+
+        Self::from_rgba8(device, queue, source)
     }
 
     /// Create default normal map (1x1, pointing up)
     pub fn default_normal(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // Normal pointing straight up: (0, 0, 1) -> (128, 128, 255) in texture space
-        Self::from_rgba8(
-            device,
-            queue,
+        let source = Self::rgba_source(
             &[128, 128, 255, 255],
             1,
             1,
             wgpu::TextureFormat::Rgba8Unorm,
             None,
             Some("DefaultNormal"),
-        )
+        );
+
+        Self::from_rgba8(device, queue, source)
     }
 
     /// Create default metallic-roughness (1x1, non-metallic, mid-roughness)
     pub fn default_metallic_roughness(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // R=occlusion(1.0), G=roughness(0.5), B=metallic(0.0)
-        Self::from_rgba8(
-            device,
-            queue,
+        let source = Self::rgba_source(
             &[255, 128, 0, 255],
             1,
             1,
             wgpu::TextureFormat::Rgba8Unorm,
             None,
             Some("DefaultMetallicRoughness"),
-        )
+        );
+
+        Self::from_rgba8(device, queue, source)
     }
 
     /// Determine the texture and view formats used for a colour texture.
@@ -576,9 +597,7 @@ mod tests {
 
             // Create a simple 4x4 test texture
             let data = vec![255u8; 4 * 4 * 4]; // 4x4 RGBA
-            let texture = Texture::from_rgba8(
-                &device,
-                &queue,
+            let source = Texture::rgba_source(
                 &data,
                 4,
                 4,
@@ -586,6 +605,8 @@ mod tests {
                 None,
                 Some("Test Texture"),
             );
+
+            let texture = Texture::from_rgba8(&device, &queue, source);
 
             // Verify the texture has the expected number of mip levels
             // We can't directly query mip levels, but we can verify it was created
@@ -650,24 +671,28 @@ mod tests {
             let tex_4x4 = Texture::from_rgba8(
                 &device,
                 &queue,
-                &data_4x4,
-                4,
-                4,
-                wgpu::TextureFormat::Rgba8Unorm,
-                None,
-                Some("4x4"),
+                Texture::rgba_source(
+                    &data_4x4,
+                    4,
+                    4,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    None,
+                    Some("4x4"),
+                ),
             );
 
             let data_256x256 = vec![255u8; 256 * 256 * 4];
             let tex_256x256 = Texture::from_rgba8(
                 &device,
                 &queue,
-                &data_256x256,
-                256,
-                256,
-                wgpu::TextureFormat::Rgba8Unorm,
-                None,
-                Some("256x256"),
+                Texture::rgba_source(
+                    &data_256x256,
+                    256,
+                    256,
+                    wgpu::TextureFormat::Rgba8Unorm,
+                    None,
+                    Some("256x256"),
+                ),
             );
 
             // Verify mip counts

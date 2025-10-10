@@ -200,13 +200,18 @@ impl Renderer {
 
         let prepared_batches = PreparedBatches::from_batcher(batcher, self.camera_position);
 
-        let mut frame_stats = RendererStats::default();
-        frame_stats.batch_count = prepared_batches.all().len() as u32;
-        frame_stats.instance_count = prepared_batches
+        let batch_count = prepared_batches.all().len() as u32;
+        let instance_count = prepared_batches
             .all()
             .iter()
             .map(|batch| batch.instances.len() as u32)
             .sum();
+
+        let mut frame_stats = RendererStats {
+            batch_count,
+            instance_count,
+            ..RendererStats::default()
+        };
 
         self.objects_buffer
             .update(&self.context, prepared_batches.all())?;

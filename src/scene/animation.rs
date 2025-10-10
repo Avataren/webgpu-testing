@@ -430,13 +430,11 @@ impl AnimationState {
                 if time < 0.0 {
                     time += duration;
                 }
-            } else {
-                if time >= duration {
-                    time = duration;
-                    self.playing = false;
-                } else if time < 0.0 {
-                    time = 0.0;
-                }
+            } else if time >= duration {
+                time = duration;
+                self.playing = false;
+            } else if time < 0.0 {
+                time = 0.0;
             }
         }
 

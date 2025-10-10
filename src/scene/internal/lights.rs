@@ -1,5 +1,7 @@
 use super::rendering::CameraVectors;
-use crate::renderer::{DirectionalShadowData, LightsData, PointShadowData, SpotShadowData};
+use crate::renderer::{
+    DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
+};
 use crate::scene::components::{
     CanCastShadow, DirectionalLight, PointLight, SpotLight, TransformComponent, WorldTransform,
 };
@@ -92,16 +94,16 @@ fn collect_spot_lights(world: &World, lights: &mut LightsData) {
             None
         };
 
-        lights.add_spot(
-            transform.translation,
+        lights.add_spot(SpotLightDescriptor {
+            position: transform.translation,
             direction,
-            light.color,
-            light.intensity,
-            light.range,
-            light.inner_angle,
-            light.outer_angle,
+            color: light.color,
+            intensity: light.intensity,
+            range: light.range,
+            inner_angle: light.inner_angle,
+            outer_angle: light.outer_angle,
             shadow,
-        );
+        });
     }
 }
 

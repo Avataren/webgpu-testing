@@ -28,6 +28,12 @@ impl CameraUniform {
     }
 }
 
+impl Default for CameraUniform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

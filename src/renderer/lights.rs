@@ -15,6 +15,18 @@ pub struct LightsData {
     spot_shadows: Vec<SpotShadowRaw>,
 }
 
+#[derive(Clone, Copy)]
+pub struct SpotLightDescriptor {
+    pub position: Vec3,
+    pub direction: Vec3,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub range: f32,
+    pub inner_angle: f32,
+    pub outer_angle: f32,
+    pub shadow: Option<SpotShadowData>,
+}
+
 impl LightsData {
     pub fn new() -> Self {
         Self::default()
@@ -55,27 +67,18 @@ impl LightsData {
         self.point_shadows.push(PointShadowRaw::from_data(shadow));
     }
 
-    pub fn add_spot(
-        &mut self,
-        position: Vec3,
-        direction: Vec3,
-        color: Vec3,
-        intensity: f32,
-        range: f32,
-        inner_angle: f32,
-        outer_angle: f32,
-        shadow: Option<SpotShadowData>,
-    ) {
+    pub fn add_spot(&mut self, descriptor: SpotLightDescriptor) {
         self.spot.push(SpotLightRaw::new(
-            position,
-            direction,
-            color,
-            intensity,
-            range,
-            inner_angle,
-            outer_angle,
+            descriptor.position,
+            descriptor.direction,
+            descriptor.color,
+            descriptor.intensity,
+            descriptor.range,
+            descriptor.inner_angle,
+            descriptor.outer_angle,
         ));
-        self.spot_shadows.push(SpotShadowRaw::from_data(shadow));
+        self.spot_shadows
+            .push(SpotShadowRaw::from_data(descriptor.shadow));
     }
 
     pub fn directional_lights(&self) -> &[DirectionalLightRaw] {
@@ -414,16 +417,16 @@ mod tests {
             far,
         };
 
-        data.add_spot(
+        data.add_spot(SpotLightDescriptor {
             position,
             direction,
             color,
             intensity,
             range,
-            inner,
-            outer,
-            Some(shadow),
-        );
+            inner_angle: inner,
+            outer_angle: outer,
+            shadow: Some(shadow),
+        });
 
         let lights = LightsUniform::from_data(&data);
         assert_eq!(lights.counts[2], 1);

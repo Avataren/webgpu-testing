@@ -2,7 +2,7 @@
 mod egui_integration;
 
 #[cfg(feature = "egui")]
-pub use egui_integration::EguiContext;
+pub use egui_integration::{EguiContext, EguiRenderTarget, EguiUiCallback};
 
 #[cfg(feature = "egui")]
 pub use egui;

@@ -99,6 +99,36 @@ impl PreparedBatches {
     }
 }
 
+fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3) {
+    instances.sort_by(|a, b| {
+        let da = (a.transform.translation - camera_pos).length_squared();
+        let db = (b.transform.translation - camera_pos).length_squared();
+        db.partial_cmp(&da).unwrap_or(Ordering::Equal)
+    });
+}
+
+fn sort_batches_back_to_front(batches: &mut [OrderedBatch], camera_pos: Vec3) {
+    batches.sort_by(|a, b| {
+        farthest_distance_sq(b, camera_pos)
+            .partial_cmp(&farthest_distance_sq(a, camera_pos))
+            .unwrap_or(Ordering::Equal)
+    });
+}
+
+fn farthest_distance_sq(batch: &OrderedBatch, camera_pos: Vec3) -> f32 {
+    batch
+        .instances
+        .iter()
+        .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+        .fold(0.0, f32::max)
+}
+
+fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range<usize> {
+    let start = dest.len();
+    dest.extend(src);
+    start..dest.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,34 +160,4 @@ mod tests {
             "empty batch entries should not produce draw calls"
         );
     }
-}
-
-fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3) {
-    instances.sort_by(|a, b| {
-        let da = (a.transform.translation - camera_pos).length_squared();
-        let db = (b.transform.translation - camera_pos).length_squared();
-        db.partial_cmp(&da).unwrap_or(Ordering::Equal)
-    });
-}
-
-fn sort_batches_back_to_front(batches: &mut Vec<OrderedBatch>, camera_pos: Vec3) {
-    batches.sort_by(|a, b| {
-        farthest_distance_sq(b, camera_pos)
-            .partial_cmp(&farthest_distance_sq(a, camera_pos))
-            .unwrap_or(Ordering::Equal)
-    });
-}
-
-fn farthest_distance_sq(batch: &OrderedBatch, camera_pos: Vec3) -> f32 {
-    batch
-        .instances
-        .iter()
-        .map(|inst| (inst.transform.translation - camera_pos).length_squared())
-        .fold(0.0, f32::max)
-}
-
-fn append_batches(dest: &mut Vec<OrderedBatch>, src: Vec<OrderedBatch>) -> Range<usize> {
-    let start = dest.len();
-    dest.extend(src);
-    start..dest.len()
 }

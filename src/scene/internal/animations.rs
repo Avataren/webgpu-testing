@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub(crate) fn advance_animations(
     world: &mut World,
     animations: &[AnimationClip],
-    animation_states: &mut Vec<AnimationState>,
+    animation_states: &mut [AnimationState],
     dt: f64,
 ) {
     if animation_states.is_empty() || animations.is_empty() {
@@ -209,7 +209,7 @@ mod tests {
             },
         ));
 
-        update_orbit_animations(&mut world, std::f64::consts::PI as f64);
+        update_orbit_animations(&mut world, std::f64::consts::PI);
 
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert!((transform.0.translation.length() - 2.0).abs() < 1e-3);
