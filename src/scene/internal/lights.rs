@@ -127,7 +127,7 @@ pub(crate) fn build_directional_shadow(
     light_transform: Transform,
     shadow_size: f32,
 ) -> DirectionalShadowData {
-    const SHADOW_DISTANCE: f32 = 30.0;
+    let shadow_distance = DirectionalLight::DEFAULT_SHADOW_DISTANCE;
 
     let raw_dir = light_transform.rotation * Vec3::NEG_Z;
     let direction = safe_normalize(raw_dir, Vec3::new(0.0, -1.0, 0.0));
@@ -137,7 +137,7 @@ pub(crate) fn build_directional_shadow(
     } else {
         camera_pos
     };
-    let light_pos = focus - direction * SHADOW_DISTANCE;
+    let light_pos = focus - direction * shadow_distance;
 
     let mut up = light_transform.rotation * Vec3::Y;
     if up.length_squared() > 0.0 {
@@ -155,7 +155,7 @@ pub(crate) fn build_directional_shadow(
     let bottom = -extent;
     let top = extent;
     let near = 0.1;
-    let far = SHADOW_DISTANCE * 2.0;
+    let far = shadow_distance * 2.0;
 
     let projection = Mat4::from_cols(
         glam::Vec4::new(2.0 / (right - left), 0.0, 0.0, 0.0),

@@ -1,4 +1,5 @@
 use glam::{Mat4, Vec2, Vec3, Vec4};
+use wgpu_cube::scene::components::DirectionalLight;
 
 const EPSILON: f32 = 1e-5;
 
@@ -58,11 +59,11 @@ struct DirectionalShadow {
 }
 
 fn build_directional_shadow_matrix(direction: Vec3) -> DirectionalShadow {
-    const SHADOW_SIZE: f32 = 5.0;
-    const SHADOW_DISTANCE: f32 = 30.0;
+    let shadow_size = DirectionalLight::DEFAULT_SHADOW_SIZE;
+    let shadow_distance = DirectionalLight::DEFAULT_SHADOW_DISTANCE;
 
     let focus = Vec3::ZERO;
-    let light_pos = focus - direction * SHADOW_DISTANCE;
+    let light_pos = focus - direction * shadow_distance;
 
     let up = if direction.abs().dot(Vec3::Y) > 0.95 {
         Vec3::Z
@@ -72,12 +73,12 @@ fn build_directional_shadow_matrix(direction: Vec3) -> DirectionalShadow {
 
     let view = Mat4::look_at_rh(light_pos, focus, up);
 
-    let left = -SHADOW_SIZE;
-    let right = SHADOW_SIZE;
-    let bottom = -SHADOW_SIZE;
-    let top = SHADOW_SIZE;
+    let left = -shadow_size;
+    let right = shadow_size;
+    let bottom = -shadow_size;
+    let top = shadow_size;
     let near = 0.1;
-    let far = SHADOW_DISTANCE * 2.0;
+    let far = shadow_distance * 2.0;
 
     let projection = Mat4::from_cols(
         Vec4::new(2.0 / (right - left), 0.0, 0.0, 0.0),
