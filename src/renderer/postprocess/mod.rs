@@ -111,6 +111,9 @@ pub struct PostProcess {
     noise_view: wgpu::TextureView,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    depth_resolve_layout: Option<wgpu::BindGroupLayout>,
+    depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
+    depth_resolve_bind_group: Option<wgpu::BindGroup>,
     ssao_layout: wgpu::BindGroupLayout,
     ssao_pipeline: wgpu::RenderPipeline,
     bloom_prefilter_layout: wgpu::BindGroupLayout,
@@ -128,6 +131,7 @@ pub struct PostProcess {
     bloom_downsample_passes: Vec<BloomDownsamplePass>,
     bloom_upsample_passes: Vec<BloomUpsamplePass>,
     composite_bind_group: Option<wgpu::BindGroup>,
+    resolved_depth: Option<TextureBundle>,
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
     last_proj: Mat4,
@@ -176,7 +180,11 @@ impl PostProcess {
         let ssao = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
 
-        let depth_multisampled = sample_count > 1;
+        let resolved_depth = if sample_count > 1 {
+            Some(TextureBundle::depth(device, &size, "ResolvedDepth"))
+        } else {
+            None
+        };
 
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("PostProcessUniformLayout"),
@@ -216,11 +224,7 @@ impl PostProcess {
 
         let postprocess_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PostProcessShader"),
-            source: if depth_multisampled {
-                wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess_msaa.wgsl").into())
-            } else {
-                wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into())
-            },
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into()),
         });
 
         let fullscreen_vertex = wgpu::VertexState {
@@ -228,6 +232,63 @@ impl PostProcess {
             entry_point: Some("vs_fullscreen"),
             buffers: &[],
             compilation_options: Default::default(),
+        };
+
+        let (depth_resolve_layout, depth_resolve_pipeline) = if sample_count > 1 {
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("DepthResolveLayout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                    count: None,
+                }],
+            });
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("DepthResolveShader"),
+                source: wgpu::ShaderSource::Wgsl(
+                    include_str!("../../shader/depth_resolve.wgsl").into(),
+                ),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("DepthResolvePipelineLayout"),
+                bind_group_layouts: &[&uniform_layout, &layout],
+                push_constant_ranges: &[],
+            });
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("DepthResolvePipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_fullscreen"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_resolve_depth"),
+                    targets: &[],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+            (Some(layout), Some(pipeline))
+        } else {
+            (None, None)
         };
 
         // SSAO pipeline setup
@@ -240,7 +301,7 @@ impl PostProcess {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: depth_multisampled,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -540,6 +601,9 @@ impl PostProcess {
             noise_view,
             uniform_buffer,
             uniform_bind_group,
+            depth_resolve_layout,
+            depth_resolve_pipeline,
+            depth_resolve_bind_group: None,
             ssao_layout,
             ssao_pipeline,
             bloom_prefilter_layout,
@@ -557,6 +621,7 @@ impl PostProcess {
             bloom_downsample_passes: Vec::new(),
             bloom_upsample_passes: Vec::new(),
             composite_bind_group: None,
+            resolved_depth,
             cached_depth_view: None,
             bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
@@ -605,6 +670,11 @@ impl PostProcess {
         self.scene = scene;
         self.scene_msaa = scene_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
+        self.resolved_depth = if self.sample_count > 1 {
+            Some(TextureBundle::depth(device, &self.size, "ResolvedDepth"))
+        } else {
+            None
+        };
         let (down_chain, up_chain) = Self::create_bloom_chain(device, &self.size);
         self.bloom_down_chain = down_chain;
         self.bloom_up_chain = up_chain;
@@ -663,6 +733,31 @@ impl PostProcess {
         self.ensure_cached_bind_groups(device);
 
         if self.effects.ssao {
+            if let (Some(pipeline), Some(bind_group), Some(resolved)) = (
+                self.depth_resolve_pipeline.as_ref(),
+                self.depth_resolve_bind_group.as_ref(),
+                self.resolved_depth.as_ref(),
+            ) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("DepthResolvePass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &resolved.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
             let ssao_bind_group = self
                 .ssao_bind_group
                 .as_ref()
@@ -886,6 +981,7 @@ impl PostProcess {
     }
 
     fn mark_bind_groups_dirty(&mut self) {
+        self.depth_resolve_bind_group = None;
         self.ssao_bind_group = None;
         self.bloom_prefilter_bind_group = None;
         self.bloom_downsample_passes.clear();
@@ -904,24 +1000,57 @@ impl PostProcess {
             .as_ref()
             .expect("Depth view must be set before executing post process");
 
-        self.ssao_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("SsaoBindGroup"),
-            layout: &self.ssao_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.noise_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
-                },
-            ],
-        }));
+        if let (Some(layout), Some(resolved)) =
+            (self.depth_resolve_layout.as_ref(), self.resolved_depth.as_ref())
+        {
+            self.depth_resolve_bind_group =
+                Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("DepthResolveBindGroup"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(depth_view),
+                    }],
+                }));
+            self.ssao_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SsaoBindGroup"),
+                layout: &self.ssao_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&resolved.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.noise_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
+                    },
+                ],
+            }));
+        } else {
+            self.depth_resolve_bind_group = None;
+            self.ssao_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SsaoBindGroup"),
+                layout: &self.ssao_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(depth_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&self.noise_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
+                    },
+                ],
+            }));
+        }
 
         self.bloom_prefilter_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1122,7 +1251,7 @@ impl PostProcessUniform {
             height / NOISE_TEXTURE_SIZE as f32,
         ];
         let mut effects_arr = effects.uniform_components();
-        // Store sample_count in w component for MSAA shader to consume.
+        // Store sample_count in w component so the depth resolve pass can iterate samples.
         effects_arr[3] = sample_count as f32;
         Self {
             proj: proj.to_cols_array_2d(),
@@ -1189,6 +1318,24 @@ impl TextureBundle {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self {
+            _texture: texture,
+            view,
+        }
+    }
+
+    fn depth(device: &wgpu::Device, size: &wgpu::Extent3d, label: &str) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: *size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });

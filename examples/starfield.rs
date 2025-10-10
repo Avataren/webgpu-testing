@@ -68,7 +68,8 @@ impl RenderApplication for StarfieldApp {
         let (verts, idx) = wgpu_cube::renderer::cube_mesh();
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-        let material = Material::checker();
+        let mut material = Material::checker();
+        material.roughness_factor = 64;
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
             g: 0.005,
