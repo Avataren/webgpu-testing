@@ -17,8 +17,8 @@ fn ndc_xy_to_uv(ndc_xy: Vec2) -> Vec2 {
     Vec2::new(ndc_xy.x * 0.5 + 0.5, 0.5 - ndc_xy.y * 0.5)
 }
 
-fn project_view_to_uv_depth(P: Mat4, view_pos: Vec3) -> (Vec2, f32) {
-    let clip: Vec4 = P * view_pos.extend(1.0);
+fn project_view_to_uv_depth(proj: Mat4, view_pos: Vec3) -> (Vec2, f32) {
+    let clip: Vec4 = proj * view_pos.extend(1.0);
     let ndc = clip.truncate() / clip.w;
     let uv = ndc_xy_to_uv(ndc.truncate());
     let depth = ndc.z; // wgpu depth in [0, 1]
@@ -29,7 +29,7 @@ fn reconstruct_view_position(uv: Vec2, depth: f32, proj_inv: Mat4) -> Vec3 {
     let ndc = Vec3::new(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
     let clip = ndc.extend(1.0);
     let view = proj_inv * clip;
-    (view.truncate() / view.w)
+    view.truncate() / view.w
 }
 
 fn approx_eq3(a: Vec3, b: Vec3, eps: f32) -> bool {
@@ -48,7 +48,13 @@ fn uv_ndc_y_flip_roundtrip_is_consistent() {
     for &uv in &samples {
         let ndc_xy = uv_to_ndc_xy(uv);
         let uv_rt = ndc_xy_to_uv(ndc_xy);
-        assert!((uv - uv_rt).abs().max_element() < 1e-6, "uv {:?} -> {:?} -> {:?}", uv, ndc_xy, uv_rt);
+        assert!(
+            (uv - uv_rt).abs().max_element() < 1e-6,
+            "uv {:?} -> {:?} -> {:?}",
+            uv,
+            ndc_xy,
+            uv_rt
+        );
     }
 }
 
@@ -58,13 +64,21 @@ fn perspective_maps_near_far_to_wgpu_depth_range() {
     let aspect = 16.0 / 9.0;
     let near = 0.1;
     let far = 100.0;
-    let P = Mat4::perspective_rh(fov, aspect, near, far);
+    let proj = Mat4::perspective_rh(fov, aspect, near, far);
 
-    let (_, depth_near) = project_view_to_uv_depth(P, Vec3::new(0.0, 0.0, -near));
-    let (_, depth_far) = project_view_to_uv_depth(P, Vec3::new(0.0, 0.0, -far));
+    let (_, depth_near) = project_view_to_uv_depth(proj, Vec3::new(0.0, 0.0, -near));
+    let (_, depth_far) = project_view_to_uv_depth(proj, Vec3::new(0.0, 0.0, -far));
 
-    assert!((depth_near - 0.0).abs() < 1e-5, "near -> depth {}, expected 0.0", depth_near);
-    assert!((depth_far - 1.0).abs() < 1e-5, "far -> depth {}, expected 1.0", depth_far);
+    assert!(
+        (depth_near - 0.0).abs() < 1e-5,
+        "near -> depth {}, expected 0.0",
+        depth_near
+    );
+    assert!(
+        (depth_far - 1.0).abs() < 1e-5,
+        "far -> depth {}, expected 1.0",
+        depth_far
+    );
 }
 
 #[test]
@@ -73,8 +87,8 @@ fn reconstruct_view_position_roundtrips_through_projection() {
     let aspect = 16.0 / 9.0;
     let near = 0.1;
     let far = 50.0;
-    let P = Mat4::perspective_rh(fov, aspect, near, far);
-    let P_inv = P.inverse();
+    let proj = Mat4::perspective_rh(fov, aspect, near, far);
+    let proj_inv = proj.inverse();
 
     // Test a few positions inside the frustum (z < -near)
     let points = [
@@ -85,11 +99,16 @@ fn reconstruct_view_position_roundtrips_through_projection() {
     ];
 
     for &p_view in &points {
-        let (uv, depth) = project_view_to_uv_depth(P, p_view);
+        let (uv, depth) = project_view_to_uv_depth(proj, p_view);
         // Make sure the point is actually in front of the near plane
-        assert!(depth > 0.0 && depth < 1.0, "depth out of range: {} for {:?}", depth, p_view);
+        assert!(
+            depth > 0.0 && depth < 1.0,
+            "depth out of range: {} for {:?}",
+            depth,
+            p_view
+        );
 
-        let recon = reconstruct_view_position(uv, depth, P_inv);
+        let recon = reconstruct_view_position(uv, depth, proj_inv);
         assert!(
             approx_eq3(recon, p_view, 1e-4),
             "reconstruct mismatch: orig={:?}, recon={:?}, uv={:?}, depth={}",
@@ -100,4 +119,3 @@ fn reconstruct_view_position_roundtrips_through_projection() {
         );
     }
 }
-

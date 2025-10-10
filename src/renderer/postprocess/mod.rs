@@ -1102,6 +1102,7 @@ struct PostProcessUniform {
 }
 
 impl PostProcessUniform {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         proj: Mat4,
         proj_inv: Mat4,
