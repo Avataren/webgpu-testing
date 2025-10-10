@@ -9,8 +9,13 @@ pub(crate) fn merge_as_child(scene: &mut Scene, parent_entity: hecs::Entity, oth
     let entity_count = other.world.len();
     log::info!("Merging scene with {} entities as child", entity_count);
 
-    let (other_world, other_assets, mut other_animations, mut other_animation_states) =
-        other.into_parts();
+    let (
+        other_world,
+        other_assets,
+        _other_environment,
+        mut other_animations,
+        mut other_animation_states,
+    ) = other.into_parts();
 
     let mut entity_map = std::collections::HashMap::new();
 

@@ -1,6 +1,7 @@
 use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, composition, debug, lights, rendering, transforms};
 use crate::asset::Assets;
+use crate::environment::Environment;
 use crate::renderer::{RenderBatcher, Renderer};
 use crate::scene::Camera;
 use crate::time::Instant;
@@ -14,6 +15,7 @@ pub struct Scene {
     animations: Vec<AnimationClip>,
     animation_states: Vec<AnimationState>,
     camera: Camera,
+    environment: Environment,
 }
 
 impl Scene {
@@ -26,6 +28,7 @@ impl Scene {
             animations: Vec::new(),
             animation_states: Vec::new(),
             camera: Camera::default(),
+            environment: Environment::default(),
         }
     }
 
@@ -72,6 +75,18 @@ impl Scene {
 
     pub fn set_camera(&mut self, camera: Camera) {
         self.camera = camera;
+    }
+
+    pub fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
+    pub fn environment_mut(&mut self) -> &mut Environment {
+        &mut self.environment
+    }
+
+    pub fn set_environment(&mut self, environment: Environment) {
+        self.environment = environment;
     }
 
     pub fn add_animation_clip(&mut self, clip: AnimationClip) -> usize {
@@ -122,7 +137,7 @@ impl Scene {
         let lights = lights::collect_lights(&self.world, camera);
         renderer.set_lights(&lights);
 
-        renderer.render(&self.assets, batcher, &lights)
+        renderer.render(&self.assets, batcher, &lights, &self.environment)
     }
 
     pub fn add_default_lighting(&mut self) -> usize {
@@ -141,10 +156,19 @@ impl Scene {
         debug::debug_print_transforms(&self.world);
     }
 
-    pub(crate) fn into_parts(self) -> (World, Assets, Vec<AnimationClip>, Vec<AnimationState>) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        World,
+        Assets,
+        Environment,
+        Vec<AnimationClip>,
+        Vec<AnimationState>,
+    ) {
         (
             self.world,
             self.assets,
+            self.environment,
             self.animations,
             self.animation_states,
         )

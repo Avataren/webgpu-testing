@@ -1,5 +1,6 @@
 // renderer/renderer.rs
 use crate::asset::{Assets, Mesh};
+use crate::environment::Environment;
 use crate::renderer::batch::InstanceData;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, LightsBuffer, OrderedBatch, PipelineKey, PreparedBatches,
@@ -204,6 +205,7 @@ impl Renderer {
         assets: &Assets,
         batcher: &RenderBatcher,
         lights: &LightsData,
+        environment: &Environment,
     ) -> Result<RenderFrame, wgpu::SurfaceError> {
         let frame = self.context.surface.get_current_texture()?;
         let view = frame
@@ -302,12 +304,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: resolve_target.as_ref(),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.231,
-                            g: 0.269,
-                            b: 0.338,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(environment.clear_color()),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -464,8 +461,7 @@ impl Renderer {
 
         if let Some(bindless_group) = self.texture_binder.global_bind_group() {
             for batch in batches {
-                let Some(mesh) =
-                    self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                let Some(mesh) = self.setup_batch_state(rpass, assets, batch, color_sample_count)
                 else {
                     continue;
                 };
@@ -475,8 +471,7 @@ impl Renderer {
             }
         } else {
             for batch in batches {
-                let Some(mesh) =
-                    self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                let Some(mesh) = self.setup_batch_state(rpass, assets, batch, color_sample_count)
                 else {
                     continue;
                 };
