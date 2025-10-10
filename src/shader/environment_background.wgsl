@@ -54,6 +54,19 @@ fn direction_to_equirect(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(u, v);
 }
 
+fn environment_uv(direction: vec3<f32>) -> vec2<f32> {
+    let base_uv = direction_to_equirect(direction);
+    let dims_u32 = textureDimensions(environment_map, 0);
+    let dims = vec2<f32>(f32(dims_u32.x), f32(dims_u32.y));
+    let safe_dims = max(dims, vec2<f32>(1.0, 1.0));
+    let inv_dims = vec2<f32>(1.0, 1.0) / safe_dims;
+    let texel = inv_dims * 0.5;
+    let shifted = base_uv + texel;
+    let wrapped_u = fract(shifted.x);
+    let clamped_v = clamp(shifted.y, texel.y, 1.0 - texel.y);
+    return vec2<f32>(wrapped_u, clamped_v);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (!environment_enabled()) {
@@ -66,8 +79,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let world_pos = world.xyz / world.w;
     let dir = normalize(world_pos - globals.camera_pos);
 
-    let uv = direction_to_equirect(dir);
-    let color = textureSample(environment_map, environment_sampler, uv).rgb
+    let uv = environment_uv(dir);
+    let color = textureSampleLevel(environment_map, environment_sampler, uv, 0.0).rgb
         * environment_intensity();
 
     let mapped = color / (color + vec3<f32>(1.0));

@@ -675,8 +675,21 @@ fn direction_to_equirect(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(u, v);
 }
 
+fn environment_uv(direction: vec3<f32>) -> vec2<f32> {
+    let base_uv = direction_to_equirect(direction);
+    let dims_u32 = textureDimensions(environment_map, 0);
+    let dims = vec2<f32>(f32(dims_u32.x), f32(dims_u32.y));
+    let safe_dims = max(dims, vec2<f32>(1.0, 1.0));
+    let inv_dims = vec2<f32>(1.0, 1.0) / safe_dims;
+    let texel = inv_dims * 0.5;
+    let shifted = base_uv + texel;
+    let wrapped_u = fract(shifted.x);
+    let clamped_v = clamp(shifted.y, texel.y, 1.0 - texel.y);
+    return vec2<f32>(wrapped_u, clamped_v);
+}
+
 fn sample_environment_hdr(direction: vec3<f32>, lod: f32) -> vec3<f32> {
-    let uv = direction_to_equirect(direction);
+    let uv = environment_uv(direction);
     return textureSampleLevel(environment_map, environment_sampler, uv, lod).rgb;
 }
 

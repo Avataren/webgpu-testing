@@ -41,6 +41,7 @@ use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformCompon
 use crate::time::Instant;
 
 const DEFAULT_HDR_ENVIRONMENT: &str = "web/assets/hdr/kloppenheim_06_puresky_4k.hdr";
+//const DEFAULT_HDR_ENVIRONMENT: &str = "web/assets/hdr/citrus_orchard_puresky_4k.hdr";
 
 pub struct StartupContext<'a> {
     pub scene: &'a mut Scene,
