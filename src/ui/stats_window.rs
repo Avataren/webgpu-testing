@@ -30,10 +30,30 @@ pub struct FrameStatsHistory {
 #[cfg(feature = "egui")]
 impl FrameStatsHistory {
     pub fn new() -> Self {
+        // Pre-fill the history with zeros across the configured time span so
+        // the graphs have a full-width time window from the start.
+        // Use a reasonable sampling rate (60 Hz) for the initial padding.
+        let max_history = DEFAULT_HISTORY_SECONDS;
+        let fill_hz: f32 = 60.0;
+        let step: f32 = 1.0 / fill_hz;
+
+        let mut samples = VecDeque::new();
+        // Start at -max_history and fill up to and including 0.0
+        let mut t = -max_history;
+        while t <= 0.0 {
+            samples.push_back(FrameSample {
+                timestamp: t,
+                frame_time: 0.0,
+                fps: 0.0,
+                renderer: RendererStats::default(),
+            });
+            t += step;
+        }
+
         Self {
-            samples: VecDeque::new(),
+            samples,
             total_elapsed: 0.0,
-            max_history: DEFAULT_HISTORY_SECONDS,
+            max_history,
         }
     }
 
@@ -71,9 +91,17 @@ impl FrameStatsHistory {
     }
 
     fn average_fps(&self) -> f32 {
-        let total_dt: f32 = self.samples.iter().map(|s| s.frame_time).sum();
+        // Ignore any padding or zero-length samples when computing the average.
+        let mut total_dt: f32 = 0.0;
+        let mut frames: usize = 0;
+        for s in &self.samples {
+            if s.frame_time > 0.0 {
+                total_dt += s.frame_time;
+                frames += 1;
+            }
+        }
         if total_dt > 0.0 {
-            self.samples.len() as f32 / total_dt
+            frames as f32 / total_dt
         } else {
             0.0
         }

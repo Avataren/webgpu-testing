@@ -1112,8 +1112,8 @@ impl PostProcessUniform {
         effects: PostProcessEffects,
         sample_count: u32,
     ) -> Self {
-        let radius = 0.1f32;
-        let bias = 0.03f32;
+        let radius = 0.2f32;
+        let bias = 0.05f32;
         let intensity = 0.75f32;
         let power = 1.25f32;
         let noise_scale = [
