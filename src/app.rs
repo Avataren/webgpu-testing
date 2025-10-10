@@ -436,7 +436,7 @@ impl App {
         }
     }
 
-    fn update_scene(&mut self, dt: f64) {
+    fn run_update_stage(&mut self, dt: f64) {
         self.scene.update(dt);
 
         for system in &mut self.update_systems {
@@ -445,6 +445,90 @@ impl App {
                 dt,
             };
             (system)(&mut ctx);
+        }
+    }
+
+    fn run_gpu_systems(
+        scene: &mut Scene,
+        systems: &mut [GpuUpdateSystem],
+        renderer: &mut Renderer,
+        dt: f64,
+    ) {
+        for system in systems {
+            let mut ctx = GpuUpdateContext {
+                scene,
+                renderer,
+                dt,
+            };
+            (system)(&mut ctx);
+        }
+    }
+
+    fn render_scene(&mut self, renderer: &mut Renderer, frame: &FrameStep) {
+        if !frame.should_render() {
+            return;
+        }
+
+        let aspect = renderer.aspect_ratio();
+        renderer.set_camera(self.scene.camera(), aspect);
+
+        #[cfg(feature = "egui")]
+        Self::apply_postprocess_effects(&self.postprocess_effects, renderer);
+
+        #[cfg(feature = "egui")]
+        let egui_output = {
+            if let (Some(egui), Some(window)) = (&mut self.egui_context, &self.window) {
+                egui.begin_frame(window);
+                egui.run_ui();
+                Some(egui.end_frame(window))
+            } else {
+                None
+            }
+        };
+
+        match self.scene.render(renderer, &mut self.batcher) {
+            Ok(render_frame) => {
+                #[cfg(feature = "egui")]
+                {
+                    if let (Some(egui), Some(window), Some(egui_output)) =
+                        (&mut self.egui_context, &self.window, egui_output)
+                    {
+                        let view = render_frame
+                            .frame
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+
+                        let mut encoder = renderer.get_device().create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor {
+                                label: Some("egui_encoder"),
+                            },
+                        );
+
+                        let surface_size = renderer.surface_size();
+                        egui.render(
+                            renderer.get_device(),
+                            renderer.get_queue(),
+                            &mut encoder,
+                            window,
+                            &view,
+                            [surface_size.width, surface_size.height],
+                            egui_output,
+                        );
+
+                        renderer.get_queue().submit(Some(encoder.finish()));
+                    }
+                }
+
+                render_frame.frame.present();
+
+                #[cfg(feature = "egui")]
+                if let Ok(mut history) = self.frame_stats.lock() {
+                    history.record(frame.dt() as f32, renderer.last_frame_stats());
+                }
+            }
+            Err(e) => {
+                log::error!("Render error: {:?}", e);
+            }
         }
     }
 }
@@ -594,99 +678,17 @@ impl ApplicationHandler for App {
                 let frame = self.begin_frame();
 
                 // --------- 1) Update scene logic first ----------
-                self.update_scene(frame.dt());
+                self.run_update_stage(frame.dt());
 
-                #[cfg(feature = "egui")]
-                let postprocess_effects_handle = self.postprocess_effects.clone();
-
-                if let Some(renderer) = self.renderer.as_mut() {
-                    {
-                        let scene = &mut self.scene;
-                        for system in &mut self.gpu_systems {
-                            let mut ctx = GpuUpdateContext {
-                                scene,
-                                renderer,
-                                dt: frame.dt(),
-                            };
-                            (system)(&mut ctx);
-                        }
-                    }
-
-                    if frame.should_render() {
-                        let aspect = renderer.aspect_ratio();
-                        renderer.set_camera(self.scene.camera(), aspect);
-
-                        #[cfg(feature = "egui")]
-                        Self::apply_postprocess_effects(&postprocess_effects_handle, renderer);
-
-                        // --------- 2) Begin/run/end egui BEFORE scene render ----------
-                        // so UI state can influence the just-in-time scene rendering
-                        #[cfg(feature = "egui")]
-                        let egui_output = {
-                            if let (Some(egui), Some(window)) =
-                                (&mut self.egui_context, &self.window)
-                            {
-                                egui.begin_frame(window);
-                                egui.run_ui(); // your panels/widgets
-                                Some(egui.end_frame(window)) // capture FullOutput for this frame
-                            } else {
-                                None
-                            }
-                        };
-
-                        // --------- 3) Render the 3D scene ----------
-                        match self.scene.render(renderer, &mut self.batcher) {
-                            Ok(render_frame) => {
-                                // --------- 4) Render egui on top (unchanged in spirit) ----------
-                                #[cfg(feature = "egui")]
-                                {
-                                    if let (Some(egui), Some(window), Some(egui_output)) =
-                                        (&mut self.egui_context, &self.window, egui_output)
-                                    {
-                                        // Reuse the swapchain view from the scene frame
-                                        let view = render_frame
-                                            .frame
-                                            .texture
-                                            .create_view(&wgpu::TextureViewDescriptor::default());
-
-                                        // NOTE: egui_integration.rs MUST call
-                                        // `let mut pass_static = pass.forget_lifetime();`
-                                        // inside its `render(...)` implementation.
-                                        let mut encoder =
-                                            renderer.get_device().create_command_encoder(
-                                                &wgpu::CommandEncoderDescriptor {
-                                                    label: Some("egui_encoder"),
-                                                },
-                                            );
-
-                                        let surface_size = renderer.surface_size();
-                                        egui.render(
-                                            renderer.get_device(),
-                                            renderer.get_queue(),
-                                            &mut encoder,
-                                            window,
-                                            &view,
-                                            [surface_size.width, surface_size.height],
-                                            egui_output,
-                                        );
-
-                                        renderer.get_queue().submit(Some(encoder.finish()));
-                                    }
-                                }
-
-                                // Present after UI has been drawn
-                                render_frame.frame.present();
-
-                                #[cfg(feature = "egui")]
-                                if let Ok(mut history) = self.frame_stats.lock() {
-                                    history.record(frame.dt() as f32, renderer.last_frame_stats());
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("Render error: {:?}", e);
-                            }
-                        }
-                    }
+                if let Some(mut renderer) = self.renderer.take() {
+                    Self::run_gpu_systems(
+                        &mut self.scene,
+                        &mut self.gpu_systems,
+                        &mut renderer,
+                        frame.dt(),
+                    );
+                    self.render_scene(&mut renderer, &frame);
+                    self.renderer = Some(renderer);
                 }
 
                 if let Some(window) = &self.window {
