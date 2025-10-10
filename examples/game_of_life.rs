@@ -17,14 +17,9 @@ const CAMERA_RADIUS: f32 = 6.5;
 const CAMERA_HEIGHT: f32 = 2.5;
 const CAMERA_SPEED: f32 = 0.2;
 
+#[derive(Default)]
 struct ExampleApp {
     state: Option<GameOfLifeState>,
-}
-
-impl Default for ExampleApp {
-    fn default() -> Self {
-        Self { state: None }
-    }
 }
 
 impl RenderApplication for ExampleApp {
@@ -231,8 +226,8 @@ impl GameOfLifeState {
                 cache: None,
             });
 
-            let dispatch_x = (width + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
-            let dispatch_y = (height + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+            let dispatch_x = width.div_ceil(WORKGROUP_SIZE);
+            let dispatch_y = height.div_ceil(WORKGROUP_SIZE);
 
             (
                 texture_0,
@@ -393,13 +388,11 @@ fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
 
     // Add random noise (30% density)
     use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::hash::BuildHasher;
     let hasher = RandomState::new();
     for y in 0..height {
         for x in 0..width {
-            let mut h = hasher.build_hasher();
-            (x, y).hash(&mut h);
-            let hash_val = h.finish();
+            let hash_val = hasher.hash_one((x, y));
             if hash_val % 100 < 30 {
                 set_cell(x, y, true);
             }

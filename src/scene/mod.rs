@@ -6,14 +6,14 @@ pub mod camera;
 pub mod components;
 pub(crate) mod internal;
 pub mod loader;
-pub mod scene;
+mod scene_core;
 pub mod transform;
 
 // Re-export commonly used types
 pub use builder::EntityBuilder;
 pub use camera::Camera;
 pub use loader::SceneLoader;
-pub use scene::Scene;
+pub use scene_core::Scene;
 pub use transform::Transform;
 
 // Re-export all components

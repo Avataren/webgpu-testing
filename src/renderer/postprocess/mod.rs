@@ -36,7 +36,7 @@ const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as us
     0.0,
     0.0,
     -0.88205993,
-    0.47113729,
+    0.471_137_3,
     0.0,
     0.0,
     0.98252517,

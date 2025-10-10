@@ -138,12 +138,13 @@ impl Default for Resolution {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PresentModeSetting {
     Fifo,
     FifoRelaxed,
     Immediate,
+    #[default]
     Mailbox,
     AutoVsync,
     AutoNoVsync,
@@ -159,12 +160,6 @@ impl PresentModeSetting {
             PresentModeSetting::AutoVsync => wgpu::PresentMode::AutoVsync,
             PresentModeSetting::AutoNoVsync => wgpu::PresentMode::AutoNoVsync,
         }
-    }
-}
-
-impl Default for PresentModeSetting {
-    fn default() -> Self {
-        PresentModeSetting::Mailbox
     }
 }
 

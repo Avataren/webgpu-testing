@@ -3,7 +3,7 @@ use crate::scene::components::{
     Children, GltfMaterial, GltfNode, MaterialComponent, MeshComponent, Name, OrbitAnimation,
     Parent, RotateAnimation, TransformComponent, Visible, WorldTransform,
 };
-use crate::scene::scene::Scene;
+use crate::scene::Scene;
 
 pub(crate) fn merge_as_child(scene: &mut Scene, parent_entity: hecs::Entity, other: Scene) {
     let entity_count = other.world.len();

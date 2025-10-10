@@ -25,7 +25,8 @@ type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
 #[cfg(feature = "egui")]
 use crate::ui::{
-    egui, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle, PostProcessWindow,
+    egui, EguiRenderTarget, EguiUiCallback, FrameStatsHandle, FrameStatsHistory,
+    PostProcessEffectsHandle, PostProcessWindow,
 };
 
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
@@ -196,7 +197,7 @@ pub struct App {
     #[cfg(feature = "egui")]
     egui_context: Option<crate::ui::EguiContext>,
     #[cfg(feature = "egui")]
-    egui_pending_ui: Option<Box<dyn FnMut(&egui::Context) + 'static>>,
+    egui_pending_ui: Option<EguiUiCallback>,
     #[cfg(feature = "egui")]
     frame_stats: FrameStatsHandle,
     #[cfg(feature = "egui")]
@@ -505,15 +506,15 @@ impl App {
                         );
 
                         let surface_size = renderer.surface_size();
-                        egui.render(
-                            renderer.get_device(),
-                            renderer.get_queue(),
-                            &mut encoder,
+                        let mut target = EguiRenderTarget {
+                            device: renderer.get_device(),
+                            queue: renderer.get_queue(),
+                            encoder: &mut encoder,
                             window,
-                            &view,
-                            [surface_size.width, surface_size.height],
-                            egui_output,
-                        );
+                            view: &view,
+                            surface_size: [surface_size.width, surface_size.height],
+                        };
+                        egui.render(&mut target, egui_output);
 
                         renderer.get_queue().submit(Some(encoder.finish()));
                     }
@@ -530,6 +531,12 @@ impl App {
                 log::error!("Render error: {:?}", e);
             }
         }
+    }
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

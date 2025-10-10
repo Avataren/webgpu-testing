@@ -97,13 +97,10 @@ impl RenderBatcher {
             depth_state: obj.depth_state,
         };
 
-        self.batches
-            .entry(key)
-            .or_insert_with(Vec::new)
-            .push(InstanceData {
-                transform: obj.transform,
-                material: obj.material,
-            });
+        self.batches.entry(key).or_default().push(InstanceData {
+            transform: obj.transform,
+            material: obj.material,
+        });
     }
 
     /// Clear all batches
