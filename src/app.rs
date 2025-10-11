@@ -33,8 +33,9 @@ type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 
 #[cfg(feature = "egui")]
 use crate::ui::{
-    egui, EguiRenderTarget, EguiUiCallback, FrameStatsHandle, FrameStatsHistory,
-    PostProcessEffectsHandle, PostProcessWindow,
+    egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
+    EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
+    PostProcessWindow,
 };
 
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
@@ -146,8 +147,11 @@ impl AppBuilder {
     }
 
     pub fn build(self) -> App {
+        let scene = Scene::new();
+        #[cfg(feature = "egui")]
+        let environment_settings = EnvironmentWindow::handle_from_environment(scene.environment());
         App {
-            scene: Scene::new(),
+            scene,
             batcher: RenderBatcher::new(),
             startup_systems: self.startup_systems,
             update_systems: self.update_systems,
@@ -168,6 +172,8 @@ impl AppBuilder {
             frame_stats: FrameStatsHistory::handle(),
             #[cfg(feature = "egui")]
             postprocess_effects: PostProcessWindow::handle(),
+            #[cfg(feature = "egui")]
+            environment_settings,
             window: None,
             window_id: None,
             renderer: None,
@@ -214,8 +220,11 @@ pub struct App {
     frame_stats: FrameStatsHandle,
     #[cfg(feature = "egui")]
     postprocess_effects: PostProcessEffectsHandle,
+    #[cfg(feature = "egui")]
+    environment_settings: EnvironmentSettingsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
+    #[allow(clippy::type_complexity)]
     custom_render_callback: Option<Box<dyn FnMut(&mut CustomRenderContext)>>,
 }
 
@@ -263,9 +272,25 @@ impl App {
     }
 
     #[cfg(feature = "egui")]
+    pub fn environment_settings_handle(&self) -> EnvironmentSettingsHandle {
+        self.environment_settings.clone()
+    }
+
+    #[cfg(feature = "egui")]
     fn apply_postprocess_effects(handle: &PostProcessEffectsHandle, renderer: &mut Renderer) {
         if let Ok(effects) = handle.lock() {
             renderer.set_postprocess_effects(*effects);
+        }
+    }
+
+    #[cfg(feature = "egui")]
+    fn apply_environment_settings(handle: &EnvironmentSettingsHandle, scene: &mut Scene) {
+        if let Ok(mut controls) = handle.lock() {
+            {
+                let environment = scene.environment_mut();
+                controls.apply_to_environment(environment);
+            }
+            *controls = EnvironmentSettingsControls::from_environment(scene.environment());
         }
     }
 
@@ -400,6 +425,9 @@ impl App {
             .environment_mut()
             .enable_hdr_background(DEFAULT_HDR_ENVIRONMENT);
 
+        #[cfg(feature = "egui")]
+        EnvironmentWindow::sync_handle(&self.environment_settings, self.scene.environment());
+
         if self.auto_init_default_textures && self.scene.assets.textures.is_empty() {
             self.init_default_textures(renderer);
         }
@@ -422,6 +450,9 @@ impl App {
         log::info!("Running initial transform propagation...");
         self.scene.update(0.0);
         log::info!("Initial propagation complete");
+
+        #[cfg(feature = "egui")]
+        EnvironmentWindow::sync_handle(&self.environment_settings, self.scene.environment());
 
         self.startup_ran = true;
     }
@@ -562,6 +593,9 @@ impl App {
         if !frame.should_render() {
             return Ok(());
         }
+
+        #[cfg(feature = "egui")]
+        Self::apply_environment_settings(&self.environment_settings, &mut self.scene);
 
         let aspect = renderer.aspect_ratio();
         renderer.set_camera(self.scene.camera(), aspect);

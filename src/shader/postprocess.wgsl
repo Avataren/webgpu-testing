@@ -26,18 +26,28 @@ struct PostUniform {
     intensity_power : vec2<f32>,
     noise_scale : vec2<f32>,
     near_far : vec2<f32>,
+    _padding0 : vec2<f32>,
+    color_adjust : vec4<f32>,
+    bloom_params : vec4<f32>,
     effects : vec4<f32>,
 };
 
 @group(0) @binding(0)
 var<uniform> post_uniform : PostUniform;
 
+// SSAO inputs (group 1 bindings 0-2)
 @group(1) @binding(0)
 var depth_texture : texture_depth_2d;
 @group(1) @binding(1)
 var noise_texture : texture_2d<f32>;
 @group(1) @binding(2)
 var noise_sampler : sampler;
+
+// Color grading inputs (group 1 bindings 10-11)
+@group(1) @binding(10)
+var color_source : texture_2d<f32>;
+@group(1) @binding(11)
+var color_sampler : sampler;
 
 fn linearize_depth(depth: f32) -> f32 {
     let near = post_uniform.near_far.x;
@@ -112,6 +122,27 @@ fn view_normal(uv : vec2<f32>, view_pos : vec3<f32>) -> vec3<f32> {
         normal = -normal;
     }
     return normal;
+}
+
+fn apply_color_controls(color: vec3<f32>) -> vec3<f32> {
+    let exposure = max(post_uniform.color_adjust.x, 0.0);
+    let saturation = max(post_uniform.color_adjust.y, 0.0);
+    let contrast = max(post_uniform.color_adjust.z, 0.0);
+
+    var adjusted = color * exposure;
+    let luma = dot(adjusted, vec3<f32>(0.2126, 0.7152, 0.0722));
+    adjusted = mix(vec3<f32>(luma), adjusted, saturation);
+    let pivot = vec3<f32>(0.5, 0.5, 0.5);
+    adjusted = (adjusted - pivot) * contrast + pivot;
+    return adjusted;
+}
+
+@fragment
+fn fs_color_adjust(in : VertexOutput) -> @location(0) vec4<f32> {
+    let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let base = textureSample(color_source, color_sampler, uv);
+    let adjusted = apply_color_controls(base.rgb);
+    return vec4<f32>(adjusted, base.a);
 }
 
 fn ssao_kernel() -> array<vec3<f32>, 32> {
@@ -218,30 +249,30 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(ao_result, ao_result, ao_result, 1.0);
 }
 
-// Bloom prefilter
-@group(0) @binding(0)
+// Bloom prefilter (group 1 bindings 20-21)
+@group(1) @binding(20)
 var scene_texture : texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(21)
 var scene_sampler : sampler;
 
 @fragment
 fn fs_bloom_prefilter(in : VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(scene_texture, scene_sampler, in.uv).rgb;
     let brightness = max(max(color.r, color.g), color.b);
-    let threshold = 0.8;
-    let knee = threshold * 0.5;
+    let threshold = max(post_uniform.bloom_params.x, 0.0);
+    let knee = max(post_uniform.bloom_params.y, 1e-4);
     let soft = brightness - threshold + knee;
     let clamped = clamp(soft, 0.0, 2.0 * knee);
-    let soft_curve = clamped * clamped / (4.0 * max(knee, 1e-4) + 1e-5);
+    let soft_curve = clamped * clamped / (4.0 * knee + 1e-5);
     let contribution = max(soft_curve, brightness - threshold);
     let weight = contribution / max(brightness, 1e-4);
     return vec4<f32>(color * weight, 1.0);
 }
 
-// Bloom downsample
-@group(0) @binding(0)
+// Bloom downsample (group 1 bindings 30-31)
+@group(1) @binding(30)
 var bloom_down_texture : texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(31)
 var bloom_down_sampler : sampler;
 
 fn bloom_gaussian_weight(offset : vec2<f32>, sigma : f32) -> f32 {
@@ -273,12 +304,12 @@ fn fs_bloom_downsample(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(result / max(total, 1e-4), 1.0);
 }
 
-// Bloom upsample
-@group(0) @binding(0)
+// Bloom upsample (group 1 bindings 40-42)
+@group(1) @binding(40)
 var bloom_upsample_texture : texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(41)
 var bloom_upsample_base : texture_2d<f32>;
-@group(0) @binding(2)
+@group(1) @binding(42)
 var bloom_upsample_sampler : sampler;
 
 @fragment
@@ -311,37 +342,35 @@ fn fs_bloom_upsample(in : VertexOutput) -> @location(0) vec4<f32> {
         0.0,
     )
         .rgb;
-    let scatter = 0.95;
+    let scatter = clamp(post_uniform.bloom_params.z, 0.0, 1.0);
     return vec4<f32>(base + filtered * scatter, 1.0);
 }
 
-@group(0) @binding(0)
+// Composite stage inputs (group 1 bindings 50-53)
+@group(1) @binding(50)
 var composite_scene : texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(51)
 var composite_ssao : texture_2d<f32>;
-@group(0) @binding(2)
+@group(1) @binding(52)
 var composite_bloom : texture_2d<f32>;
-@group(0) @binding(3)
+@group(1) @binding(53)
 var composite_sampler : sampler;
-
-@group(1) @binding(0)
-var<uniform> composite_uniform : PostUniform;
 
 const FXAA_REDUCE_MIN : f32 = 1.0 / 128.0;
 const FXAA_REDUCE_MUL : f32 = 1.0 / 8.0;
 const FXAA_SPAN_MAX : f32 = 8.0;
 
 fn safe_texel_size() -> vec2<f32> {
-    let width = max(composite_uniform.resolution.x, 1.0);
-    let height = max(composite_uniform.resolution.y, 1.0);
+    let width = max(post_uniform.resolution.x, 1.0);
+    let height = max(post_uniform.resolution.y, 1.0);
     return vec2<f32>(1.0 / width, 1.0 / height);
 }
 
 fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
     let uv_clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
     let base = textureSampleLevel(composite_scene, composite_sampler, uv_clamped, 0.0);
-    let ssao_enabled = composite_uniform.effects.x > 0.5;
-    let bloom_enabled = composite_uniform.effects.y > 0.5;
+    let ssao_enabled = post_uniform.effects.x > 0.5;
+    let bloom_enabled = post_uniform.effects.y > 0.5;
     var ssao = 1.0;
     if ssao_enabled {
         ssao = textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r;
@@ -416,7 +445,7 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
         0.0,
     );
     var color = sample_lit_color(in.uv);
-    if composite_uniform.effects.z > 0.5 {
+    if post_uniform.effects.z > 0.5 {
         color = fxaa(in.uv);
     }
     return vec4<f32>(color, base.a);

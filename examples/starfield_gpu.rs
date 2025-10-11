@@ -9,7 +9,7 @@ use wgpu_cube::{
     StartupContext,
 };
 
-const STAR_COUNT: usize = 1000_000;
+const STAR_COUNT: usize = 1_000_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
 const FAR_PLANE: f32 = 150.0;

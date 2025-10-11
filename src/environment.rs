@@ -13,6 +13,15 @@ pub struct Environment {
     clear_color: Color,
     ambient_intensity: f32,
     hdr_background: Option<HdrBackground>,
+    color_grading: ColorGrading,
+}
+
+/// Global color adjustments applied during the post-processing pipeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColorGrading {
+    exposure: f32,
+    saturation: f32,
+    contrast: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +38,7 @@ impl Environment {
             clear_color,
             ambient_intensity: 0.03,
             hdr_background: None,
+            color_grading: ColorGrading::default(),
         }
     }
 
@@ -115,6 +125,21 @@ impl Environment {
     pub fn is_hdr_enabled(&self) -> bool {
         self.active_hdr_background().is_some()
     }
+
+    /// Returns the color grading configuration used during post-processing.
+    pub fn color_grading(&self) -> ColorGrading {
+        self.color_grading
+    }
+
+    /// Provides mutable access to the color grading configuration.
+    pub fn color_grading_mut(&mut self) -> &mut ColorGrading {
+        &mut self.color_grading
+    }
+
+    /// Sets the color grading configuration used during post-processing.
+    pub fn set_color_grading(&mut self, grading: ColorGrading) {
+        self.color_grading = grading;
+    }
 }
 
 impl Default for Environment {
@@ -125,6 +150,51 @@ impl Default for Environment {
             b: 0.338,
             a: 1.0,
         })
+    }
+}
+
+impl ColorGrading {
+    /// Creates a new color grading configuration.
+    pub fn new(exposure: f32, saturation: f32, contrast: f32) -> Self {
+        let mut grading = Self::default();
+        grading.set_exposure(exposure);
+        grading.set_saturation(saturation);
+        grading.set_contrast(contrast);
+        grading
+    }
+
+    pub fn exposure(&self) -> f32 {
+        self.exposure
+    }
+
+    pub fn set_exposure(&mut self, exposure: f32) {
+        self.exposure = exposure.max(0.0);
+    }
+
+    pub fn saturation(&self) -> f32 {
+        self.saturation
+    }
+
+    pub fn set_saturation(&mut self, saturation: f32) {
+        self.saturation = saturation.max(0.0);
+    }
+
+    pub fn contrast(&self) -> f32 {
+        self.contrast
+    }
+
+    pub fn set_contrast(&mut self, contrast: f32) {
+        self.contrast = contrast.max(0.0);
+    }
+}
+
+impl Default for ColorGrading {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            saturation: 1.0,
+            contrast: 1.0,
+        }
     }
 }
 
