@@ -319,6 +319,8 @@ pub(crate) struct LightsBuffer {
     pub(crate) shadow_buffer: wgpu::Buffer,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) bind_layout: wgpu::BindGroupLayout,
+    last_lights: Option<LightsUniform>,
+    last_shadows: Option<ShadowsUniform>,
 }
 
 impl LightsBuffer {
@@ -459,6 +461,8 @@ impl LightsBuffer {
             shadow_buffer,
             bind_group,
             bind_layout: layout,
+            last_lights: None,
+            last_shadows: None,
         }
     }
 
@@ -522,12 +526,30 @@ impl LightsBuffer {
         })
     }
 
-    pub(crate) fn update(&self, queue: &wgpu::Queue, lights: &LightsData) {
+    pub(crate) fn update(&mut self, queue: &wgpu::Queue, lights: &LightsData) {
         let data = LightsUniform::from_data(lights);
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
-        let shadow_data = ShadowsUniform::from_data(lights);
+        let should_update_lights = self
+            .last_lights
+            .as_ref()
+            .map(|last| last != &data)
+            .unwrap_or(true);
 
-        queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
+        if should_update_lights {
+            queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
+            self.last_lights = Some(data);
+        }
+
+        let shadow_data = ShadowsUniform::from_data(lights);
+        let should_update_shadows = self
+            .last_shadows
+            .as_ref()
+            .map(|last| last != &shadow_data)
+            .unwrap_or(true);
+
+        if should_update_shadows {
+            queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
+            self.last_shadows = Some(shadow_data);
+        }
     }
 
     pub(crate) fn rebuild_bind_group(

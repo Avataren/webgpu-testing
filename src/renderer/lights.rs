@@ -115,7 +115,7 @@ impl LightsData {
 // CPU layout in lock-step with the shader expectations.
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct DirectionalLightRaw {
     pub direction: [f32; 4],
     pub color_intensity: [f32; 4],
@@ -136,7 +136,7 @@ pub struct DirectionalShadowData {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct DirectionalShadowRaw {
     pub view_proj: [[f32; 4]; 4],
     pub params: [f32; 4],
@@ -166,7 +166,7 @@ impl DirectionalShadowRaw {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct PointLightRaw {
     pub position_range: [f32; 4],
     pub color_intensity: [f32; 4],
@@ -189,7 +189,7 @@ pub struct PointShadowData {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct PointShadowRaw {
     pub view_proj: [[[f32; 4]; 4]; 6],
     pub params: [f32; 4],
@@ -216,7 +216,7 @@ impl PointShadowRaw {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct SpotLightRaw {
     pub position_range: [f32; 4],
     pub direction: [f32; 4],
@@ -257,7 +257,7 @@ pub struct SpotShadowData {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct SpotShadowRaw {
     pub view_proj: [[f32; 4]; 4],
     pub params: [f32; 4],
@@ -287,7 +287,7 @@ impl SpotShadowRaw {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct LightsUniform {
     pub counts: [u32; 4],
     pub directionals: [DirectionalLightRaw; MAX_DIRECTIONAL_LIGHTS],
@@ -337,7 +337,7 @@ impl LightsUniform {
 }
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct ShadowsUniform {
     pub counts: [u32; 4],
     pub directionals: [DirectionalShadowRaw; MAX_DIRECTIONAL_LIGHTS],

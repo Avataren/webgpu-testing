@@ -1,7 +1,7 @@
 // src/renderer/pipeline_builder.rs
 
 /// Builder for creating render pipelines with sensible defaults
-/// 
+///
 /// Reduces boilerplate when creating pipelines by providing a fluent API
 /// and common presets for depth/stencil, blending, etc.
 pub struct PipelineBuilder<'a> {
@@ -48,7 +48,7 @@ impl<'a> PipelineBuilder<'a> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            custom_vertex_state: None
+            custom_vertex_state: None,
         }
     }
 
@@ -63,7 +63,7 @@ impl<'a> PipelineBuilder<'a> {
     pub fn with_vertex_state(mut self, vertex_state: wgpu::VertexState<'a>) -> Self {
         self.custom_vertex_state = Some(vertex_state);
         self
-    }    
+    }
 
     /// Set the vertex shader entry point (default: "vs_main")
     pub fn with_vertex_entry(mut self, entry: &'a str) -> Self {
@@ -90,7 +90,11 @@ impl<'a> PipelineBuilder<'a> {
     }
 
     /// Add a color target
-    pub fn with_color_target(mut self, format: wgpu::TextureFormat, blend: Option<wgpu::BlendState>) -> Self {
+    pub fn with_color_target(
+        mut self,
+        format: wgpu::TextureFormat,
+        blend: Option<wgpu::BlendState>,
+    ) -> Self {
         self.color_targets.push(Some(wgpu::ColorTargetState {
             format,
             blend,
@@ -159,26 +163,27 @@ impl<'a> PipelineBuilder<'a> {
 
     /// Build the render pipeline
     pub fn build(self) -> wgpu::RenderPipeline {
-        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: self.label,
-            layout: Some(self.layout),
-            vertex: wgpu::VertexState {
-                module: self.shader,
-                entry_point: Some(self.vertex_entry),
-                buffers: &self.vertex_buffers,
-                compilation_options: Default::default(),
-            },
-            fragment: self.fragment_entry.map(|entry| wgpu::FragmentState {
-                module: self.shader,
-                entry_point: Some(entry),
-                targets: &self.color_targets,
-                compilation_options: Default::default(),
-            }),
-            primitive: self.primitive,
-            depth_stencil: self.depth_stencil,
-            multisample: self.multisample,
-            multiview: None,
-            cache: None,
-        })
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: self.label,
+                layout: Some(self.layout),
+                vertex: wgpu::VertexState {
+                    module: self.shader,
+                    entry_point: Some(self.vertex_entry),
+                    buffers: &self.vertex_buffers,
+                    compilation_options: Default::default(),
+                },
+                fragment: self.fragment_entry.map(|entry| wgpu::FragmentState {
+                    module: self.shader,
+                    entry_point: Some(entry),
+                    targets: &self.color_targets,
+                    compilation_options: Default::default(),
+                }),
+                primitive: self.primitive,
+                depth_stencil: self.depth_stencil,
+                multisample: self.multisample,
+                multiview: None,
+                cache: None,
+            })
     }
 }

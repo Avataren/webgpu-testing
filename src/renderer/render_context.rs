@@ -1,7 +1,7 @@
 // src/renderer/render_context.rs
 
 /// Context provided to custom render callbacks
-/// 
+///
 /// This bundles commonly needed rendering resources to simplify
 /// the custom_render callback signature and provide helper methods.
 pub struct CustomRenderContext<'a> {
@@ -31,10 +31,10 @@ impl<'a> CustomRenderContext<'a> {
     }
 
     /// Begin a render pass with sensible defaults for custom rendering
-    /// 
+    ///
     /// The pass loads existing color and depth, allowing you to draw on top
     /// of the main scene rendering.
-    pub fn begin_render_pass(&mut self, label: &str) -> wgpu::RenderPass<'_>  {
+    pub fn begin_render_pass(&mut self, label: &str) -> wgpu::RenderPass<'_> {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -60,7 +60,7 @@ impl<'a> CustomRenderContext<'a> {
     }
 
     /// Begin a render pass that clears the depth buffer
-    /// 
+    ///
     /// Useful when you want your custom rendering to ignore the main scene depth.
     pub fn begin_render_pass_clear_depth(&mut self, label: &str) -> wgpu::RenderPass<'_> {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
