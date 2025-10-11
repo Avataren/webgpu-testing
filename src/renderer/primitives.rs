@@ -36,14 +36,14 @@ pub fn sphere_mesh(segments: u32, rings: u32) -> (Vec<Vertex>, Vec<u32>) {
             let current = ring * (segments + 1) + segment;
             let next = current + segments + 1;
 
-            // Two triangles per quad
+            // Two triangles per quad — reversed winding (swap the last two of each tri)
             indices.push(current);
-            indices.push(next);
             indices.push(current + 1);
+            indices.push(next);
 
             indices.push(current + 1);
-            indices.push(next);
             indices.push(next + 1);
+            indices.push(next);
         }
     }
 

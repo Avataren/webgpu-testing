@@ -241,7 +241,7 @@ impl ShadowResources {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {
                     constant: 2,
-                    slope_scale: 2.5,
+                    slope_scale: 2.0,
                     clamp: 0.0,
                 },
             }),
