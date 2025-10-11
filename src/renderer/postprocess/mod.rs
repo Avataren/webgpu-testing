@@ -286,7 +286,7 @@ impl PostProcess {
                 label: Some("ColorGradingLayout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: 10,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -296,7 +296,7 @@ impl PostProcess {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 11,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -418,7 +418,7 @@ impl PostProcess {
                 label: Some("BloomPrefilterLayout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: 20,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -428,7 +428,7 @@ impl PostProcess {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 21,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -439,7 +439,7 @@ impl PostProcess {
         let bloom_prefilter_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomPrefilterPipelineLayout"),
-                bind_group_layouts: &[&bloom_prefilter_layout],
+                bind_group_layouts: &[&uniform_layout, &bloom_prefilter_layout],
                 push_constant_ranges: &[],
             });
 
@@ -461,7 +461,7 @@ impl PostProcess {
                 label: Some("BloomDownsampleLayout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: 30,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -471,7 +471,7 @@ impl PostProcess {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 31,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -482,7 +482,7 @@ impl PostProcess {
         let bloom_downsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomDownsamplePipelineLayout"),
-                bind_group_layouts: &[&bloom_downsample_layout],
+                bind_group_layouts: &[&uniform_layout, &bloom_downsample_layout],
                 push_constant_ranges: &[],
             });
 
@@ -504,7 +504,7 @@ impl PostProcess {
                 label: Some("BloomUpsampleLayout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+                        binding: 40,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -514,7 +514,7 @@ impl PostProcess {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1,
+                        binding: 41,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -524,7 +524,7 @@ impl PostProcess {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 2,
+                        binding: 42,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -535,7 +535,7 @@ impl PostProcess {
         let bloom_upsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomUpsamplePipelineLayout"),
-                bind_group_layouts: &[&bloom_upsample_layout],
+                bind_group_layouts: &[&uniform_layout, &bloom_upsample_layout],
                 push_constant_ranges: &[],
             });
 
@@ -554,7 +554,7 @@ impl PostProcess {
             label: Some("CompositeLayout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                    binding: 50,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -564,7 +564,7 @@ impl PostProcess {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 51,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -574,7 +574,7 @@ impl PostProcess {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 52,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
@@ -584,7 +584,7 @@ impl PostProcess {
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
+                    binding: 53,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -595,7 +595,7 @@ impl PostProcess {
         let composite_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("CompositePipelineLayout"),
-                bind_group_layouts: &[&composite_layout, &uniform_layout],
+                bind_group_layouts: &[&uniform_layout, &composite_layout],
                 push_constant_ranges: &[],
             });
 
@@ -878,7 +878,8 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_prefilter_pipeline);
-                pass.set_bind_group(0, bloom_prefilter, &[]);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, bloom_prefilter, &[]);
                 pass.draw(0..3, 0..1);
             }
 
@@ -899,7 +900,8 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_downsample_pipeline);
-                pass.set_bind_group(0, &pass_info.bind_group, &[]);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, &pass_info.bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
 
@@ -940,7 +942,8 @@ impl PostProcess {
                     occlusion_query_set: None,
                 });
                 pass.set_pipeline(&self.bloom_upsample_pipeline);
-                pass.set_bind_group(0, &pass_info.bind_group, &[]);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, &pass_info.bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
         } else {
@@ -985,8 +988,8 @@ impl PostProcess {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.composite_pipeline);
-            pass.set_bind_group(0, composite_bind_group, &[]);
-            pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, composite_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
     }
@@ -1076,11 +1079,11 @@ impl PostProcess {
                 layout: &self.ssao_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 0,
+                        binding: 10,
                         resource: wgpu::BindingResource::TextureView(&resolved.view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 1,
+                        binding: 11,
                         resource: wgpu::BindingResource::TextureView(&self.noise_view),
                     },
                     wgpu::BindGroupEntry {
@@ -1117,11 +1120,11 @@ impl PostProcess {
                 layout: &self.color_grading_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 0,
+                        binding: 10,
                         resource: wgpu::BindingResource::TextureView(&self.scene_source.view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 1,
+                        binding: 11,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                     },
                 ],
@@ -1133,11 +1136,11 @@ impl PostProcess {
                 layout: &self.bloom_prefilter_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 0,
+                        binding: 20,
                         resource: wgpu::BindingResource::TextureView(&self.scene.view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 1,
+                        binding: 21,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                     },
                 ],
@@ -1155,13 +1158,13 @@ impl PostProcess {
                     layout: &self.bloom_downsample_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
-                            binding: 0,
+                            binding: 30,
                             resource: wgpu::BindingResource::TextureView(
                                 &self.bloom_down_chain[level - 1].view,
                             ),
                         },
                         wgpu::BindGroupEntry {
-                            binding: 1,
+                            binding: 31,
                             resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                         },
                     ],
@@ -1176,19 +1179,19 @@ impl PostProcess {
                 layout: &self.bloom_upsample_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 0,
+                        binding: 40,
                         resource: wgpu::BindingResource::TextureView(
                             &self.bloom_up_chain[level].view,
                         ),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 1,
+                        binding: 41,
                         resource: wgpu::BindingResource::TextureView(
                             &self.bloom_down_chain[level - 1].view,
                         ),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 2,
+                        binding: 42,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                     },
                 ],
@@ -1204,19 +1207,19 @@ impl PostProcess {
             layout: &self.composite_layout,
             entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 0,
+                    binding: 50,
                     resource: wgpu::BindingResource::TextureView(&self.scene.view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 1,
+                    binding: 51,
                     resource: wgpu::BindingResource::TextureView(&self.ssao.view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 2,
+                    binding: 52,
                     resource: wgpu::BindingResource::TextureView(&self.bloom_up_chain[0].view),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 53,
                     resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
                 },
             ],
