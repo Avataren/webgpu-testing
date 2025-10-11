@@ -10,8 +10,8 @@ use crate::renderer::lights::{
     LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::renderer::material::Material;
-use crate::renderer::{PipelineBuilder, RenderPass};
 use crate::renderer::Vertex;
+use crate::renderer::{PipelineBuilder, RenderPass};
 
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
