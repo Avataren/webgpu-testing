@@ -20,7 +20,7 @@ use crate::renderer::{
         DEFAULT_CHECKER_TEXTURE_INDEX, DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX,
         DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
     },
-    CustomRenderContext, RenderBatcher, Renderer, Texture,
+    CustomRenderCallback, CustomRenderRequest, CustomRenderStage, RenderBatcher, Renderer, Texture,
 };
 use crate::settings::RenderSettings;
 
@@ -178,6 +178,7 @@ impl AppBuilder {
             window_id: None,
             renderer: None,
             custom_render_callback: None,
+            custom_render_stage: CustomRenderStage::BeforePostprocess,
         }
     }
 }
@@ -224,8 +225,8 @@ pub struct App {
     environment_settings: EnvironmentSettingsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
-    #[allow(clippy::type_complexity)]
-    custom_render_callback: Option<Box<dyn FnMut(&mut CustomRenderContext)>>,
+    custom_render_callback: Option<Box<CustomRenderCallback>>,
+    custom_render_stage: CustomRenderStage,
 }
 
 impl App {
@@ -233,11 +234,13 @@ impl App {
         AppBuilder::default().build()
     }
 
-    pub fn set_custom_render_callback(
-        &mut self,
-        callback: Box<dyn FnMut(&mut CustomRenderContext)>,
-    ) {
+    pub fn set_custom_render_callback(&mut self, callback: Box<CustomRenderCallback>) {
         self.custom_render_callback = Some(callback);
+        self.custom_render_stage = CustomRenderStage::BeforePostprocess;
+    }
+
+    pub fn set_custom_render_stage(&mut self, stage: CustomRenderStage) {
+        self.custom_render_stage = stage;
     }
 
     #[cfg(feature = "egui")]
@@ -618,29 +621,17 @@ impl App {
             }
         };
 
-        let render_frame = self.scene.render(renderer, &mut self.batcher)?;
+        let custom_render_request =
+            self.custom_render_callback
+                .as_mut()
+                .map(|callback| CustomRenderRequest {
+                    callback: &mut **callback,
+                    stage: self.custom_render_stage,
+                });
 
-        // Call custom render callback
-        if let Some(callback) = &mut self.custom_render_callback {
-            let view = render_frame
-                .frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder =
-                renderer
-                    .get_device()
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("custom_render_encoder"),
-                    });
-            let depth_view = renderer.depth_view();
-
-            // Create context and call the callback
-            let mut ctx =
-                CustomRenderContext::new(&mut encoder, renderer, &self.scene, &view, depth_view);
-            callback(&mut ctx);
-
-            renderer.get_queue().submit(Some(encoder.finish()));
-        }
+        let render_frame = self
+            .scene
+            .render(renderer, &mut self.batcher, custom_render_request)?;
 
         #[cfg(feature = "egui")]
         {

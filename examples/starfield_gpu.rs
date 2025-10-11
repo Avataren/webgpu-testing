@@ -138,7 +138,7 @@ impl RenderApplication for StarfieldGpuApp {
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         // Render the GPU particles
         if let (Some(particle_system), Some(mesh_handle)) =
-            (&self.particle_system, self.mesh_handle)
+            (self.particle_system.as_mut(), self.mesh_handle)
         {
             if let Some(mesh) = ctx.scene.assets.meshes.get(mesh_handle) {
                 particle_system.render(
@@ -147,6 +147,7 @@ impl RenderApplication for StarfieldGpuApp {
                     mesh,
                     ctx.color_view,
                     ctx.depth_view,
+                    ctx.stage,
                 );
             }
         }

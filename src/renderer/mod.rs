@@ -23,7 +23,9 @@ pub use material::Material;
 pub use objects::{MaterialData, ObjectData};
 pub use pipeline_builder::PipelineBuilder;
 pub use primitives::*;
-pub use render_context::CustomRenderContext;
+pub use render_context::{
+    CustomRenderCallback, CustomRenderContext, CustomRenderRequest, CustomRenderStage,
+};
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;

@@ -10,9 +10,10 @@ use crate::renderer::internal::{
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessEffects},
-    CameraUniform, LightsData, Material, RenderBatcher, RenderPass, Vertex,
+    CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
+    Material, RenderBatcher, RenderPass, Vertex,
 };
-use crate::scene::Camera;
+use crate::scene::{Camera, Scene};
 use crate::settings::RenderSettings;
 
 use glam::Vec3;
@@ -244,10 +245,12 @@ impl Renderer {
 
     pub fn render(
         &mut self,
+        scene: &Scene,
         assets: &Assets,
         batcher: &RenderBatcher,
         lights: &LightsData,
         environment: &Environment,
+        mut custom_render: Option<CustomRenderRequest<'_>>,
     ) -> Result<RenderFrame, wgpu::SurfaceError> {
         let frame = self.context.surface.get_current_texture()?;
         let view = frame
@@ -393,6 +396,20 @@ impl Renderer {
             );
         }
 
+        if let Some(request) = custom_render.as_mut() {
+            if request.stage == CustomRenderStage::BeforePostprocess {
+                let mut ctx = CustomRenderContext::new(
+                    &mut encoder,
+                    self,
+                    scene,
+                    &scene_view,
+                    &depth_view,
+                    CustomRenderStage::BeforePostprocess,
+                );
+                (request.callback)(&mut ctx);
+            }
+        }
+
         // Resolve scene → swapchain
         self.postprocess
             .execute(&mut encoder, &self.context.device, &view);
@@ -474,6 +491,20 @@ impl Renderer {
             );
         }
 
+        if let Some(request) = custom_render.as_mut() {
+            if request.stage == CustomRenderStage::AfterPostprocess {
+                let mut ctx = CustomRenderContext::new(
+                    &mut encoder,
+                    self,
+                    scene,
+                    &view,
+                    &depth_view,
+                    CustomRenderStage::AfterPostprocess,
+                );
+                (request.callback)(&mut ctx);
+            }
+        }
+
         frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(
             prepared_batches.all(),
             prepared_batches.materials(),
@@ -486,9 +517,19 @@ impl Renderer {
         Ok(RenderFrame { frame })
     }
 
-    // Add helper method to get surface format
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.context.config.format
+    }
+
+    pub fn scene_texture_format(&self) -> wgpu::TextureFormat {
+        self.context.scene_texture_format()
+    }
+
+    pub fn color_format_for_stage(&self, stage: CustomRenderStage) -> wgpu::TextureFormat {
+        match stage {
+            CustomRenderStage::BeforePostprocess => self.scene_texture_format(),
+            CustomRenderStage::AfterPostprocess => self.surface_format(),
+        }
     }
 
     pub fn surface_size(&self) -> PhysicalSize<u32> {
@@ -497,6 +538,13 @@ impl Renderer {
 
     pub fn sample_count(&self) -> u32 {
         self.context.sample_count
+    }
+
+    pub fn sample_count_for_stage(&self, stage: CustomRenderStage) -> u32 {
+        match stage {
+            CustomRenderStage::BeforePostprocess => self.sample_count(),
+            CustomRenderStage::AfterPostprocess => 1,
+        }
     }
 
     pub fn set_postprocess_effects(&mut self, effects: PostProcessEffects) {

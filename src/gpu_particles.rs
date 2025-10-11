@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
 use wgpu::util::DeviceExt;
 
-use crate::renderer::{Material, PipelineBuilder, Renderer, Vertex};
+use crate::renderer::{CustomRenderStage, Material, PipelineBuilder, Renderer, Vertex};
 
 const WORKGROUP_SIZE: u32 = 256;
 
@@ -125,11 +125,13 @@ pub struct GpuParticleSystem {
     // Render pipeline for GPU-driven rendering
     render_pipeline: wgpu::RenderPipeline,
     render_bind_group: wgpu::BindGroup,
+    render_format: wgpu::TextureFormat,
+    render_sample_count: u32,
 
     params: GpuParticleParams,
     params_buffer: wgpu::Buffer,
-    _state_buffer: wgpu::Buffer,
-    _material_buffer: wgpu::Buffer,
+    state_buffer: wgpu::Buffer,
+    material_buffer: wgpu::Buffer,
     workgroup_count: u32,
     particle_count: u32,
     frame_count: u32,
@@ -267,8 +269,17 @@ impl GpuParticleSystem {
         });
 
         // Create render pipeline
-        let (render_pipeline, render_bind_group) =
-            Self::create_render_pipeline(device, renderer, &state_buffer, &material_buffer);
+        let initial_stage = CustomRenderStage::BeforePostprocess;
+        let render_format = renderer.color_format_for_stage(initial_stage);
+        let render_sample_count = renderer.sample_count_for_stage(initial_stage);
+        let (render_pipeline, render_bind_group) = Self::create_render_pipeline(
+            device,
+            renderer,
+            &state_buffer,
+            &material_buffer,
+            render_format,
+            render_sample_count,
+        );
 
         let workgroup_count = particle_count.div_ceil(WORKGROUP_SIZE);
 
@@ -283,10 +294,12 @@ impl GpuParticleSystem {
             compute_bind_group,
             render_pipeline,
             render_bind_group,
+            render_format,
+            render_sample_count,
             params,
             params_buffer,
-            _state_buffer: state_buffer,
-            _material_buffer: material_buffer,
+            state_buffer,
+            material_buffer,
             workgroup_count,
             particle_count,
             frame_count: 0,
@@ -298,6 +311,8 @@ impl GpuParticleSystem {
         renderer: &Renderer,
         state_buffer: &wgpu::Buffer,
         material_buffer: &wgpu::Buffer,
+        color_format: wgpu::TextureFormat,
+        sample_count: u32,
     ) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
         let shader_source = format!(
             "{}\n{}\n{}",
@@ -372,13 +387,13 @@ impl GpuParticleSystem {
         let pipeline = PipelineBuilder::new(device, &pipeline_layout, &render_shader)
             .with_label("GpuParticleRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
-            .with_color_target(renderer.surface_format(), Some(wgpu::BlendState::REPLACE))
+            .with_color_target(color_format, Some(wgpu::BlendState::REPLACE))
             .with_depth_stencil(
                 wgpu::TextureFormat::Depth32Float,
                 true,
                 wgpu::CompareFunction::LessEqual,
             )
-            .with_multisample(renderer.sample_count())
+            .with_multisample(sample_count)
             .build();
 
         (pipeline, particle_bind_group)
@@ -425,14 +440,41 @@ impl GpuParticleSystem {
         }
     }
 
+    fn ensure_render_pipeline(&mut self, renderer: &Renderer, stage: CustomRenderStage) {
+        let target_format = renderer.color_format_for_stage(stage);
+        let target_sample_count = renderer.sample_count_for_stage(stage);
+
+        if self.render_format == target_format && self.render_sample_count == target_sample_count {
+            return;
+        }
+
+        let device = renderer.get_device();
+        let (pipeline, bind_group) = Self::create_render_pipeline(
+            device,
+            renderer,
+            &self.state_buffer,
+            &self.material_buffer,
+            target_format,
+            target_sample_count,
+        );
+
+        self.render_pipeline = pipeline;
+        self.render_bind_group = bind_group;
+        self.render_format = target_format;
+        self.render_sample_count = target_sample_count;
+    }
+
     pub fn render(
-        &self,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
         renderer: &Renderer,
         mesh: &crate::asset::Mesh,
         view: &wgpu::TextureView,
         depth_view: &wgpu::TextureView,
+        stage: CustomRenderStage,
     ) {
+        self.ensure_render_pipeline(renderer, stage);
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("GpuParticleRenderPass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

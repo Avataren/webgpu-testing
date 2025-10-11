@@ -2,7 +2,7 @@ use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, composition, debug, lights, rendering, transforms};
 use crate::asset::Assets;
 use crate::environment::Environment;
-use crate::renderer::{RenderBatcher, Renderer};
+use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::Camera;
 use crate::time::Instant;
 use hecs::World;
@@ -130,6 +130,7 @@ impl Scene {
         &mut self,
         renderer: &mut Renderer,
         batcher: &mut RenderBatcher,
+        custom_render: Option<CustomRenderRequest<'_>>,
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         batcher.clear();
         let camera = rendering::CameraVectors::from_renderer(renderer);
@@ -141,7 +142,15 @@ impl Scene {
         let lights = lights::collect_lights(&self.world, camera);
         renderer.set_lights(&lights);
 
-        renderer.render(&self.assets, batcher, &lights, &self.environment)
+        let scene_ref: &Scene = self;
+        renderer.render(
+            scene_ref,
+            &self.assets,
+            batcher,
+            &lights,
+            &self.environment,
+            custom_render,
+        )
     }
 
     pub fn add_default_lighting(&mut self) -> usize {

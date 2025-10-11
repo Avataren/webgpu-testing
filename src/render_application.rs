@@ -3,7 +3,7 @@
 
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
-use crate::renderer::CustomRenderContext;
+use crate::renderer::{CustomRenderContext, CustomRenderStage};
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
@@ -38,8 +38,16 @@ pub trait RenderApplication: Sized + 'static {
         let _ = builder;
     }
 
-    /// Custom render hook - called after main scene rendering
+    /// Custom render hook - called during rendering at the stage returned by
+    /// [`RenderApplication::custom_render_stage`]. By default this executes
+    /// before post-processing so any output is affected by those effects.
     fn custom_render(&mut self, _ctx: &mut CustomRenderContext) {}
+
+    /// Choose when [`RenderApplication::custom_render`] executes relative to
+    /// post-processing.
+    fn custom_render_stage(&self) -> CustomRenderStage {
+        CustomRenderStage::BeforePostprocess
+    }
 
     /// Custom egui UI (called after default UI is rendered)
     #[cfg(feature = "egui")]
@@ -159,6 +167,9 @@ where
 
     // Install custom render callback
     {
+        let stage = app_rc.borrow().custom_render_stage();
+        app.set_custom_render_stage(stage);
+
         let app_ref = app_rc.clone();
         app.set_custom_render_callback(Box::new(move |ctx| {
             app_ref.borrow_mut().custom_render(ctx);
@@ -233,6 +244,9 @@ where
 
     // Install custom render callback
     {
+        let stage = app_rc.borrow().custom_render_stage();
+        app.set_custom_render_stage(stage);
+
         let app_ref = app_rc.clone();
         app.set_custom_render_callback(Box::new(move |ctx| {
             app_ref.borrow_mut().custom_render(ctx);
