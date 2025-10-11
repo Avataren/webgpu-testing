@@ -6,10 +6,9 @@ use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
-    StartupContext, UpdateContext,
+    StartupContext,
 };
 
-// Match the CPU starfield parameters exactly
 const STAR_COUNT: usize = 1000_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
@@ -44,17 +43,14 @@ impl RenderApplication for StarfieldGpuApp {
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        // Use cube mesh to match CPU starfield
         let (vertices, indices) = wgpu_cube::renderer::cube_mesh();
         let mesh = ctx.renderer.create_mesh(&vertices, &indices);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
         self.mesh_handle = Some(mesh_handle);
 
-        // Match the CPU starfield material (checker with roughness 64)
         let mut material = Material::checker();
         material.roughness_factor = 64;
 
-        // Match the CPU starfield environment
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
             g: 0.005,
@@ -63,7 +59,6 @@ impl RenderApplication for StarfieldGpuApp {
         });
         ctx.scene.environment_mut().disable_hdr_background();
 
-        // Match the CPU starfield camera
         ctx.scene.set_camera(wgpu_cube::scene::Camera {
             eye: Vec3::ZERO,
             target: Vec3::new(0.0, 0.0, -1.0),
@@ -73,7 +68,6 @@ impl RenderApplication for StarfieldGpuApp {
             ..Default::default()
         });
 
-        // Match the CPU starfield lighting
         let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
         let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
 
@@ -85,10 +79,9 @@ impl RenderApplication for StarfieldGpuApp {
                 Vec3::ONE,
             )),
             DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
-            CanCastShadow(false),
+            CanCastShadow(true),
         ));
 
-        // Match the CPU starfield particle settings
         let settings = ParticleFieldSettings {
             near_plane: NEAR_PLANE,
             far_plane: FAR_PLANE,
@@ -100,7 +93,7 @@ impl RenderApplication for StarfieldGpuApp {
             scale_range: STAR_SCALE_RANGE,
         };
 
-        // Generate initial particles with same distribution as CPU version
+        // Generate initial particles
         let particle_count = STAR_COUNT as u32;
         let particles: Vec<ParticleInit> = (0..particle_count)
             .map(|i| {
@@ -166,7 +159,7 @@ impl RenderApplication for StarfieldGpuApp {
     }
 }
 
-// Helper functions matching the CPU version
+// Helper functions
 fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
