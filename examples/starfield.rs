@@ -12,7 +12,7 @@ use wgpu_cube::scene::{
     Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
 
-const STAR_COUNT: usize = 150_000;
+const STAR_COUNT: usize = 100_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
 const FAR_PLANE: f32 = 150.0;
