@@ -670,6 +670,9 @@ fn calculate_environment_lighting(
     roughness: f32,
     occlusion: f32,
 ) -> vec3<f32> {
+    let ambient_base = environment_settings.ambient_color.rgb * environment_ambient_intensity();
+    let fallback_ambient = ambient_base * base_color * occlusion;
+
     if (environment_hdr_enabled()) {
         let max_lod = environment_settings.flags_intensity.w;
         let irradiance =
@@ -686,11 +689,10 @@ fn calculate_environment_lighting(
         specular_strength = max(specular_strength, 0.05);
         let specular = spec_sample * specular_color * specular_strength;
 
-        return (diffuse + specular) * occlusion;
+        return fallback_ambient + (diffuse + specular) * occlusion;
     }
 
-    let ambient_base = environment_settings.ambient_color.rgb * environment_ambient_intensity();
-    return ambient_base * base_color * occlusion;
+    return fallback_ambient;
 }
 
 fn calculate_scene_lighting(
