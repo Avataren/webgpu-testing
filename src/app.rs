@@ -537,6 +537,8 @@ impl App {
             };
             (system)(&mut ctx);
         }
+
+        self.scene.propagate_transforms();
     }
 
     fn run_gpu_systems(
@@ -553,6 +555,8 @@ impl App {
             };
             (system)(&mut ctx);
         }
+
+        scene.propagate_transforms();
     }
 
     fn handle_surface_error(

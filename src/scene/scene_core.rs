@@ -119,6 +119,10 @@ impl Scene {
         animations::update_rotate_animations(&mut self.world, dt);
         animations::update_orbit_animations(&mut self.world, self.time);
 
+        self.propagate_transforms();
+    }
+
+    pub fn propagate_transforms(&mut self) {
         transforms::propagate_transforms(&mut self.world);
     }
 
