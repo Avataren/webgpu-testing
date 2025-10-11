@@ -43,6 +43,12 @@ var noise_texture : texture_2d<f32>;
 @group(1) @binding(2)
 var noise_sampler : sampler;
 
+// SSAO blur inputs (group 1 bindings 60-61)
+@group(1) @binding(60)
+var ssao_blur_texture : texture_2d<f32>;
+@group(1) @binding(61)
+var ssao_blur_sampler : sampler;
+
 // Color grading inputs (group 1 bindings 10-11)
 @group(1) @binding(10)
 var color_source : texture_2d<f32>;
@@ -247,6 +253,52 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     let strength = clamp(post_uniform.intensity_power.x, 0.0, 1.0);
     let ao_result = mix(1.0, ao_pow, strength);
     return vec4<f32>(ao_result, ao_result, ao_result, 1.0);
+}
+
+fn ssao_texel_size() -> vec2<f32> {
+    let width = max(post_uniform.resolution.x, 1.0);
+    let height = max(post_uniform.resolution.y, 1.0);
+    return vec2<f32>(1.0 / width, 1.0 / height);
+}
+
+fn ssao_blur_value(uv : vec2<f32>, direction : vec2<f32>) -> f32 {
+    let texel = ssao_texel_size();
+    let sigma = 2.0;
+    var accum = 0.0;
+    var weight_sum = 0.0;
+
+    for (var i : i32 = -2; i <= 2; i = i + 1) {
+        let offset = f32(i);
+        let weight = exp(-(offset * offset) / (2.0 * sigma * sigma));
+        let sample_uv = clamp(
+            uv + direction * vec2<f32>(texel.x * offset, texel.y * offset),
+            vec2<f32>(0.0),
+            vec2<f32>(1.0),
+        );
+        let sample_value = textureSampleLevel(
+            ssao_blur_texture,
+            ssao_blur_sampler,
+            sample_uv,
+            0.0,
+        )
+            .r;
+        accum = accum + sample_value * weight;
+        weight_sum = weight_sum + weight;
+    }
+
+    return accum / max(weight_sum, 1e-4);
+}
+
+@fragment
+fn fs_ssao_blur_horizontal(in : VertexOutput) -> @location(0) vec4<f32> {
+    let ao = ssao_blur_value(in.uv, vec2<f32>(1.0, 0.0));
+    return vec4<f32>(ao, ao, ao, 1.0);
+}
+
+@fragment
+fn fs_ssao_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
+    let ao = ssao_blur_value(in.uv, vec2<f32>(0.0, 1.0));
+    return vec4<f32>(ao, ao, ao, 1.0);
 }
 
 // Bloom prefilter (group 1 bindings 20-21)

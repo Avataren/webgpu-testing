@@ -146,6 +146,7 @@ pub struct PostProcess {
     scene: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
+    ssao_ping: TextureBundle,
     bloom_down_chain: Vec<BloomMip>,
     bloom_up_chain: Vec<BloomMip>,
     sampler_linear: wgpu::Sampler,
@@ -161,6 +162,9 @@ pub struct PostProcess {
     depth_resolve_bind_group: Option<wgpu::BindGroup>,
     ssao_layout: wgpu::BindGroupLayout,
     ssao_pipeline: wgpu::RenderPipeline,
+    ssao_blur_layout: wgpu::BindGroupLayout,
+    ssao_blur_horizontal_pipeline: wgpu::RenderPipeline,
+    ssao_blur_vertical_pipeline: wgpu::RenderPipeline,
     bloom_prefilter_layout: wgpu::BindGroupLayout,
     bloom_prefilter_pipeline: wgpu::RenderPipeline,
     bloom_downsample_layout: wgpu::BindGroupLayout,
@@ -173,6 +177,8 @@ pub struct PostProcess {
     scene_format: wgpu::TextureFormat,
     effects: PostProcessEffects,
     ssao_bind_group: Option<wgpu::BindGroup>,
+    ssao_blur_horizontal_bind_group: Option<wgpu::BindGroup>,
+    ssao_blur_vertical_bind_group: Option<wgpu::BindGroup>,
     bloom_prefilter_bind_group: Option<wgpu::BindGroup>,
     bloom_downsample_passes: Vec<BloomDownsamplePass>,
     bloom_upsample_passes: Vec<BloomUpsamplePass>,
@@ -227,6 +233,7 @@ impl PostProcess {
         let (scene_source, scene, scene_msaa) =
             Self::create_scene_targets(device, &size, scene_format, sample_count);
         let ssao = TextureBundle::ssao(device, &size);
+        let ssao_ping = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
 
         let resolved_depth = if sample_count > 1 {
@@ -409,6 +416,55 @@ impl PostProcess {
                 .with_label("SsaoPipeline")
                 .with_vertex_entry("vs_fullscreen")
                 .with_fragment_entry("fs_ssao")
+                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
+                .with_vertex_state(fullscreen_vertex.clone())
+                .with_no_culling()
+                .build();
+
+        let ssao_blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SsaoBlurLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 60,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 61,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let ssao_blur_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SsaoBlurPipelineLayout"),
+                bind_group_layouts: &[&uniform_layout, &ssao_blur_layout],
+                push_constant_ranges: &[],
+            });
+
+        let ssao_blur_horizontal_pipeline =
+            PipelineBuilder::new(device, &ssao_blur_pipeline_layout, &postprocess_shader)
+                .with_label("SsaoBlurHorizontalPipeline")
+                .with_vertex_entry("vs_fullscreen")
+                .with_fragment_entry("fs_ssao_blur_horizontal")
+                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
+                .with_vertex_state(fullscreen_vertex.clone())
+                .with_no_culling()
+                .build();
+
+        let ssao_blur_vertical_pipeline =
+            PipelineBuilder::new(device, &ssao_blur_pipeline_layout, &postprocess_shader)
+                .with_label("SsaoBlurVerticalPipeline")
+                .with_vertex_entry("vs_fullscreen")
+                .with_fragment_entry("fs_ssao_blur_vertical")
                 .with_color_target(wgpu::TextureFormat::R8Unorm, None)
                 .with_vertex_state(fullscreen_vertex.clone())
                 .with_no_culling()
@@ -616,6 +672,7 @@ impl PostProcess {
             scene,
             scene_msaa,
             ssao,
+            ssao_ping,
             bloom_down_chain,
             bloom_up_chain,
             sampler_linear,
@@ -631,6 +688,9 @@ impl PostProcess {
             depth_resolve_bind_group: None,
             ssao_layout,
             ssao_pipeline,
+            ssao_blur_layout,
+            ssao_blur_horizontal_pipeline,
+            ssao_blur_vertical_pipeline,
             bloom_prefilter_layout,
             bloom_prefilter_pipeline,
             bloom_downsample_layout,
@@ -643,6 +703,8 @@ impl PostProcess {
             scene_format,
             effects: PostProcessEffects::default(),
             ssao_bind_group: None,
+            ssao_blur_horizontal_bind_group: None,
+            ssao_blur_vertical_bind_group: None,
             bloom_prefilter_bind_group: None,
             bloom_downsample_passes: Vec::new(),
             bloom_upsample_passes: Vec::new(),
@@ -693,6 +755,7 @@ impl PostProcess {
         self.scene = scene;
         self.scene_msaa = scene_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
+        self.ssao_ping = TextureBundle::ssao(device, &self.size);
         self.resolved_depth = if self.sample_count > 1 {
             Some(TextureBundle::depth(device, &self.size, "ResolvedDepth"))
         } else {
@@ -814,7 +877,82 @@ impl PostProcess {
                 .ssao_bind_group
                 .as_ref()
                 .expect("SSAO bind group not initialized");
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("SsaoPass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.ssao.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.ssao_pipeline);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, ssao_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            let blur_horizontal = self
+                .ssao_blur_horizontal_bind_group
+                .as_ref()
+                .expect("SSAO horizontal blur bind group not initialized");
+            let blur_vertical = self
+                .ssao_blur_vertical_bind_group
+                .as_ref()
+                .expect("SSAO vertical blur bind group not initialized");
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("SsaoBlurHorizontal"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.ssao_ping.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.ssao_blur_horizontal_pipeline);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, blur_horizontal, &[]);
+                pass.draw(0..3, 0..1);
+            }
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("SsaoBlurVertical"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.ssao.view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.ssao_blur_vertical_pipeline);
+                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+                pass.set_bind_group(1, blur_vertical, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        } else {
+            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SsaoPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.ssao.view,
@@ -829,15 +967,10 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.ssao_pipeline);
-            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            pass.set_bind_group(1, ssao_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        } else {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SsaoPass"),
+                label: Some("SsaoPingClear"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.ssao.view,
+                    view: &self.ssao_ping.view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -1039,6 +1172,8 @@ impl PostProcess {
     fn mark_bind_groups_dirty(&mut self) {
         self.depth_resolve_bind_group = None;
         self.ssao_bind_group = None;
+        self.ssao_blur_horizontal_bind_group = None;
+        self.ssao_blur_vertical_bind_group = None;
         self.bloom_prefilter_bind_group = None;
         self.bloom_downsample_passes.clear();
         self.bloom_upsample_passes.clear();
@@ -1109,6 +1244,37 @@ impl PostProcess {
                 ],
             }));
         }
+
+        self.ssao_blur_horizontal_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SsaoBlurHorizontalBindGroup"),
+                layout: &self.ssao_blur_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 60,
+                        resource: wgpu::BindingResource::TextureView(&self.ssao.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 61,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                    },
+                ],
+            }));
+        self.ssao_blur_vertical_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SsaoBlurVerticalBindGroup"),
+                layout: &self.ssao_blur_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 60,
+                        resource: wgpu::BindingResource::TextureView(&self.ssao_ping.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 61,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                    },
+                ],
+            }));
 
         self.color_grading_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
