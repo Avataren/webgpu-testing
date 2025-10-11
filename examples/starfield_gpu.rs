@@ -2,7 +2,7 @@ use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use wgpu_cube::gpu_particles::{GpuParticleSystem, ParticleFieldSettings, ParticleInit};
-use wgpu_cube::renderer::Material;
+use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
@@ -118,13 +118,8 @@ impl RenderApplication for StarfieldGpuApp {
             })
             .collect();
 
-        let particle_system = GpuParticleSystem::new(
-            ctx.renderer,
-            particle_count,
-            material,
-            settings,
-            &particles,
-        );
+        let particle_system =
+            GpuParticleSystem::new(ctx.renderer, particle_count, material, settings, &particles);
 
         self.particle_system = Some(particle_system);
 
@@ -140,20 +135,19 @@ impl RenderApplication for StarfieldGpuApp {
         }
     }
 
-    fn custom_render(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        renderer: &wgpu_cube::renderer::Renderer,
-        scene: &wgpu_cube::scene::Scene,
-        view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
-    ) {
+    fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         // Render the GPU particles
         if let (Some(particle_system), Some(mesh_handle)) =
             (&self.particle_system, self.mesh_handle)
         {
-            if let Some(mesh) = scene.assets.meshes.get(mesh_handle) {
-                particle_system.render(encoder, renderer, mesh, view, depth_view);
+            if let Some(mesh) = ctx.scene.assets.meshes.get(mesh_handle) {
+                particle_system.render(
+                    ctx.encoder,
+                    ctx.renderer,
+                    mesh,
+                    ctx.color_view,
+                    ctx.depth_view,
+                );
             }
         }
     }

@@ -3,6 +3,7 @@
 
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
+use crate::renderer::CustomRenderContext;
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, FrameStatsHandle, LogBufferHandle, LogWindow, PostProcessEffectsHandle,
@@ -38,15 +39,7 @@ pub trait RenderApplication: Sized + 'static {
     }
 
     /// Custom render hook - called after main scene rendering
-    fn custom_render(
-        &mut self,
-        _encoder: &mut wgpu::CommandEncoder,
-        _renderer: &crate::renderer::Renderer,
-        _scene: &crate::scene::Scene,
-        _view: &wgpu::TextureView,
-        _depth_view: &wgpu::TextureView,
-    ) {
-    }    
+    fn custom_render(&mut self, _ctx: &mut CustomRenderContext) {}
 
     /// Custom egui UI (called after default UI is rendered)
     #[cfg(feature = "egui")]
@@ -158,8 +151,8 @@ where
     // Install custom render callback
     {
         let app_ref = app_rc.clone();
-        app.set_custom_render_callback(Box::new(move |encoder, renderer, scene, view, depth_view| {
-            app_ref.borrow_mut().custom_render(encoder, renderer, scene, view, depth_view);
+        app.set_custom_render_callback(Box::new(move |ctx| {
+            app_ref.borrow_mut().custom_render(ctx);
         }));
     }
 
@@ -229,8 +222,8 @@ where
     // Install custom render callback
     {
         let app_ref = app_rc.clone();
-        app.set_custom_render_callback(Box::new(move |encoder, renderer, scene, view, depth_view| {
-            app_ref.borrow_mut().custom_render(encoder, renderer, scene, view, depth_view);
+        app.set_custom_render_callback(Box::new(move |ctx| {
+            app_ref.borrow_mut().custom_render(ctx);
         }));
     }
 

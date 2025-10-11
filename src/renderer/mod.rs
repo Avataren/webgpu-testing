@@ -7,6 +7,7 @@ pub mod objects;
 pub mod postprocess;
 pub mod primitives;
 mod renderer_core;
+pub mod render_context;
 pub mod texture;
 pub mod uniforms;
 pub mod vertex;
@@ -20,6 +21,7 @@ pub use lights::{
 pub use material::Material;
 pub use objects::{MaterialData, ObjectData};
 pub use primitives::*;
+pub use render_context::CustomRenderContext;
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;
