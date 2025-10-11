@@ -281,6 +281,9 @@ impl Renderer {
             self.environment
                 .update(&self.context.device, &self.context.queue, environment);
 
+        self.postprocess
+            .set_color_grading(&self.context.queue, environment.color_grading());
+
         if env_texture_changed {
             self.lights_buffer.rebuild_bind_group(
                 &self.context.device,

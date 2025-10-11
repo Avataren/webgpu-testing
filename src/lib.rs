@@ -16,7 +16,7 @@ pub mod ui;
 pub use render_application::DefaultUI;
 pub use render_application::{run_application, RenderApplication};
 
-pub use environment::{Environment, HdrBackground};
+pub use environment::{ColorGrading, Environment, HdrBackground};
 
 pub use app::{
     App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,

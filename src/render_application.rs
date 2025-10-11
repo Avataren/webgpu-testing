@@ -6,8 +6,8 @@ use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use crate::renderer::CustomRenderContext;
 #[cfg(feature = "egui")]
 use crate::ui::{
-    init_log_recorder, FrameStatsHandle, LogBufferHandle, LogWindow, PostProcessEffectsHandle,
-    PostProcessWindow, StatsWindow,
+    init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
+    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, StatsWindow,
 };
 
 use std::cell::RefCell;
@@ -61,9 +61,11 @@ pub struct DefaultUI {
     stats_window: StatsWindow,
     log_window: LogWindow,
     postprocess_window: PostProcessWindow,
+    environment_window: EnvironmentWindow,
     stats_open: bool,
     log_open: bool,
     postprocess_open: bool,
+    environment_open: bool,
 }
 
 #[cfg(feature = "egui")]
@@ -72,19 +74,24 @@ impl DefaultUI {
         stats_handle: FrameStatsHandle,
         log_handle: LogBufferHandle,
         post_handle: PostProcessEffectsHandle,
+        env_handle: EnvironmentSettingsHandle,
     ) -> Self {
         Self {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
             postprocess_window: PostProcessWindow::new(post_handle),
+            environment_window: EnvironmentWindow::new(env_handle),
             stats_open: true,
             log_open: false,
             postprocess_open: true,
+            environment_open: true,
         }
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
+        self.environment_window
+            .show(ctx, Some(&mut self.environment_open));
         self.postprocess_window
             .show(ctx, Some(&mut self.postprocess_open));
         self.log_window.show(ctx, Some(&mut self.log_open));
@@ -92,6 +99,8 @@ impl DefaultUI {
 
     pub fn show_stats(&mut self, ctx: &egui::Context) {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
+        self.environment_window
+            .show(ctx, Some(&mut self.environment_open));
         self.postprocess_window
             .show(ctx, Some(&mut self.postprocess_open));
     }
@@ -162,9 +171,11 @@ where
         let stats_handle = app.frame_stats_handle();
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
+        let env_handle = app.environment_settings_handle();
 
         if show_default {
-            let mut default_ui = DefaultUI::new(stats_handle, log_handle, post_handle);
+            let mut default_ui =
+                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -172,7 +183,8 @@ where
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         } else {
-            let mut default_ui = DefaultUI::new(stats_handle, log_handle, post_handle);
+            let mut default_ui =
+                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -233,9 +245,11 @@ where
         let stats_handle = app.frame_stats_handle();
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
+        let env_handle = app.environment_settings_handle();
 
         if show_default {
-            let mut default_ui = DefaultUI::new(stats_handle, log_handle, post_handle);
+            let mut default_ui =
+                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -243,7 +257,8 @@ where
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         } else {
-            let mut default_ui = DefaultUI::new(stats_handle, log_handle, post_handle);
+            let mut default_ui =
+                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {

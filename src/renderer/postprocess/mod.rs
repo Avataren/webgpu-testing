@@ -1,3 +1,4 @@
+use crate::environment::ColorGrading;
 use crate::renderer::PipelineBuilder;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
@@ -72,11 +73,28 @@ const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as us
     0.0,
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PostProcessEffects {
     pub ssao: bool,
     pub bloom: bool,
     pub fxaa: bool,
+    pub ssao_settings: SsaoSettings,
+    pub bloom_settings: BloomSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SsaoSettings {
+    pub radius: f32,
+    pub bias: f32,
+    pub intensity: f32,
+    pub power: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BloomSettings {
+    pub threshold: f32,
+    pub knee: f32,
+    pub scatter: f32,
 }
 
 impl Default for PostProcessEffects {
@@ -85,6 +103,29 @@ impl Default for PostProcessEffects {
             ssao: true,
             bloom: true,
             fxaa: true,
+            ssao_settings: SsaoSettings::default(),
+            bloom_settings: BloomSettings::default(),
+        }
+    }
+}
+
+impl Default for SsaoSettings {
+    fn default() -> Self {
+        Self {
+            radius: 0.2,
+            bias: 0.05,
+            intensity: 0.75,
+            power: 1.25,
+        }
+    }
+}
+
+impl Default for BloomSettings {
+    fn default() -> Self {
+        Self {
+            threshold: 0.8,
+            knee: 0.4,
+            scatter: 0.95,
         }
     }
 }
@@ -101,6 +142,7 @@ impl PostProcessEffects {
 }
 
 pub struct PostProcess {
+    scene_source: TextureBundle,
     scene: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
@@ -112,6 +154,8 @@ pub struct PostProcess {
     noise_view: wgpu::TextureView,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    color_grading_layout: wgpu::BindGroupLayout,
+    color_grading_pipeline: wgpu::RenderPipeline,
     depth_resolve_layout: Option<wgpu::BindGroupLayout>,
     depth_resolve_pipeline: Option<wgpu::RenderPipeline>,
     depth_resolve_bind_group: Option<wgpu::BindGroup>,
@@ -132,6 +176,7 @@ pub struct PostProcess {
     bloom_downsample_passes: Vec<BloomDownsamplePass>,
     bloom_upsample_passes: Vec<BloomUpsamplePass>,
     composite_bind_group: Option<wgpu::BindGroup>,
+    color_grading_bind_group: Option<wgpu::BindGroup>,
     resolved_depth: Option<TextureBundle>,
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
@@ -139,6 +184,7 @@ pub struct PostProcess {
     last_near: f32,
     last_far: f32,
     sample_count: u32,
+    color_grading: ColorGrading,
 }
 
 impl PostProcess {
@@ -176,7 +222,7 @@ impl PostProcess {
             ..Default::default()
         });
 
-        let (scene, scene_msaa) =
+        let (scene_source, scene, scene_msaa) =
             Self::create_scene_targets(device, &size, config.format, sample_count);
         let ssao = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
@@ -234,6 +280,46 @@ impl PostProcess {
             buffers: &[],
             compilation_options: Default::default(),
         };
+
+        let color_grading_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("ColorGradingLayout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let color_grading_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("ColorGradingPipelineLayout"),
+                bind_group_layouts: &[&uniform_layout, &color_grading_layout],
+                push_constant_ranges: &[],
+            });
+
+        let color_grading_pipeline =
+            PipelineBuilder::new(device, &color_grading_pipeline_layout, &postprocess_shader)
+                .with_label("ColorGradingPipeline")
+                .with_vertex_entry("vs_fullscreen")
+                .with_fragment_entry("fs_color_adjust")
+                .with_color_target(config.format, Some(wgpu::BlendState::REPLACE))
+                .with_vertex_state(fullscreen_vertex.clone())
+                .with_no_culling()
+                .build();
 
         let (depth_resolve_layout, depth_resolve_pipeline) = if sample_count > 1 {
             let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -524,6 +610,7 @@ impl PostProcess {
                 .build();
 
         let post = Self {
+            scene_source,
             scene,
             scene_msaa,
             ssao,
@@ -535,6 +622,8 @@ impl PostProcess {
             noise_view,
             uniform_buffer,
             uniform_bind_group,
+            color_grading_layout,
+            color_grading_pipeline,
             depth_resolve_layout,
             depth_resolve_pipeline,
             depth_resolve_bind_group: None,
@@ -555,6 +644,7 @@ impl PostProcess {
             bloom_downsample_passes: Vec::new(),
             bloom_upsample_passes: Vec::new(),
             composite_bind_group: None,
+            color_grading_bind_group: None,
             resolved_depth,
             cached_depth_view: None,
             bind_groups_dirty: true,
@@ -562,6 +652,7 @@ impl PostProcess {
             last_near: 0.01,
             last_far: 100.0,
             sample_count,
+            color_grading: ColorGrading::default(),
         };
 
         let initial_uniform = PostProcessUniform::new(
@@ -572,6 +663,7 @@ impl PostProcess {
             post.last_near,
             post.last_far,
             post.effects,
+            post.color_grading,
             post.sample_count,
         );
         queue.write_buffer(
@@ -599,8 +691,9 @@ impl PostProcess {
             height,
             depth_or_array_layers: 1,
         };
-        let (scene, scene_msaa) =
+        let (scene_source, scene, scene_msaa) =
             Self::create_scene_targets(device, &self.size, format, self.sample_count);
+        self.scene_source = scene_source;
         self.scene = scene;
         self.scene_msaa = scene_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
@@ -625,8 +718,8 @@ impl PostProcess {
 
     pub fn scene_color_views(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
         match self.scene_msaa.as_ref() {
-            Some(msaa) => (&msaa.view, Some(&self.scene.view)),
-            None => (&self.scene.view, None),
+            Some(msaa) => (&msaa.view, Some(&self.scene_source.view)),
+            None => (&self.scene_source.view, None),
         }
     }
 
@@ -658,6 +751,13 @@ impl PostProcess {
         self.effects
     }
 
+    pub fn set_color_grading(&mut self, queue: &wgpu::Queue, grading: ColorGrading) {
+        if self.color_grading != grading {
+            self.color_grading = grading;
+            self.upload_uniform(queue);
+        }
+    }
+
     pub fn execute(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -665,6 +765,28 @@ impl PostProcess {
         target: &wgpu::TextureView,
     ) {
         self.ensure_cached_bind_groups(device);
+
+        if let Some(color_group) = self.color_grading_bind_group.as_ref() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ColorGradingPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.scene.view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.color_grading_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, color_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
 
         if self.effects.ssao {
             if let (Some(pipeline), Some(bind_group), Some(resolved)) = (
@@ -881,6 +1003,7 @@ impl PostProcess {
             self.last_near,
             self.last_far,
             self.effects,
+            self.color_grading,
             self.sample_count,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -921,6 +1044,7 @@ impl PostProcess {
         self.bloom_downsample_passes.clear();
         self.bloom_upsample_passes.clear();
         self.composite_bind_group = None;
+        self.color_grading_bind_group = None;
         self.bind_groups_dirty = true;
     }
 
@@ -986,6 +1110,22 @@ impl PostProcess {
                 ],
             }));
         }
+
+        self.color_grading_bind_group =
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ColorGradingBindGroup"),
+                layout: &self.color_grading_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.scene_source.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                    },
+                ],
+            }));
 
         self.bloom_prefilter_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1131,21 +1271,22 @@ impl PostProcess {
         size: &wgpu::Extent3d,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> (TextureBundle, Option<MsaaTarget>) {
-        let resolved = TextureBundle::color(device, size, format, "SceneColor");
+    ) -> (TextureBundle, TextureBundle, Option<MsaaTarget>) {
+        let source = TextureBundle::color(device, size, format, "SceneColorSource");
+        let target = TextureBundle::color(device, size, format, "SceneColor");
         let msaa = if sample_count > 1 {
             Some(MsaaTarget::new(
                 device,
                 size,
                 format,
                 sample_count,
-                "SceneColorMsaa",
+                "SceneColorSourceMsaa",
             ))
         } else {
             None
         };
 
-        (resolved, msaa)
+        (source, target, msaa)
     }
 }
 
@@ -1162,6 +1303,8 @@ struct PostProcessUniform {
     near_far: [f32; 2],
     // Ensure `effects` starts on a 16-byte boundary to match WGSL uniform layout.
     _effects_padding: [f32; 2],
+    color_adjust: [f32; 4],
+    bloom_params: [f32; 4],
     effects: [f32; 4],
 }
 
@@ -1175,12 +1318,11 @@ impl PostProcessUniform {
         near: f32,
         far: f32,
         effects: PostProcessEffects,
+        grading: ColorGrading,
         sample_count: u32,
     ) -> Self {
-        let radius = 0.2f32;
-        let bias = 0.05f32;
-        let intensity = 0.75f32;
-        let power = 1.25f32;
+        let ssao = effects.ssao_settings;
+        let bloom = effects.bloom_settings;
         let noise_scale = [
             width / NOISE_TEXTURE_SIZE as f32,
             height / NOISE_TEXTURE_SIZE as f32,
@@ -1192,11 +1334,18 @@ impl PostProcessUniform {
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
             resolution: [width, height],
-            radius_bias: [radius, bias],
-            intensity_power: [intensity, power],
+            radius_bias: [ssao.radius, ssao.bias],
+            intensity_power: [ssao.intensity, ssao.power],
             noise_scale,
             near_far: [near, far],
             _effects_padding: [0.0, 0.0],
+            color_adjust: [
+                grading.exposure(),
+                grading.saturation(),
+                grading.contrast(),
+                0.0,
+            ],
+            bloom_params: [bloom.threshold, bloom.knee, bloom.scatter, 0.0],
             effects: effects_arr,
         }
     }
