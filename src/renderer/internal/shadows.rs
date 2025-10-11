@@ -10,7 +10,7 @@ use crate::renderer::lights::{
     LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::renderer::material::Material;
-use crate::renderer::RenderPass;
+use crate::renderer::{PipelineBuilder, RenderPass};
 use crate::renderer::Vertex;
 
 const POINT_SHADOW_FACE_COUNT: usize = 6;
@@ -218,37 +218,19 @@ impl ShadowResources {
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ShadowPipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::layout()],
-                compilation_options: Default::default(),
-            },
-            fragment: None,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Back),
-                front_face: wgpu::FrontFace::Ccw,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
+            .with_label("ShadowPipeline")
+            .with_vertex_entry("vs_main")
+            .depth_only() // No fragment shader for shadow pass
+            .with_vertex_buffer(Vertex::layout())
+            .with_depth_stencil_biased(
+                wgpu::TextureFormat::Depth32Float,
+                true,
+                wgpu::CompareFunction::LessEqual,
+                2,   // constant bias
+                2.0, // slope bias
+            )
+            .build();
 
         Self {
             directional,
