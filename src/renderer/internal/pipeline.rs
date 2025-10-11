@@ -43,14 +43,6 @@ pub(crate) enum TextureBindingModel {
     Classic(TraditionalTextureBinder),
 }
 
-impl TextureBindingModel {
-    pub(crate) fn update(&mut self, device: &wgpu::Device, assets: &Assets) {
-        match self {
-            TextureBindingModel::Bindless(binder) => binder.update(device, assets),
-            TextureBindingModel::Classic(binder) => binder.update(device, assets),
-        }
-    }
-}
 
 impl RenderPipeline {
     pub(crate) fn new(
@@ -448,7 +440,7 @@ impl RenderPipeline {
 }
 
 pub(crate) struct BindlessTextureBinder {
-    layout: wgpu::BindGroupLayout,
+    pub(crate) layout: wgpu::BindGroupLayout,
     linear_sampler: wgpu::Sampler,
     nearest_sampler: wgpu::Sampler,
     _fallback_texture: wgpu::Texture,
@@ -573,7 +565,7 @@ impl BindlessTextureBinder {
 }
 
 pub(crate) struct TraditionalTextureBinder {
-    layout: wgpu::BindGroupLayout,
+    pub(crate) layout: wgpu::BindGroupLayout,
     linear_sampler: wgpu::Sampler,
     nearest_sampler: wgpu::Sampler,
     _fallback_texture: wgpu::Texture,
@@ -763,7 +755,14 @@ impl TraditionalTextureBinder {
 }
 
 impl TextureBindingModel {
-    pub(crate) fn global_bind_group(&self) -> Option<&wgpu::BindGroup> {
+    pub fn update(&mut self, device: &wgpu::Device, assets: &Assets) {
+        match self {
+            TextureBindingModel::Bindless(binder) => binder.update(device, assets),
+            TextureBindingModel::Classic(binder) => binder.update(device, assets),
+        }
+    }
+
+    pub fn global_bind_group(&self) -> Option<&wgpu::BindGroup> {
         if let TextureBindingModel::Bindless(bindless) = self {
             Some(bindless.global_bind_group())
         } else {
@@ -771,7 +770,14 @@ impl TextureBindingModel {
         }
     }
 
-    pub(crate) fn bind_group_for_material(
+    pub fn bind_layout(&self) -> &wgpu::BindGroupLayout {
+        match self {
+            TextureBindingModel::Bindless(bindless) => &bindless.layout,
+            TextureBindingModel::Classic(classic) => &classic.layout,
+        }
+    }
+
+    pub fn bind_group_for_material(
         &mut self,
         device: &wgpu::Device,
         assets: &Assets,

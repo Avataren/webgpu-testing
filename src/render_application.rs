@@ -1,5 +1,5 @@
 // src/render_application.rs
-// Minimal trait system that integrates with existing UI module
+// Complete fix to make custom_render work
 
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
@@ -36,6 +36,17 @@ pub trait RenderApplication: Sized + 'static {
     fn configure(&self, builder: &mut AppBuilder) {
         let _ = builder;
     }
+
+    /// Custom render hook - called after main scene rendering
+    fn custom_render(
+        &mut self,
+        _encoder: &mut wgpu::CommandEncoder,
+        _renderer: &crate::renderer::Renderer,
+        _scene: &crate::scene::Scene,
+        _view: &wgpu::TextureView,
+        _depth_view: &wgpu::TextureView,
+    ) {
+    }    
 
     /// Custom egui UI (called after default UI is rendered)
     #[cfg(feature = "egui")]
@@ -79,7 +90,6 @@ impl DefaultUI {
         }
     }
 
-    /// Show both stats and log windows
     pub fn show(&mut self, ctx: &egui::Context) {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.postprocess_window
@@ -87,29 +97,24 @@ impl DefaultUI {
         self.log_window.show(ctx, Some(&mut self.log_open));
     }
 
-    /// Show only stats window
     pub fn show_stats(&mut self, ctx: &egui::Context) {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.postprocess_window
             .show(ctx, Some(&mut self.postprocess_open));
     }
 
-    /// Show only log window
     pub fn show_logs(&mut self, ctx: &egui::Context) {
         self.log_window.show(ctx, Some(&mut self.log_open));
     }
 
-    /// Get mutable access to stats window
     pub fn stats_window_mut(&mut self) -> &mut StatsWindow {
         &mut self.stats_window
     }
 
-    /// Get mutable access to log window
     pub fn log_window_mut(&mut self) -> &mut LogWindow {
         &mut self.log_window
     }
 
-    /// Get mutable access to the post-processing window
     pub fn postprocess_window_mut(&mut self) -> &mut PostProcessWindow {
         &mut self.postprocess_window
     }
@@ -149,6 +154,14 @@ where
 
     #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
+
+    // Install custom render callback
+    {
+        let app_ref = app_rc.clone();
+        app.set_custom_render_callback(Box::new(move |encoder, renderer, scene, view, depth_view| {
+            app_ref.borrow_mut().custom_render(encoder, renderer, scene, view, depth_view);
+        }));
+    }
 
     #[cfg(feature = "egui")]
     {
@@ -212,6 +225,14 @@ where
 
     #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
+
+    // Install custom render callback
+    {
+        let app_ref = app_rc.clone();
+        app.set_custom_render_callback(Box::new(move |encoder, renderer, scene, view, depth_view| {
+            app_ref.borrow_mut().custom_render(encoder, renderer, scene, view, depth_view);
+        }));
+    }
 
     #[cfg(feature = "egui")]
     {

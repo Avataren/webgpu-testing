@@ -1,10 +1,3 @@
-struct ObjectData {
-    model: mat4x4<f32>,
-    material_index: u32,
-    _padding: array<u32, 3>,
-    _padding2: array<u32, 4>,
-};
-
 struct ParticleState {
     position: vec3<f32>,
     speed: f32,
@@ -38,9 +31,6 @@ struct Params {
 var<storage, read_write> particles: array<ParticleState>;
 
 @group(0) @binding(1)
-var<storage, read_write> objects: array<ObjectData>;
-
-@group(0) @binding(2)
 var<uniform> params: Params;
 
 fn lcg_rand(seed: ptr<function, u32>) -> f32 {
@@ -79,28 +69,6 @@ fn quat_normalize(q: vec4<f32>) -> vec4<f32> {
     return q / len;
 }
 
-fn rotation_matrix(q: vec4<f32>) -> mat3x3<f32> {
-    let x = q.x;
-    let y = q.y;
-    let z = q.z;
-    let w = q.w;
-
-    let xx = x + x;
-    let yy = y + y;
-    let zz = z + z;
-    let xy = x * yy;
-    let xz = x * zz;
-    let yz = y * zz;
-    let wx = w * xx;
-    let wy = w * yy;
-    let wz = w * zz;
-
-    let c0 = vec3<f32>(1.0 - (y * yy + z * zz), xy + wz, xz - wy);
-    let c1 = vec3<f32>(xy - wz, 1.0 - (x * xx + z * zz), yz + wx);
-    let c2 = vec3<f32>(xz + wy, yz - wx, 1.0 - (x * xx + y * yy));
-    return mat3x3<f32>(c0, c1, c2);
-}
-
 fn respawn_position(seed: ptr<function, u32>) -> vec3<f32> {
     var pos: vec2<f32>;
     loop {
@@ -130,7 +98,7 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Update position
     position.z = position.z + speed * params.dt;
 
-    // Early exit check for respawn (most common case for optimization)
+    // Respawn check (early exit for performance)
     if position.z > -params.near_plane {
         var seed = state.seed;
         position = respawn_position(&seed);
@@ -140,7 +108,6 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
         let scale = random_range(&seed, params.scale_min, params.scale_max);
         let rotation = random_rotation(&seed);
         
-        // Write back updated state
         state.position = position;
         state.speed = speed;
         state.rotation = rotation;
@@ -149,24 +116,10 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
         state.scale = scale;
         state.seed = seed;
         particles[index] = state;
-        
-        // Update object buffer
-        let rot = rotation_matrix(rotation) * scale;
-        let model = mat4x4<f32>(
-            vec4<f32>(rot[0], 0.0),
-            vec4<f32>(rot[1], 0.0),
-            vec4<f32>(rot[2], 0.0),
-            vec4<f32>(position, 1.0),
-        );
-        
-        let object_index = params.base_instance + index;
-        var object = objects[object_index];
-        object.model = model;
-        objects[object_index] = object;
         return;
     }
 
-    // Handle rotation (only if angular speed is significant)
+    // Rotation update (only if angular speed is significant)
     var rotation = state.rotation;
     let angular_speed = state.angular_speed;
     if angular_speed > 0.001 {
@@ -178,22 +131,8 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
         rotation = quat_normalize(quat_mul(delta, rotation));
     }
 
-    // Write back state
+    // Write back
     state.position = position;
     state.rotation = rotation;
     particles[index] = state;
-
-    // Update object buffer
-    let rot = rotation_matrix(rotation) * state.scale;
-    let model = mat4x4<f32>(
-        vec4<f32>(rot[0], 0.0),
-        vec4<f32>(rot[1], 0.0),
-        vec4<f32>(rot[2], 0.0),
-        vec4<f32>(position, 1.0),
-    );
-
-    let object_index = params.base_instance + index;
-    var object = objects[object_index];
-    object.model = model;
-    objects[object_index] = object;
 }

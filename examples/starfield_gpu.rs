@@ -1,19 +1,15 @@
 use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
-use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::gpu_particles::{GpuParticleSystem, ParticleFieldSettings, ParticleInit};
-use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
-use wgpu_cube::scene::components::{
-    CanCastShadow, DirectionalLight, GpuParticleInstance, MaterialComponent, MeshComponent, Name,
-    TransformComponent, Visible,
+use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
+use wgpu_cube::{
+    render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
+    StartupContext, UpdateContext,
 };
-use wgpu_cube::scene::{Camera, Transform};
 
+// Match the CPU starfield parameters exactly
 const STAR_COUNT: usize = 150_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
@@ -25,22 +21,22 @@ const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.25..0.5;
 const MIN_SIZE_FROM_CENTER: f32 = 0.5;
 
 struct StarfieldGpuApp {
-    rng: SmallRng,
-    particles: Option<GpuParticleSystem>,
+    particle_system: Option<GpuParticleSystem>,
+    mesh_handle: Option<wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>>,
 }
 
-impl Default for StarfieldGpuApp {
-    fn default() -> Self {
+impl StarfieldGpuApp {
+    fn new() -> Self {
         Self {
-            rng: SmallRng::seed_from_u64(0x5EED_CAFE),
-            particles: None,
+            particle_system: None,
+            mesh_handle: None,
         }
     }
 }
 
 impl RenderApplication for StarfieldGpuApp {
     fn name(&self) -> &str {
-        "3D Starfield (GPU)"
+        "GPU Starfield (GPU-Driven)"
     }
 
     fn configure(&self, builder: &mut AppBuilder) {
@@ -48,13 +44,17 @@ impl RenderApplication for StarfieldGpuApp {
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        let (verts, idx) = wgpu_cube::renderer::cube_mesh();
-        let mesh = ctx.renderer.create_mesh(&verts, &idx);
+        // Use cube mesh to match CPU starfield
+        let (vertices, indices) = wgpu_cube::renderer::cube_mesh();
+        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
+        self.mesh_handle = Some(mesh_handle);
 
+        // Match the CPU starfield material (checker with roughness 64)
         let mut material = Material::checker();
         material.roughness_factor = 64;
 
+        // Match the CPU starfield environment
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
             g: 0.005,
@@ -62,92 +62,111 @@ impl RenderApplication for StarfieldGpuApp {
             a: 1.0,
         });
         ctx.scene.environment_mut().disable_hdr_background();
-        ctx.scene.set_camera(Camera {
+
+        // Match the CPU starfield camera
+        ctx.scene.set_camera(wgpu_cube::scene::Camera {
             eye: Vec3::ZERO,
             target: Vec3::new(0.0, 0.0, -1.0),
             up: Vec3::Y,
             near: NEAR_PLANE,
             far: FAR_PLANE,
-            ..Camera::default()
+            ..Default::default()
         });
 
-        let sun_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
-        let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
+        // Match the CPU starfield lighting
+        let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
+        let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
 
         ctx.scene.world.spawn((
-            Name::new("Default Sky Light"),
-            TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
+            wgpu_cube::scene::Name::new("Default Sky Light"),
+            wgpu_cube::scene::TransformComponent(wgpu_cube::scene::Transform::from_trs(
+                Vec3::ZERO,
+                sun1_rotation,
+                Vec3::ONE,
+            )),
             DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
             CanCastShadow(false),
         ));
 
-        let mut initial_particles = Vec::with_capacity(STAR_COUNT);
-
-        for index in 0..STAR_COUNT {
-            let position = random_initial_position(&mut self.rng);
-            let rotation = random_rotation(&mut self.rng);
-            let scale = random_scale(&mut self.rng);
-            let speed = self.rng.gen_range(STAR_SPEED_RANGE.clone());
-            let angular_speed = self.rng.gen_range(SPIN_SPEED_RANGE.clone());
-            let angular_axis = random_unit_vector(&mut self.rng);
-            let seed = self.rng.gen();
-
-            let transform = Transform::from_trs(position, rotation, Vec3::splat(scale));
-            ctx.scene.world.spawn((
-                TransformComponent(transform),
-                MeshComponent(mesh_handle),
-                MaterialComponent(material),
-                Visible(true),
-                GpuParticleInstance {
-                    index: index as u32,
-                },
-            ));
-
-            initial_particles.push(ParticleInit {
-                position,
-                speed,
-                rotation,
-                angular_axis,
-                angular_speed,
-                scale,
-                seed,
-            });
-        }
-
+        // Match the CPU starfield particle settings
         let settings = ParticleFieldSettings {
             near_plane: NEAR_PLANE,
             far_plane: FAR_PLANE,
             far_reset_band: FAR_RESET_BAND,
             field_half_size: FIELD_HALF_SIZE,
             min_radius: MIN_SIZE_FROM_CENTER,
-            speed_range: STAR_SPEED_RANGE.clone(),
-            spin_range: SPIN_SPEED_RANGE.clone(),
-            scale_range: STAR_SCALE_RANGE.clone(),
+            speed_range: STAR_SPEED_RANGE,
+            spin_range: SPIN_SPEED_RANGE,
+            scale_range: STAR_SCALE_RANGE,
         };
 
-        let system = GpuParticleSystem::new(
+        // Generate initial particles with same distribution as CPU version
+        let particle_count = STAR_COUNT as u32;
+        let particles: Vec<ParticleInit> = (0..particle_count)
+            .map(|i| {
+                let mut rng = SmallRng::seed_from_u64(i as u64);
+
+                let position = random_initial_position(&mut rng);
+                let rotation = random_rotation(&mut rng);
+                let scale = random_scale(&mut rng);
+                let speed = rng.gen_range(STAR_SPEED_RANGE);
+                let angular_speed = rng.gen_range(SPIN_SPEED_RANGE);
+                let angular_axis = random_unit_vector(&mut rng);
+
+                ParticleInit {
+                    position,
+                    speed,
+                    rotation,
+                    angular_axis,
+                    angular_speed,
+                    scale,
+                    seed: i,
+                }
+            })
+            .collect();
+
+        let particle_system = GpuParticleSystem::new(
             ctx.renderer,
-            STAR_COUNT as u32,
-            0,
-            0,
+            particle_count,
+            material,
             settings,
-            &initial_particles,
+            &particles,
         );
 
-        self.particles = Some(system);
+        self.particle_system = Some(particle_system);
+
+        log::info!(
+            "GPU Starfield setup complete with {} particles",
+            particle_count
+        );
     }
 
-    fn update(&mut self, ctx: &mut UpdateContext) {
-        let _ = ctx;
+    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        if let Some(particle_system) = &mut self.particle_system {
+            particle_system.update(ctx.renderer, ctx.dt as f32);
+        }
     }
 
-    fn gpu_update(&mut self, ctx: &mut wgpu_cube::app::GpuUpdateContext) {
-        if let Some(system) = self.particles.as_mut() {
-            system.update(ctx.renderer, ctx.dt as f32);
+    fn custom_render(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        renderer: &wgpu_cube::renderer::Renderer,
+        scene: &wgpu_cube::scene::Scene,
+        view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) {
+        // Render the GPU particles
+        if let (Some(particle_system), Some(mesh_handle)) =
+            (&self.particle_system, self.mesh_handle)
+        {
+            if let Some(mesh) = scene.assets.meshes.get(mesh_handle) {
+                particle_system.render(encoder, renderer, mesh, view, depth_view);
+            }
         }
     }
 }
 
+// Helper functions matching the CPU version
 fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
@@ -179,12 +198,12 @@ fn random_unit_vector(rng: &mut SmallRng) -> Vec3 {
 }
 
 fn random_scale(rng: &mut SmallRng) -> f32 {
-    rng.gen_range(STAR_SCALE_RANGE.clone())
+    rng.gen_range(STAR_SCALE_RANGE)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    run_application(StarfieldGpuApp::default()).unwrap();
+    run_application(StarfieldGpuApp::new()).unwrap();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -193,5 +212,5 @@ fn main() {}
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn start_app() {
-    run_application(StarfieldGpuApp::default()).unwrap();
+    run_application(StarfieldGpuApp::new()).unwrap();
 }

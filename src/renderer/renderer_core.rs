@@ -153,6 +153,36 @@ impl Renderer {
         self.objects_buffer.buffer()
     }
 
+    pub fn camera_bind_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.camera_buffer.bind_layout
+    }
+
+    pub fn camera_bind_group(&self) -> &wgpu::BindGroup {
+        &self.camera_buffer.bind_group
+    }
+
+    pub fn lights_bind_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.lights_buffer.bind_layout
+    }
+
+    pub fn lights_bind_group(&self) -> &wgpu::BindGroup {
+        &self.lights_buffer.bind_group
+    }
+
+    pub fn textures_bind_layout(&self) -> &wgpu::BindGroupLayout {
+        self.texture_binder.bind_layout()
+    }
+
+    pub fn textures_bind_group(&self) -> &wgpu::BindGroup {
+        self.texture_binder
+            .global_bind_group()
+            .expect("GPU-driven particles require bindless textures")
+    }
+
+    pub fn depth_view(&self) -> &wgpu::TextureView {
+        &self.context.depth.view
+    }
+    
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
     }

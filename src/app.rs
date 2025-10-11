@@ -171,6 +171,7 @@ impl AppBuilder {
             window: None,
             window_id: None,
             renderer: None,
+            custom_render_callback: None,
         }
     }
 }
@@ -215,12 +216,17 @@ pub struct App {
     postprocess_effects: PostProcessEffectsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
+    custom_render_callback: Option<Box<dyn FnMut(&mut wgpu::CommandEncoder, &Renderer, &Scene, &wgpu::TextureView, &wgpu::TextureView)>>,
 }
 
 impl App {
     pub fn new() -> Self {
         AppBuilder::default().build()
     }
+
+   pub fn set_custom_render_callback(&mut self, callback: Box<dyn FnMut(&mut wgpu::CommandEncoder, &Renderer, &Scene, &wgpu::TextureView, &wgpu::TextureView)>) {
+       self.custom_render_callback = Some(callback);
+   }    
 
     #[cfg(feature = "egui")]
     pub fn set_egui_ui<F>(&mut self, callback: F)
@@ -572,6 +578,17 @@ impl App {
         };
 
         let render_frame = self.scene.render(renderer, &mut self.batcher)?;
+
+        // Call custom render callback
+        if let Some(callback) = &mut self.custom_render_callback {
+            let view = render_frame.frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = renderer.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("custom_render_encoder"),
+            });
+            let depth_view = renderer.depth_view();
+            callback(&mut encoder, renderer, &self.scene, &view, depth_view);
+            renderer.get_queue().submit(Some(encoder.finish()));
+        }        
 
         #[cfg(feature = "egui")]
         {
