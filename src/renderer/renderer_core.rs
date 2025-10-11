@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
-const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 150;
+const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 1024;
 const POINT_SHADOW_FACE_COUNT: u32 = 6;
 
 #[cfg(feature = "egui")]
@@ -182,7 +182,7 @@ impl Renderer {
     pub fn depth_view(&self) -> &wgpu::TextureView {
         &self.context.depth.view
     }
-    
+
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
     }
