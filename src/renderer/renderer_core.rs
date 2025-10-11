@@ -194,7 +194,6 @@ impl Renderer {
             &self.context.queue,
             self.context.config.width,
             self.context.config.height,
-            self.context.config.format,
         );
         self.postprocess
             .set_depth_view(&self.context.depth.sampled_view);
@@ -353,6 +352,8 @@ impl Renderer {
             }
         }
 
+        let scene_format = self.context.scene_texture_format();
+
         // Main color pass (to postprocess scene target)
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -387,6 +388,7 @@ impl Renderer {
                 assets,
                 prepared_batches.opaque(),
                 prepared_batches.materials(),
+                scene_format,
                 self.context.sample_count,
             );
         }
@@ -425,6 +427,7 @@ impl Renderer {
                 assets,
                 prepared_batches.transparent(),
                 prepared_batches.materials(),
+                self.context.config.format,
                 1,
             );
         }
@@ -453,6 +456,7 @@ impl Renderer {
                 assets,
                 prepared_batches.overlay(),
                 prepared_batches.materials(),
+                self.context.config.format,
                 1,
             );
         }
@@ -513,6 +517,7 @@ impl Renderer {
         assets: &Assets,
         batches: &[OrderedBatch],
         materials: &[Material],
+        color_format: wgpu::TextureFormat,
         color_sample_count: u32,
     ) -> u32 {
         if batches.is_empty() {
@@ -523,7 +528,8 @@ impl Renderer {
 
         if let Some(bindless_group) = self.texture_binder.global_bind_group() {
             for batch in batches {
-                let Some(mesh) = self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                let Some(mesh) =
+                    self.setup_batch_state(rpass, assets, batch, color_format, color_sample_count)
                 else {
                     continue;
                 };
@@ -533,7 +539,8 @@ impl Renderer {
             }
         } else {
             for batch in batches {
-                let Some(mesh) = self.setup_batch_state(rpass, assets, batch, color_sample_count)
+                let Some(mesh) =
+                    self.setup_batch_state(rpass, assets, batch, color_format, color_sample_count)
                 else {
                     continue;
                 };
@@ -548,6 +555,7 @@ impl Renderer {
         rpass: &mut wgpu::RenderPass<'_>,
         assets: &'a Assets,
         batch: &OrderedBatch,
+        color_format: wgpu::TextureFormat,
         color_sample_count: u32,
     ) -> Option<&'a Mesh> {
         let mesh = mesh_for_batch(assets, batch)?;
@@ -555,6 +563,7 @@ impl Renderer {
             batch.depth_state.depth_test,
             batch.depth_state.depth_write,
             batch.alpha_blend,
+            color_format,
             color_sample_count,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);

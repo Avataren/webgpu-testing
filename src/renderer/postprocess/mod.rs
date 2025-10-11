@@ -170,6 +170,7 @@ pub struct PostProcess {
     composite_layout: wgpu::BindGroupLayout,
     composite_pipeline: wgpu::RenderPipeline,
     size: wgpu::Extent3d,
+    scene_format: wgpu::TextureFormat,
     effects: PostProcessEffects,
     ssao_bind_group: Option<wgpu::BindGroup>,
     bloom_prefilter_bind_group: Option<wgpu::BindGroup>,
@@ -199,6 +200,7 @@ impl PostProcess {
             height: config.height.max(1),
             depth_or_array_layers: 1,
         };
+        let scene_format = config.format.remove_srgb_suffix();
 
         let sampler_linear = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("PostProcessLinearSampler"),
@@ -223,7 +225,7 @@ impl PostProcess {
         });
 
         let (scene_source, scene, scene_msaa) =
-            Self::create_scene_targets(device, &size, config.format, sample_count);
+            Self::create_scene_targets(device, &size, scene_format, sample_count);
         let ssao = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
 
@@ -316,7 +318,7 @@ impl PostProcess {
                 .with_label("ColorGradingPipeline")
                 .with_vertex_entry("vs_fullscreen")
                 .with_fragment_entry("fs_color_adjust")
-                .with_color_target(config.format, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
                 .with_vertex_state(fullscreen_vertex.clone())
                 .with_no_culling()
                 .build();
@@ -638,6 +640,7 @@ impl PostProcess {
             composite_layout,
             composite_pipeline,
             size,
+            scene_format,
             effects: PostProcessEffects::default(),
             ssao_bind_group: None,
             bloom_prefilter_bind_group: None,
@@ -675,14 +678,7 @@ impl PostProcess {
         post
     }
 
-    pub fn resize(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        format: wgpu::TextureFormat,
-    ) {
+    pub fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
@@ -692,7 +688,7 @@ impl PostProcess {
             depth_or_array_layers: 1,
         };
         let (scene_source, scene, scene_msaa) =
-            Self::create_scene_targets(device, &self.size, format, self.sample_count);
+            Self::create_scene_targets(device, &self.size, self.scene_format, self.sample_count);
         self.scene_source = scene_source;
         self.scene = scene;
         self.scene_msaa = scene_msaa;

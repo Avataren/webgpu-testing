@@ -21,6 +21,7 @@ pub(crate) struct RenderContext {
     pub(crate) _instance: wgpu::Instance,
     pub(crate) size: PhysicalSize<u32>,
     pub(crate) config: wgpu::SurfaceConfiguration,
+    pub(crate) scene_texture_format: wgpu::TextureFormat,
     pub(crate) supports_bindless_textures: bool,
     pub(crate) sample_count: u32,
     // GPU resources (drop before device/queue)
@@ -181,6 +182,8 @@ impl RenderContext {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
+        let scene_texture_format = Self::scene_texture_format_for(format);
+
         let format_features = adapter.get_texture_format_features(format);
         let supported_sample_counts = format_features.flags.supported_sample_counts();
         let requested_samples = settings.sample_count.max(1);
@@ -236,11 +239,20 @@ impl RenderContext {
             device,
             queue,
             config,
+            scene_texture_format,
             size,
             depth,
             supports_bindless_textures,
             sample_count,
         }
+    }
+
+    pub(crate) fn scene_texture_format(&self) -> wgpu::TextureFormat {
+        self.scene_texture_format
+    }
+
+    fn scene_texture_format_for(surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        surface_format.remove_srgb_suffix()
     }
 
     fn choose_supported_sample_count(requested: u32, supported: &[u32]) -> u32 {

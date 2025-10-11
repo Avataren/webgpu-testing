@@ -19,6 +19,7 @@ pub(crate) struct PipelineKey {
     depth_test: bool,
     depth_write: bool,
     alpha_blend: bool,
+    color_format: wgpu::TextureFormat,
     sample_count: u32,
 }
 
@@ -27,12 +28,14 @@ impl PipelineKey {
         depth_test: bool,
         depth_write: bool,
         alpha_blend: bool,
+        color_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> Self {
         Self {
             depth_test,
             depth_write,
             alpha_blend,
+            color_format,
             sample_count,
         }
     }
@@ -220,10 +223,12 @@ impl RenderPipeline {
                 source: wgpu::ShaderSource::Wgsl(shader_source.into()),
             });
 
+        let scene_format = context.scene_texture_format();
+
         let background_pipeline =
             PipelineBuilder::new(&context.device, &background_layout, &background_shader)
                 .with_label("EnvironmentBackgroundPipeline")
-                .with_color_target(context.config.format, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
                 .with_depth_stencil(
                     context.depth.format,
                     false, // depth_write
@@ -234,25 +239,30 @@ impl RenderPipeline {
                 .build();
 
         let mut pipelines = HashMap::new();
-        for &depth_test in &[false, true] {
-            for &depth_write in &[false, true] {
-                for &alpha_blend in &[false, true] {
-                    let key = PipelineKey {
-                        depth_test,
-                        depth_write,
-                        alpha_blend,
-                        sample_count,
-                    };
-                    let pipeline = Self::create_pipeline(
-                        context,
-                        &pipeline_layout,
-                        &shader,
-                        depth_test,
-                        depth_write,
-                        alpha_blend,
-                        sample_count,
-                    );
-                    pipelines.insert(key, pipeline);
+        let color_targets = [(scene_format, sample_count), (context.config.format, 1)];
+        for &(color_format, samples) in &color_targets {
+            for &depth_test in &[false, true] {
+                for &depth_write in &[false, true] {
+                    for &alpha_blend in &[false, true] {
+                        let key = PipelineKey {
+                            depth_test,
+                            depth_write,
+                            alpha_blend,
+                            color_format,
+                            sample_count: samples,
+                        };
+                        let pipeline = Self::create_pipeline(
+                            context,
+                            &pipeline_layout,
+                            &shader,
+                            depth_test,
+                            depth_write,
+                            alpha_blend,
+                            color_format,
+                            samples,
+                        );
+                        pipelines.insert(key, pipeline);
+                    }
                 }
             }
         }
@@ -292,6 +302,7 @@ impl RenderPipeline {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_pipeline(
         context: &RenderContext,
         pipeline_layout: &wgpu::PipelineLayout,
@@ -299,6 +310,7 @@ impl RenderPipeline {
         depth_test: bool,
         depth_write: bool,
         alpha_blend: bool,
+        color_format: wgpu::TextureFormat,
         sample_count: u32,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
@@ -316,7 +328,7 @@ impl RenderPipeline {
         let mut builder = PipelineBuilder::new(&context.device, pipeline_layout, shader)
             .with_label("MainRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
-            .with_color_target(context.config.format, blend_state)
+            .with_color_target(color_format, blend_state)
             .with_multisample(sample_count);
 
         if depth_test || depth_write {
