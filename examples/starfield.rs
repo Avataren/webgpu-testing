@@ -19,7 +19,7 @@ const FAR_PLANE: f32 = 150.0;
 const FAR_RESET_BAND: f32 = 25.0;
 const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
 const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.1..3.5;
-const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.25..0.5;
+const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.1..0.25;
 const MIN_SIZE_FROM_CENTER: f32 = 0.5;
 #[derive(Clone, Copy)]
 struct StarfieldMotion {
