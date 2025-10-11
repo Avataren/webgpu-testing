@@ -16,6 +16,7 @@ pub struct PipelineBuilder<'a> {
     depth_stencil: Option<wgpu::DepthStencilState>,
     primitive: wgpu::PrimitiveState,
     multisample: wgpu::MultisampleState,
+    custom_vertex_state: Option<wgpu::VertexState<'a>>,
 }
 
 impl<'a> PipelineBuilder<'a> {
@@ -47,6 +48,7 @@ impl<'a> PipelineBuilder<'a> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
+            custom_vertex_state: None
         }
     }
 
@@ -55,6 +57,13 @@ impl<'a> PipelineBuilder<'a> {
         self.label = Some(label);
         self
     }
+
+    /// Set a custom vertex state, overriding the default construction
+    /// Use this when you need full control over the vertex state
+    pub fn with_vertex_state(mut self, vertex_state: wgpu::VertexState<'a>) -> Self {
+        self.custom_vertex_state = Some(vertex_state);
+        self
+    }    
 
     /// Set the vertex shader entry point (default: "vs_main")
     pub fn with_vertex_entry(mut self, entry: &'a str) -> Self {

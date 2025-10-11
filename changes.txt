@@ -1,0 +1,230 @@
+diff --git a/src/renderer/postprocess/mod.rs b/src/renderer/postprocess/mod.rs
+index c9caafd..79cb71a 100644
+--- a/src/renderer/postprocess/mod.rs
++++ b/src/renderer/postprocess/mod.rs
+@@ -1,3 +1,4 @@
++use crate::renderer::PipelineBuilder;
+ use bytemuck::{Pod, Zeroable};
+ use glam::Mat4;
+ 
+@@ -259,33 +260,16 @@ impl PostProcess {
+                 bind_group_layouts: &[&uniform_layout, &layout],
+                 push_constant_ranges: &[],
+             });
+-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-                label: Some("DepthResolvePipeline"),
+-                layout: Some(&pipeline_layout),
+-                vertex: wgpu::VertexState {
+-                    module: &shader,
+-                    entry_point: Some("vs_fullscreen"),
+-                    buffers: &[],
+-                    compilation_options: Default::default(),
+-                },
+-                fragment: Some(wgpu::FragmentState {
+-                    module: &shader,
+-                    entry_point: Some("fs_resolve_depth"),
+-                    targets: &[],
+-                    compilation_options: Default::default(),
+-                }),
+-                primitive: wgpu::PrimitiveState::default(),
+-                depth_stencil: Some(wgpu::DepthStencilState {
+-                    format: wgpu::TextureFormat::Depth32Float,
+-                    depth_write_enabled: true,
+-                    depth_compare: wgpu::CompareFunction::Always,
+-                    stencil: wgpu::StencilState::default(),
+-                    bias: wgpu::DepthBiasState::default(),
+-                }),
+-                multisample: wgpu::MultisampleState::default(),
+-                multiview: None,
+-                cache: None,
+-            });
++            let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
++                .with_label("DepthResolvePipeline")
++                .with_vertex_entry("vs_fullscreen")
++                .with_fragment_entry("fs_resolve_depth")
++                .with_depth_stencil(
++                    wgpu::TextureFormat::Depth32Float,
++                    true,
++                    wgpu::CompareFunction::Always,
++                )
++                .build();
+             (Some(layout), Some(pipeline))
+         } else {
+             (None, None)
+@@ -330,26 +314,13 @@ impl PostProcess {
+             push_constant_ranges: &[],
+         });
+ 
+-        let ssao_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-            label: Some("SsaoPipeline"),
+-            layout: Some(&ssao_pipeline_layout),
+-            vertex: fullscreen_vertex.clone(),
+-            fragment: Some(wgpu::FragmentState {
+-                module: &postprocess_shader,
+-                entry_point: Some("fs_ssao"),
+-                targets: &[Some(wgpu::ColorTargetState {
+-                    format: wgpu::TextureFormat::R8Unorm,
+-                    blend: None,
+-                    write_mask: wgpu::ColorWrites::ALL,
+-                })],
+-                compilation_options: Default::default(),
+-            }),
+-            primitive: wgpu::PrimitiveState::default(),
+-            depth_stencil: None,
+-            multisample: wgpu::MultisampleState::default(),
+-            multiview: None,
+-            cache: None,
+-        });
++        let ssao_pipeline =
++            PipelineBuilder::new(device, &ssao_pipeline_layout, &postprocess_shader)
++                .with_label("SsaoPipeline")
++                .with_vertex_entry("vs_fullscreen")
++                .with_fragment_entry("fs_ssao")
++                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
++                .build();
+ 
+         // Bloom prefilter pipeline
+         let bloom_prefilter_layout =
+@@ -382,27 +353,16 @@ impl PostProcess {
+                 push_constant_ranges: &[],
+             });
+ 
+-        let bloom_prefilter_pipeline =
+-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-                label: Some("BloomPrefilterPipeline"),
+-                layout: Some(&bloom_prefilter_pipeline_layout),
+-                vertex: fullscreen_vertex.clone(),
+-                fragment: Some(wgpu::FragmentState {
+-                    module: &postprocess_shader,
+-                    entry_point: Some("fs_bloom_prefilter"),
+-                    targets: &[Some(wgpu::ColorTargetState {
+-                        format: BLOOM_FORMAT,
+-                        blend: Some(wgpu::BlendState::REPLACE),
+-                        write_mask: wgpu::ColorWrites::ALL,
+-                    })],
+-                    compilation_options: Default::default(),
+-                }),
+-                primitive: wgpu::PrimitiveState::default(),
+-                depth_stencil: None,
+-                multisample: wgpu::MultisampleState::default(),
+-                multiview: None,
+-                cache: None,
+-            });
++        let bloom_prefilter_pipeline = PipelineBuilder::new(
++            device,
++            &bloom_prefilter_pipeline_layout,
++            &postprocess_shader,
++        )
++        .with_label("BloomPrefilterPipeline")
++        .with_vertex_entry("vs_fullscreen")
++        .with_fragment_entry("fs_bloom_prefilter")
++        .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
++        .build();
+ 
+         let bloom_downsample_layout =
+             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+@@ -434,27 +394,16 @@ impl PostProcess {
+                 push_constant_ranges: &[],
+             });
+ 
+-        let bloom_downsample_pipeline =
+-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-                label: Some("BloomDownsamplePipeline"),
+-                layout: Some(&bloom_downsample_pipeline_layout),
+-                vertex: fullscreen_vertex.clone(),
+-                fragment: Some(wgpu::FragmentState {
+-                    module: &postprocess_shader,
+-                    entry_point: Some("fs_bloom_downsample"),
+-                    targets: &[Some(wgpu::ColorTargetState {
+-                        format: BLOOM_FORMAT,
+-                        blend: Some(wgpu::BlendState::REPLACE),
+-                        write_mask: wgpu::ColorWrites::ALL,
+-                    })],
+-                    compilation_options: Default::default(),
+-                }),
+-                primitive: wgpu::PrimitiveState::default(),
+-                depth_stencil: None,
+-                multisample: wgpu::MultisampleState::default(),
+-                multiview: None,
+-                cache: None,
+-            });
++        let bloom_downsample_pipeline = PipelineBuilder::new(
++            device,
++            &bloom_downsample_pipeline_layout,
++            &postprocess_shader,
++        )
++        .with_label("BloomDownsamplePipeline")
++        .with_vertex_entry("vs_fullscreen")
++        .with_fragment_entry("fs_bloom_downsample")
++        .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
++        .build();
+ 
+         let bloom_upsample_layout =
+             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+@@ -497,26 +446,12 @@ impl PostProcess {
+             });
+ 
+         let bloom_upsample_pipeline =
+-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-                label: Some("BloomUpsamplePipeline"),
+-                layout: Some(&bloom_upsample_pipeline_layout),
+-                vertex: fullscreen_vertex.clone(),
+-                fragment: Some(wgpu::FragmentState {
+-                    module: &postprocess_shader,
+-                    entry_point: Some("fs_bloom_upsample"),
+-                    targets: &[Some(wgpu::ColorTargetState {
+-                        format: BLOOM_FORMAT,
+-                        blend: Some(wgpu::BlendState::REPLACE),
+-                        write_mask: wgpu::ColorWrites::ALL,
+-                    })],
+-                    compilation_options: Default::default(),
+-                }),
+-                primitive: wgpu::PrimitiveState::default(),
+-                depth_stencil: None,
+-                multisample: wgpu::MultisampleState::default(),
+-                multiview: None,
+-                cache: None,
+-            });
++            PipelineBuilder::new(device, &bloom_upsample_pipeline_layout, &postprocess_shader)
++                .with_label("BloomUpsamplePipeline")
++                .with_vertex_entry("vs_fullscreen")
++                .with_fragment_entry("fs_bloom_upsample")
++                .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
++                .build();
+ 
+         // Composite pipeline
+         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+@@ -568,26 +503,13 @@ impl PostProcess {
+                 push_constant_ranges: &[],
+             });
+ 
+-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+-            label: Some("CompositePipeline"),
+-            layout: Some(&composite_pipeline_layout),
+-            vertex: fullscreen_vertex,
+-            fragment: Some(wgpu::FragmentState {
+-                module: &postprocess_shader,
+-                entry_point: Some("fs_composite"),
+-                targets: &[Some(wgpu::ColorTargetState {
+-                    format: config.format,
+-                    blend: Some(wgpu::BlendState::REPLACE),
+-                    write_mask: wgpu::ColorWrites::ALL,
+-                })],
+-                compilation_options: Default::default(),
+-            }),
+-            primitive: wgpu::PrimitiveState::default(),
+-            depth_stencil: None,
+-            multisample: wgpu::MultisampleState::default(),
+-            multiview: None,
+-            cache: None,
+-        });
++        let composite_pipeline =
++            PipelineBuilder::new(device, &composite_pipeline_layout, &postprocess_shader)
++                .with_label("CompositePipeline")
++                .with_vertex_entry("vs_fullscreen")
++                .with_fragment_entry("fs_composite")
++                .with_color_target(config.format, Some(wgpu::BlendState::REPLACE))
++                .build();
+ 
+         let post = Self {
+             scene,
