@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, Mesh};
-use crate::renderer::batch::{InstanceData, RenderBatcher, RenderPass};
+use crate::renderer::batch::{InstanceData, InstanceSource, RenderBatcher, RenderPass};
 use crate::renderer::material::Material;
 use crate::scene::components::DepthState;
 use glam::Vec3;
@@ -57,7 +57,7 @@ impl PreparedBatches {
                 depth_state.depth_write = false;
             }
 
-            let ordered = OrderedBatch {
+            let mut ordered = OrderedBatch {
                 mesh: batch.mesh,
                 pass: batch.pass,
                 depth_state,
@@ -65,6 +65,16 @@ impl PreparedBatches {
                 alpha_blend,
                 first_instance: 0,
             };
+
+            if ordered
+                .instances
+                .iter()
+                .all(|inst| inst.source == InstanceSource::Gpu)
+            {
+                if let Some(first_gpu) = ordered.instances.first().and_then(|inst| inst.gpu_index) {
+                    ordered.first_instance = first_gpu;
+                }
+            }
 
             match ordered.pass {
                 RenderPass::Opaque => opaque.push(ordered),
@@ -83,6 +93,29 @@ impl PreparedBatches {
 
         let mut offset = 0u32;
         for batch in &mut batches {
+            if batch
+                .instances
+                .iter()
+                .all(|inst| inst.source == InstanceSource::Gpu)
+            {
+                if let Some(first_gpu) = batch.instances.first().and_then(|inst| inst.gpu_index) {
+                    batch.first_instance = first_gpu;
+                    if let Some(last_gpu) = batch.instances.last().and_then(|inst| inst.gpu_index) {
+                        let end = last_gpu + 1;
+                        if offset > first_gpu {
+                            log::warn!(
+                                "GPU instance range [{}..{}) overlaps existing CPU range ending at {}",
+                                first_gpu,
+                                end,
+                                offset
+                            );
+                        }
+                        offset = offset.max(end);
+                    }
+                    continue;
+                }
+            }
+
             batch.first_instance = offset;
             offset += batch.instances.len() as u32;
         }
@@ -157,6 +190,14 @@ fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
         return;
     }
 
+    if instances
+        .iter()
+        .all(|inst| inst.source == InstanceSource::Gpu)
+    {
+        instances.sort_by_key(|inst| inst.gpu_index.unwrap_or(u32::MAX));
+        return;
+    }
+
     if matches!(pass, RenderPass::Opaque) {
         instances.sort_by_key(|inst| inst.material_index);
     }
@@ -166,7 +207,7 @@ fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
 mod tests {
     use super::*;
     use crate::asset::Handle;
-    use crate::renderer::batch::RenderObject;
+    use crate::renderer::batch::{InstanceSource, RenderObject};
     use crate::renderer::material::Material;
     use crate::scene::components::DepthState;
     use crate::scene::transform::Transform;
@@ -182,6 +223,8 @@ mod tests {
             transform: Transform::IDENTITY,
             depth_state: DepthState::default(),
             force_overlay: false,
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
         });
 
         batcher.clear();

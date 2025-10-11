@@ -20,7 +20,7 @@ const FAR_RESET_BAND: f32 = 25.0;
 const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
 const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.1..3.5;
 const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.25..0.75;
-const MIN_SIZE_FROM_CENTER:f32 = 0.5;
+const MIN_SIZE_FROM_CENTER: f32 = 0.5;
 #[derive(Clone, Copy)]
 struct StarfieldMotion {
     speed: f32,
@@ -123,7 +123,7 @@ impl RenderApplication for StarfieldApp {
             return;
         }
 
-        let batch: u32 = 1024*4;
+        let batch: u32 = 1024 * 4;
 
         // Note: `into_iter_batched` (not `iter_batched`)
         let q = ctx
@@ -156,10 +156,9 @@ impl RenderApplication for StarfieldApp {
 }
 
 fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
-    let mut x:f32 = 0.0;
-    let mut y:f32 = 0.0;
-    while (x*x+y*y).sqrt() < MIN_SIZE_FROM_CENTER
-    {
+    let mut x: f32 = 0.0;
+    let mut y: f32 = 0.0;
+    while (x * x + y * y).sqrt() < MIN_SIZE_FROM_CENTER {
         x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
         y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
     }
@@ -169,13 +168,13 @@ fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
 }
 
 fn random_far_position(rng: &mut SmallRng) -> Vec3 {
-    let mut x:f32 = 0.0;
-    let mut y:f32 = 0.0;
-    while (x*x+y*y).sqrt() < MIN_SIZE_FROM_CENTER
-    {
+    let mut x: f32 = 0.0;
+    let mut y: f32 = 0.0;
+    while (x * x + y * y).sqrt() < MIN_SIZE_FROM_CENTER {
         x = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
         y = rng.gen_range(-FIELD_HALF_SIZE..FIELD_HALF_SIZE);
-    }    let z = -FAR_PLANE - rng.gen_range(0.0..FAR_RESET_BAND);
+    }
+    let z = -FAR_PLANE - rng.gen_range(0.0..FAR_RESET_BAND);
     Vec3::new(x, y, z)
 }
 

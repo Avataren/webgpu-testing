@@ -1000,9 +1000,10 @@ impl PostProcess {
             .as_ref()
             .expect("Depth view must be set before executing post process");
 
-        if let (Some(layout), Some(resolved)) =
-            (self.depth_resolve_layout.as_ref(), self.resolved_depth.as_ref())
-        {
+        if let (Some(layout), Some(resolved)) = (
+            self.depth_resolve_layout.as_ref(),
+            self.resolved_depth.as_ref(),
+        ) {
             self.depth_resolve_bind_group =
                 Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("DepthResolveBindGroup"),

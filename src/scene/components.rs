@@ -120,6 +120,19 @@ impl Default for Visible {
 }
 
 // ============================================================================
+// GPU-driven instance components
+// ============================================================================
+
+/// Marker for instances whose transforms are driven entirely on the GPU.
+///
+/// The `index` refers to the absolute object buffer slot that the GPU system
+/// updates each frame (including any base instance offset).
+#[derive(Debug, Clone, Copy)]
+pub struct GpuParticleInstance {
+    pub index: u32,
+}
+
+// ============================================================================
 // Lighting Components
 // ============================================================================
 

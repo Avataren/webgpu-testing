@@ -45,12 +45,28 @@ pub struct RenderObject {
     pub transform: Transform, // Changed from Mat4
     pub depth_state: DepthState,
     pub force_overlay: bool,
+    pub instance_source: InstanceSource,
+    pub gpu_index: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct InstanceData {
     pub transform: Transform, // Changed from Mat4
     pub material_index: u32,
+    pub source: InstanceSource,
+    pub gpu_index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InstanceSource {
+    Cpu,
+    Gpu,
+}
+
+impl Default for InstanceSource {
+    fn default() -> Self {
+        Self::Cpu
+    }
 }
 
 pub struct Batch<'a> {
@@ -67,6 +83,7 @@ struct BatchKey {
     mesh: Handle<Mesh>,
     pass: RenderPass, // Only split if different pipeline needed
     depth_state: DepthState,
+    source: InstanceSource,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -100,6 +117,7 @@ impl RenderBatcher {
             mesh: obj.mesh,
             pass,
             depth_state: obj.depth_state,
+            source: obj.instance_source,
         };
 
         let material_index = *self.material_lookup.entry(obj.material).or_insert_with(|| {
@@ -111,6 +129,8 @@ impl RenderBatcher {
         self.batches.entry(key).or_default().push(InstanceData {
             transform: obj.transform,
             material_index,
+            source: obj.instance_source,
+            gpu_index: obj.gpu_index,
         });
     }
 

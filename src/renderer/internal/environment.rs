@@ -112,15 +112,13 @@ impl EnvironmentResources {
         self.current_max_lod = active_levels.saturating_sub(1) as f32;
 
         let hdr_intensity = active_hdr.map(|hdr| hdr.intensity()).unwrap_or(1.0);
-        let new_uniform =
-            build_uniform(environment, use_hdr, hdr_intensity, self.current_max_lod);
+        let new_uniform = build_uniform(environment, use_hdr, hdr_intensity, self.current_max_lod);
         if new_uniform != self.uniform {
             self.uniform = new_uniform;
             queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
         }
 
-        let texture_changed =
-            self.current_view_is_hdr != use_hdr || (use_hdr && texture_reloaded);
+        let texture_changed = self.current_view_is_hdr != use_hdr || (use_hdr && texture_reloaded);
         self.current_view_is_hdr = use_hdr;
 
         texture_changed
@@ -160,12 +158,7 @@ fn build_uniform(
             environment.ambient_intensity().max(0.0),
             max_lod.max(0.0),
         ],
-        ambient_color: [
-            color.r as f32,
-            color.g as f32,
-            color.b as f32,
-            1.0,
-        ],
+        ambient_color: [color.r as f32, color.g as f32, color.b as f32, 1.0],
     }
 }
 
@@ -247,7 +240,7 @@ fn calculate_mip_levels(width: u32, height: u32) -> u32 {
     let mut levels = 1u32;
     let mut size = width.max(height).max(1);
     while size > 1 {
-        size = (size + 1) / 2;
+        size = size.div_ceil(2);
         levels += 1;
     }
     levels

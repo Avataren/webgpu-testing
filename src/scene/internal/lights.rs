@@ -429,15 +429,12 @@ mod tests {
         let camera_pos = Vec3::new(0.0, 4.0, 12.0);
         let camera_target = Vec3::ZERO;
         let transform = Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
-        let world_point = Vec3::new(10.0, 0.0, 0.0);
+        let default_extent = DirectionalLight::DEFAULT_SHADOW_SIZE;
+        let world_point = Vec3::new(default_extent * 1.2, 0.0, 0.0);
 
-        let small = build_directional_shadow(
-            camera_pos,
-            camera_target,
-            transform,
-            DirectionalLight::DEFAULT_SHADOW_SIZE,
-        );
-        let large = build_directional_shadow(camera_pos, camera_target, transform, 12.0);
+        let small = build_directional_shadow(camera_pos, camera_target, transform, default_extent);
+        let large =
+            build_directional_shadow(camera_pos, camera_target, transform, default_extent * 3.0);
 
         let project_to_uv = |matrix: Mat4| {
             let clip = matrix * world_point.extend(1.0);

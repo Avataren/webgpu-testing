@@ -1,6 +1,7 @@
 pub mod app;
 pub mod asset;
 pub mod environment;
+pub mod gpu_particles;
 pub mod io;
 pub mod render_application;
 pub mod renderer;

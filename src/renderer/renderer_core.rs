@@ -145,6 +145,14 @@ impl Renderer {
         &self.context.queue
     }
 
+    pub fn reserve_object_capacity(&mut self, count: u32) {
+        self.objects_buffer.ensure_capacity(&self.context, count);
+    }
+
+    pub fn objects_buffer(&self) -> &wgpu::Buffer {
+        self.objects_buffer.buffer()
+    }
+
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
     }
@@ -239,9 +247,9 @@ impl Renderer {
             ..RendererStats::default()
         };
 
-        let env_texture_changed = self
-            .environment
-            .update(&self.context.device, &self.context.queue, environment);
+        let env_texture_changed =
+            self.environment
+                .update(&self.context.device, &self.context.queue, environment);
 
         if env_texture_changed {
             self.lights_buffer.rebuild_bind_group(

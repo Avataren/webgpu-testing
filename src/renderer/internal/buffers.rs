@@ -4,11 +4,13 @@ use std::num::NonZeroU64;
 use bytemuck::Zeroable;
 use wgpu::util::DeviceExt;
 
-use crate::renderer::internal::{environment::EnvironmentResources, OrderedBatch, RenderContext, ShadowResources};
+use crate::renderer::internal::{
+    environment::EnvironmentResources, OrderedBatch, RenderContext, ShadowResources,
+};
 use crate::renderer::lights::{LightsData, LightsUniform, ShadowsUniform};
 use crate::renderer::material::Material;
 use crate::renderer::uniforms::CameraUniform;
-use crate::renderer::{MaterialData, ObjectData};
+use crate::renderer::{batch::InstanceSource, MaterialData, ObjectData};
 
 pub(crate) struct DynamicObjectsBuffer {
     pub(crate) objects: wgpu::Buffer,
@@ -19,6 +21,14 @@ pub(crate) struct DynamicObjectsBuffer {
     pub(crate) bind_layout: wgpu::BindGroupLayout,
     pub(crate) object_scratch: Vec<ObjectData>,
     pub(crate) material_scratch: Vec<MaterialData>,
+    cpu_segments: Vec<CpuSegment>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CpuSegment {
+    start_index: u32,
+    length: usize,
+    scratch_start: usize,
 }
 
 impl DynamicObjectsBuffer {
@@ -90,6 +100,7 @@ impl DynamicObjectsBuffer {
             bind_layout,
             object_scratch: Vec::with_capacity(capacity as usize),
             material_scratch: Vec::with_capacity(capacity as usize),
+            cpu_segments: Vec::new(),
         }
     }
 
@@ -100,26 +111,69 @@ impl DynamicObjectsBuffer {
         materials: &[Material],
     ) -> Result<(), wgpu::SurfaceError> {
         self.object_scratch.clear();
+        self.cpu_segments.clear();
+
+        let mut current_segment: Option<CpuSegment> = None;
+        let mut total_instances: u32 = 0;
+
         for batch in batches {
-            self.object_scratch.extend(
-                batch
-                    .instances
-                    .iter()
-                    .map(|inst| ObjectData::new(inst.transform.matrix(), inst.material_index)),
-            );
+            for (local_index, inst) in batch.instances.iter().enumerate() {
+                let global_index = if inst.source == InstanceSource::Gpu {
+                    inst.gpu_index
+                        .unwrap_or(batch.first_instance + local_index as u32)
+                } else {
+                    batch.first_instance + local_index as u32
+                };
+                total_instances = total_instances.max(global_index + 1);
+
+                if inst.source == InstanceSource::Gpu {
+                    if let Some(segment) = current_segment.take() {
+                        self.cpu_segments.push(segment);
+                    }
+                    continue;
+                }
+
+                let data = ObjectData::new(inst.transform.matrix(), inst.material_index);
+                let scratch_index = self.object_scratch.len();
+                self.object_scratch.push(data);
+
+                if let Some(segment) = current_segment.as_mut() {
+                    if global_index == segment.start_index + segment.length as u32 {
+                        segment.length += 1;
+                    } else {
+                        self.cpu_segments.push(*segment);
+                        *segment = CpuSegment {
+                            start_index: global_index,
+                            length: 1,
+                            scratch_start: scratch_index,
+                        };
+                    }
+                } else {
+                    current_segment = Some(CpuSegment {
+                        start_index: global_index,
+                        length: 1,
+                        scratch_start: scratch_index,
+                    });
+                }
+            }
         }
 
-        let required_objects = self.object_scratch.len() as u32;
-        if required_objects > self.object_capacity {
-            self.grow_objects(context, required_objects);
+        if let Some(segment) = current_segment.take() {
+            self.cpu_segments.push(segment);
         }
 
-        if !self.object_scratch.is_empty() {
-            context.queue.write_buffer(
-                &self.objects,
-                0,
-                bytemuck::cast_slice(&self.object_scratch),
-            );
+        if total_instances > self.object_capacity {
+            self.grow_objects(context, total_instances);
+        }
+
+        for segment in &self.cpu_segments {
+            let start = segment.start_index as usize;
+            let offset = (start * mem::size_of::<ObjectData>()) as u64;
+            let end = segment.scratch_start + segment.length;
+            let slice = &self.object_scratch[segment.scratch_start..end];
+            context
+                .queue
+                .write_buffer(&self.objects, offset, bytemuck::cast_slice(slice));
         }
 
         self.material_scratch.clear();
@@ -199,6 +253,16 @@ impl DynamicObjectsBuffer {
                     },
                 ],
             });
+    }
+
+    pub(crate) fn ensure_capacity(&mut self, context: &RenderContext, required: u32) {
+        if required > self.object_capacity {
+            self.grow_objects(context, required);
+        }
+    }
+
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
+        &self.objects
     }
 }
 

@@ -1,9 +1,9 @@
 use super::lights::safe_normalize;
 use crate::asset::{Handle, Mesh};
-use crate::renderer::{Material, RenderObject, Renderer};
+use crate::renderer::{batch::InstanceSource, Material, RenderObject, Renderer};
 use crate::scene::components::{
-    Billboard, BillboardOrientation, BillboardSpace, DepthState, MaterialComponent, MeshComponent,
-    Name, TransformComponent, Visible, WorldTransform,
+    Billboard, BillboardOrientation, BillboardSpace, DepthState, GpuParticleInstance,
+    MaterialComponent, MeshComponent, Name, TransformComponent, Visible, WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
@@ -45,6 +45,7 @@ struct RenderEntity {
     name: Option<String>,
     billboard: Option<Billboard>,
     depth_state: Option<DepthState>,
+    gpu_instance: Option<GpuParticleInstance>,
 }
 
 fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
@@ -58,6 +59,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
             Option<&Name>,
             Option<&Billboard>,
             Option<&DepthState>,
+            Option<&GpuParticleInstance>,
         )>()
         .iter()
         .map(
@@ -72,6 +74,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                     name,
                     billboard,
                     depth_state,
+                    gpu_instance,
                 ),
             )| RenderEntity {
                 mesh: mesh.0,
@@ -82,6 +85,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                 name: name.map(|n| n.0.clone()),
                 billboard: billboard.copied(),
                 depth_state: depth_state.copied(),
+                gpu_instance: gpu_instance.copied(),
             },
         )
         .collect()
@@ -95,6 +99,13 @@ fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<
     let mut transform = select_render_transform(&entity);
     let mut material = entity.material;
     let billboard = entity.billboard;
+
+    let instance_source = if entity.gpu_instance.is_some() {
+        InstanceSource::Gpu
+    } else {
+        InstanceSource::Cpu
+    };
+    let gpu_index = entity.gpu_instance.map(|inst| inst.index);
 
     if let Some(billboard) = billboard {
         transform = apply_billboard_transform(
@@ -121,6 +132,8 @@ fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<
         transform,
         depth_state,
         force_overlay,
+        instance_source,
+        gpu_index,
     })
 }
 
