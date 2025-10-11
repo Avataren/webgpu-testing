@@ -21,7 +21,8 @@ This repository contains Rust code targeting native and the web (WebGPU) using `
 3. **Small steps.** Limit changes to a single concern per PR.
 4. **Document intent.** Public APIs must have doc comments with examples.
 5. **Keep shaders tidy.** WGSL should be validated, commented, and use pipeline-friendly layouts.
-
+6. **SUPER IMPORTANT** Ensure 16 byte alignment for structs that will be uploaded to gpu on the cpu side #[repr(C, align(16))], and padding on the gpu side if needed!
+7. **SUPER IMPORTANT** Ensure correct wgsl syntax, struct members are seperated by , not ; 
 ---
 
 ## Environment bootstrap
