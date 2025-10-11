@@ -301,12 +301,18 @@ impl GpuParticleSystem {
         state_buffer: &wgpu::Buffer,
         material_buffer: &wgpu::Buffer,
     ) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
+
+        let shader_source = format!(
+            "{}\n{}\n{}",
+            include_str!("shader/constants.wgsl"),
+            include_str!("shader/pbr_lighting.wgsl"),
+            include_str!("shader/gpu_particle_render.wgsl")
+        );
+        
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("GpuParticleRender"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "shader/gpu_particle_render.wgsl"
-            ))),
-        });
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+        });        
 
         // Get existing bind group layouts from renderer
         let camera_layout = renderer.camera_bind_layout();

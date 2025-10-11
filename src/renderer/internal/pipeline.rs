@@ -208,12 +208,18 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
+
+        let shader_source = format!(
+            "{}\n{}",
+            include_str!("../../shader/constants.wgsl"),
+            include_str!("../../shader/environment_background.wgsl"));
+
         let background_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("EnvironmentBackgroundShader"),
                 source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../shader/environment_background.wgsl").into(),
+                    shader_source.into(),
                 ),
             });
 
@@ -304,12 +310,21 @@ impl RenderPipeline {
     }
 
     fn shader_source(bindless: bool) -> String {
+        let constants = include_str!("../../shader/constants.wgsl");
         let bindings = if bindless {
             include_str!("../../shader/bindings_bindless.wgsl")
         } else {
             include_str!("../../shader/bindings_traditional.wgsl")
         };
-        format!("{bindings}\n{}", include_str!("../../shader/common.wgsl"))
+        
+        // Include shared PBR lighting module before common.wgsl
+        format!(
+            "{}\n{}\n{}\n{}",
+            constants,
+            bindings,
+            include_str!("../../shader/pbr_lighting.wgsl"),
+            include_str!("../../shader/common.wgsl")
+        )
     }
 
     fn create_pipeline(

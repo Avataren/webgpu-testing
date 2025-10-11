@@ -14,8 +14,6 @@ struct EnvironmentSettings {
 @group(1) @binding(9) var environment_map: texture_2d<f32>;
 @group(1) @binding(10) var environment_sampler: sampler;
 
-const PI: f32 = 3.14159265359;
-const TWO_PI: f32 = 6.28318530718;
 
 struct VsOut {
     @builtin(position) position: vec4<f32>,
