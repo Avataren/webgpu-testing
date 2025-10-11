@@ -6,10 +6,14 @@ struct ObjectData {
 };
 
 struct ParticleState {
-    position_speed: vec4<f32>,
+    position: vec3<f32>,
+    speed: f32,
     rotation: vec4<f32>,
-    angular_axis_speed: vec4<f32>,
-    scale_seed: vec4<u32>,
+    angular_axis: vec3<f32>,
+    angular_speed: f32,
+    scale: f32,
+    seed: u32,
+    _padding: vec2<u32>,
 };
 
 struct Params {
@@ -112,7 +116,7 @@ fn respawn_position(seed: ptr<function, u32>) -> vec3<f32> {
     return vec3<f32>(pos, -(params.far_plane + depth));
 }
 
-@compute @workgroup_size(128)
+@compute @workgroup_size(256)
 fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
     let index = gid.x;
     if index >= params.particle_count {
@@ -120,14 +124,53 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     var state = particles[index];
-    var position = state.position_speed.xyz;
-    var speed = state.position_speed.w;
+    var position = state.position;
+    var speed = state.speed;
+    
+    // Update position
     position.z = position.z + speed * params.dt;
 
+    // Early exit check for respawn (most common case for optimization)
+    if position.z > -params.near_plane {
+        var seed = state.seed;
+        position = respawn_position(&seed);
+        speed = random_range(&seed, params.speed_min, params.speed_max);
+        let new_axis = random_unit_vector(&seed);
+        let new_spin = random_range(&seed, params.spin_min, params.spin_max);
+        let scale = random_range(&seed, params.scale_min, params.scale_max);
+        let rotation = random_rotation(&seed);
+        
+        // Write back updated state
+        state.position = position;
+        state.speed = speed;
+        state.rotation = rotation;
+        state.angular_axis = new_axis;
+        state.angular_speed = new_spin;
+        state.scale = scale;
+        state.seed = seed;
+        particles[index] = state;
+        
+        // Update object buffer
+        let rot = rotation_matrix(rotation) * scale;
+        let model = mat4x4<f32>(
+            vec4<f32>(rot[0], 0.0),
+            vec4<f32>(rot[1], 0.0),
+            vec4<f32>(rot[2], 0.0),
+            vec4<f32>(position, 1.0),
+        );
+        
+        let object_index = params.base_instance + index;
+        var object = objects[object_index];
+        object.model = model;
+        objects[object_index] = object;
+        return;
+    }
+
+    // Handle rotation (only if angular speed is significant)
     var rotation = state.rotation;
-    let angular_speed = state.angular_axis_speed.w;
-    if angular_speed > 0.0 {
-        let axis = normalize(state.angular_axis_speed.xyz);
+    let angular_speed = state.angular_speed;
+    if angular_speed > 0.001 {
+        let axis = normalize(state.angular_axis);
         let angle = angular_speed * params.dt;
         let half = angle * 0.5;
         let sin_half = sin(half);
@@ -135,26 +178,13 @@ fn update_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
         rotation = quat_normalize(quat_mul(delta, rotation));
     }
 
-    var seed = state.scale_seed.y;
-    var scale = bitcast<f32>(state.scale_seed.x);
-
-    if position.z > -params.near_plane {
-        position = respawn_position(&seed);
-        speed = random_range(&seed, params.speed_min, params.speed_max);
-        let new_axis = random_unit_vector(&seed);
-        let new_spin = random_range(&seed, params.spin_min, params.spin_max);
-        state.angular_axis_speed = vec4<f32>(new_axis, new_spin);
-        scale = random_range(&seed, params.scale_min, params.scale_max);
-        rotation = random_rotation(&seed);
-    }
-
-    state.position_speed = vec4<f32>(position, speed);
+    // Write back state
+    state.position = position;
     state.rotation = rotation;
-    state.scale_seed.x = bitcast<u32>(scale);
-    state.scale_seed.y = seed;
     particles[index] = state;
 
-    let rot = rotation_matrix(rotation) * scale;
+    // Update object buffer
+    let rot = rotation_matrix(rotation) * state.scale;
     let model = mat4x4<f32>(
         vec4<f32>(rot[0], 0.0),
         vec4<f32>(rot[1], 0.0),

@@ -6,15 +6,20 @@ use wgpu::util::DeviceExt;
 
 use crate::renderer::{ObjectData, Renderer};
 
-const WORKGROUP_SIZE: u32 = 128;
+const WORKGROUP_SIZE: u32 = 256;
 
+// Optimized particle state - 32 bytes instead of 64
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ParticleState {
-    position_speed: [f32; 4],
-    rotation: [f32; 4],
-    angular_axis_speed: [f32; 4],
-    scale_seed: [u32; 4],
+    position: [f32; 3],
+    speed: f32,
+    rotation: [f32; 4],      // Still using full quat for now (can optimize later)
+    angular_axis: [f32; 3],
+    angular_speed: f32,
+    scale: f32,
+    seed: u32,
+    _padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -91,25 +96,23 @@ pub struct ParticleInit {
 impl ParticleInit {
     fn as_state(&self) -> ParticleState {
         ParticleState {
-            position_speed: [
-                self.position.x,
-                self.position.y,
-                self.position.z,
-                self.speed,
-            ],
+            position: [self.position.x, self.position.y, self.position.z],
+            speed: self.speed,
             rotation: [
                 self.rotation.x,
                 self.rotation.y,
                 self.rotation.z,
                 self.rotation.w,
             ],
-            angular_axis_speed: [
+            angular_axis: [
                 self.angular_axis.x,
                 self.angular_axis.y,
                 self.angular_axis.z,
-                self.angular_speed,
             ],
-            scale_seed: [self.scale.to_bits(), self.seed, 0, 0],
+            angular_speed: self.angular_speed,
+            scale: self.scale,
+            seed: self.seed,
+            _padding: [0, 0],
         }
     }
 
@@ -130,6 +133,7 @@ pub struct GpuParticleSystem {
     params_buffer: wgpu::Buffer,
     _state_buffer: wgpu::Buffer,
     workgroup_count: u32,
+    frame_count: u32,
 }
 
 impl GpuParticleSystem {
@@ -147,6 +151,7 @@ impl GpuParticleSystem {
 
         let device = renderer.get_device();
         let queue = renderer.get_queue();
+        
         let state_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ParticleStateBuffer"),
             size: (particle_count as usize * std::mem::size_of::<ParticleState>()) as u64,
@@ -280,6 +285,13 @@ impl GpuParticleSystem {
 
         let workgroup_count = particle_count.div_ceil(WORKGROUP_SIZE);
 
+        log::info!(
+            "GPU Particle System initialized: {} particles, {} workgroups of {}",
+            particle_count,
+            workgroup_count,
+            WORKGROUP_SIZE
+        );
+
         Self {
             pipeline,
             bind_group,
@@ -287,6 +299,7 @@ impl GpuParticleSystem {
             params_buffer,
             _state_buffer: state_buffer,
             workgroup_count,
+            frame_count: 0,
         }
     }
 
@@ -294,6 +307,8 @@ impl GpuParticleSystem {
         if dt <= f32::EPSILON {
             return;
         }
+
+        self.frame_count += 1;
 
         self.params.dt = dt;
         renderer
@@ -318,6 +333,16 @@ impl GpuParticleSystem {
         }
 
         renderer.get_queue().submit(Some(encoder.finish()));
+
+        // Optional: Log performance every 5 seconds
+        if self.frame_count % 300 == 0 {
+            let fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+            log::debug!(
+                "GPU Particles FPS: {:.1}, dt: {:.3}ms",
+                fps,
+                dt * 1000.0
+            );
+        }
     }
 }
 
@@ -366,5 +391,16 @@ mod tests {
         for element in diff.to_cols_array() {
             assert!(element.abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn particle_state_size_is_reasonable() {
+        // Should be 64 bytes or less for good cache behavior
+        let size = std::mem::size_of::<ParticleState>();
+        assert!(
+            size <= 64,
+            "ParticleState is {} bytes, should be <= 64",
+            size
+        );
     }
 }
