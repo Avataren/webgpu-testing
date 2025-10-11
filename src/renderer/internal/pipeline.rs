@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 use crate::asset::Assets;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, Vertex};
+use crate::renderer::{Material, PipelineBuilder, Vertex};
 
 const MAX_TEXTURES: usize = 256;
 
@@ -42,7 +42,6 @@ pub(crate) enum TextureBindingModel {
     Bindless(BindlessTextureBinder),
     Classic(TraditionalTextureBinder),
 }
-
 
 impl RenderPipeline {
     pub(crate) fn new(
@@ -208,65 +207,31 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
-
         let shader_source = format!(
             "{}\n{}",
             include_str!("../../shader/constants.wgsl"),
-            include_str!("../../shader/environment_background.wgsl"));
+            include_str!("../../shader/environment_background.wgsl")
+        );
 
         let background_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("EnvironmentBackgroundShader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    shader_source.into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
             });
 
         let background_pipeline =
-            context
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("EnvironmentBackgroundPipeline"),
-                    layout: Some(&background_layout),
-                    vertex: wgpu::VertexState {
-                        module: &background_shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: Default::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &background_shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: context.config.format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: Default::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        cull_mode: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: context.depth.format,
-                        depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::Always,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: sample_count,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview: None,
-                    cache: None,
-                });
+            PipelineBuilder::new(&context.device, &background_layout, &background_shader)
+                .with_label("EnvironmentBackgroundPipeline")
+                .with_color_target(context.config.format, Some(wgpu::BlendState::REPLACE))
+                .with_depth_stencil(
+                    context.depth.format,
+                    false, // depth_write
+                    wgpu::CompareFunction::Always,
+                )
+                .with_no_culling()
+                .with_multisample(sample_count)
+                .build();
 
         let mut pipelines = HashMap::new();
         for &depth_test in &[false, true] {
@@ -316,7 +281,7 @@ impl RenderPipeline {
         } else {
             include_str!("../../shader/bindings_traditional.wgsl")
         };
-        
+
         // Include shared PBR lighting module before common.wgsl
         format!(
             "{}\n{}\n{}\n{}",
@@ -348,55 +313,17 @@ impl RenderPipeline {
             Some(wgpu::BlendState::REPLACE)
         };
 
-        let depth_stencil = if depth_test || depth_write {
-            Some(wgpu::DepthStencilState {
-                format: context.depth.format,
-                depth_write_enabled: depth_write,
-                depth_compare,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })
-        } else {
-            None
-        };
+        let mut builder = PipelineBuilder::new(&context.device, pipeline_layout, shader)
+            .with_label("MainRenderPipeline")
+            .with_vertex_buffer(Vertex::layout())
+            .with_color_target(context.config.format, blend_state)
+            .with_multisample(sample_count);
 
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Pipeline"),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::layout()],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: context.config.format,
-                        blend: blend_state,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    front_face: wgpu::FrontFace::Ccw,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    ..Default::default()
-                },
-                depth_stencil,
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
+        if depth_test || depth_write {
+            builder = builder.with_depth_stencil(context.depth.format, depth_write, depth_compare);
+        }
+
+        builder.build()
     }
 
     pub(crate) fn pipeline(&self, key: PipelineKey) -> &wgpu::RenderPipeline {
@@ -409,40 +336,13 @@ impl RenderPipeline {
         shader: &wgpu::ShaderModule,
         sample_count: u32,
     ) -> wgpu::RenderPipeline {
-        context
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("DepthPrepassPipeline"),
-                layout: Some(pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[Vertex::layout()],
-                    compilation_options: Default::default(),
-                },
-                fragment: None,
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    front_face: wgpu::FrontFace::Ccw,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: context.depth.format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: sample_count,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
-                multiview: None,
-                cache: None,
-            })
+        PipelineBuilder::new(&context.device, pipeline_layout, shader)
+            .with_label("DepthPrepassPipeline")
+            .depth_only()
+            .with_vertex_buffer(Vertex::layout())
+            .with_depth_stencil(context.depth.format, true, wgpu::CompareFunction::LessEqual)
+            .with_multisample(sample_count)
+            .build()
     }
 
     pub(crate) fn depth_prepass(&self) -> &wgpu::RenderPipeline {
