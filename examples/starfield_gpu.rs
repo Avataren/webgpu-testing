@@ -6,11 +6,11 @@ use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
-    StartupContext, UpdateContext,
+    StartupContext,
 };
 
 // Match the CPU starfield parameters exactly
-const STAR_COUNT: usize = 1000_000;
+const STAR_COUNT: usize = 1_000_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
 const FAR_PLANE: f32 = 150.0;
@@ -125,13 +125,8 @@ impl RenderApplication for StarfieldGpuApp {
             })
             .collect();
 
-        let particle_system = GpuParticleSystem::new(
-            ctx.renderer,
-            particle_count,
-            material,
-            settings,
-            &particles,
-        );
+        let particle_system =
+            GpuParticleSystem::new(ctx.renderer, particle_count, material, settings, &particles);
 
         self.particle_system = Some(particle_system);
 

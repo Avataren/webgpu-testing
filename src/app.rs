@@ -216,7 +216,18 @@ pub struct App {
     postprocess_effects: PostProcessEffectsHandle,
     scene: Scene,
     renderer: Option<Renderer>,
-    custom_render_callback: Option<Box<dyn FnMut(&mut wgpu::CommandEncoder, &Renderer, &Scene, &wgpu::TextureView, &wgpu::TextureView)>>,
+    #[allow(clippy::type_complexity)]
+    custom_render_callback: Option<
+        Box<
+            dyn FnMut(
+                &mut wgpu::CommandEncoder,
+                &Renderer,
+                &Scene,
+                &wgpu::TextureView,
+                &wgpu::TextureView,
+            ),
+        >,
+    >,
 }
 
 impl App {
@@ -224,9 +235,21 @@ impl App {
         AppBuilder::default().build()
     }
 
-   pub fn set_custom_render_callback(&mut self, callback: Box<dyn FnMut(&mut wgpu::CommandEncoder, &Renderer, &Scene, &wgpu::TextureView, &wgpu::TextureView)>) {
-       self.custom_render_callback = Some(callback);
-   }    
+    #[allow(clippy::type_complexity)]
+    pub fn set_custom_render_callback(
+        &mut self,
+        callback: Box<
+            dyn FnMut(
+                &mut wgpu::CommandEncoder,
+                &Renderer,
+                &Scene,
+                &wgpu::TextureView,
+                &wgpu::TextureView,
+            ),
+        >,
+    ) {
+        self.custom_render_callback = Some(callback);
+    }
 
     #[cfg(feature = "egui")]
     pub fn set_egui_ui<F>(&mut self, callback: F)
