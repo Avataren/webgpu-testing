@@ -475,6 +475,10 @@ impl GpuParticleSystem {
         self.emitters.push(emitter);
     }
 
+    pub fn particles_buffer(&self) -> &wgpu::Buffer {
+        &self.particles_buffer
+    }
+
     pub fn update(
         &mut self,
         queue: &wgpu::Queue,
