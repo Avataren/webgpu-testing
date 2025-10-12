@@ -201,13 +201,13 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let depth = fetch_depth(in.uv);
+    let noise_sample = textureSample(noise_texture, noise_sampler, in.uv * post_uniform.noise_scale);
     if (depth >= 1.0) {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
     let view_pos = reconstruct_view_position(in.uv, depth);
     let normal = view_normal(in.uv, view_pos);
-    let noise_sample = textureSample(noise_texture, noise_sampler, in.uv * post_uniform.noise_scale);
     var tangent = vec3<f32>(noise_sample.xy, 0.0);
     if (dot(tangent, tangent) < 1e-4) {
         tangent = vec3<f32>(1.0, 0.0, 0.0);

@@ -165,6 +165,7 @@ impl GpuParticleSystem {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_render_pipeline(
         device: &wgpu::Device,
         renderer: &Renderer,
