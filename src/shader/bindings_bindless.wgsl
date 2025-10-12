@@ -1,5 +1,3 @@
-const MAX_TEXTURES: u32 = 256u;
-
 @group(3) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
 @group(3) @binding(1) var tex_sampler_linear: sampler;
 @group(3) @binding(2) var tex_sampler_nearest: sampler;

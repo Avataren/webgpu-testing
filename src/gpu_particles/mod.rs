@@ -4,6 +4,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
 use wgpu::util::DeviceExt;
 
+use crate::renderer::ShaderBuilder;
+
 pub mod behaviors;
 
 const WORKGROUP_SIZE: u32 = 256;
@@ -269,7 +271,7 @@ impl GpuParticleSystem {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create compute pipeline
+        // Create compute pipeline (unchanged)
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ParticleComputeShader"),
             source: wgpu::ShaderSource::Wgsl(behavior.shader_source().into()),
@@ -339,10 +341,15 @@ impl GpuParticleSystem {
             entries: &bind_entries,
         });
 
-        // Create render pipeline
+        // ====================================================================
+        // NEW: Create render pipeline using ShaderBuilder
+        // ====================================================================
         let initial_stage = crate::renderer::CustomRenderStage::BeforePostprocess;
         let render_format = renderer.color_format_for_stage(initial_stage);
         let render_sample_count = renderer.sample_count_for_stage(initial_stage);
+
+        // Determine if renderer uses bindless textures
+        let uses_bindless = renderer.supports_bindless_textures();
 
         let (render_pipeline, render_bind_group) = Self::create_render_pipeline(
             device,
@@ -351,6 +358,7 @@ impl GpuParticleSystem {
             &material_buffer,
             render_format,
             render_sample_count,
+            uses_bindless,
         );
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
@@ -379,14 +387,13 @@ impl GpuParticleSystem {
         material_buffer: &wgpu::Buffer,
         color_format: wgpu::TextureFormat,
         sample_count: u32,
+        uses_bindless: bool,
     ) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
-        // let shader_source = format!(
-        //     "{}\n{}\n{}",
-        //     include_str!("../shader/constants.wgsl"),
-        //     include_str!("../shader/pbr_lighting.wgsl"),
-        //     include_str!("../shader/particle_render.wgsl")
-        // );
-        let shader_source = include_str!("../shader/particle_render.wgsl");
+        // NEW: Use ShaderBuilder to compose the particle shader
+        // Particles use lighting and environment but NOT shadows
+        let shader_source = ShaderBuilder::particles(uses_bindless)
+            .build(include_str!("../shader/particle_render.wgsl"));
+
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ParticleRenderShader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -442,7 +449,7 @@ impl GpuParticleSystem {
             bind_group_layouts: &[
                 camera_layout,
                 &particle_layout,
-                lights_layout,
+                lights_layout, // NEW: Now includes environment!
                 textures_layout,
             ],
             push_constant_ranges: &[],
@@ -525,6 +532,8 @@ impl GpuParticleSystem {
             return;
         }
 
+        let uses_bindless = renderer.supports_bindless_textures();
+
         let (pipeline, bind_group) = Self::create_render_pipeline(
             device,
             renderer,
@@ -532,6 +541,7 @@ impl GpuParticleSystem {
             &self.material_buffer,
             target_format,
             target_sample_count,
+            uses_bindless,
         );
 
         self.render_pipeline = pipeline;
@@ -581,7 +591,7 @@ impl GpuParticleSystem {
         pass.set_pipeline(&self.render_pipeline);
         pass.set_bind_group(0, renderer.camera_bind_group(), &[]);
         pass.set_bind_group(1, &self.render_bind_group, &[]);
-        pass.set_bind_group(2, renderer.lights_bind_group(), &[]);
+        pass.set_bind_group(2, renderer.lights_bind_group(), &[]); // Now includes environment!
         pass.set_bind_group(3, renderer.textures_bind_group(), &[]);
 
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));

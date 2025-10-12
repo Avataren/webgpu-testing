@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 use crate::asset::Assets;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, PipelineBuilder, Vertex};
+use crate::renderer::{Material, PipelineBuilder, ShaderBuilder, Vertex};
 
 const MAX_TEXTURES: usize = 256;
 
@@ -285,21 +285,9 @@ impl RenderPipeline {
     }
 
     fn shader_source(bindless: bool) -> String {
-        let constants = include_str!("../../shader/constants.wgsl");
-        let bindings = if bindless {
-            include_str!("../../shader/bindings_bindless.wgsl")
-        } else {
-            include_str!("../../shader/bindings_traditional.wgsl")
-        };
-
-        // Include shared PBR lighting module before common.wgsl
-        format!(
-            "{}\n{}\n{}\n{}",
-            constants,
-            bindings,
-            include_str!("../../shader/pbr_lighting.wgsl"),
-            include_str!("../../shader/common.wgsl")
-        )
+        // Use the preset configuration for full PBR with all features
+        ShaderBuilder::full_pbr(bindless)
+            .build(include_str!("../../shader/common.wgsl"))
     }
 
     #[allow(clippy::too_many_arguments)]

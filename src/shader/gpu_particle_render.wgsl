@@ -50,11 +50,6 @@ const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
 const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 
-// Lighting (same as main shader)
-const MAX_DIRECTIONAL_LIGHTS: u32 = 4u;
-const MAX_POINT_LIGHTS: u32 = 4u;
-const MAX_SPOT_LIGHTS: u32 = 4u;
-
 struct DirectionalLight {
     direction: vec4<f32>,
     color_intensity: vec4<f32>,

@@ -1,13 +1,35 @@
-// src/shader/particle_render.wgsl - Standalone version with texture sampling
+// src/shader/particle_render.wgsl
+// Particle rendering with full PBR lighting support
 
-// Camera uniform
+// ============================================================================
+// Camera Uniform
+// ============================================================================
+
 struct CameraUniform {
     view_proj: mat4x4<f32>,
     inv_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
+    _padding: f32,
 }
 
-// Material data
+@group(0) @binding(0) var<uniform> camera: CameraUniform;
+
+// ============================================================================
+// Particle Data
+// ============================================================================
+
+struct Particle {
+    position: vec3<f32>,
+    lifetime: f32,
+    velocity: vec3<f32>,
+    max_lifetime: f32,
+    rotation: vec4<f32>,  // axis-angle: xyz = axis, w = angle
+    scale: vec3<f32>,
+    angular_velocity: f32,
+    color: vec4<f32>,
+    user_data: vec4<f32>,
+}
+
 struct MaterialData {
     color: vec4<f32>,
     base_color_texture: u32,
@@ -19,20 +41,40 @@ struct MaterialData {
     metallic_factor: f32,
     roughness_factor: f32,
     emissive_strength: f32,
+    _padding: u32,
+    _padding2: vec2<u32>,
 }
 
-// Particle structure
-struct Particle {
-    position: vec3<f32>,
-    lifetime: f32,
-    velocity: vec3<f32>,
-    max_lifetime: f32,
-    rotation: vec4<f32>,
-    scale: vec3<f32>,
-    angular_velocity: f32,
-    color: vec4<f32>,
-    user_data: vec4<f32>,
-}
+// Material flags
+const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
+const FLAG_USE_METALLIC_ROUGHNESS_TEXTURE: u32 = 2u;
+const FLAG_USE_NORMAL_TEXTURE: u32 = 4u;
+const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
+const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
+const FLAG_ALPHA_BLEND: u32 = 32u;
+const FLAG_UNLIT: u32 = 128u;
+const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
+
+@group(1) @binding(0) var<storage, read> particles: array<Particle>;
+@group(1) @binding(1) var<uniform> material_data: MaterialData;
+
+// ============================================================================
+// Lighting and Environment
+// ============================================================================
+
+// Group 2 is for lights (@binding 0) and environment (@binding 8-10)
+// These are imported from lighting_common.wgsl and environment.wgsl
+
+// ============================================================================
+// Textures (Bindless)
+// ============================================================================
+
+@group(3) @binding(0) var textures: binding_array<texture_2d<f32>>;
+@group(3) @binding(1) var texture_sampler: sampler;
+
+// ============================================================================
+// Vertex Shader
+// ============================================================================
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -47,19 +89,25 @@ struct VertexOutput {
     @location(1) world_normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) world_tangent: vec3<f32>,
-    @location(4) tangent_handedness: f32,
+    @location(4) world_bitangent: vec3<f32>,
     @location(5) particle_color: vec4<f32>,
 }
 
-// Material flags
-const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
-
-@group(0) @binding(0) var<uniform> camera: CameraUniform;
-@group(1) @binding(0) var<storage, read> particles: array<Particle>;
-@group(1) @binding(1) var<uniform> material_data: MaterialData;
-// @group(2) is lights (not used in this simple shader yet)
-@group(3) @binding(0) var textures: binding_array<texture_2d<f32>>;
-@group(3) @binding(1) var texture_sampler: sampler;
+// Build rotation matrix from axis-angle (Rodrigues' rotation formula)
+fn axis_angle_to_matrix(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    let t = 1.0 - c;
+    let x = axis.x;
+    let y = axis.y;
+    let z = axis.z;
+    
+    return mat3x3<f32>(
+        vec3<f32>(t*x*x + c,    t*x*y - s*z,  t*x*z + s*y),
+        vec3<f32>(t*x*y + s*z,  t*y*y + c,    t*y*z - s*x),
+        vec3<f32>(t*x*z - s*y,  t*y*z + s*x,  t*z*z + c)
+    );
+}
 
 @vertex
 fn vs_main(
@@ -68,72 +116,90 @@ fn vs_main(
 ) -> VertexOutput {
     let particle = particles[instance_idx];
     
-    // Build model matrix from particle data
-    let scale_mat = mat4x4<f32>(
-        vec4<f32>(particle.scale.x, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, particle.scale.y, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, particle.scale.z, 0.0),
-        vec4<f32>(0.0, 0.0, 0.0, 1.0)
-    );
-    
-    // Rotation from axis-angle (stored as [axis.xyz, angle])
-    let axis = particle.rotation.xyz;
+    // Build rotation matrix from axis-angle
+    let axis = normalize(particle.rotation.xyz);
     let angle = particle.rotation.w;
+    let rot_mat = axis_angle_to_matrix(axis, angle);
     
-    // Build rotation matrix from axis-angle (Rodrigues' rotation formula)
-    let c = cos(angle);
-    let s = sin(angle);
-    let t = 1.0 - c;
-    let x = axis.x;
-    let y = axis.y;
-    let z = axis.z;
+    // Apply scale and rotation to vertex
+    let scaled_pos = vertex.position * particle.scale;
+    let rotated_pos = rot_mat * scaled_pos;
+    let world_pos = rotated_pos + particle.position;
     
-    let rot_mat = mat4x4<f32>(
-        vec4<f32>(t*x*x + c,    t*x*y - s*z,  t*x*z + s*y,  0.0),
-        vec4<f32>(t*x*y + s*z,  t*y*y + c,    t*y*z - s*x,  0.0),
-        vec4<f32>(t*x*z - s*y,  t*y*z + s*x,  t*z*z + c,    0.0),
-        vec4<f32>(0.0,          0.0,          0.0,          1.0)
-    );
-    
-    let translation_mat = mat4x4<f32>(
-        vec4<f32>(1.0, 0.0, 0.0, 0.0),
-        vec4<f32>(0.0, 1.0, 0.0, 0.0),
-        vec4<f32>(0.0, 0.0, 1.0, 0.0),
-        vec4<f32>(particle.position, 1.0)
-    );
-    
-    let model = translation_mat * rot_mat * scale_mat;
-    
-    let world_position = model * vec4<f32>(vertex.position, 1.0);
+    // Transform normal and tangent
+    let world_normal = normalize(rot_mat * vertex.normal);
+    let world_tangent = normalize(rot_mat * vertex.tangent.xyz);
+    let world_bitangent = cross(world_normal, world_tangent) * vertex.tangent.w;
     
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * world_position;
-    output.world_position = world_position.xyz;
-    output.world_normal = normalize((model * vec4<f32>(vertex.normal, 0.0)).xyz);
+    output.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    output.world_position = world_pos;
+    output.world_normal = world_normal;
     output.uv = vertex.uv;
-    output.world_tangent = normalize((model * vec4<f32>(vertex.tangent.xyz, 0.0)).xyz);
-    output.tangent_handedness = vertex.tangent.w;
+    output.world_tangent = world_tangent;
+    output.world_bitangent = world_bitangent;
     output.particle_color = particle.color;
     
     return output;
 }
+
+// ============================================================================
+// Fragment Shader
+// ============================================================================
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample base color texture if enabled
     var base_color = material_data.color * in.particle_color;
     
-    if (material_data.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u {
+    if ((material_data.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
         let tex_index = material_data.base_color_texture;
         let tex_color = textureSample(textures[tex_index], texture_sampler, in.uv);
         base_color *= tex_color;
     }
     
-    // Basic diffuse lighting
-    let light_dir = normalize(vec3<f32>(0.3, -1.0, -0.5));
-    let ndotl = max(dot(in.world_normal, -light_dir), 0.0);
-    let ambient = 0.3;
-    let lighting = ambient + (1.0 - ambient) * ndotl;
+    // Get material properties
+    let metallic = material_data.metallic_factor;
+    let roughness = max(material_data.roughness_factor, 0.01);
     
-    return vec4<f32>(base_color.rgb * lighting, base_color.a);
+    // Normal mapping (if needed, particles usually don't use it but support it)
+    var N = normalize(in.world_normal);
+    if ((material_data.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
+        let normal_sample = textureSample(
+            textures[material_data.normal_texture], 
+            texture_sampler, 
+            in.uv
+        ).xyz;
+        let tangent_normal = normal_sample * 2.0 - 1.0;
+        let T = normalize(in.world_tangent);
+        let B = normalize(in.world_bitangent);
+        let TBN = mat3x3<f32>(T, B, N);
+        N = normalize(TBN * tangent_normal);
+    }
+    
+    let V = normalize(camera.camera_pos - in.world_position);
+    
+    // Use shared lighting functions (without shadows for particles)
+    // This function is from lighting_common.wgsl
+    let Lo = calculate_scene_lighting_no_shadows(
+        in.world_position, N, V, base_color.rgb, metallic, roughness
+    );
+    
+    // Use environment lighting if available
+    // This function is from environment.wgsl
+    let environment_light = calculate_environment_lighting(
+        N, V, base_color.rgb, metallic, roughness, 1.0  // no occlusion for particles
+    );
+    
+    var color: vec3<f32>;
+    if ((material_data.material_flags & FLAG_UNLIT) != 0u) {
+        color = base_color.rgb;
+    } else {
+        color = environment_light + Lo;
+    }
+    
+    // Tone mapping
+    color = color / (color + vec3<f32>(1.0));
+    
+    return vec4<f32>(color, base_color.a);
 }
