@@ -601,14 +601,8 @@ impl App {
             return Ok(());
         }
 
-        #[cfg(feature = "egui")]
-        Self::apply_environment_settings(&self.environment_settings, &mut self.scene);
-
         let aspect = renderer.aspect_ratio();
         renderer.set_camera(self.scene.camera(), aspect);
-
-        #[cfg(feature = "egui")]
-        Self::apply_postprocess_effects(&self.postprocess_effects, renderer);
 
         #[cfg(feature = "egui")]
         let egui_output = {
@@ -620,6 +614,12 @@ impl App {
                 None
             }
         };
+
+        #[cfg(feature = "egui")]
+        {
+            Self::apply_environment_settings(&self.environment_settings, &mut self.scene);
+            Self::apply_postprocess_effects(&self.postprocess_effects, renderer);
+        }
 
         let custom_render_request =
             self.custom_render_callback

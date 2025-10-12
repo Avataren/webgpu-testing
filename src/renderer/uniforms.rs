@@ -53,7 +53,7 @@ impl EnvironmentUniform {
     pub fn new() -> Self {
         Self {
             flags_intensity: [0.0, 1.0, 0.003, 0.0],
-            ambient_color: [0.003, 0.003, 0.003, 1.0],
+            ambient_color: [0.003, 0.003, 0.003, 0.003],
         }
     }
 }

@@ -113,8 +113,6 @@ struct Shadows {
 @group(2) @binding(6) var point_shadow_maps: texture_depth_2d_array;
 @group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
 
-
-
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -265,16 +263,6 @@ fn calculate_test_lighting(
     return Lo;
 }
 
-
-// fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-//     let clip = matrix * vec4<f32>(world_pos, 1.0);
-//     if (clip.w <= 0.0) {
-//         return vec3<f32>(-1.0, -1.0, -1.0);
-//     }
-//     let ndc = clip.xyz / clip.w;
-//     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z);  // Use ndc.z directly
-// }
-
 fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let clip = matrix * vec4<f32>(world_pos, 1.0);
     if (clip.w <= 0.0) {
@@ -294,15 +282,6 @@ fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
         ndc.z,
     );
 }
-// fn project_shadow(matrix: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-//     let clip = matrix * vec4<f32>(world_pos, 1.0);
-//     if (clip.w <= 0.0) {
-//         return vec3<f32>(-1.0, -1.0, -1.0);
-//     }
-//     let ndc = clip.xyz / clip.w;
-//     //return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
-//     return vec3<f32>(ndc.xy * 0.5 + 0.5, ndc.z);
-// }
 
 fn shadow_texel_size(texture: texture_depth_2d_array) -> vec2<f32> {
     let dims = textureDimensions(texture, 0u);
@@ -401,8 +380,6 @@ fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     return select(1.0, shadow_sample, valid);
 }
 
-// ---- Spot shadow using view-depth-scaled PCF (wgpu) ----
-// Assumes: glam Mat4::perspective_rh used when building view_proj (depth 0..1)
 fn sample_spot_shadow(index: u32, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
     let info  = shadow_info.spots[index];
     let light = lights.spots[index];
@@ -451,7 +428,6 @@ fn sample_spot_shadow(index: u32, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
 
     return select(1.0, shadow_sample, valid);
 }
-
 
 fn sample_point_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
     let info = shadow_info.points[index];
@@ -513,116 +489,6 @@ fn select_point_face(direction: vec3<f32>) -> u32 {
     }
 }
 
-
-
-// fn calculate_scene_lighting(
-//     world_pos: vec3<f32>,
-//     N: vec3<f32>,
-//     V: vec3<f32>,
-//     base_color: vec3<f32>,
-//     metallic: f32,
-//     roughness: f32
-// ) -> vec3<f32> {
-//     // if (lights.counts.x == 0u && lights.counts.y == 0u && lights.counts.z == 0u) {
-//     //     return calculate_test_lighting(world_pos, N, V, base_color, metallic, roughness);
-//     // }
-
-//     var Lo = vec3<f32>(0.0);
-
-//     let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
-//     for (var i = 0u; i < dir_count; i = i + 1u) {
-//         let light = lights.directionals[i];
-//         let light_dir = normalize(-light.direction.xyz);
-//         let light_color = light.color_intensity.xyz;
-//         let light_intensity = light.color_intensity.w;
-//         let shadow = sample_directional_shadow(i, world_pos);
-//         Lo += shadow * calculate_light_contribution(
-//             N,
-//             V,
-//             light_dir,
-//             base_color,
-//             metallic,
-//             roughness,
-//             light_color,
-//             light_intensity,
-//         );
-//     }
-
-//     let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-//     for (var i = 0u; i < point_count; i = i + 1u) {
-//         let light = lights.points[i];
-//         let to_light = light.position_range.xyz - world_pos;
-//         let distance = length(to_light);
-//         if (distance > 0.0001) {
-//             let L = to_light / distance;
-//             var attenuation = 1.0 / max(distance * distance, 0.0001);
-//             let range = light.position_range.w;
-//             if (range > 0.0) {
-//                 let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-//                 attenuation = attenuation * range_factor * range_factor;
-//             }
-//             let light_color = light.color_intensity.xyz;
-//             let light_intensity = light.color_intensity.w * attenuation;
-//             let shadow = sample_point_shadow(i, world_pos);
-//             Lo += shadow * calculate_light_contribution(
-//                 N,
-//                 V,
-//                 L,
-//                 base_color,
-//                 metallic,
-//                 roughness,
-//                 light_color,
-//                 light_intensity,
-//             );
-//         }
-//     }
-
-//     let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-//     for (var i = 0u; i < spot_count; i = i + 1u) {
-//         let light = lights.spots[i];
-//         let to_light = light.position_range.xyz - world_pos;
-//         let distance = length(to_light);
-//         if (distance > 0.0001) {
-//             let L = to_light / distance;
-//             var attenuation = 1.0 / max(distance * distance, 0.0001);
-//             let range = light.position_range.w;
-//             if (range > 0.0) {
-//                 let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-//                 attenuation = attenuation * range_factor * range_factor;
-//             }
-
-//             let light_dir = normalize(light.direction.xyz);
-//             let cos_theta = dot(light_dir, -L);
-//             let cos_inner = light.cone_params.x;
-//             let cos_outer = light.cone_params.y;
-//             var spot_effect = 0.0;
-//             if (cos_theta >= cos_outer) {
-//                 let denom = max(cos_inner - cos_outer, 0.0001);
-//                 spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
-//                 spot_effect = spot_effect * spot_effect;
-//             }
-
-//             if (spot_effect > 0.0) {
-//                 let light_color = light.color_intensity.xyz;
-//                 let light_intensity = light.color_intensity.w * attenuation * spot_effect;
-//                 let shadow = sample_spot_shadow(i, world_pos);
-//                 Lo += shadow * calculate_light_contribution(
-//                     N,
-//                     V,
-//                     L,
-//                     base_color,
-//                     metallic,
-//                     roughness,
-//                     light_color,
-//                     light_intensity,
-//                 );
-//             }
-//         }
-//     }
-
-//     return Lo;
-// }
-
 fn environment_hdr_enabled() -> bool {
     return environment_settings.flags_intensity.x > 0.5;
 }
@@ -632,6 +498,16 @@ fn environment_hdr_intensity() -> f32 {
 }
 
 fn environment_ambient_intensity() -> f32 {
+    // The ambient intensity is duplicated in both the primary flag vector and the
+    // w component of the ambient color to make it accessible even on backends
+    // that mishandle vec4 packing. Prefer the explicitly stored value whenever it
+    // contains a meaningful value and only fall back to the flag copy if the
+    // encoded channel is zero (which can happen on buggy drivers that drop the
+    // final component of a vec4).
+    let encoded = environment_settings.ambient_color.w;
+    if (encoded > 0.0) {
+        return encoded;
+    }
     return environment_settings.flags_intensity.z;
 }
 
@@ -670,29 +546,46 @@ fn calculate_environment_lighting(
     roughness: f32,
     occlusion: f32,
 ) -> vec3<f32> {
-    let ambient_base = environment_settings.ambient_color.rgb * environment_ambient_intensity();
-    let fallback_ambient = ambient_base * base_color * occlusion;
+    let hdr_enabled = environment_hdr_enabled();
+    
+    var ambient_tint: vec3<f32>;
+    if (hdr_enabled) {
+        ambient_tint = environment_settings.ambient_color.rgb;
+    } else {
+        // When no HDR map is bound, fall back to a neutral tint so the
+        // ambient intensity slider still brightens unlit surfaces even if the
+        // clear color is black.
+        ambient_tint = vec3<f32>(1.0);
+    }
+    
+    let ambient_base = ambient_tint * environment_ambient_intensity();
+    let fallback_ambient = ambient_base * base_color;
 
-    if (environment_hdr_enabled()) {
+    if (hdr_enabled) {
         let max_lod = environment_settings.flags_intensity.w;
-        let irradiance =
-            sample_environment_hdr(N, max_lod) * environment_hdr_intensity();
+        
+        // Sample irradiance for diffuse
+        let irradiance = sample_environment_hdr(N, max_lod) * environment_hdr_intensity();
         let diffuse_color = base_color * (1.0 - metallic);
         let diffuse = irradiance * diffuse_color;
 
-        let reflected = normalize(reflect(-V, normalize(N)));
+        // Sample environment for specular
+        let reflected = reflect(-V, N);
         let rough_lod = max_lod * roughness * roughness;
-        let spec_sample =
-            sample_environment_hdr(reflected, rough_lod) * environment_hdr_intensity();
+        let spec_sample = sample_environment_hdr(reflected, rough_lod) * environment_hdr_intensity();
         let specular_color = mix(vec3<f32>(0.04), base_color, vec3<f32>(metallic));
+        
+        // Fresnel approximation for specular strength
         var specular_strength = pow(clamp(1.0 - roughness, 0.0, 1.0), 4.0);
         specular_strength = max(specular_strength, 0.05);
         let specular = spec_sample * specular_color * specular_strength;
 
-        return fallback_ambient + (diffuse + specular) * occlusion;
+        // Apply occlusion once to the entire environment contribution
+        return (fallback_ambient + diffuse + specular) * occlusion;
     }
 
-    return fallback_ambient;
+    // When no HDR is available, apply occlusion to the fallback ambient
+    return fallback_ambient * occlusion;
 }
 
 fn calculate_scene_lighting(
@@ -810,88 +703,8 @@ fn calculate_scene_lighting(
     return Lo;
 }
 
-// @fragment
-// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-//     let obj = objects[in.instance_id];
-    
-//     // DEBUG: Check if world position is in shadow map bounds
-//     let info = shadow_info.directionals[0u];
-//     if (info.params.x != 0.0) {
-//         let proj = project_shadow(info.view_proj, in.world_pos);
-        
-//         // Visualize shadow map coordinates
-//         if (proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0) {
-//             // In shadow map bounds - show depth as color
-//             return vec4<f32>(proj.z, proj.z, proj.z, 1.0);
-//         } else {
-//             // Outside shadow map - show red
-//             return vec4<f32>(1.0, 0.0, 0.0, 1.0);
-//         }
-//     }
-    
-//     // If no shadow info, show blue
-//     return vec4<f32>(0.0, 0.0, 1.0, 1.0);
-// }
-
-// @fragment
-// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-//     let shadow = sample_directional_shadow(0u, in.world_pos);
-//     return vec4<f32>(shadow, shadow, shadow, 1.0);
-// }
-
-// @fragment
-// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-//     let shadow_mat = shadow_info.directionals[0u].view_proj;
-//     let test_pos = vec3<f32>(0.0, 0.1, 0.0);
-    
-//     // Shadow projection - manual multiply to see intermediate values
-//     let shadow_clip = shadow_mat * vec4<f32>(test_pos, 1.0);
-//     let shadow_w = shadow_clip.w;
-//     let shadow_z = shadow_clip.z;
-    
-//     // Show raw values (might be outside [0,1])
-//     // Red = clip.z, Green = clip.w (for perspective divide)
-//     return vec4<f32>(
-//         shadow_z * 0.1 + 0.5,  // Scale to make visible
-//         shadow_w * 0.1 + 0.5,
-//         0.0,
-//         1.0
-//     );
-// }
-
-// @fragment
-// fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-//     let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-//     if (spot_count == 0u) {
-//         return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red = no lights
-//     }
-    
-//     // Test first spot light
-//     let light = lights.spots[0u];
-//     let to_light = light.position_range.xyz - in.world_pos;
-//     let distance = length(to_light);
-//     let L = to_light / distance;
-//     let light_dir = normalize(light.direction.xyz);
-//     let cos_theta = dot(light_dir, -L);
-    
-//     // Visualize the angle check
-//     return vec4<f32>(
-//         cos_theta,  // Red channel shows the angle
-//         light.cone_params.y,  // Green = cos_outer threshold
-//         0.0,
-//         1.0
-//     );
-// }
-
-
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    // shadow debug
-    // let shadow = sample_directional_shadow(0u, in.world_pos);
-    // if (shadow < 0.99) {
-    //     return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red = in shadow
-    // }
-
     // ALWAYS sample all textures (uniform control flow)
     let material_flags = in.material_flags;
     let use_nearest_sampler = (material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
@@ -952,8 +765,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Always calculate lighting in uniform control flow (required for shadow sampling)
     let V = normalize(globals.camera_pos - in.world_pos);
-    let Lo =
-        calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
+    let Lo = calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
     let environment_light = calculate_environment_lighting(
         N,
         V,
@@ -974,22 +786,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Tone mapping and gamma correction
     color = color / (color + vec3<f32>(1.0));
     //color = pow(color, vec3<f32>(1.0 / 2.2));
-    return vec4<f32>(color, base_color.a);   
-
-//     if ((material.material_flags & FLAG_UNLIT) != 0u) {
-//         var color = base_color.rgb + emissive;
-//         color = color / (color + vec3<f32>(1.0));
-//         color = pow(color, vec3<f32>(1.0 / 2.2));
-//         return vec4<f32>(color, base_color.a);
-//     }
-
-//     let V = normalize(globals.camera_pos - in.world_pos);
-//     let Lo =
-//         calculate_scene_lighting(in.world_pos, N, V, base_color.rgb, metallic, roughness);
-//     let ambient = vec3<f32>(0.03) * base_color.rgb * occlusion;
-
-//     var color = ambient + Lo + emissive;
-//     color = color / (color + vec3<f32>(1.0));
-//     color = pow(color, vec3<f32>(1.0 / 2.2));
-//     return vec4<f32>(color, base_color.a);
- }
+    
+    return vec4<f32>(color, base_color.a);
+}
