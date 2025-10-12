@@ -94,7 +94,7 @@
       async function init() {
         try {
           console.log("Loading wasm module...");
-          const wasm = await import("./pkg/simple.js");
+          const wasm = await import("./pkg/minimal.js");
           console.log("Wasm module loaded, initializing...");
           await wasm.default();
           console.log("✓ WASM module initialized");
