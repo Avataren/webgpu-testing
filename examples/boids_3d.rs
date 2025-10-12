@@ -14,20 +14,20 @@ use wgpu_cube::scene::{EntityBuilder, Transform, TransformComponent};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-// Simulation parameters
-const BOID_COUNT: u32 = 2000;
-const WORKGROUP_SIZE: u32 = 64;
-const BOUNDS: f32 = 50.0;
-const MAX_SPEED: f32 = 15.0;
-const MAX_FORCE: f32 = 0.3;
 
-// Boid behavior parameters
+const BOID_COUNT: u32 = 5000;
+const WORKGROUP_SIZE: u32 = 256;
+const BOUNDS: f32 = 75.0;
+const MAX_SPEED: f32 = 40.0; 
+const MAX_FORCE: f32 = 5.0; 
+
+
 const SEPARATION_RADIUS: f32 = 3.0;
-const ALIGNMENT_RADIUS: f32 = 8.0;
-const COHESION_RADIUS: f32 = 8.0;
-const SEPARATION_WEIGHT: f32 = 1.5;
-const ALIGNMENT_WEIGHT: f32 = 1.0;
-const COHESION_WEIGHT: f32 = 1.0;
+const ALIGNMENT_RADIUS: f32 = 20.0;
+const COHESION_RADIUS: f32 = 20.0;
+const SEPARATION_WEIGHT: f32 = 1.0;
+const ALIGNMENT_WEIGHT: f32 = 1.5;
+const COHESION_WEIGHT: f32 = 3.0;
 
 // GPU representation of a boid
 #[repr(C)]
@@ -90,11 +90,7 @@ impl RenderApplication for BoidsApp {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        // Orbit camera
-        let t = ctx.scene.time() as f32 * 0.1;
-        let radius = 100.0;
-        let height = 60.0;
-        ctx.scene.camera_mut().eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
+        ctx.scene.camera_mut().eye = Vec3::new(0.0,0.0,150.0);
         ctx.scene.camera_mut().target = Vec3::ZERO;
     }
 
@@ -280,7 +276,7 @@ impl BoidSimulation {
                 let boid = &boids[index];
                 // Access the inner Transform from TransformComponent
                 transform_comp.0.translation = Vec3::from(boid.position);
-                transform_comp.0.scale = Vec3::splat(0.5); // Make cubes smaller
+                transform_comp.0.scale = Vec3::splat(1.0);
 
                 // Orient boid in direction of velocity
                 let vel = Vec3::from(boid.velocity);
@@ -312,15 +308,17 @@ impl BoidSimulation {
         let mut rng = SmallRng::from_entropy();
         (0..BOID_COUNT)
             .map(|_| {
+                // Start in a tight cluster near center
                 let position = [
-                    rng.gen_range(-BOUNDS..BOUNDS),
-                    rng.gen_range(-BOUNDS..BOUNDS),
-                    rng.gen_range(-BOUNDS..BOUNDS),
+                    rng.gen_range(-15.0..15.0), // Much tighter starting area
+                    rng.gen_range(-15.0..15.0),
+                    rng.gen_range(-15.0..15.0),
                 ];
+                // Random velocities pointing in all directions
                 let velocity = [
-                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.1,
-                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.1,
-                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.1,
+                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.4,
+                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.4,
+                    rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.4,
                 ];
                 BoidGpuData {
                     position,

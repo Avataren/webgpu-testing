@@ -127,37 +127,60 @@ fn seek(target_pos: vec3<f32>, position: vec3<f32>, velocity: vec3<f32>) -> vec3
     return limit_magnitude(steer, params.max_force);
 }
 
-// Keep boids within bounds
+// Keep boids within bounds with strong repulsion near edges
 fn bounds_check(position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     var steer = vec3<f32>(0.0);
-    let margin = params.bounds * 0.9;
-    let turn_factor = 0.5;
+    let margin = params.bounds * 0.7;  // Start turning earlier
+    let edge_distance = params.bounds - margin;
     
+    // Apply very strong exponential force near boundaries
+    // X axis
     if position.x < -margin {
-        steer.x = steer.x + turn_factor;
+        let dist = (-margin - position.x) / edge_distance;
+        // Exponential ramp: gentle at margin, extreme at edge
+        steer.x = steer.x + pow(dist, 3.0) * 8.0;
     }
     if position.x > margin {
-        steer.x = steer.x - turn_factor;
+        let dist = (position.x - margin) / edge_distance;
+        steer.x = steer.x - pow(dist, 3.0) * 8.0;
     }
     
+    // Y axis
     if position.y < -margin {
-        steer.y = steer.y + turn_factor;
+        let dist = (-margin - position.y) / edge_distance;
+        steer.y = steer.y + pow(dist, 3.0) * 8.0;
     }
     if position.y > margin {
-        steer.y = steer.y - turn_factor;
+        let dist = (position.y - margin) / edge_distance;
+        steer.y = steer.y - pow(dist, 3.0) * 8.0;
     }
     
+    // Z axis
     if position.z < -margin {
-        steer.z = steer.z + turn_factor;
+        let dist = (-margin - position.z) / edge_distance;
+        steer.z = steer.z + pow(dist, 3.0) * 8.0;
     }
     if position.z > margin {
-        steer.z = steer.z - turn_factor;
+        let dist = (position.z - margin) / edge_distance;
+        steer.z = steer.z - pow(dist, 3.0) * 8.0;
+    }
+    
+    // Emergency force if VERY close to absolute boundary
+    let emergency_margin = params.bounds * 0.95;
+    if abs(position.x) > emergency_margin {
+        steer.x = steer.x - sign(position.x) * 15.0;
+    }
+    if abs(position.y) > emergency_margin {
+        steer.y = steer.y - sign(position.y) * 15.0;
+    }
+    if abs(position.z) > emergency_margin {
+        steer.z = steer.z - sign(position.z) * 15.0;
     }
     
     return steer;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
     
@@ -179,7 +202,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     acceleration = acceleration + sep * params.separation_weight;
     acceleration = acceleration + ali * params.alignment_weight;
     acceleration = acceleration + coh * params.cohesion_weight;
-    acceleration = acceleration + bnd;
+    acceleration = acceleration + bnd * 3.5;  // Very strong boundary avoidance
     
     // Update velocity
     velocity = velocity + acceleration * params.delta_time;
@@ -188,25 +211,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update position
     var new_position = position + velocity * params.delta_time;
     
-    // Hard boundary check (wrap around)
-    if new_position.x < -params.bounds {
-        new_position.x = params.bounds;
-    }
-    if new_position.x > params.bounds {
-        new_position.x = -params.bounds;
-    }
-    if new_position.y < -params.bounds {
-        new_position.y = params.bounds;
-    }
-    if new_position.y > params.bounds {
-        new_position.y = -params.bounds;
-    }
-    if new_position.z < -params.bounds {
-        new_position.z = params.bounds;
-    }
-    if new_position.z > params.bounds {
-        new_position.z = -params.bounds;
-    }
+    // Hard clamp to prevent boids from escaping (just in case)
+    new_position.x = clamp(new_position.x, -params.bounds, params.bounds);
+    new_position.y = clamp(new_position.y, -params.bounds, params.bounds);
+    new_position.z = clamp(new_position.z, -params.bounds, params.bounds);
     
     // Write back results
     boids[index].position = new_position;
