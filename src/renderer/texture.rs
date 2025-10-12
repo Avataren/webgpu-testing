@@ -11,6 +11,7 @@ use std::path::Path;
 
 #[cfg(target_arch = "wasm32")]
 use crate::io;
+use crate::renderer::ShaderBuilder;
 
 struct RgbaTextureSource<'a> {
     data: &'a [u8],
@@ -231,9 +232,11 @@ impl Texture {
         }
 
         // Create a simple shader for downsampling
+        let shader_source = ShaderBuilder::new().build(include_str!("blit.wgsl"));
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Blit Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("blit.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

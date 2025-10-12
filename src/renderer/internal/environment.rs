@@ -7,6 +7,7 @@ use crate::environment::Environment;
 #[cfg(target_arch = "wasm32")]
 use crate::io;
 use crate::renderer::uniforms::EnvironmentUniform;
+use crate::renderer::ShaderBuilder;
 
 pub(crate) struct EnvironmentResources {
     uniform: EnvironmentUniform,
@@ -356,9 +357,11 @@ fn generate_mipmaps(
         return;
     }
 
+    let shader_source = ShaderBuilder::new().build(include_str!("../blit.wgsl"));
+
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Environment Mipmap Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../blit.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
     });
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

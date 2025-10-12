@@ -11,7 +11,7 @@ use crate::renderer::lights::{
 };
 use crate::renderer::material::Material;
 use crate::renderer::Vertex;
-use crate::renderer::{PipelineBuilder, RenderPass};
+use crate::renderer::{PipelineBuilder, RenderPass, ShaderBuilder};
 
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
@@ -207,9 +207,11 @@ impl ShadowResources {
             }],
         });
 
+        let shader_source = ShaderBuilder::new().build(include_str!("../../shader/shadow.wgsl"));
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ShadowShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/shadow.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

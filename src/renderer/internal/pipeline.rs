@@ -192,13 +192,14 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
+        let depth_shader_source =
+            ShaderBuilder::new().build(include_str!("../../shader/depth_prepass.wgsl"));
+
         let depth_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("DepthShader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../shader/depth_prepass.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(depth_shader_source.into()),
             });
 
         let background_layout =
@@ -210,17 +211,14 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
-        let shader_source = format!(
-            "{}\n{}",
-            include_str!("../../shader/constants.wgsl"),
-            include_str!("../../shader/environment_background.wgsl")
-        );
+        let background_shader_source = ShaderBuilder::background()
+            .build(include_str!("../../shader/environment_background.wgsl"));
 
         let background_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("EnvironmentBackgroundShader"),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+                source: wgpu::ShaderSource::Wgsl(background_shader_source.into()),
             });
 
         let scene_format = context.scene_texture_format();
@@ -286,8 +284,7 @@ impl RenderPipeline {
 
     fn shader_source(bindless: bool) -> String {
         // Use the preset configuration for full PBR with all features
-        ShaderBuilder::full_pbr(bindless)
-            .build(include_str!("../../shader/common.wgsl"))
+        ShaderBuilder::full_pbr(bindless).build(include_str!("../../shader/common.wgsl"))
     }
 
     #[allow(clippy::too_many_arguments)]

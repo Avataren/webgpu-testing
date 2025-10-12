@@ -76,11 +76,6 @@ struct Lights {
 
 @group(2) @binding(0) var<storage, read> lights: Lights;
 
-// Textures (bindless)
-@group(3) @binding(0) var textures: binding_array<texture_2d<f32>, 256>;
-@group(3) @binding(1) var tex_sampler_linear: sampler;
-@group(3) @binding(2) var tex_sampler_nearest: sampler;
-
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -193,15 +188,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if ((particle_material.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
         let tex_idx = particle_material.base_color_texture;
         let use_nearest = (particle_material.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
-        
-        // Sample with appropriate sampler
-        var tex_color: vec4<f32>;
-        if (use_nearest) {
-            tex_color = textureSample(textures[tex_idx], tex_sampler_nearest, in.uv);
-        } else {
-            tex_color = textureSample(textures[tex_idx], tex_sampler_linear, in.uv);
-        }
-        
+        let tex_color = sample_base_color_texture(tex_idx, in.uv, use_nearest);
         base_color = base_color * tex_color;
     }
     

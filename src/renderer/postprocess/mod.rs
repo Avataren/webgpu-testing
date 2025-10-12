@@ -1,5 +1,5 @@
 use crate::environment::ColorGrading;
-use crate::renderer::PipelineBuilder;
+use crate::renderer::{PipelineBuilder, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
@@ -278,9 +278,12 @@ impl PostProcess {
         let noise_texture = Self::create_noise_texture(device, queue);
         let noise_view = noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        let postprocess_source =
+            ShaderBuilder::new().build(include_str!("../../shader/postprocess.wgsl"));
+
         let postprocess_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PostProcessShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/postprocess.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(postprocess_source.into()),
         });
 
         let fullscreen_vertex = wgpu::VertexState {
@@ -344,11 +347,12 @@ impl PostProcess {
                     count: None,
                 }],
             });
+            let depth_resolve_source =
+                ShaderBuilder::new().build(include_str!("../../shader/depth_resolve.wgsl"));
+
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("DepthResolveShader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("../../shader/depth_resolve.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(depth_resolve_source.into()),
             });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("DepthResolvePipelineLayout"),

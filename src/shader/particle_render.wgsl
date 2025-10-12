@@ -66,13 +66,6 @@ const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 // These are imported from lighting_common.wgsl and environment.wgsl
 
 // ============================================================================
-// Textures (Bindless)
-// ============================================================================
-
-@group(3) @binding(0) var textures: binding_array<texture_2d<f32>>;
-@group(3) @binding(1) var texture_sampler: sampler;
-
-// ============================================================================
 // Vertex Shader
 // ============================================================================
 
@@ -151,13 +144,14 @@ fn vs_main(
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample base color texture if enabled
     var base_color = material_data.color * in.particle_color;
-    
+
     if ((material_data.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
         let tex_index = material_data.base_color_texture;
-        let tex_color = textureSample(textures[tex_index], texture_sampler, in.uv);
+        let use_nearest = (material_data.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
+        let tex_color = sample_base_color_texture(tex_index, in.uv, use_nearest);
         base_color *= tex_color;
     }
-    
+
     // Get material properties
     let metallic = material_data.metallic_factor;
     let roughness = max(material_data.roughness_factor, 0.01);
@@ -165,11 +159,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal mapping (if needed, particles usually don't use it but support it)
     var N = normalize(in.world_normal);
     if ((material_data.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
-        let normal_sample = textureSample(
-            textures[material_data.normal_texture], 
-            texture_sampler, 
-            in.uv
-        ).xyz;
+        let normal_sample = sample_normal_texture(
+            material_data.normal_texture,
+            in.uv,
+            (material_data.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u,
+        );
         let tangent_normal = normal_sample * 2.0 - 1.0;
         let T = normalize(in.world_tangent);
         let B = normalize(in.world_bitangent);
