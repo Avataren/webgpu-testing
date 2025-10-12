@@ -40,6 +40,14 @@ impl Transform {
         }
     }
 
+    pub fn from_translation(t: Vec3) -> Self {
+        Self {
+            translation: t,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+        }
+    }
+
     /// Combine two transforms: self (parent) * other (child) = world transform of child
     ///
     /// This computes the world transform of a child given:

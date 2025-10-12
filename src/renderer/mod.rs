@@ -1,4 +1,8 @@
+// src/renderer/mod.rs
 pub mod batch;
+pub mod compute_builder;
+pub mod compute_pass;
+pub mod compute_resources;
 pub mod depth;
 pub(crate) mod internal;
 pub mod lights;
@@ -14,6 +18,11 @@ pub mod uniforms;
 pub mod vertex;
 
 pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
+pub use compute_builder::ComputePipelineBuilder;
+pub use compute_pass::{dispatch_compute, ComputePass};
+pub use compute_resources::{
+    BindGroupBuilder, BindGroupLayoutBuilder, StorageBuffer, UniformBuffer,
+};
 pub use depth::Depth;
 pub use lights::{
     DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
