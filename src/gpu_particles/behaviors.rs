@@ -298,11 +298,11 @@ struct OptimizedBoidsParams {
 struct GridBuildParams {
     bounds: f32,               // offset 0
     cell_size: f32,            // offset 4
-    _padding1: [u32; 2],       // offset 8 (padding to align grid_dimensions to 16)
+    _padding1: [u32; 2],       // offset 8
     grid_dimensions: [u32; 3], // offset 16 (vec3 needs 16-byte alignment!)
     particle_count: u32,       // offset 28
     total_cells: u32,          // offset 32
-    _padding2: [u32; 3],       // offset 36 (pad struct to 48 bytes)
+    _padding2: [u32; 7],       // offset 36 (pad struct to 64 bytes for uniform alignment)
 }
 
 pub struct OptimizedBoidsBehavior {
@@ -413,7 +413,7 @@ impl OptimizedBoidsBehavior {
             particle_count: 0,
             total_cells,
             _padding1: [0, 0],
-            _padding2: [0, 0, 0],
+            _padding2: [0, 0, 0, 0, 0, 0, 0],
         };
 
         let grid_params_buffer = UniformBuffer::new(device, "GridParams", &grid_params);
@@ -428,7 +428,9 @@ impl OptimizedBoidsBehavior {
 
         let prefix_sum_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PrefixSumShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/prefix_sum.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/parallel_prefix_sum.wgsl").into(),
+            ),
         });
 
         let reorder_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -557,7 +559,7 @@ impl OptimizedBoidsBehavior {
             particle_count: self.particle_count,
             total_cells: self.total_cells,
             _padding1: [0, 0],
-            _padding2: [0, 0, 0],
+            _padding2: [0, 0, 0, 0, 0, 0, 0],
         };
         self.grid_params_buffer.write(queue, &grid_params);
 
@@ -608,9 +610,8 @@ impl OptimizedBoidsBehavior {
             });
             pass.set_pipeline(&self.prefix_sum_pipeline);
             pass.set_bind_group(0, &self.prefix_sum_bind_group, &[]);
-            pass.dispatch_workgroups(self.total_cells.div_ceil(256), 1, 1);
+            pass.dispatch_workgroups(1, 1, 1); // One workgroup processes up to 256 cells
         }
-
         // Pass 3: Reorder particles into sorted array
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

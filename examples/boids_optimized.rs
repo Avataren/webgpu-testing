@@ -19,7 +19,7 @@ use wgpu_cube::{
 use wasm_bindgen::prelude::*;
 
 // Increased particle count to demonstrate optimization
-const BOID_COUNT: usize = 5_000; // 2x more than original!
+const BOID_COUNT: usize = 10_000;
 const BOUNDS: f32 = 75.0;
 const MAX_SPEED: f32 = 50.0;
 const MAX_FORCE: f32 = 6.0;
@@ -106,7 +106,7 @@ impl RenderApplication for BoidsOptimizedApp {
             ctx.renderer.get_device(),
             BOID_COUNT as u32,
             BOUNDS,
-            max_interaction_radius,
+            max_interaction_radius * 0.5,
         );
 
         // Set behavior parameters
@@ -142,7 +142,14 @@ impl RenderApplication for BoidsOptimizedApp {
             "Optimized Boids GPU simulation initialized with {} boids",
             particle_count
         );
-
+        println!(
+            "Initial particle 0 position: {:?}",
+            initial_particles[0].position
+        );
+        println!(
+            "Initial particle 0 velocity: {:?}",
+            initial_particles[0].velocity
+        );
         self.behavior = Some(behavior);
         self.particle_system = Some(particle_system);
     }
@@ -156,6 +163,10 @@ impl RenderApplication for BoidsOptimizedApp {
         if let (Some(particle_system), Some(behavior)) =
             (&mut self.particle_system, &mut self.behavior)
         {
+            if self.frame_count % 60 == 0 {
+                println!("dt = {} seconds", ctx.dt);
+            }
+            let frame_start = std::time::Instant::now();
             behavior.set_particle_count(particle_system.active_particle_count());
 
             let mut encoder =
@@ -165,18 +176,13 @@ impl RenderApplication for BoidsOptimizedApp {
                         label: Some("BoidsOptimizedGpuUpdate"),
                     });
 
-            // OPTIMIZATION: Only rebuild grid every N frames
-            // Particles don't move THAT much between frames
-            if self.frame_count % 2 == 0 {
-                // Rebuild every 2 frames
-                behavior.build_spatial_grid(
-                    ctx.renderer.get_device(),
-                    ctx.renderer.get_queue(),
-                    &mut encoder,
-                    particle_system.particles_buffer(),
-                );
-            }
-            self.frame_count += 1;
+            // Rebuild every 2 frames
+            behavior.build_spatial_grid(
+                ctx.renderer.get_device(),
+                ctx.renderer.get_queue(),
+                &mut encoder,
+                particle_system.particles_buffer(),
+            );
 
             // Update particles (using possibly slightly stale grid)
             particle_system.update(
@@ -185,8 +191,20 @@ impl RenderApplication for BoidsOptimizedApp {
                 behavior,
                 ctx.dt as f32,
             );
-
+            let before_submit = std::time::Instant::now();
             ctx.renderer.get_queue().submit(Some(encoder.finish()));
+            let submit_time = before_submit.elapsed();
+
+            let total_time = frame_start.elapsed();
+            if self.frame_count % 60 == 0 {
+                log::info!(
+                    "Frame {}: Submit took {:?}, Total {:?}",
+                    self.frame_count,
+                    submit_time,
+                    total_time
+                );
+            }
+            self.frame_count += 1;
         }
     }
 
@@ -307,7 +325,6 @@ fn hue_to_rgb(hue: f32) -> [f32; 3] {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    env_logger::init();
     run_application(BoidsOptimizedApp::new()).unwrap();
 }
 
