@@ -1,32 +1,27 @@
 // src/renderer/compute_resources.rs
 
-use wgpu::util::DeviceExt;
 use bytemuck::Pod;
+use wgpu::util::DeviceExt;
 
 /// A storage buffer that can be read/written by compute shaders
 pub struct StorageBuffer {
     buffer: wgpu::Buffer,
     size: wgpu::BufferAddress,
-    label: Option<String>,
 }
 
 impl StorageBuffer {
     /// Create a new storage buffer with initial data
     pub fn new<T: Pod>(device: &wgpu::Device, label: &str, data: &[T]) -> Self {
-        let size = (std::mem::size_of::<T>() * data.len()) as wgpu::BufferAddress;
+        let size = std::mem::size_of_val(data) as wgpu::BufferAddress;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(label),
             contents: bytemuck::cast_slice(data),
-            usage: wgpu::BufferUsages::STORAGE 
-                | wgpu::BufferUsages::COPY_DST 
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         });
 
-        Self {
-            buffer,
-            size,
-            label: Some(label.to_string()),
-        }
+        Self { buffer, size }
     }
 
     /// Create an empty storage buffer with a given capacity
@@ -35,17 +30,13 @@ impl StorageBuffer {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size,
-            usage: wgpu::BufferUsages::STORAGE 
-                | wgpu::BufferUsages::COPY_DST 
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
-        Self {
-            buffer,
-            size,
-            label: Some(label.to_string()),
-        }
+        Self { buffer, size }
     }
 
     /// Update the buffer with new data
@@ -67,7 +58,6 @@ impl StorageBuffer {
 /// A uniform buffer for shader constants
 pub struct UniformBuffer {
     buffer: wgpu::Buffer,
-    label: Option<String>,
 }
 
 impl UniformBuffer {
@@ -79,10 +69,7 @@ impl UniformBuffer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        Self {
-            buffer,
-            label: Some(label.to_string()),
-        }
+        Self { buffer }
     }
 
     /// Create an empty uniform buffer for a given type
@@ -95,10 +82,7 @@ impl UniformBuffer {
             mapped_at_creation: false,
         });
 
-        Self {
-            buffer,
-            label: Some(label.to_string()),
-        }
+        Self { buffer }
     }
 
     /// Update the uniform buffer
@@ -194,10 +178,11 @@ impl<'a> BindGroupLayoutBuilder<'a> {
     }
 
     pub fn build(self) -> wgpu::BindGroupLayout {
-        self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: self.label,
-            entries: &self.entries,
-        })
+        self.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: self.label,
+                entries: &self.entries,
+            })
     }
 }
 

@@ -39,7 +39,7 @@ impl ParticleBehavior for StarfieldBehavior {
         "main"
     }
 
-    fn create_params_buffer(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
+    fn create_params_buffer(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> wgpu::Buffer {
         let params = StarfieldParams {
             delta_time: 0.0,
             near_plane: self.near_plane,

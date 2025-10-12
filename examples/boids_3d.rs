@@ -15,13 +15,11 @@ use wgpu_cube::scene::{EntityBuilder, Transform, TransformComponent};
 use wasm_bindgen::prelude::*;
 use wgpu_cube::AppBuilder;
 
-
 const BOID_COUNT: u32 = 5000;
 const WORKGROUP_SIZE: u32 = 256;
 const BOUNDS: f32 = 75.0;
-const MAX_SPEED: f32 = 50.0; 
-const MAX_FORCE: f32 = 6.0; 
-
+const MAX_SPEED: f32 = 50.0;
+const MAX_FORCE: f32 = 6.0;
 
 const SEPARATION_RADIUS: f32 = 3.0;
 const ALIGNMENT_RADIUS: f32 = 20.0;
@@ -78,7 +76,7 @@ impl RenderApplication for BoidsApp {
         "3D Boids Simulation (Compute)"
     }
 
-    fn configure(&self, builder: &mut AppBuilder) {
+    fn configure(&self, _builder: &mut AppBuilder) {
         //builder.disable_default_lighting();
     }
 
@@ -94,7 +92,7 @@ impl RenderApplication for BoidsApp {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        ctx.scene.camera_mut().eye = Vec3::new(0.0,0.0,150.0);
+        ctx.scene.camera_mut().eye = Vec3::new(0.0, 0.0, 150.0);
         ctx.scene.camera_mut().target = Vec3::ZERO;
     }
 
@@ -151,12 +149,12 @@ impl BoidSimulation {
             .add_uniform_buffer(1) // Params buffer
             .build();
 
-        let compute_pipeline = ComputePipelineBuilder::new(device)
+        let compute_pipeline = ComputePipelineBuilder::new()
             .with_label("BoidsComputePipeline")
             .with_shader(&shader)
             .with_entry_point("main")
             .with_bind_group_layout(&bind_group_layout)
-            .build();
+            .build(device);
 
         let compute_bind_group = BindGroupBuilder::new(device, &bind_group_layout)
             .with_label("BoidsBindGroup")

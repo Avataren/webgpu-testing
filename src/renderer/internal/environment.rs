@@ -176,73 +176,6 @@ fn build_uniform(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pollster::block_on;
-
-    #[test]
-    fn build_uniform_carries_ambient_intensity() {
-        let mut environment = Environment::default();
-        environment.set_ambient_intensity(1.5);
-
-        let uniform = build_uniform(&environment, false, 0.0, 0.0);
-        assert_eq!(uniform.flags_intensity[0], 0.0);
-        assert_eq!(uniform.flags_intensity[1], 0.0);
-        assert!((uniform.flags_intensity[2] - 1.5).abs() < f32::EPSILON);
-        assert!((uniform.ambient_color[3] - 1.5).abs() < f32::EPSILON);
-
-        // When HDR is active the flag should flip but the intensity should remain.
-        let uniform_hdr = build_uniform(&environment, true, 2.0, 3.0);
-        assert_eq!(uniform_hdr.flags_intensity[0], 1.0);
-        assert!((uniform_hdr.flags_intensity[1] - 2.0).abs() < f32::EPSILON);
-        assert!((uniform_hdr.flags_intensity[2] - 1.5).abs() < f32::EPSILON);
-        assert!((uniform_hdr.flags_intensity[3] - 3.0).abs() < f32::EPSILON);
-        assert!((uniform_hdr.ambient_color[3] - 1.5).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn update_applies_ambient_intensity_without_hdr() {
-        let instance = wgpu::Instance::default();
-        let adapter = match block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })) {
-            Ok(adapter) => adapter,
-            Err(_) => {
-                // No adapter available in this environment; skip the test gracefully.
-                return;
-            }
-        };
-
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("EnvironmentResourcesTestDevice"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            ..Default::default()
-        }))
-        .expect("failed to create test device");
-
-        let mut resources = EnvironmentResources::new(&device, &queue);
-        let mut environment = Environment::default();
-
-        // Initial update seeds the uniform with the environment's defaults.
-        resources.update(&device, &queue, &environment);
-        let initial = resources.debug_uniform();
-        assert!((initial.flags_intensity[2] - environment.ambient_intensity()).abs() < 1e-6);
-        assert!((initial.ambient_color[3] - environment.ambient_intensity()).abs() < 1e-6);
-
-        // Changing the ambient intensity should be reflected immediately when HDR is disabled.
-        environment.set_ambient_intensity(0.85);
-        resources.update(&device, &queue, &environment);
-        let updated = resources.debug_uniform();
-        assert!((updated.flags_intensity[2] - 0.85).abs() < 1e-6);
-        assert!((updated.ambient_color[3] - 0.85).abs() < 1e-6);
-    }
-}
-
 fn load_hdr_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -555,5 +488,73 @@ fn create_single_pixel_texture(
         view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
         _texture: texture,
         levels: 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pollster::block_on;
+
+    #[test]
+    fn build_uniform_carries_ambient_intensity() {
+        let mut environment = Environment::default();
+        environment.set_ambient_intensity(1.5);
+
+        let uniform = build_uniform(&environment, false, 0.0, 0.0);
+        assert_eq!(uniform.flags_intensity[0], 0.0);
+        assert_eq!(uniform.flags_intensity[1], 0.0);
+        assert!((uniform.flags_intensity[2] - 1.5).abs() < f32::EPSILON);
+        assert!((uniform.ambient_color[3] - 1.5).abs() < f32::EPSILON);
+
+        // When HDR is active the flag should flip but the intensity should remain.
+        let uniform_hdr = build_uniform(&environment, true, 2.0, 3.0);
+        assert_eq!(uniform_hdr.flags_intensity[0], 1.0);
+        assert!((uniform_hdr.flags_intensity[1] - 2.0).abs() < f32::EPSILON);
+        assert!((uniform_hdr.flags_intensity[2] - 1.5).abs() < f32::EPSILON);
+        assert!((uniform_hdr.flags_intensity[3] - 3.0).abs() < f32::EPSILON);
+        assert!((uniform_hdr.ambient_color[3] - 1.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    #[ignore = "requires a GPU device"]
+    fn update_applies_ambient_intensity_without_hdr() {
+        let instance = wgpu::Instance::default();
+        let adapter = match block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })) {
+            Ok(adapter) => adapter,
+            Err(_) => {
+                // No adapter available in this environment; skip the test gracefully.
+                return;
+            }
+        };
+
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("EnvironmentResourcesTestDevice"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            ..Default::default()
+        }))
+        .expect("failed to create test device");
+
+        let mut resources = EnvironmentResources::new(&device, &queue);
+        let mut environment = Environment::default();
+
+        // Initial update seeds the uniform with the environment's defaults.
+        resources.update(&device, &queue, &environment);
+        let initial = resources.debug_uniform();
+        assert!((initial.flags_intensity[2] - environment.ambient_intensity()).abs() < 1e-6);
+        assert!((initial.ambient_color[3] - environment.ambient_intensity()).abs() < 1e-6);
+
+        // Changing the ambient intensity should be reflected immediately when HDR is disabled.
+        environment.set_ambient_intensity(0.85);
+        resources.update(&device, &queue, &environment);
+        let updated = resources.debug_uniform();
+        assert!((updated.flags_intensity[2] - 0.85).abs() < 1e-6);
+        assert!((updated.ambient_color[3] - 0.85).abs() < 1e-6);
     }
 }

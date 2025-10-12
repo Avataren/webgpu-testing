@@ -4,7 +4,6 @@
 ///
 /// Reduces boilerplate when creating compute pipelines by providing a fluent API
 pub struct ComputePipelineBuilder<'a> {
-    device: &'a wgpu::Device,
     label: Option<&'a str>,
     shader: Option<&'a wgpu::ShaderModule>,
     entry_point: &'a str,
@@ -14,9 +13,8 @@ pub struct ComputePipelineBuilder<'a> {
 
 impl<'a> ComputePipelineBuilder<'a> {
     /// Create a new compute pipeline builder
-    pub fn new(device: &'a wgpu::Device) -> Self {
+    pub fn new() -> Self {
         Self {
-            device,
             label: None,
             shader: None,
             entry_point: "main",
@@ -62,23 +60,33 @@ impl<'a> ComputePipelineBuilder<'a> {
     }
 
     /// Build the compute pipeline
-    pub fn build(self) -> wgpu::ComputePipeline {
-        let shader = self.shader.expect("Shader must be provided via with_shader()");
+    pub fn build(self, device: &wgpu::Device) -> wgpu::ComputePipeline {
+        let shader = self
+            .shader
+            .expect("Shader must be provided via with_shader()");
+        let label = self.label;
+        let layout_label = label.map(|l| format!("{l} Layout"));
 
-        let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: self.label.map(|l| format!("{l} Layout")).as_deref(),
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: layout_label.as_deref(),
             bind_group_layouts: &self.bind_group_layouts,
             push_constant_ranges: &self.push_constant_ranges,
         });
 
-        self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: self.label,
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label,
             layout: Some(&pipeline_layout),
             module: shader,
             entry_point: Some(self.entry_point),
             compilation_options: Default::default(),
             cache: None,
         })
+    }
+}
+
+impl<'a> Default for ComputePipelineBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -89,7 +97,7 @@ mod tests {
     #[test]
     fn builder_uses_default_entry_point() {
         // Just ensure the builder compiles and has correct defaults
-        let builder = ComputePipelineBuilder::new(unsafe { &*(std::ptr::null::<wgpu::Device>()) });
+        let builder = ComputePipelineBuilder::new();
         assert_eq!(builder.entry_point, "main");
     }
 }

@@ -33,9 +33,11 @@ impl Default for UiStyle {
 impl UiStyle {
     /// Create a new style with custom opacity values
     pub fn with_opacity(window_opacity: f32, panel_opacity: f32) -> Self {
-        let mut style = Self::default();
-        style.window_opacity = window_opacity.clamp(0.0, 1.0);
-        style.panel_opacity = panel_opacity.clamp(0.0, 1.0);
+        let mut style = Self {
+            window_opacity: window_opacity.clamp(0.0, 1.0),
+            panel_opacity: panel_opacity.clamp(0.0, 1.0),
+            ..Self::default()
+        };
         style.apply_opacity();
         style
     }
@@ -57,7 +59,7 @@ impl UiStyle {
         } else {
             Color32::from_gray(248)
         };
-        
+
         let base_panel = if self.dark_mode {
             Color32::from_gray(27)
         } else {
@@ -102,10 +104,10 @@ impl UiStyle {
         // Set window and panel backgrounds
         visuals.window_fill = self.window_fill;
         visuals.panel_fill = self.panel_fill;
-        
+
         // Optional: also make popup backgrounds transparent
         visuals.window_shadow.color = Color32::from_black_alpha(60);
-        
+
         ctx.set_visuals(visuals);
     }
 }

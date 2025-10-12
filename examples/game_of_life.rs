@@ -48,12 +48,12 @@ struct GameOfLifeState {
     texture_0: Texture,
     texture_1: Texture,
     display_handle: Handle<Texture>,
-    
+
     // Compute pipeline and resources
     compute_pipeline: wgpu::ComputePipeline,
-    bind_group_0: wgpu::BindGroup,  // Read from 0, write to 1
-    bind_group_1: wgpu::BindGroup,  // Read from 1, write to 0
-    
+    bind_group_0: wgpu::BindGroup, // Read from 0, write to 1
+    bind_group_1: wgpu::BindGroup, // Read from 1, write to 0
+
     // Simulation state
     width: u32,
     height: u32,
@@ -112,12 +112,12 @@ impl GameOfLifeState {
             .add_storage_texture_write(1, wgpu::TextureFormat::Rgba8Unorm)
             .build();
 
-        let compute_pipeline = ComputePipelineBuilder::new(device)
+        let compute_pipeline = ComputePipelineBuilder::new()
             .with_label("Game of Life Pipeline")
             .with_shader(&shader)
             .with_entry_point("main")
             .with_bind_group_layout(&bind_group_layout)
-            .build();
+            .build(device);
 
         // Create bind groups for ping-pong buffering
         let bind_group_0 = BindGroupBuilder::new(device, &bind_group_layout)
@@ -190,8 +190,11 @@ impl GameOfLifeState {
                 &self.bind_group_0
             };
 
-            pass.set_bind_group(0, bind_group, &[])
-                .dispatch_workgroups(self.dispatch_x, self.dispatch_y, 1);
+            pass.set_bind_group(0, bind_group, &[]).dispatch_workgroups(
+                self.dispatch_x,
+                self.dispatch_y,
+                1,
+            );
         }
 
         // Copy result to display texture
@@ -255,7 +258,7 @@ fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
     // Add interesting patterns
     let patterns = [
         (vec![(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)], 20, 20), // Glider
-        (vec![(0, 0), (1, 0), (2, 0)], 50, 30), // Blinker
+        (vec![(0, 0), (1, 0), (2, 0)], 50, 30),                 // Blinker
     ];
 
     for (pattern, base_x, base_y) in patterns {

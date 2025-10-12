@@ -47,7 +47,7 @@ impl RenderApplication for StarfieldGpuApp {
         "GPU Starfield (GPU-Driven)"
     }
 
-    fn configure(&self, builder: &mut AppBuilder) {
+    fn configure(&self, _builder: &mut AppBuilder) {
         // Keep default lighting enabled for PBR
     }
 
@@ -58,9 +58,7 @@ impl RenderApplication for StarfieldGpuApp {
         self.mesh_handle = Some(mesh_handle);
 
         // Create material with checker texture and PBR properties
-        let material = Material::checker()
-            .with_metallic(0.1)
-            .with_roughness(0.7);
+        let material = Material::checker().with_metallic(0.1).with_roughness(0.7);
 
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
@@ -101,7 +99,6 @@ impl RenderApplication for StarfieldGpuApp {
                 let mut rng = SmallRng::seed_from_u64(i as u64);
 
                 let position = random_initial_position(&mut rng);
-                let rotation = random_rotation(&mut rng);
                 let rotation_axis = random_unit_vector(&mut rng);
                 let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
                 let scale = random_scale(&mut rng);
@@ -111,9 +108,14 @@ impl RenderApplication for StarfieldGpuApp {
                 Particle {
                     position: position.into(),
                     lifetime: rng.gen_range(0.0..1000.0), // Random start time for variety
-                    velocity: [0.0, 0.0, speed], // Moving in +Z toward camera at origin
+                    velocity: [0.0, 0.0, speed],          // Moving in +Z toward camera at origin
                     max_lifetime: f32::INFINITY,
-                    rotation: [rotation_axis.x, rotation_axis.y, rotation_axis.z, rotation_angle], // axis-angle format
+                    rotation: [
+                        rotation_axis.x,
+                        rotation_axis.y,
+                        rotation_axis.z,
+                        rotation_angle,
+                    ], // axis-angle format
                     scale: [scale, scale, scale],
                     angular_velocity: angular_speed,
                     color: [1.0, 1.0, 1.0, 1.0],
@@ -169,15 +171,7 @@ impl RenderApplication for StarfieldGpuApp {
             );
 
             ctx.renderer.get_queue().submit(Some(encoder.finish()));
-            
-            // Log active particle count every 60 frames
-            static mut FRAME_COUNT: u32 = 0;
-            unsafe {
-                FRAME_COUNT += 1;
-                if FRAME_COUNT % 60 == 0 {
-                    log::info!("Active particles: {}", particle_system.active_particle_count());
-                }
-            }
+
         }
     }
 
@@ -211,12 +205,6 @@ fn random_initial_position(rng: &mut SmallRng) -> Vec3 {
 
     let z = -rng.gen_range(NEAR_PLANE..FAR_PLANE);
     Vec3::new(x, y, z)
-}
-
-fn random_rotation(rng: &mut SmallRng) -> Quat {
-    let axis = random_unit_vector(rng);
-    let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-    Quat::from_axis_angle(axis, angle)
 }
 
 fn random_unit_vector(rng: &mut SmallRng) -> Vec3 {
