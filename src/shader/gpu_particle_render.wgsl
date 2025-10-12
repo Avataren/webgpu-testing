@@ -48,7 +48,6 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
-const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 
 struct DirectionalLight {
     direction: vec4<f32>,
@@ -187,8 +186,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     if ((particle_material.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
         let tex_idx = particle_material.base_color_texture;
-        let use_nearest = (particle_material.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
-        let tex_color = sample_base_color_texture(tex_idx, in.uv, use_nearest);
+        let tex_color = sample_base_color_texture(tex_idx, in.uv);
         base_color = base_color * tex_color;
     }
     

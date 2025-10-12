@@ -617,6 +617,7 @@ impl Renderer {
             batch.alpha_blend,
             color_format,
             color_sample_count,
+            batch.sampler_filtering,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);
         rpass.set_pipeline(pipeline);

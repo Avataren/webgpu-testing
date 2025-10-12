@@ -2,7 +2,8 @@ use wgpu::util::DeviceExt;
 
 use crate::asset::Mesh;
 use crate::renderer::{
-    CustomRenderStage, Material, MaterialData, PipelineBuilder, Renderer, ShaderBuilder, Vertex,
+    CustomRenderStage, Material, MaterialData, PipelineBuilder, Renderer, SamplerFilterMode,
+    ShaderBuilder, Vertex,
 };
 
 use super::behavior::ParticleBehavior;
@@ -30,6 +31,7 @@ pub struct GpuParticleSystem {
 
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
+    sampler_filtering: SamplerFilterMode,
 }
 
 impl GpuParticleSystem {
@@ -50,6 +52,7 @@ impl GpuParticleSystem {
 
         let params_buffer = behavior.create_params_buffer(device, queue);
 
+        let sampler_filtering = material.sampler_filtering();
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ParticleMaterial"),
@@ -139,6 +142,7 @@ impl GpuParticleSystem {
             render_format,
             render_sample_count,
             uses_bindless,
+            sampler_filtering,
         );
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
@@ -157,6 +161,7 @@ impl GpuParticleSystem {
             emitters: Vec::new(),
             render_format,
             render_sample_count,
+            sampler_filtering,
         }
     }
 
@@ -168,8 +173,9 @@ impl GpuParticleSystem {
         color_format: wgpu::TextureFormat,
         sample_count: u32,
         uses_bindless: bool,
+        filtering: SamplerFilterMode,
     ) -> (wgpu::RenderPipeline, wgpu::BindGroup) {
-        let shader_source = ShaderBuilder::particles(uses_bindless)
+        let shader_source = ShaderBuilder::particles_filtered(uses_bindless, filtering)
             .build(include_str!("../shader/particle_render.wgsl"));
 
         let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -319,6 +325,7 @@ impl GpuParticleSystem {
             target_format,
             target_sample_count,
             uses_bindless,
+            self.sampler_filtering,
         );
 
         self.render_pipeline = pipeline;

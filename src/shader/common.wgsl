@@ -49,7 +49,6 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
-const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 
 // Note: Lighting, shadows, and environment are imported from modules below
 // Group 2 bindings:
@@ -154,21 +153,20 @@ fn vs_main(in: VsIn) -> VsOut {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // ALWAYS sample all textures (uniform control flow)
     let material_flags = in.material_flags;
-    let use_nearest_sampler = (material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
     let base_color_sample = sample_base_color_texture(
-        in.material_texture_indices0.x, in.uv, use_nearest_sampler
+        in.material_texture_indices0.x, in.uv
     );
     let mr_sample = sample_metallic_roughness_texture(
-        in.material_texture_indices0.y, in.uv, use_nearest_sampler
+        in.material_texture_indices0.y, in.uv
     );
     let normal_sample = sample_normal_texture(
-        in.material_texture_indices0.z, in.uv, use_nearest_sampler
+        in.material_texture_indices0.z, in.uv
     );
     let emissive_sample = sample_emissive_texture(
-        in.material_texture_indices0.w, in.uv, use_nearest_sampler
+        in.material_texture_indices0.w, in.uv
     );
     let occlusion_sample = sample_occlusion_texture(
-        in.material_texture_indices1.x, in.uv, use_nearest_sampler
+        in.material_texture_indices1.x, in.uv
     );
 
     // Then conditionally USE the samples

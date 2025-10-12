@@ -3,6 +3,7 @@ use std::{cmp::Ordering, ops::Range};
 use crate::asset::{Handle, Mesh};
 use crate::renderer::batch::{InstanceData, InstanceSource, RenderBatcher, RenderPass};
 use crate::renderer::material::Material;
+use crate::renderer::shader_builder::SamplerFilterMode;
 use crate::scene::components::DepthState;
 use glam::Vec3;
 
@@ -14,6 +15,7 @@ pub(crate) struct OrderedBatch {
     pub instances: Vec<InstanceData>,
     pub alpha_blend: bool,
     pub first_instance: u32,
+    pub sampler_filtering: SamplerFilterMode,
 }
 
 pub(crate) struct PreparedBatches {
@@ -64,6 +66,11 @@ impl PreparedBatches {
                 instances,
                 alpha_blend,
                 first_instance: 0,
+                sampler_filtering: if batch.use_nearest_filtering {
+                    SamplerFilterMode::Nearest
+                } else {
+                    SamplerFilterMode::Linear
+                },
             };
 
             if ordered

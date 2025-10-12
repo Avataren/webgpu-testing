@@ -53,7 +53,6 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
-const FLAG_USE_NEAREST_SAMPLER: u32 = 256u;
 
 @group(1) @binding(0) var<storage, read> particles: array<Particle>;
 @group(1) @binding(1) var<uniform> material_data: MaterialData;
@@ -147,8 +146,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if ((material_data.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u) {
         let tex_index = material_data.base_color_texture;
-        let use_nearest = (material_data.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u;
-        let tex_color = sample_base_color_texture(tex_index, in.uv, use_nearest);
+        let tex_color = sample_base_color_texture(tex_index, in.uv);
         base_color *= tex_color;
     }
 
@@ -159,11 +157,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal mapping (if needed, particles usually don't use it but support it)
     var N = normalize(in.world_normal);
     if ((material_data.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
-        let normal_sample = sample_normal_texture(
-            material_data.normal_texture,
-            in.uv,
-            (material_data.material_flags & FLAG_USE_NEAREST_SAMPLER) != 0u,
-        );
+        let normal_sample =
+            sample_normal_texture(material_data.normal_texture, in.uv);
         let tangent_normal = normal_sample * 2.0 - 1.0;
         let T = normalize(in.world_tangent);
         let B = normalize(in.world_bitangent);

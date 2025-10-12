@@ -1,5 +1,6 @@
 // renderer/material.rs (PBR version)
 
+use super::shader_builder::SamplerFilterMode;
 use crate::renderer::texture::DEFAULT_CHECKER_TEXTURE_INDEX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,6 +126,18 @@ impl Material {
     pub fn with_linear_filtering(mut self) -> Self {
         self.flags.remove(MaterialFlags::USE_NEAREST_FILTERING);
         self
+    }
+
+    pub fn uses_nearest_filtering(&self) -> bool {
+        self.flags.contains(MaterialFlags::USE_NEAREST_FILTERING)
+    }
+
+    pub fn sampler_filtering(&self) -> SamplerFilterMode {
+        if self.uses_nearest_filtering() {
+            SamplerFilterMode::Nearest
+        } else {
+            SamplerFilterMode::Linear
+        }
     }
 
     pub fn with_base_color_texture(mut self, index: u32) -> Self {

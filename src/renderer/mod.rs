@@ -39,7 +39,7 @@ pub use render_context::{
     CustomRenderCallback, CustomRenderContext, CustomRenderRequest, CustomRenderStage,
 };
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
-pub use shader_builder::ShaderBuilder;
+pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;
 pub use vertex::Vertex;

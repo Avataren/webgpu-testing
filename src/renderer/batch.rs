@@ -75,6 +75,7 @@ pub struct Batch<'a> {
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
     pub materials: &'a [Material],
+    pub use_nearest_filtering: bool,
 }
 
 /// Batching key - only splits by what ACTUALLY requires different draw calls
@@ -84,6 +85,7 @@ struct BatchKey {
     pass: RenderPass, // Only split if different pipeline needed
     depth_state: DepthState,
     source: InstanceSource,
+    use_nearest_filtering: bool,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -118,6 +120,7 @@ impl RenderBatcher {
             pass,
             depth_state: obj.depth_state,
             source: obj.instance_source,
+            use_nearest_filtering: obj.material.uses_nearest_filtering(),
         };
 
         let material_index = *self.material_lookup.entry(obj.material).or_insert_with(|| {
@@ -150,6 +153,7 @@ impl RenderBatcher {
             depth_state: key.depth_state,
             instances: instances.as_slice(),
             materials: self.materials.as_slice(),
+            use_nearest_filtering: key.use_nearest_filtering,
         })
     }
 
@@ -162,6 +166,7 @@ impl RenderBatcher {
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
                     materials: self.materials.as_slice(),
+                    use_nearest_filtering: key.use_nearest_filtering,
                 })
             } else {
                 None

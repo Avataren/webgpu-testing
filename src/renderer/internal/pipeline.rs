@@ -4,7 +4,9 @@ use std::num::NonZeroU32;
 use crate::asset::Assets;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, PipelineBuilder, ShaderBuilder, Vertex, MAX_TEXTURES};
+use crate::renderer::{
+    Material, PipelineBuilder, SamplerFilterMode, ShaderBuilder, Vertex, MAX_TEXTURES,
+};
 
 pub(crate) struct RenderPipeline {
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
@@ -19,6 +21,7 @@ pub(crate) struct PipelineKey {
     alpha_blend: bool,
     color_format: wgpu::TextureFormat,
     sample_count: u32,
+    sampler_filtering: SamplerFilterMode,
 }
 
 impl PipelineKey {
@@ -28,6 +31,7 @@ impl PipelineKey {
         alpha_blend: bool,
         color_format: wgpu::TextureFormat,
         sample_count: u32,
+        sampler_filtering: SamplerFilterMode,
     ) -> Self {
         Self {
             depth_test,
@@ -35,6 +39,7 @@ impl PipelineKey {
             alpha_blend,
             color_format,
             sample_count,
+            sampler_filtering,
         }
     }
 }
@@ -52,9 +57,8 @@ impl RenderPipeline {
         lights: &LightsBuffer,
         sample_count: u32,
     ) -> (Self, TextureBindingModel) {
-        let (texture_bind_layout, texture_binder, shader_source) = if context
-            .supports_bindless_textures
-        {
+        let uses_bindless = context.supports_bindless_textures;
+        let (texture_bind_layout, texture_binder) = if uses_bindless {
             let layout =
                 context
                     .device
@@ -92,7 +96,7 @@ impl RenderPipeline {
 
             let binder =
                 TextureBindingModel::Bindless(BindlessTextureBinder::new(&context.device, &layout));
-            (layout, binder, Self::shader_source(true))
+            (layout, binder)
         } else {
             let layout =
                 context
@@ -157,15 +161,28 @@ impl RenderPipeline {
                 &context.device,
                 &layout,
             ));
-            (layout, binder, Self::shader_source(false))
+            (layout, binder)
         };
 
-        let shader = context
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("RendererShader"),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-            });
+        let shader_modules: Vec<(SamplerFilterMode, wgpu::ShaderModule)> =
+            [SamplerFilterMode::Linear, SamplerFilterMode::Nearest]
+                .into_iter()
+                .map(|filtering| {
+                    let label = match filtering {
+                        SamplerFilterMode::Linear => "RendererShaderLinear",
+                        SamplerFilterMode::Nearest => "RendererShaderNearest",
+                    };
+                    let source = Self::shader_source(uses_bindless, filtering);
+                    let module =
+                        context
+                            .device
+                            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                                label: Some(label),
+                                source: wgpu::ShaderSource::Wgsl(source.into()),
+                            });
+                    (filtering, module)
+                })
+                .collect();
 
         let pipeline_layout =
             context
@@ -236,28 +253,32 @@ impl RenderPipeline {
 
         let mut pipelines = HashMap::new();
         let color_targets = [(scene_format, sample_count), (context.config.format, 1)];
-        for &(color_format, samples) in &color_targets {
-            for &depth_test in &[false, true] {
-                for &depth_write in &[false, true] {
-                    for &alpha_blend in &[false, true] {
-                        let key = PipelineKey {
-                            depth_test,
-                            depth_write,
-                            alpha_blend,
-                            color_format,
-                            sample_count: samples,
-                        };
-                        let pipeline = Self::create_pipeline(
-                            context,
-                            &pipeline_layout,
-                            &shader,
-                            depth_test,
-                            depth_write,
-                            alpha_blend,
-                            color_format,
-                            samples,
-                        );
-                        pipelines.insert(key, pipeline);
+        for (filtering, shader_module) in &shader_modules {
+            let filtering = *filtering;
+            for &(color_format, samples) in &color_targets {
+                for &depth_test in &[false, true] {
+                    for &depth_write in &[false, true] {
+                        for &alpha_blend in &[false, true] {
+                            let key = PipelineKey {
+                                depth_test,
+                                depth_write,
+                                alpha_blend,
+                                color_format,
+                                sample_count: samples,
+                                sampler_filtering: filtering,
+                            };
+                            let pipeline = Self::create_pipeline(
+                                context,
+                                &pipeline_layout,
+                                shader_module,
+                                depth_test,
+                                depth_write,
+                                alpha_blend,
+                                color_format,
+                                samples,
+                            );
+                            pipelines.insert(key, pipeline);
+                        }
                     }
                 }
             }
@@ -280,9 +301,10 @@ impl RenderPipeline {
         )
     }
 
-    fn shader_source(bindless: bool) -> String {
+    fn shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
         // Use the preset configuration for full PBR with all features
-        ShaderBuilder::full_pbr(bindless).build(include_str!("../../shader/common.wgsl"))
+        ShaderBuilder::full_pbr_filtered(bindless, filtering)
+            .build(include_str!("../../shader/common.wgsl"))
     }
 
     #[allow(clippy::too_many_arguments)]

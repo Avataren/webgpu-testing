@@ -13,6 +13,12 @@ struct ShaderConstant {
     value: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SamplerFilterMode {
+    Linear,
+    Nearest,
+}
+
 /// Builder for composing shaders from modular components
 pub struct ShaderBuilder {
     modules: Vec<&'static str>,
@@ -41,15 +47,35 @@ impl ShaderBuilder {
     }
 
     /// Add texture bindings (bindless or traditional)
-    pub fn with_bindings(mut self, bindless: bool) -> Self {
+    pub fn with_bindings_for_filter(
+        mut self,
+        bindless: bool,
+        filtering: SamplerFilterMode,
+    ) -> Self {
         if bindless {
-            self.modules
-                .push(include_str!("../shader/bindings_bindless.wgsl"));
+            match filtering {
+                SamplerFilterMode::Linear => self
+                    .modules
+                    .push(include_str!("../shader/bindings_bindless_linear.wgsl")),
+                SamplerFilterMode::Nearest => self
+                    .modules
+                    .push(include_str!("../shader/bindings_bindless_nearest.wgsl")),
+            }
         } else {
-            self.modules
-                .push(include_str!("../shader/bindings_traditional.wgsl"));
+            match filtering {
+                SamplerFilterMode::Linear => self
+                    .modules
+                    .push(include_str!("../shader/bindings_traditional_linear.wgsl")),
+                SamplerFilterMode::Nearest => self
+                    .modules
+                    .push(include_str!("../shader/bindings_traditional_nearest.wgsl")),
+            }
         }
         self
+    }
+
+    pub fn with_bindings(self, bindless: bool) -> Self {
+        self.with_bindings_for_filter(bindless, SamplerFilterMode::Linear)
     }
 
     /// Add core PBR lighting functions and light structures
@@ -127,28 +153,42 @@ impl Default for ShaderBuilder {
 /// Preset configurations for common shader types
 impl ShaderBuilder {
     /// Complete PBR shader with all features (main geometry)
-    pub fn full_pbr(bindless: bool) -> Self {
+    pub fn full_pbr_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
             .with_constants()
-            .with_bindings(bindless)
+            .with_bindings_for_filter(bindless, filtering)
             .with_lighting()
             .with_shadows()
             .with_environment()
             .with_lighting_and_shadows()
     }
 
+    pub fn full_pbr(bindless: bool) -> Self {
+        Self::full_pbr_filtered(bindless, SamplerFilterMode::Linear)
+    }
+
     /// Particle shader (lighting but no shadows)
-    pub fn particles(bindless: bool) -> Self {
+    pub fn particles_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
             .with_constants()
-            .with_bindings(bindless)
+            .with_bindings_for_filter(bindless, filtering)
             .with_lighting()
             .with_environment()
     }
 
+    pub fn particles(bindless: bool) -> Self {
+        Self::particles_filtered(bindless, SamplerFilterMode::Linear)
+    }
+
     /// Simple shader (no lighting, just textures)
+    pub fn unlit_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
+        Self::new()
+            .with_constants()
+            .with_bindings_for_filter(bindless, filtering)
+    }
+
     pub fn unlit(bindless: bool) -> Self {
-        Self::new().with_constants().with_bindings(bindless)
+        Self::unlit_filtered(bindless, SamplerFilterMode::Linear)
     }
 
     /// Background/skybox shader
