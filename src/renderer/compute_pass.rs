@@ -40,7 +40,7 @@ impl<'a> ComputePass<'a> {
     }
 
     /// Dispatch workgroups with automatic calculation
-    /// 
+    ///
     /// Calculates workgroups based on total work size and workgroup size
     pub fn dispatch_auto(
         &mut self,
@@ -73,10 +73,10 @@ pub fn dispatch_compute(
 ) {
     let mut pass = ComputePass::begin(encoder, label);
     pass.set_pipeline(pipeline);
-    
+
     for (index, bind_group) in bind_groups {
         pass.set_bind_group(*index, bind_group, &[]);
     }
-    
+
     pass.dispatch_workgroups(workgroups.0, workgroups.1, workgroups.2);
 }

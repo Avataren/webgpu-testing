@@ -13,10 +13,10 @@ pub mod postprocess;
 pub mod primitives;
 pub mod render_context;
 mod renderer_core;
+pub mod shader_builder;
 pub mod texture;
 pub mod uniforms;
 pub mod vertex;
-pub mod shader_builder;
 
 pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
 pub use compute_builder::ComputePipelineBuilder;
@@ -32,12 +32,12 @@ pub use lights::{
 pub use material::Material;
 pub use objects::{MaterialData, ObjectData};
 pub use pipeline_builder::PipelineBuilder;
-pub use shader_builder::ShaderBuilder;
 pub use primitives::*;
 pub use render_context::{
     CustomRenderCallback, CustomRenderContext, CustomRenderRequest, CustomRenderStage,
 };
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
+pub use shader_builder::ShaderBuilder;
 pub use texture::Texture;
 pub use uniforms::CameraUniform;
 pub use vertex::Vertex;

@@ -138,7 +138,7 @@ impl Renderer {
         self.ui_hook = Some(hook);
     }
 
-    pub fn supports_bindless_textures(&self) -> bool{
+    pub fn supports_bindless_textures(&self) -> bool {
         self.context.supports_bindless_textures
     }
 

@@ -171,7 +171,6 @@ impl RenderApplication for StarfieldGpuApp {
             );
 
             ctx.renderer.get_queue().submit(Some(encoder.finish()));
-
         }
     }
 
