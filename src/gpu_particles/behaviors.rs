@@ -257,22 +257,287 @@ impl ParticleBehavior for BoidsBehavior {
 }
 
 // ============================================================================
-// Optimized Boids Behavior with Spatial Hash Grid (O(n) version)
+// Radix Sort Implementation
 // ============================================================================
-//
-// This implementation uses a spatial hash grid to accelerate neighbor queries.
-// Performance comparison:
-// - Original:  5,000 particles @ 15 FPS  |  10,000 @ 4 FPS
-// - Optimized: 5,000 particles @ 60 FPS  |  10,000 @ 55 FPS
-//
-// The spatial grid divides 3D space into uniform cells. Each particle is
-// assigned to a cell, and neighbor queries only check nearby cells (typically
-// 27 cells in 3D) instead of all particles, reducing complexity from O(n²) to O(n).
 
 use crate::renderer::compute_resources::{
     BindGroupBuilder, BindGroupLayoutBuilder, StorageBuffer, UniformBuffer,
 };
 use crate::renderer::ComputePipelineBuilder;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct RadixSortParams {
+    count: u32,
+    bit_offset: u32,
+    _padding: [u32; 2],
+}
+
+struct RadixSort {
+    // Pipelines
+    count_pipeline: wgpu::ComputePipeline,
+    prefix_sum_pipeline: wgpu::ComputePipeline,
+    scatter_pipeline: wgpu::ComputePipeline,
+    
+    // Layouts
+    count_layout: wgpu::BindGroupLayout,
+    prefix_sum_layout: wgpu::BindGroupLayout,
+    scatter_layout: wgpu::BindGroupLayout,
+    
+    // Buffers
+    histogram_buffer: StorageBuffer,
+    params_buffer: UniformBuffer,
+    temp_buffer: StorageBuffer,  // For ping-pong sorting
+    
+    // Bind groups (recreated when buffers change)
+    count_bind_group_a: Option<wgpu::BindGroup>,
+    count_bind_group_b: Option<wgpu::BindGroup>,
+    prefix_sum_bind_group: wgpu::BindGroup,
+    scatter_bind_group_a: Option<wgpu::BindGroup>,
+    scatter_bind_group_b: Option<wgpu::BindGroup>,
+}
+
+impl RadixSort {
+    fn new(device: &wgpu::Device, max_elements: u32) -> Self {
+        // Create shader
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RadixSortShader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("shaders/radix_sort.wgsl").into(),
+            ),
+        });
+        
+        // Create histogram buffer (16 bins for 4-bit radix)
+        let histogram_buffer = StorageBuffer::with_capacity::<u32>(
+            device,
+            "RadixSortHistogram",
+            16,
+        );
+        
+        // Create temp buffer for ping-pong
+        let temp_buffer = StorageBuffer::with_capacity::<[u32; 2]>(
+            device,
+            "RadixSortTemp",
+            max_elements as usize,
+        );
+        
+        // Create params buffer
+        let params = RadixSortParams {
+            count: 0,
+            bit_offset: 0,
+            _padding: [0, 0],
+        };
+        let params_buffer = UniformBuffer::new(device, "RadixSortParams", &params);
+        
+        // Create bind group layouts
+        let count_layout = BindGroupLayoutBuilder::new(device)
+            .with_label("RadixSortCountLayout")
+            .add_storage_buffer(0, true)   // input_data (read)
+            .add_storage_buffer(1, false)  // histogram (read_write, atomic)
+            .add_uniform_buffer(2)         // params
+            .build();
+        
+        let prefix_sum_layout = BindGroupLayoutBuilder::new(device)
+            .with_label("RadixSortPrefixSumLayout")
+            .add_storage_buffer(0, false)  // histogram (read_write, atomic)
+            .build();
+        
+        let scatter_layout = BindGroupLayoutBuilder::new(device)
+            .with_label("RadixSortScatterLayout")
+            .add_storage_buffer(0, true)   // input_data (read)
+            .add_storage_buffer(1, false)  // output_data (write)
+            .add_storage_buffer(2, false)  // histogram (read_write, atomic)
+            .add_uniform_buffer(3)         // params
+            .build();
+        
+        // Create pipelines
+        let count_pipeline = ComputePipelineBuilder::new()
+            .with_label("RadixSortCount")
+            .with_shader(&shader)
+            .with_entry_point("count_phase")
+            .with_bind_group_layout(&count_layout)
+            .build(device);
+        
+        let prefix_sum_pipeline = ComputePipelineBuilder::new()
+            .with_label("RadixSortPrefixSum")
+            .with_shader(&shader)
+            .with_entry_point("prefix_sum_phase")
+            .with_bind_group_layout(&prefix_sum_layout)
+            .build(device);
+        
+        let scatter_pipeline = ComputePipelineBuilder::new()
+            .with_label("RadixSortScatter")
+            .with_shader(&shader)
+            .with_entry_point("scatter_phase")
+            .with_bind_group_layout(&scatter_layout)
+            .build(device);
+        
+        // Create prefix sum bind group (doesn't depend on data buffers)
+        let prefix_sum_bind_group = BindGroupBuilder::new(device, &prefix_sum_layout)
+            .with_label("RadixSortPrefixSumBindGroup")
+            .add_buffer(0, histogram_buffer.buffer())
+            .build();
+        
+        Self {
+            count_pipeline,
+            prefix_sum_pipeline,
+            scatter_pipeline,
+            count_layout,
+            prefix_sum_layout,
+            scatter_layout,
+            histogram_buffer,
+            params_buffer,
+            temp_buffer,
+            count_bind_group_a: None,
+            count_bind_group_b: None,
+            prefix_sum_bind_group,
+            scatter_bind_group_a: None,
+            scatter_bind_group_b: None,
+        }
+    }
+    
+    /// Sort ParticleGridData array by cell_index using radix sort
+    fn sort(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        input_buffer: &wgpu::Buffer,
+        output_buffer: &wgpu::Buffer,
+        count: u32,
+    ) {
+        if count == 0 { return; }
+        
+        // Calculate number of passes needed (4 bits per pass)
+        // For most cell indices, we need 2-3 passes max
+        let max_cell_index = count;  // Worst case: as many cells as particles
+        let max_bits = if max_cell_index > 0 {
+            32 - max_cell_index.leading_zeros()
+        } else {
+            1
+        };
+        let num_passes = ((max_bits + 3) / 4).max(1);  // At least 1 pass
+        
+        // Create bind groups if needed
+        if self.count_bind_group_a.is_none() {
+            // A: input -> temp
+            self.count_bind_group_a = Some(
+                BindGroupBuilder::new(device, &self.count_layout)
+                    .with_label("RadixSortCountBindGroupA")
+                    .add_buffer(0, input_buffer)
+                    .add_buffer(1, self.histogram_buffer.buffer())
+                    .add_buffer(2, self.params_buffer.buffer())
+                    .build(),
+            );
+            
+            // B: temp -> output (for ping-pong)
+            self.count_bind_group_b = Some(
+                BindGroupBuilder::new(device, &self.count_layout)
+                    .with_label("RadixSortCountBindGroupB")
+                    .add_buffer(0, self.temp_buffer.buffer())
+                    .add_buffer(1, self.histogram_buffer.buffer())
+                    .add_buffer(2, self.params_buffer.buffer())
+                    .build(),
+            );
+            
+            self.scatter_bind_group_a = Some(
+                BindGroupBuilder::new(device, &self.scatter_layout)
+                    .with_label("RadixSortScatterBindGroupA")
+                    .add_buffer(0, input_buffer)
+                    .add_buffer(1, self.temp_buffer.buffer())
+                    .add_buffer(2, self.histogram_buffer.buffer())
+                    .add_buffer(3, self.params_buffer.buffer())
+                    .build(),
+            );
+            
+            self.scatter_bind_group_b = Some(
+                BindGroupBuilder::new(device, &self.scatter_layout)
+                    .with_label("RadixSortScatterBindGroupB")
+                    .add_buffer(0, self.temp_buffer.buffer())
+                    .add_buffer(1, output_buffer)
+                    .add_buffer(2, self.histogram_buffer.buffer())
+                    .add_buffer(3, self.params_buffer.buffer())
+                    .build(),
+            );
+        }
+        
+        for pass in 0..num_passes {
+            let bit_offset = pass * 4;
+            
+            // Determine which bind groups to use (ping-pong between buffers)
+            let (count_bg, scatter_bg) = if pass % 2 == 0 {
+                (
+                    self.count_bind_group_a.as_ref().unwrap(),
+                    self.scatter_bind_group_a.as_ref().unwrap(),
+                )
+            } else {
+                (
+                    self.count_bind_group_b.as_ref().unwrap(),
+                    self.scatter_bind_group_b.as_ref().unwrap(),
+                )
+            };
+            
+            // Update params
+            let params = RadixSortParams {
+                count,
+                bit_offset,
+                _padding: [0, 0],
+            };
+            self.params_buffer.write(queue, &params);
+            
+            // Clear histogram
+            encoder.clear_buffer(self.histogram_buffer.buffer(), 0, None);
+            
+            // Sub-pass 1: Count phase
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("RadixSortCount"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.count_pipeline);
+                pass.set_bind_group(0, count_bg, &[]);
+                pass.dispatch_workgroups(count.div_ceil(256), 1, 1);
+            }
+            
+            // Sub-pass 2: Prefix sum phase
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("RadixSortPrefixSum"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.prefix_sum_pipeline);
+                pass.set_bind_group(0, &self.prefix_sum_bind_group, &[]);
+                pass.dispatch_workgroups(1, 1, 1);  // Only 16 elements
+            }
+            
+            // Sub-pass 3: Scatter phase
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("RadixSortScatter"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&self.scatter_pipeline);
+                pass.set_bind_group(0, scatter_bg, &[]);
+                pass.dispatch_workgroups(count.div_ceil(256), 1, 1);
+            }
+        }
+        
+        // If odd number of passes, data ends up in temp_buffer, need final copy
+        if num_passes % 2 == 1 {
+            encoder.copy_buffer_to_buffer(
+                self.temp_buffer.buffer(),
+                0,
+                output_buffer,
+                0,
+                (count as usize * std::mem::size_of::<[u32; 2]>()) as u64,
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Optimized Boids Behavior with Spatial Hash Grid (O(n) version)
+// ============================================================================
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -298,11 +563,12 @@ struct OptimizedBoidsParams {
 struct GridBuildParams {
     bounds: f32,               // offset 0
     cell_size: f32,            // offset 4
-    _padding1: [u32; 2],       // offset 8
+    _padding1: [u32; 2],       // offset 8 (pad to 16)
     grid_dimensions: [u32; 3], // offset 16 (vec3 needs 16-byte alignment!)
-    particle_count: u32,       // offset 28
-    total_cells: u32,          // offset 32
-    _padding2: [u32; 7],       // offset 36 (pad struct to 64 bytes for uniform alignment)
+    _padding_vec3: u32,        // offset 28 (pad vec3 to 16 bytes)
+    particle_count: u32,       // offset 32
+    total_cells: u32,          // offset 36
+    _padding2: [u32; 2],       // offset 40 (pad to 48 bytes total)
 }
 
 pub struct OptimizedBoidsBehavior {
@@ -324,25 +590,24 @@ pub struct OptimizedBoidsBehavior {
 
     // GPU resources for spatial grid
     spatial_grid_buffer: StorageBuffer,
-    sorted_indices_buffer: StorageBuffer,
+    sorted_particle_data_buffer: StorageBuffer,
     particle_grid_data_buffer: StorageBuffer,
     cell_counts_buffer: StorageBuffer,
-    cell_offsets_buffer: StorageBuffer,
     grid_params_buffer: UniformBuffer,
+
+    // Radix sorter
+    radix_sorter: RadixSort,
 
     // Compute pipelines for grid building
     compute_cell_indices_pipeline: wgpu::ComputePipeline,
     prefix_sum_pipeline: wgpu::ComputePipeline,
-    reorder_pipeline: wgpu::ComputePipeline,
 
     // Bind group layouts
     cell_indices_layout: wgpu::BindGroupLayout,
-    reorder_layout: wgpu::BindGroupLayout,
 
     // Bind groups (recreated when particle buffer changes)
     cell_indices_bind_group: Option<wgpu::BindGroup>,
     prefix_sum_bind_group: wgpu::BindGroup,
-    reorder_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl OptimizedBoidsBehavior {
@@ -388,9 +653,9 @@ impl OptimizedBoidsBehavior {
             total_cells as usize,
         );
 
-        let sorted_indices_buffer = StorageBuffer::with_capacity::<u32>(
+        let sorted_particle_data_buffer = StorageBuffer::with_capacity::<[u32; 2]>(
             device,
-            "SortedIndicesBuffer",
+            "SortedParticleDataBuffer",
             max_particles as usize,
         );
 
@@ -403,9 +668,6 @@ impl OptimizedBoidsBehavior {
         let cell_counts_buffer =
             StorageBuffer::with_capacity::<u32>(device, "CellCountsBuffer", total_cells as usize);
 
-        let cell_offsets_buffer =
-            StorageBuffer::with_capacity::<u32>(device, "CellOffsetsBuffer", total_cells as usize);
-
         let grid_params = GridBuildParams {
             bounds,
             cell_size,
@@ -413,7 +675,8 @@ impl OptimizedBoidsBehavior {
             particle_count: 0,
             total_cells,
             _padding1: [0, 0],
-            _padding2: [0, 0, 0, 0, 0, 0, 0],
+            _padding_vec3: 0,
+            _padding2: [0, 0],
         };
 
         let grid_params_buffer = UniformBuffer::new(device, "GridParams", &grid_params);
@@ -433,11 +696,6 @@ impl OptimizedBoidsBehavior {
             ),
         });
 
-        let reorder_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ReorderShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/reorder.wgsl").into()),
-        });
-
         // Create bind group layouts
         let cell_indices_layout = BindGroupLayoutBuilder::new(device)
             .with_label("CellIndicesLayout")
@@ -451,16 +709,7 @@ impl OptimizedBoidsBehavior {
             .with_label("PrefixSumLayout")
             .add_storage_buffer(0, true) // cell_counts (read)
             .add_storage_buffer(1, false) // spatial_grid (write)
-            .add_uniform_buffer(2) // total_cells
-            .build();
-
-        let reorder_layout = BindGroupLayoutBuilder::new(device)
-            .with_label("ReorderLayout")
-            .add_storage_buffer(0, true) // particle_grid_data (read)
-            .add_storage_buffer(1, true) // spatial_grid (read)
-            .add_storage_buffer(2, false) // sorted_indices (write)
-            .add_storage_buffer(3, false) // cell_offsets (write, atomic)
-            .add_uniform_buffer(4) // particle_count
+            .add_uniform_buffer(2) // params
             .build();
 
         // Create compute pipelines
@@ -478,13 +727,6 @@ impl OptimizedBoidsBehavior {
             .with_bind_group_layout(&prefix_sum_layout)
             .build(device);
 
-        let reorder_pipeline = ComputePipelineBuilder::new()
-            .with_label("ReorderPipeline")
-            .with_shader(&reorder_shader)
-            .with_entry_point("reorder_particles")
-            .with_bind_group_layout(&reorder_layout)
-            .build(device);
-
         // Create prefix sum bind group (doesn't depend on particles_buffer)
         let prefix_sum_bind_group = BindGroupBuilder::new(device, &prefix_sum_layout)
             .with_label("PrefixSumBindGroup")
@@ -492,6 +734,9 @@ impl OptimizedBoidsBehavior {
             .add_buffer(1, spatial_grid_buffer.buffer())
             .add_buffer(2, grid_params_buffer.buffer())
             .build();
+
+        // Create radix sorter
+        let radix_sorter = RadixSort::new(device, max_particles);
 
         Self {
             separation_radius: 3.0,
@@ -508,19 +753,16 @@ impl OptimizedBoidsBehavior {
             grid_dimensions,
             total_cells,
             spatial_grid_buffer,
-            sorted_indices_buffer,
+            sorted_particle_data_buffer,
             particle_grid_data_buffer,
             cell_counts_buffer,
-            cell_offsets_buffer,
             grid_params_buffer,
+            radix_sorter,
             compute_cell_indices_pipeline,
             prefix_sum_pipeline,
-            reorder_pipeline,
             cell_indices_layout,
-            reorder_layout,
             cell_indices_bind_group: None,
             prefix_sum_bind_group,
-            reorder_bind_group: None,
         }
     }
 
@@ -530,10 +772,10 @@ impl OptimizedBoidsBehavior {
 
     /// Build spatial grid from particle positions.
     ///
-    /// This must be called before the main boids update pass. It performs three compute passes:
+    /// This must be called before the main boids update pass. It performs three stages:
     /// 1. Compute cell indices - Assigns each particle to a grid cell and counts particles per cell
     /// 2. Prefix sum - Calculates start indices for each cell in the sorted array
-    /// 3. Reorder - Sorts particles by cell for cache-coherent access
+    /// 3. Radix sort - Sorts particles by cell for cache-coherent access (replaces atomic reordering)
     ///
     /// # Arguments
     /// * `device` - WGPU device
@@ -559,7 +801,8 @@ impl OptimizedBoidsBehavior {
             particle_count: self.particle_count,
             total_cells: self.total_cells,
             _padding1: [0, 0],
-            _padding2: [0, 0, 0, 0, 0, 0, 0],
+            _padding_vec3: 0,
+            _padding2: [0, 0],
         };
         self.grid_params_buffer.write(queue, &grid_params);
 
@@ -574,22 +817,10 @@ impl OptimizedBoidsBehavior {
                     .add_buffer(3, self.cell_counts_buffer.buffer())
                     .build(),
             );
-
-            self.reorder_bind_group = Some(
-                BindGroupBuilder::new(device, &self.reorder_layout)
-                    .with_label("ReorderBindGroup")
-                    .add_buffer(0, self.particle_grid_data_buffer.buffer())
-                    .add_buffer(1, self.spatial_grid_buffer.buffer())
-                    .add_buffer(2, self.sorted_indices_buffer.buffer())
-                    .add_buffer(3, self.cell_offsets_buffer.buffer())
-                    .add_buffer(4, self.grid_params_buffer.buffer())
-                    .build(),
-            );
         }
 
-        // Clear cell counts and offsets
+        // Clear cell counts
         encoder.clear_buffer(self.cell_counts_buffer.buffer(), 0, None);
-        encoder.clear_buffer(self.cell_offsets_buffer.buffer(), 0, None);
 
         // Pass 1: Compute cell indices and count particles per cell
         {
@@ -610,18 +841,18 @@ impl OptimizedBoidsBehavior {
             });
             pass.set_pipeline(&self.prefix_sum_pipeline);
             pass.set_bind_group(0, &self.prefix_sum_bind_group, &[]);
-            pass.dispatch_workgroups(1, 1, 1); // One workgroup processes up to 256 cells
+            pass.dispatch_workgroups(1, 1, 1);
         }
-        // Pass 3: Reorder particles into sorted array
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("ReorderParticles"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.reorder_pipeline);
-            pass.set_bind_group(0, self.reorder_bind_group.as_ref().unwrap(), &[]);
-            pass.dispatch_workgroups(self.particle_count.div_ceil(256), 1, 1);
-        }
+
+        // Pass 3: Radix sort particles by cell index (replaces atomic reordering)
+        self.radix_sorter.sort(
+            device,
+            queue,
+            encoder,
+            self.particle_grid_data_buffer.buffer(),
+            self.sorted_particle_data_buffer.buffer(),
+            self.particle_count,
+        );
     }
 }
 
@@ -688,7 +919,7 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: self.sorted_indices_buffer.buffer().as_entire_binding(),
+                resource: self.sorted_particle_data_buffer.buffer().as_entire_binding(),
             },
         ]
     }
@@ -787,20 +1018,8 @@ mod tests {
     }
 
     #[test]
-    fn test_optimized_boids_set_particle_count() {
-        // Note: This test can't actually create the behavior without a GPU device,
-        // but we can test the struct fields are laid out correctly
-        let bounds = 75.0;
-        let max_radius = 20.0;
-        let cell_size = max_radius * 1.5;
-        let grid_extent = bounds * 2.0;
-        let grid_dim = ((grid_extent / cell_size) as f32).ceil() as u32;
-        let total_cells = grid_dim * grid_dim * grid_dim;
-
-        // Verify grid calculations
-        assert_eq!(cell_size, 30.0);
-        assert_eq!(grid_dim, 5); // 150 / 30 = 5
-        assert_eq!(total_cells, 125); // 5³
+    fn test_radix_sort_params_size() {
+        assert_eq!(std::mem::size_of::<RadixSortParams>(), 16);
     }
 
     #[test]

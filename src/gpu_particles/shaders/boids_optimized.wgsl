@@ -39,10 +39,16 @@ struct CellData {
     count: u32,
 }
 
+// NEW: Sorted particle data structure (output from radix sort)
+struct ParticleGridData {
+    cell_index: u32,
+    particle_index: u32,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read> spatial_grid: array<CellData>;
-@group(0) @binding(3) var<storage, read> sorted_indices: array<u32>;
+@group(0) @binding(3) var<storage, read> sorted_particle_data: array<ParticleGridData>;
 
 // ============================================================================
 // Spatial Grid Helper Functions
@@ -115,7 +121,7 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
 
                 // Check all particles in this cell
                 for (var i = 0u; i < cell_data.count; i++) {
-                    let particle_idx = sorted_indices[cell_data.start_index + i];
+                    let particle_idx = sorted_particle_data[cell_data.start_index + i].particle_index;
                     if particle_idx == index { continue; }
 
                     let other_pos = particles[particle_idx].position;
@@ -158,7 +164,7 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
                 let cell_data = spatial_grid[grid_idx];
 
                 for (var i = 0u; i < cell_data.count; i++) {
-                    let particle_idx = sorted_indices[cell_data.start_index + i];
+                    let particle_idx = sorted_particle_data[cell_data.start_index + i].particle_index;
                     if particle_idx == index { continue; }
 
                     let other_pos = particles[particle_idx].position;
@@ -198,7 +204,7 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
                 let cell_data = spatial_grid[grid_idx];
 
                 for (var i = 0u; i < cell_data.count; i++) {
-                    let particle_idx = sorted_indices[cell_data.start_index + i];
+                    let particle_idx = sorted_particle_data[cell_data.start_index + i].particle_index;
                     if particle_idx == index { continue; }
 
                     let other_pos = particles[particle_idx].position;

@@ -25,9 +25,12 @@ struct Particle {
 struct GridParams {
     bounds: f32,
     cell_size: f32,
+    _padding1: vec2<u32>,        // ✅ Add padding
     grid_dimensions: vec3<u32>,
+    _padding_vec3: u32,          // ✅ Pad vec3 to 16 bytes  
     particle_count: u32,
     total_cells: u32,
+    _padding2: vec2<u32>,        // ✅ Add padding
 }
 
 struct ParticleGridData {

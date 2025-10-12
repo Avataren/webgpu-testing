@@ -19,7 +19,7 @@ use wgpu_cube::{
 use wasm_bindgen::prelude::*;
 
 // Increased particle count to demonstrate optimization
-const BOID_COUNT: usize = 10_000;
+const BOID_COUNT: usize = 5_000;
 const BOUNDS: f32 = 75.0;
 const MAX_SPEED: f32 = 50.0;
 const MAX_FORCE: f32 = 6.0;
@@ -106,7 +106,7 @@ impl RenderApplication for BoidsOptimizedApp {
             ctx.renderer.get_device(),
             BOID_COUNT as u32,
             BOUNDS,
-            max_interaction_radius * 0.5,
+            max_interaction_radius,
         );
 
         // Set behavior parameters
