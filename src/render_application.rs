@@ -8,58 +8,55 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage};
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
     LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, StatsWindow,
+    UiStyle
 };
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+
+
 /// Core trait for render applications. Implement this to define your application's behavior.
 pub trait RenderApplication: Sized + 'static {
-    /// Name of your application
     fn name(&self) -> &str {
         "Render Application"
     }
 
-    /// Called once during startup to initialize the scene
     fn setup(&mut self, ctx: &mut StartupContext);
 
-    /// Called every frame to update application logic
     fn update(&mut self, ctx: &mut UpdateContext) {
         let _ = ctx;
     }
 
-    /// Called every frame for GPU-related updates
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         let _ = ctx;
     }
 
-    /// Configure the AppBuilder before systems are added
     fn configure(&self, builder: &mut AppBuilder) {
         let _ = builder;
     }
 
-    /// Custom render hook - called during rendering at the stage returned by
-    /// [`RenderApplication::custom_render_stage`]. By default this executes
-    /// before post-processing so any output is affected by those effects.
     fn custom_render(&mut self, _ctx: &mut CustomRenderContext) {}
 
-    /// Choose when [`RenderApplication::custom_render`] executes relative to
-    /// post-processing.
     fn custom_render_stage(&self) -> CustomRenderStage {
         CustomRenderStage::BeforePostprocess
     }
 
-    /// Custom egui UI (called after default UI is rendered)
     #[cfg(feature = "egui")]
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         let _ = ctx;
         let _ = default_ui;
     }
 
-    /// Whether to show the default UI windows
     #[cfg(feature = "egui")]
     fn show_default_ui(&self) -> bool {
         true
+    }
+
+    /// Return the UI style to use. Override this to customize appearance.
+    #[cfg(feature = "egui")]
+    fn ui_style(&self) -> UiStyle {
+        UiStyle::default()
     }
 }
 
@@ -162,7 +159,6 @@ where
         });
     }
 
-    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
 
     // Install custom render callback
@@ -179,6 +175,7 @@ where
     #[cfg(feature = "egui")]
     {
         let show_default = app_rc.borrow().show_default_ui();
+        let ui_style = app_rc.borrow().ui_style(); // Get the style
         let stats_handle = app.frame_stats_handle();
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
@@ -190,6 +187,7 @@ where
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
+                ui_style.apply(ctx); // Apply style at the start of each frame
                 default_ui.show(ctx);
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
@@ -199,6 +197,7 @@ where
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
+                ui_style.apply(ctx); // Apply style at the start of each frame
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         }

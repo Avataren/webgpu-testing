@@ -20,6 +20,9 @@ mod postprocess_window;
 mod environment_window;
 
 #[cfg(feature = "egui")]
+mod style; // Add this
+
+#[cfg(feature = "egui")]
 pub use stats_window::{FrameSample, FrameStatsHandle, FrameStatsHistory, StatsWindow};
 
 #[cfg(feature = "egui")]
@@ -32,3 +35,6 @@ pub use postprocess_window::{PostProcessEffectsHandle, PostProcessWindow};
 pub use environment_window::{
     EnvironmentSettingsControls, EnvironmentSettingsHandle, EnvironmentWindow,
 };
+
+#[cfg(feature = "egui")]
+pub use style::UiStyle;

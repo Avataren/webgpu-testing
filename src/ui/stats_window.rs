@@ -241,7 +241,7 @@ impl StatsWindow {
         let rect = response.rect;
 
         // Background
-        painter.rect_filled(rect, CornerRadius::same(4), Color32::from_gray(25));
+        painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(25,25,25,150));
         painter.rect_stroke(
             rect,
             CornerRadius::same(4),
@@ -339,7 +339,7 @@ impl StatsWindow {
         let rect = response.rect;
 
         // Background
-        painter.rect_filled(rect, CornerRadius::same(4), Color32::from_gray(25));
+        painter.rect_filled(rect, CornerRadius::same(4), Color32::from_rgba_unmultiplied(25,25,25,150));
         painter.rect_stroke(
             rect,
             CornerRadius::same(4),

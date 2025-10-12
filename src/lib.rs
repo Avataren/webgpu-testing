@@ -13,6 +13,10 @@ pub mod time;
 pub mod ui;
 
 #[cfg(feature = "egui")]
+pub use ui::*;
+
+
+#[cfg(feature = "egui")]
 pub use render_application::DefaultUI;
 pub use render_application::{run_application, RenderApplication};
 
