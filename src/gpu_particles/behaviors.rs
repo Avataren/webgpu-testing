@@ -337,7 +337,6 @@ pub struct OptimizedBoidsBehavior {
 
     // Bind group layouts
     cell_indices_layout: wgpu::BindGroupLayout,
-    prefix_sum_layout: wgpu::BindGroupLayout,
     reorder_layout: wgpu::BindGroupLayout,
 
     // Bind groups (recreated when particle buffer changes)
@@ -516,7 +515,6 @@ impl OptimizedBoidsBehavior {
             prefix_sum_pipeline,
             reorder_pipeline,
             cell_indices_layout,
-            prefix_sum_layout,
             reorder_layout,
             cell_indices_bind_group: None,
             prefix_sum_bind_group,
@@ -784,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_physics_params_size() {
-        assert_eq!(std::mem::size_of::<PhysicsParams>(), 24);
+        assert_eq!(std::mem::size_of::<PhysicsParams>(), 32);
     }
 
     #[test]
@@ -824,5 +822,4 @@ mod tests {
             );
         }
     }
-
 }

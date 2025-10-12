@@ -61,9 +61,27 @@ fn pos_to_cell(pos: vec3<f32>) -> vec3<u32> {
 
 /// Convert 3D cell coordinates to 1D grid index
 fn cell_to_index(cell: vec3<u32>) -> u32 {
-    return cell.x + 
-           cell.y * params.grid_dimensions.x + 
+    return cell.x +
+           cell.y * params.grid_dimensions.x +
            cell.z * params.grid_dimensions.x * params.grid_dimensions.y;
+}
+
+/// Clamp cell coordinates to the valid grid range
+fn clamp_cell_coords(cell: vec3<i32>) -> vec3<i32> {
+    let max_dims = vec3<i32>(
+        i32(params.grid_dimensions.x) - 1,
+        i32(params.grid_dimensions.y) - 1,
+        i32(params.grid_dimensions.z) - 1,
+    );
+    return clamp(cell, vec3<i32>(0), max_dims);
+}
+
+/// Convert a world-space position to a clamped cell coordinate
+fn pos_to_cell_clamped_i32(pos: vec3<f32>) -> vec3<i32> {
+    let offset_pos = pos + vec3<f32>(params.bounds);
+    let grid_pos = offset_pos / params.cell_size;
+    let floored = floor(grid_pos);
+    return clamp_cell_coords(vec3<i32>(floored));
 }
 
 /// Clamp magnitude of a vector
@@ -83,35 +101,26 @@ fn limit_magnitude(v: vec3<f32>, max_length: f32) -> vec3<f32> {
 fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
     var steer = vec3<f32>(0.0);
     var count = 0u;
-    
-    let cell = pos_to_cell(position);
-    let search_radius = u32(ceil(params.separation_radius / params.cell_size));
-    
-    // Search neighboring cells only (typically 27 cells in 3D)
-    for (var dx = -i32(search_radius); dx <= i32(search_radius); dx++) {
-        for (var dy = -i32(search_radius); dy <= i32(search_radius); dy++) {
-            for (var dz = -i32(search_radius); dz <= i32(search_radius); dz++) {
-                let neighbor_cell = vec3<i32>(cell) + vec3<i32>(dx, dy, dz);
-                
-                // Check if neighbor cell is within grid bounds
-                if neighbor_cell.x < 0 || neighbor_cell.y < 0 || neighbor_cell.z < 0 ||
-                   neighbor_cell.x >= i32(params.grid_dimensions.x) ||
-                   neighbor_cell.y >= i32(params.grid_dimensions.y) ||
-                   neighbor_cell.z >= i32(params.grid_dimensions.z) {
-                    continue;
-                }
-                
+
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.separation_radius));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.separation_radius));
+
+    // Search neighboring cells that overlap the interaction sphere
+    for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
+        for (var cy = min_cell.y; cy <= max_cell.y; cy++) {
+            for (var cz = min_cell.z; cz <= max_cell.z; cz++) {
+                let neighbor_cell = vec3<i32>(cx, cy, cz);
                 let grid_idx = cell_to_index(vec3<u32>(neighbor_cell));
                 let cell_data = spatial_grid[grid_idx];
-                
+
                 // Check all particles in this cell
                 for (var i = 0u; i < cell_data.count; i++) {
                     let particle_idx = sorted_indices[cell_data.start_index + i];
                     if particle_idx == index { continue; }
-                    
+
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
-                    
+
                     if distance > 0.0 && distance < params.separation_radius {
                         var diff = position - other_pos;
                         diff = normalize(diff) / distance;  // Weight by distance
@@ -122,14 +131,14 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
             }
         }
     }
-    
+
     if count > 0u {
         steer /= f32(count);
         if length(steer) > 0.0 {
             steer = normalize(steer) * params.max_speed;
         }
     }
-    
+
     return steer;
 }
 
@@ -137,32 +146,24 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
 fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     var count = 0u;
-    
-    let cell = pos_to_cell(position);
-    let search_radius = u32(ceil(params.alignment_radius / params.cell_size));
-    
-    for (var dx = -i32(search_radius); dx <= i32(search_radius); dx++) {
-        for (var dy = -i32(search_radius); dy <= i32(search_radius); dy++) {
-            for (var dz = -i32(search_radius); dz <= i32(search_radius); dz++) {
-                let neighbor_cell = vec3<i32>(cell) + vec3<i32>(dx, dy, dz);
-                
-                if neighbor_cell.x < 0 || neighbor_cell.y < 0 || neighbor_cell.z < 0 ||
-                   neighbor_cell.x >= i32(params.grid_dimensions.x) ||
-                   neighbor_cell.y >= i32(params.grid_dimensions.y) ||
-                   neighbor_cell.z >= i32(params.grid_dimensions.z) {
-                    continue;
-                }
-                
+
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.alignment_radius));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.alignment_radius));
+
+    for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
+        for (var cy = min_cell.y; cy <= max_cell.y; cy++) {
+            for (var cz = min_cell.z; cz <= max_cell.z; cz++) {
+                let neighbor_cell = vec3<i32>(cx, cy, cz);
                 let grid_idx = cell_to_index(vec3<u32>(neighbor_cell));
                 let cell_data = spatial_grid[grid_idx];
-                
+
                 for (var i = 0u; i < cell_data.count; i++) {
                     let particle_idx = sorted_indices[cell_data.start_index + i];
                     if particle_idx == index { continue; }
-                    
+
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
-                    
+
                     if distance > 0.0 && distance < params.alignment_radius {
                         sum += particles[particle_idx].velocity;
                         count++;
@@ -171,13 +172,13 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
             }
         }
     }
-    
+
     if count > 0u {
         sum /= f32(count);
         sum = normalize(sum) * params.max_speed;
         return limit_magnitude(sum - velocity, params.max_force);
     }
-    
+
     return vec3<f32>(0.0);
 }
 
@@ -185,32 +186,24 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
 fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     var count = 0u;
-    
-    let cell = pos_to_cell(position);
-    let search_radius = u32(ceil(params.cohesion_radius / params.cell_size));
-    
-    for (var dx = -i32(search_radius); dx <= i32(search_radius); dx++) {
-        for (var dy = -i32(search_radius); dy <= i32(search_radius); dy++) {
-            for (var dz = -i32(search_radius); dz <= i32(search_radius); dz++) {
-                let neighbor_cell = vec3<i32>(cell) + vec3<i32>(dx, dy, dz);
-                
-                if neighbor_cell.x < 0 || neighbor_cell.y < 0 || neighbor_cell.z < 0 ||
-                   neighbor_cell.x >= i32(params.grid_dimensions.x) ||
-                   neighbor_cell.y >= i32(params.grid_dimensions.y) ||
-                   neighbor_cell.z >= i32(params.grid_dimensions.z) {
-                    continue;
-                }
-                
+
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.cohesion_radius));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.cohesion_radius));
+
+    for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
+        for (var cy = min_cell.y; cy <= max_cell.y; cy++) {
+            for (var cz = min_cell.z; cz <= max_cell.z; cz++) {
+                let neighbor_cell = vec3<i32>(cx, cy, cz);
                 let grid_idx = cell_to_index(vec3<u32>(neighbor_cell));
                 let cell_data = spatial_grid[grid_idx];
-                
+
                 for (var i = 0u; i < cell_data.count; i++) {
                     let particle_idx = sorted_indices[cell_data.start_index + i];
                     if particle_idx == index { continue; }
-                    
+
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
-                    
+
                     if distance > 0.0 && distance < params.cohesion_radius {
                         sum += other_pos;
                         count++;
@@ -219,14 +212,14 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
             }
         }
     }
-    
+
     if count > 0u {
         sum /= f32(count);
         let desired = sum - position;
         let desired_normalized = normalize(desired) * params.max_speed;
         return limit_magnitude(desired_normalized - velocity, params.max_force);
     }
-    
+
     return vec3<f32>(0.0);
 }
 
