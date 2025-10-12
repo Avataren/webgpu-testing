@@ -181,9 +181,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     p.velocity += acceleration * params.delta_time;
     p.velocity = limit_magnitude(p.velocity, params.max_speed);
     p.position += p.velocity * params.delta_time;
-    
+
     // Hard clamp to bounds
     p.position = clamp(p.position, vec3<f32>(-params.bounds), vec3<f32>(params.bounds));
-    
+
+    // Align orientation with velocity direction for instanced rendering
+    let speed_sq = dot(p.velocity, p.velocity);
+    if speed_sq > 1e-6 {
+        let forward = normalize(p.velocity);
+        let base_forward = vec3<f32>(0.0, 0.0, 1.0);
+        let dot_value = clamp(dot(base_forward, forward), -1.0, 1.0);
+        var axis = cross(base_forward, forward);
+        let axis_length = length(axis);
+
+        if axis_length < 1e-5 {
+            axis = vec3<f32>(0.0, 1.0, 0.0);
+            if dot_value > 0.0 {
+                p.rotation = vec4<f32>(axis, 0.0);
+            } else {
+                p.rotation = vec4<f32>(axis, 3.14159265);
+            }
+        } else {
+            axis = axis / axis_length;
+            let angle = acos(dot_value);
+            p.rotation = vec4<f32>(axis, angle);
+        }
+    } else {
+        p.rotation = vec4<f32>(0.0, 1.0, 0.0, 0.0);
+    }
+
     particles[index] = p;
 }

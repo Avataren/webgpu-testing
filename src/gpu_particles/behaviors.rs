@@ -178,6 +178,7 @@ pub struct BoidsBehavior {
     pub max_speed: f32,
     pub max_force: f32,
     pub bounds: f32,
+    pub particle_count: u32,
 }
 
 impl Default for BoidsBehavior {
@@ -192,7 +193,14 @@ impl Default for BoidsBehavior {
             max_speed: 5.0,
             max_force: 0.5,
             bounds: 20.0,
+            particle_count: 0,
         }
+    }
+}
+
+impl BoidsBehavior {
+    pub fn set_particle_count(&mut self, count: u32) {
+        self.particle_count = count;
     }
 }
 
@@ -217,7 +225,7 @@ impl ParticleBehavior for BoidsBehavior {
             max_speed: self.max_speed,
             max_force: self.max_force,
             bounds: self.bounds,
-            particle_count: 0,
+            particle_count: self.particle_count,
             _padding: 0,
         };
 
@@ -240,7 +248,7 @@ impl ParticleBehavior for BoidsBehavior {
             max_speed: self.max_speed,
             max_force: self.max_force,
             bounds: self.bounds,
-            particle_count: 0,
+            particle_count: self.particle_count,
             _padding: 0,
         };
 
