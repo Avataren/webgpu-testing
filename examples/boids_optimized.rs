@@ -1,12 +1,6 @@
 // examples/boids_optimized.rs
 //
 // Optimized 3D Boids Simulation using Spatial Hash Grid
-//
-// Performance comparison with original (examples/boids_3d.rs):
-// - 5,000 boids:  15 FPS → 60 FPS (4x improvement)
-// - 10,000 boids: 4 FPS → 55 FPS (13x improvement)
-// - 20,000 boids: Unusable → 45 FPS
-// - 50,000 boids: Unusable → 25 FPS
 
 use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
@@ -195,7 +189,7 @@ impl RenderApplication for BoidsOptimizedApp {
             ctx.renderer.get_queue().submit(Some(encoder.finish()));
         }
     }
-    
+
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         if let (Some(particle_system), Some(mesh_handle)) =
             (self.particle_system.as_mut(), self.mesh_handle)
