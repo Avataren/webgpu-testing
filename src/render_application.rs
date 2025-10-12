@@ -85,8 +85,8 @@ impl DefaultUI {
             environment_window: EnvironmentWindow::new(env_handle),
             stats_open: true,
             log_open: false,
-            postprocess_open: true,
-            environment_open: true,
+            postprocess_open: false,
+            environment_open: false,
         }
     }
 

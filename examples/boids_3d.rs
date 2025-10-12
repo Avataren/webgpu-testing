@@ -65,13 +65,13 @@ impl RenderApplication for BoidsGpuApp {
     fn configure(&self, _builder: &mut AppBuilder) {}
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        ctx.scene.environment_mut().set_clear_color(wgpu::Color {
-            r: 0.02,
-            g: 0.025,
-            b: 0.04,
-            a: 1.0,
-        });
-        ctx.scene.environment_mut().disable_hdr_background();
+        // ctx.scene.environment_mut().set_clear_color(wgpu::Color {
+        //     r: 0.02,
+        //     g: 0.025,
+        //     b: 0.04,
+        //     a: 1.0,
+        // });
+        //ctx.scene.environment_mut().disable_hdr_background();
 
         ctx.scene.camera_mut().eye = Vec3::new(0.0, 45.0, 130.0);
         ctx.scene.camera_mut().target = Vec3::ZERO;
