@@ -94,7 +94,7 @@ impl EnvironmentWindow {
         let mut controls = controls;
         let mut changed = false;
 
-        let mut window = Window::new(&self.title).resizable(false);
+        let mut window = Window::new(&self.title).resizable(true);
         if let Some(open) = open {
             window = window.open(open);
         }
@@ -103,7 +103,9 @@ impl EnvironmentWindow {
             ui.heading("Global environment settings");
             ui.separator();
 
-            changed |= ui.color_edit_button_rgb(&mut controls.clear_color).changed();
+            changed |= ui
+                .color_edit_button_rgb(&mut controls.clear_color)
+                .changed();
 
             Self::slider_row(
                 ui,

@@ -39,7 +39,7 @@ impl PostProcessWindow {
             window = window.open(open);
         }
 
-        window.resizable(false).show(ctx, |ui| {
+        window.resizable(true).show(ctx, |ui| {
             ui.heading("Post-processing effects");
             ui.separator();
 
@@ -56,10 +56,34 @@ impl PostProcessWindow {
             ui.add_enabled_ui(effects.ssao, |ui| {
                 ui.label("Adjust the ambient occlusion contribution");
 
-                Self::slider_row(ui, &mut effects.ssao_settings.radius, 0.01..=1.0, "Radius", &mut changed);
-                Self::slider_row(ui, &mut effects.ssao_settings.bias, 0.0..=0.2, "Bias", &mut changed);
-                Self::slider_row(ui, &mut effects.ssao_settings.intensity, 0.0..=2.0, "Strength", &mut changed);
-                Self::slider_row(ui, &mut effects.ssao_settings.power, 0.5..=4.0, "Power", &mut changed);
+                Self::slider_row(
+                    ui,
+                    &mut effects.ssao_settings.radius,
+                    0.01..=1.0,
+                    "Radius",
+                    &mut changed,
+                );
+                Self::slider_row(
+                    ui,
+                    &mut effects.ssao_settings.bias,
+                    0.0..=0.2,
+                    "Bias",
+                    &mut changed,
+                );
+                Self::slider_row(
+                    ui,
+                    &mut effects.ssao_settings.intensity,
+                    0.0..=2.0,
+                    "Strength",
+                    &mut changed,
+                );
+                Self::slider_row(
+                    ui,
+                    &mut effects.ssao_settings.power,
+                    0.5..=4.0,
+                    "Power",
+                    &mut changed,
+                );
             });
 
             ui.separator();
@@ -67,9 +91,27 @@ impl PostProcessWindow {
             ui.add_enabled_ui(effects.bloom, |ui| {
                 ui.label("Control highlight extraction and scattering");
 
-                Self::slider_row(ui, &mut effects.bloom_settings.threshold, 0.0..=2.0, "Threshold", &mut changed);
-                Self::slider_row(ui, &mut effects.bloom_settings.knee, 0.0..=1.0, "Knee", &mut changed);
-                Self::slider_row(ui, &mut effects.bloom_settings.scatter, 0.0..=1.0, "Scatter", &mut changed);
+                Self::slider_row(
+                    ui,
+                    &mut effects.bloom_settings.threshold,
+                    0.0..=2.0,
+                    "Threshold",
+                    &mut changed,
+                );
+                Self::slider_row(
+                    ui,
+                    &mut effects.bloom_settings.knee,
+                    0.0..=1.0,
+                    "Knee",
+                    &mut changed,
+                );
+                Self::slider_row(
+                    ui,
+                    &mut effects.bloom_settings.scatter,
+                    0.0..=1.0,
+                    "Scatter",
+                    &mut changed,
+                );
             });
         });
 

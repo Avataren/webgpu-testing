@@ -7,14 +7,11 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage};
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
-    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, StatsWindow,
-    UiStyle
+    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
 use std::rc::Rc;
-
-
 
 /// Core trait for render applications. Implement this to define your application's behavior.
 pub trait RenderApplication: Sized + 'static {
@@ -94,12 +91,34 @@ impl DefaultUI {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
+        self.show_menu_bar(ctx);
+
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.environment_window
             .show(ctx, Some(&mut self.environment_open));
         self.postprocess_window
             .show(ctx, Some(&mut self.postprocess_open));
         self.log_window.show(ctx, Some(&mut self.log_open));
+    }
+
+    fn show_menu_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("default_ui_menu_bar").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Exit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button("Window", |ui| {
+                    ui.checkbox(&mut self.stats_open, "Statistics");
+                    ui.checkbox(&mut self.environment_open, "Environment");
+                    ui.checkbox(&mut self.postprocess_open, "Post-processing");
+                    ui.checkbox(&mut self.log_open, "Log");
+                });
+            });
+        });
     }
 
     pub fn show_stats(&mut self, ctx: &egui::Context) {
