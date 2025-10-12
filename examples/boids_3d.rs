@@ -14,17 +14,17 @@ use wgpu_cube::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const BOID_COUNT: usize = 5_000;
+const BOID_COUNT: usize = 2_500;
 const BOUNDS: f32 = 75.0;
-const MAX_SPEED: f32 = 50.0;
+const MAX_SPEED: f32 = 40.0;
 const MAX_FORCE: f32 = 6.0;
 
-const SEPARATION_RADIUS: f32 = 3.0;
+const SEPARATION_RADIUS: f32 = 2.0;
 const ALIGNMENT_RADIUS: f32 = 20.0;
 const COHESION_RADIUS: f32 = 20.0;
-const SEPARATION_WEIGHT: f32 = 1.0;
-const ALIGNMENT_WEIGHT: f32 = 1.5;
-const COHESION_WEIGHT: f32 = 3.0;
+const SEPARATION_WEIGHT: f32 = 2.5;
+const ALIGNMENT_WEIGHT: f32 = 2.5;
+const COHESION_WEIGHT: f32 = 2.0;
 
 const INITIAL_SPAWN_RADIUS: f32 = 15.0;
 const MIN_SPEED: f32 = 5.0;
