@@ -10,6 +10,8 @@ use crate::gpu_particles::ParticleBehavior;
 
 use super::radix_sort::RadixSort;
 
+const MAX_TOTAL_CELLS: u32 = 256;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct OptimizedBoidsParams {
@@ -75,6 +77,36 @@ pub struct OptimizedBoidsBehavior {
     prefix_sum_bind_group: wgpu::BindGroup,
 }
 
+fn calculate_grid_parameters(bounds: f32, max_interaction_radius: f32) -> (f32, [u32; 3], u32) {
+    let grid_extent = bounds * 2.0;
+    let preferred_cell_size = max_interaction_radius * 1.5;
+    let max_grid_dim = (MAX_TOTAL_CELLS as f32).cbrt().floor() as u32;
+
+    let mut grid_dim = ((grid_extent / preferred_cell_size).ceil() as u32).max(1);
+    let mut cell_size = preferred_cell_size;
+
+    if grid_dim > max_grid_dim {
+        grid_dim = max_grid_dim.max(1);
+        cell_size = grid_extent / grid_dim as f32;
+    }
+
+    if cell_size < max_interaction_radius {
+        cell_size = max_interaction_radius;
+        grid_dim = ((grid_extent / cell_size).ceil() as u32).clamp(1, max_grid_dim.max(1));
+        cell_size = grid_extent / grid_dim as f32;
+    }
+
+    let grid_dimensions = [grid_dim, grid_dim, grid_dim];
+    let total_cells = grid_dim * grid_dim * grid_dim;
+
+    debug_assert!(
+        total_cells <= MAX_TOTAL_CELLS,
+        "prefix sum shader expects at most {MAX_TOTAL_CELLS} cells but got {total_cells}",
+    );
+
+    (cell_size, grid_dimensions, total_cells)
+}
+
 impl OptimizedBoidsBehavior {
     pub fn new(
         device: &wgpu::Device,
@@ -82,11 +114,9 @@ impl OptimizedBoidsBehavior {
         bounds: f32,
         max_interaction_radius: f32,
     ) -> Self {
-        let cell_size = max_interaction_radius * 1.5;
-        let grid_extent = bounds * 2.0;
-        let grid_dim = (grid_extent / cell_size).ceil() as u32;
-        let grid_dimensions = [grid_dim, grid_dim, grid_dim];
-        let total_cells = grid_dim * grid_dim * grid_dim;
+        let (cell_size, grid_dimensions, total_cells) =
+            calculate_grid_parameters(bounds, max_interaction_radius);
+        let grid_dim = grid_dimensions[0];
 
         log::info!(
             "Optimized Boids: Grid {}x{}x{} = {} cells, cell_size = {:.2}",
@@ -396,13 +426,17 @@ mod tests {
 
     #[test]
     fn grid_dimension_calculations() {
-        let test_cases = vec![(50.0, 10.0, 7), (100.0, 20.0, 7), (75.0, 20.0, 5)];
+        let test_cases = vec![
+            (50.0, 10.0, 6, 216),
+            (100.0, 20.0, 6, 216),
+            (75.0, 20.0, 5, 125),
+        ];
 
-        for (bounds, radius, expected_dim) in test_cases {
-            let cell_size = radius * 1.5;
-            let grid_extent = bounds * 2.0;
-            let grid_dim = ((grid_extent / cell_size) as f32).ceil() as u32;
-            assert_eq!(grid_dim, expected_dim);
+        for (bounds, radius, expected_dim, expected_total) in test_cases {
+            let (_cell_size, grid_dims, total_cells) = calculate_grid_parameters(bounds, radius);
+            assert_eq!(grid_dims[0], expected_dim);
+            assert_eq!(total_cells, expected_total);
+            assert!(total_cells <= MAX_TOTAL_CELLS);
         }
     }
 }

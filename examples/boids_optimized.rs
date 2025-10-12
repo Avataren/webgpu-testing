@@ -18,22 +18,22 @@ use wgpu_cube::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-// Increased particle count to demonstrate optimization
-const BOID_COUNT: usize = 5_000;
-const BOUNDS: f32 = 75.0;
-const MAX_SPEED: f32 = 50.0;
-const MAX_FORCE: f32 = 6.0;
+// Tuned parameters chosen to keep the spatial grid within a single prefix-sum workgroup
+const BOID_COUNT: usize = 4_096;
+const BOUNDS: f32 = 60.0;
+const MAX_SPEED: f32 = 36.0;
+const MAX_FORCE: f32 = 4.5;
 
-const SEPARATION_RADIUS: f32 = 3.0;
-const ALIGNMENT_RADIUS: f32 = 20.0;
-const COHESION_RADIUS: f32 = 20.0;
-const SEPARATION_WEIGHT: f32 = 1.0;
-const ALIGNMENT_WEIGHT: f32 = 1.5;
-const COHESION_WEIGHT: f32 = 3.0;
+const SEPARATION_RADIUS: f32 = 4.0;
+const ALIGNMENT_RADIUS: f32 = 18.0;
+const COHESION_RADIUS: f32 = 22.0;
+const SEPARATION_WEIGHT: f32 = 1.2;
+const ALIGNMENT_WEIGHT: f32 = 1.4;
+const COHESION_WEIGHT: f32 = 2.4;
 
-const INITIAL_SPAWN_RADIUS: f32 = 15.0;
-const MIN_SPEED: f32 = 5.0;
-const SCALE_RANGE: std::ops::Range<f32> = 0.8..1.5;
+const INITIAL_SPAWN_RADIUS: f32 = 20.0;
+const MIN_SPEED: f32 = 6.0;
+const SCALE_RANGE: std::ops::Range<f32> = 0.9..1.4;
 
 struct BoidsOptimizedApp {
     particle_system: Option<GpuParticleSystem>,
