@@ -144,7 +144,6 @@ impl Scene {
         }
 
         let lights = lights::collect_lights(&self.world, camera);
-        renderer.set_lights(&lights);
 
         let scene_ref: &Scene = self;
         renderer.render(
