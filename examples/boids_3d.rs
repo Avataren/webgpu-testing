@@ -13,13 +13,14 @@ use wgpu_cube::scene::{EntityBuilder, Transform, TransformComponent};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+use wgpu_cube::AppBuilder;
 
 
 const BOID_COUNT: u32 = 5000;
 const WORKGROUP_SIZE: u32 = 256;
 const BOUNDS: f32 = 75.0;
-const MAX_SPEED: f32 = 40.0; 
-const MAX_FORCE: f32 = 5.0; 
+const MAX_SPEED: f32 = 50.0; 
+const MAX_FORCE: f32 = 6.0; 
 
 
 const SEPARATION_RADIUS: f32 = 3.0;
@@ -77,12 +78,15 @@ impl RenderApplication for BoidsApp {
         "3D Boids Simulation (Compute)"
     }
 
+    fn configure(&self, builder: &mut AppBuilder) {
+        //builder.disable_default_lighting();
+    }
+
     fn setup(&mut self, ctx: &mut StartupContext) {
         // Setup camera
         ctx.scene.camera_mut().eye = Vec3::new(0.0, 40.0, 80.0);
         ctx.scene.camera_mut().target = Vec3::ZERO;
         ctx.scene.camera_mut().far = 500.0;
-
         // Create boid simulation
         self.boid_state = Some(BoidSimulation::new(ctx));
 
