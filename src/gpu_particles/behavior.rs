@@ -1,4 +1,4 @@
-pub trait ParticleBehavior: Send + Sync {
+pub trait ParticleBehavior: PlatformBehaviorBounds {
     fn shader_source(&self) -> &str;
 
     fn entry_point(&self) -> &str {
@@ -17,3 +17,15 @@ pub trait ParticleBehavior: Send + Sync {
         Vec::new()
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait PlatformBehaviorBounds: Send + Sync {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync> PlatformBehaviorBounds for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait PlatformBehaviorBounds {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> PlatformBehaviorBounds for T {}
