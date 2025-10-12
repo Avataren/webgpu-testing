@@ -32,6 +32,12 @@ impl<'w> EntityBuilder<'w> {
         self
     }
 
+    /// Add any custom component (generic method)
+    pub fn with_component<T: hecs::Component>(mut self, component: T) -> Self {
+        self.builder.add(component);
+        self
+    }
+
     /// Add a transform component
     pub fn with_transform(mut self, transform: Transform) -> Self {
         self.builder.add(TransformComponent(transform));

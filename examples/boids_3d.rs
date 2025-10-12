@@ -9,7 +9,7 @@ use wgpu_cube::renderer::{
     BindGroupBuilder, BindGroupLayoutBuilder, ComputePass, ComputePipelineBuilder, Material,
     StorageBuffer, UniformBuffer,
 };
-use wgpu_cube::scene::{EntityBuilder, Transform};
+use wgpu_cube::scene::{EntityBuilder, Transform, TransformComponent};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -29,13 +29,20 @@ const SEPARATION_WEIGHT: f32 = 1.5;
 const ALIGNMENT_WEIGHT: f32 = 1.0;
 const COHESION_WEIGHT: f32 = 1.0;
 
+// GPU representation of a boid
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct Boid {
+struct BoidGpuData {
     position: [f32; 3],
     _padding1: f32,
     velocity: [f32; 3],
     _padding2: f32,
+}
+
+// Component marker for boid entities with their index
+#[derive(Clone, Copy, Debug)]
+struct BoidComponent {
+    index: u32,
 }
 
 #[repr(C)]
@@ -103,15 +110,12 @@ struct BoidSimulation {
     params_buffer: UniformBuffer,
     compute_pipeline: wgpu::ComputePipeline,
     compute_bind_group: wgpu::BindGroup,
-    mesh_handle: wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>,
-    material: Material,
     workgroup_count: u32,
 }
 
 impl BoidSimulation {
     fn new(ctx: &mut StartupContext) -> Self {
         let device = ctx.renderer.get_device();
-        let queue = ctx.renderer.get_queue();
 
         // Initialize boids with random positions and velocities
         let boids = Self::initialize_boids();
@@ -165,15 +169,11 @@ impl BoidSimulation {
         let mesh = ctx.renderer.create_mesh(&vertices, &indices);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
 
-        let material = Material::pbr()
-            .with_metallic(0.2)
-            .with_roughness(0.6);
-
         // Spawn visual entities for each boid
         for i in 0..BOID_COUNT {
             let color_hue = (i as f32 / BOID_COUNT as f32) * 360.0;
             let color = Self::hue_to_rgb(color_hue);
-            
+
             let boid_material = Material::new([
                 (color.0 * 255.0) as u8,
                 (color.1 * 255.0) as u8,
@@ -183,14 +183,18 @@ impl BoidSimulation {
             .with_metallic(0.3)
             .with_roughness(0.5);
 
+            // Spawn entity with BoidComponent marker
             EntityBuilder::new(&mut ctx.scene.world)
                 .with_name(format!("Boid{}", i))
                 .with_transform(Transform::from_translation(Vec3::ZERO))
                 .with_mesh(mesh_handle)
                 .with_material(boid_material)
+                .with_component(BoidComponent { index: i })
                 .visible(true)
                 .spawn();
         }
+
+        log::info!("Spawned {} boid entities", BOID_COUNT);
 
         let workgroup_count = BOID_COUNT.div_ceil(WORKGROUP_SIZE);
 
@@ -199,13 +203,112 @@ impl BoidSimulation {
             params_buffer,
             compute_pipeline,
             compute_bind_group,
-            mesh_handle,
-            material,
             workgroup_count,
         }
     }
 
-    fn initialize_boids() -> Vec<Boid> {
+    fn update_visual_entities(&self, ctx: &mut GpuUpdateContext) {
+        let device = ctx.renderer.get_device();
+        let queue = ctx.renderer.get_queue();
+
+        // Create staging buffer for readback
+        let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Boid Staging Buffer"),
+            size: self.boid_buffer.buffer().size(),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // Copy GPU buffer to staging buffer
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Boid Readback Encoder"),
+        });
+        encoder.copy_buffer_to_buffer(
+            self.boid_buffer.buffer(),
+            0,
+            &staging_buffer,
+            0,
+            self.boid_buffer.buffer().size(),
+        );
+        queue.submit(Some(encoder.finish()));
+
+        // Map and read the staging buffer
+        let buffer_slice = staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+
+        let data = buffer_slice.get_mapped_range();
+        let boids: &[BoidGpuData] = bytemuck::cast_slice(&data);
+
+        // Debug: print first few boid positions (only occasionally to reduce spam)
+        static mut FRAME_COUNT: u32 = 0;
+        unsafe {
+            FRAME_COUNT += 1;
+            if FRAME_COUNT % 120 == 1 {
+                // Log every 120 frames
+                if !boids.is_empty() {
+                    log::info!(
+                        "Boid 0 pos: {:?}, vel: {:?}",
+                        boids[0].position,
+                        boids[0].velocity
+                    );
+                    if boids.len() > 1 {
+                        log::info!(
+                            "Boid 1 pos: {:?}, vel: {:?}",
+                            boids[1].position,
+                            boids[1].velocity
+                        );
+                    }
+                }
+            }
+        }
+
+        // Query all entities with both BoidComponent and TransformComponent (not Transform!)
+        let mut updated_count = 0;
+        for (_entity, (boid_comp, transform_comp)) in ctx
+            .scene
+            .world
+            .query_mut::<(&BoidComponent, &mut TransformComponent)>()
+        {
+            let index = boid_comp.index as usize;
+            if index < boids.len() {
+                let boid = &boids[index];
+                // Access the inner Transform from TransformComponent
+                transform_comp.0.translation = Vec3::from(boid.position);
+                transform_comp.0.scale = Vec3::splat(0.5); // Make cubes smaller
+
+                // Orient boid in direction of velocity
+                let vel = Vec3::from(boid.velocity);
+                if vel.length_squared() > 0.001 {
+                    let forward = vel.normalize();
+                    let up = Vec3::Y;
+                    let right = up.cross(forward).normalize_or_zero();
+                    if right.length_squared() > 0.001 {
+                        let new_up = forward.cross(right).normalize();
+                        transform_comp.0.rotation =
+                            Quat::from_mat3(&glam::Mat3::from_cols(right, new_up, forward));
+                    }
+                }
+                updated_count += 1;
+            }
+        }
+
+        unsafe {
+            if FRAME_COUNT % 120 == 1 {
+                log::info!("Updated {} boid transforms", updated_count);
+            }
+        }
+
+        drop(data);
+        staging_buffer.unmap();
+    }
+
+    fn initialize_boids() -> Vec<BoidGpuData> {
         let mut rng = SmallRng::from_entropy();
         (0..BOID_COUNT)
             .map(|_| {
@@ -219,7 +322,7 @@ impl BoidSimulation {
                     rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.1,
                     rng.gen_range(-MAX_SPEED..MAX_SPEED) * 0.1,
                 ];
-                Boid {
+                BoidGpuData {
                     position,
                     _padding1: 0.0,
                     velocity,
@@ -263,16 +366,14 @@ impl BoidSimulation {
         }
 
         queue.submit(Some(encoder.finish()));
-
-        // Update visual positions (simplified - in production you'd read back from GPU)
-        // For now we'll just let the compute shader update and trust it's working
+        self.update_visual_entities(ctx);
     }
 
     fn hue_to_rgb(hue: f32) -> (f32, f32, f32) {
         let h = hue / 60.0;
         let c = 1.0;
         let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
-        
+
         let (r, g, b) = if h < 1.0 {
             (c, x, 0.0)
         } else if h < 2.0 {
@@ -286,7 +387,7 @@ impl BoidSimulation {
         } else {
             (c, 0.0, x)
         };
-        
+
         (r, g, b)
     }
 }
