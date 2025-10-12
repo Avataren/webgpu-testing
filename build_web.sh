@@ -7,6 +7,6 @@ RUSTFLAGS="--cfg=web_sys_unstable_apis" \
 wasm-bindgen \
     --target web \
     --out-dir web/pkg \
-    target/wasm32-unknown-unknown/release/examples/demo.wasm
+    target/wasm32-unknown-unknown/release/examples/simple.wasm
 
 python3 -m http.server --directory web 8080
