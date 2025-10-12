@@ -4,6 +4,8 @@ use bytemuck::bytes_of;
 use half::f16;
 
 use crate::environment::Environment;
+#[cfg(target_arch = "wasm32")]
+use crate::io;
 use crate::renderer::uniforms::EnvironmentUniform;
 
 pub(crate) struct EnvironmentResources {
@@ -245,9 +247,7 @@ fn load_hdr_texture(
     queue: &wgpu::Queue,
     path: &Path,
 ) -> Result<TextureResource, String> {
-    let image = image::open(path)
-        .map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))?
-        .to_rgba32f();
+    let image = open_hdr_image(path)?.to_rgba32f();
 
     let (width, height) = image.dimensions();
     let raw = image.into_raw();
@@ -312,6 +312,27 @@ fn load_hdr_texture(
         _texture: texture,
         levels: mip_level_count,
     })
+}
+
+fn open_hdr_image(path: &Path) -> Result<image::DynamicImage, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::io::Cursor;
+
+        let bytes = io::load_binary(path)?;
+        let reader = image::io::Reader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))?;
+
+        reader
+            .decode()
+            .map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        image::open(path).map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))
+    }
 }
 
 fn calculate_mip_levels(width: u32, height: u32) -> u32 {
