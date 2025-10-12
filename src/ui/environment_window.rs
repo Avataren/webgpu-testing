@@ -75,6 +75,8 @@ pub struct EnvironmentWindow {
 
 #[cfg(feature = "egui")]
 impl EnvironmentWindow {
+    const SLIDER_WIDTH: f32 = 250.0;
+
     pub fn new(handle: EnvironmentSettingsHandle) -> Self {
         Self {
             handle,
@@ -101,15 +103,15 @@ impl EnvironmentWindow {
             ui.heading("Global environment settings");
             ui.separator();
 
-            changed |= ui
-                .color_edit_button_rgb(&mut controls.clear_color)
-                .changed();
-            changed |= ui
-                .add(
-                    Slider::new(&mut controls.ambient_intensity, 0.0..=2.0)
-                        .text("Ambient intensity"),
-                )
-                .changed();
+            changed |= ui.color_edit_button_rgb(&mut controls.clear_color).changed();
+
+            Self::slider_row(
+                ui,
+                &mut controls.ambient_intensity,
+                0.0..=2.0,
+                "Ambient intensity",
+                &mut changed,
+            );
 
             ui.separator();
             ui.heading("HDR background");
@@ -117,24 +119,42 @@ impl EnvironmentWindow {
                 changed |= ui
                     .checkbox(&mut controls.hdr_enabled, "Enable HDR background")
                     .changed();
-                changed |= ui
-                    .add(Slider::new(&mut controls.hdr_intensity, 0.0..=5.0).text("Intensity"))
-                    .changed();
+
+                Self::slider_row(
+                    ui,
+                    &mut controls.hdr_intensity,
+                    0.0..=5.0,
+                    "Intensity",
+                    &mut changed,
+                );
             } else {
                 ui.label("No HDR background is loaded.");
             }
 
             ui.separator();
             ui.heading("Color grading");
-            changed |= ui
-                .add(Slider::new(&mut controls.exposure, 0.0..=4.0).text("Exposure"))
-                .changed();
-            changed |= ui
-                .add(Slider::new(&mut controls.saturation, 0.0..=2.0).text("Saturation"))
-                .changed();
-            changed |= ui
-                .add(Slider::new(&mut controls.contrast, 0.0..=3.0).text("Contrast"))
-                .changed();
+
+            Self::slider_row(
+                ui,
+                &mut controls.exposure,
+                0.0..=4.0,
+                "Exposure",
+                &mut changed,
+            );
+            Self::slider_row(
+                ui,
+                &mut controls.saturation,
+                0.0..=2.0,
+                "Saturation",
+                &mut changed,
+            );
+            Self::slider_row(
+                ui,
+                &mut controls.contrast,
+                0.0..=3.0,
+                "Contrast",
+                &mut changed,
+            );
         });
 
         if changed {
@@ -142,6 +162,19 @@ impl EnvironmentWindow {
                 *guard = controls;
             }
         }
+    }
+
+    fn slider_row<T: egui::emath::Numeric>(
+        ui: &mut egui::Ui,
+        value: &mut T,
+        range: std::ops::RangeInclusive<T>,
+        label: &str,
+        changed: &mut bool,
+    ) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().slider_width = Self::SLIDER_WIDTH;
+            *changed |= ui.add(Slider::new(value, range).text(label)).changed();
+        });
     }
 
     pub fn handle_from_environment(environment: &Environment) -> EnvironmentSettingsHandle {

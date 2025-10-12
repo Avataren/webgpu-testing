@@ -16,6 +16,8 @@ pub struct PostProcessWindow {
 
 #[cfg(feature = "egui")]
 impl PostProcessWindow {
+    const SLIDER_WIDTH: f32 = 250.0;
+
     pub fn new(handle: PostProcessEffectsHandle) -> Self {
         Self {
             handle,
@@ -53,41 +55,21 @@ impl PostProcessWindow {
             ui.heading("SSAO");
             ui.add_enabled_ui(effects.ssao, |ui| {
                 ui.label("Adjust the ambient occlusion contribution");
-                changed |= ui
-                    .add(Slider::new(&mut effects.ssao_settings.radius, 0.01..=1.0).text("Radius"))
-                    .changed();
-                changed |= ui
-                    .add(Slider::new(&mut effects.ssao_settings.bias, 0.0..=0.2).text("Bias"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        Slider::new(&mut effects.ssao_settings.intensity, 0.0..=2.0)
-                            .text("Strength"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(Slider::new(&mut effects.ssao_settings.power, 0.5..=4.0).text("Power"))
-                    .changed();
+
+                Self::slider_row(ui, &mut effects.ssao_settings.radius, 0.01..=1.0, "Radius", &mut changed);
+                Self::slider_row(ui, &mut effects.ssao_settings.bias, 0.0..=0.2, "Bias", &mut changed);
+                Self::slider_row(ui, &mut effects.ssao_settings.intensity, 0.0..=2.0, "Strength", &mut changed);
+                Self::slider_row(ui, &mut effects.ssao_settings.power, 0.5..=4.0, "Power", &mut changed);
             });
 
             ui.separator();
             ui.heading("Bloom");
             ui.add_enabled_ui(effects.bloom, |ui| {
                 ui.label("Control highlight extraction and scattering");
-                changed |= ui
-                    .add(
-                        Slider::new(&mut effects.bloom_settings.threshold, 0.0..=2.0)
-                            .text("Threshold"),
-                    )
-                    .changed();
-                changed |= ui
-                    .add(Slider::new(&mut effects.bloom_settings.knee, 0.0..=1.0).text("Knee"))
-                    .changed();
-                changed |= ui
-                    .add(
-                        Slider::new(&mut effects.bloom_settings.scatter, 0.0..=1.0).text("Scatter"),
-                    )
-                    .changed();
+
+                Self::slider_row(ui, &mut effects.bloom_settings.threshold, 0.0..=2.0, "Threshold", &mut changed);
+                Self::slider_row(ui, &mut effects.bloom_settings.knee, 0.0..=1.0, "Knee", &mut changed);
+                Self::slider_row(ui, &mut effects.bloom_settings.scatter, 0.0..=1.0, "Scatter", &mut changed);
             });
         });
 
@@ -96,6 +78,19 @@ impl PostProcessWindow {
                 *guard = effects;
             }
         }
+    }
+
+    fn slider_row<T: egui::emath::Numeric>(
+        ui: &mut egui::Ui,
+        value: &mut T,
+        range: std::ops::RangeInclusive<T>,
+        label: &str,
+        changed: &mut bool,
+    ) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().slider_width = Self::SLIDER_WIDTH;
+            *changed |= ui.add(Slider::new(value, range).text(label)).changed();
+        });
     }
 
     pub fn handle() -> PostProcessEffectsHandle {
