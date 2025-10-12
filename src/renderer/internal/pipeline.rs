@@ -4,9 +4,7 @@ use std::num::NonZeroU32;
 use crate::asset::Assets;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, PipelineBuilder, ShaderBuilder, Vertex};
-
-const MAX_TEXTURES: usize = 256;
+use crate::renderer::{Material, PipelineBuilder, ShaderBuilder, Vertex, MAX_TEXTURES};
 
 pub(crate) struct RenderPipeline {
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,

@@ -18,6 +18,8 @@ pub mod texture;
 pub mod uniforms;
 pub mod vertex;
 
+pub const MAX_TEXTURES: usize = 256;
+
 pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
 pub use compute_builder::ComputePipelineBuilder;
 pub use compute_pass::{dispatch_compute, ComputePass};

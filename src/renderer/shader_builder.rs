@@ -1,21 +1,42 @@
 // src/renderer/shader_builder.rs
 // Modular shader composition system
 
+use std::convert::TryFrom;
+
+use crate::renderer::{
+    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
+    MAX_TEXTURES,
+};
+
+struct ShaderConstant {
+    name: &'static str,
+    value: u32,
+}
+
 /// Builder for composing shaders from modular components
 pub struct ShaderBuilder {
     modules: Vec<&'static str>,
+    constant_overrides: Vec<ShaderConstant>,
 }
 
 impl ShaderBuilder {
     pub fn new() -> Self {
         Self {
             modules: Vec::new(),
+            constant_overrides: Vec::new(),
         }
     }
 
     /// Add constants (PI, TWO_PI, etc.)
     pub fn with_constants(mut self) -> Self {
         self.modules.push(include_str!("../shader/constants.wgsl"));
+        self.set_constant("MAX_DIRECTIONAL_LIGHTS", MAX_DIRECTIONAL_LIGHTS as u32);
+        self.set_constant("MAX_POINT_LIGHTS", MAX_POINT_LIGHTS as u32);
+        self.set_constant("MAX_SPOT_LIGHTS", MAX_SPOT_LIGHTS as u32);
+        self.set_constant(
+            "MAX_TEXTURES",
+            u32::try_from(MAX_TEXTURES).expect("MAX_TEXTURES must fit in u32"),
+        );
         self
     }
 
@@ -75,7 +96,7 @@ impl ShaderBuilder {
         );
 
         // Add all modules in order
-        for module in self.modules {
+        for module in &self.modules {
             source.push_str(module);
             source.push_str("\n\n");
         }
@@ -83,17 +104,17 @@ impl ShaderBuilder {
         // Add main shader
         source.push_str(main_shader);
 
-        source
+        self.finalize(source)
     }
 
     /// Build without a main shader (for testing or custom usage)
     pub fn build_modules_only(self) -> String {
         let mut source = String::new();
-        for module in self.modules {
+        for module in &self.modules {
             source.push_str(module);
             source.push_str("\n\n");
         }
-        source
+        self.finalize(source)
     }
 }
 
@@ -136,9 +157,53 @@ impl ShaderBuilder {
     }
 }
 
+impl ShaderBuilder {
+    fn set_constant(&mut self, name: &'static str, value: u32) {
+        if let Some(existing) = self
+            .constant_overrides
+            .iter_mut()
+            .find(|constant| constant.name == name)
+        {
+            existing.value = value;
+        } else {
+            self.constant_overrides.push(ShaderConstant { name, value });
+        }
+    }
+
+    fn finalize(self, mut source: String) -> String {
+        for constant in self.constant_overrides {
+            Self::replace_constant(&mut source, constant.name, constant.value);
+        }
+        source
+    }
+
+    fn replace_constant(source: &mut String, name: &str, value: u32) {
+        let declaration = format!("const {name}:");
+        if let Some(declaration_index) = source.find(&declaration) {
+            let after_declaration = declaration_index + declaration.len();
+            if let Some(equals_offset) = source[after_declaration..].find('=') {
+                let mut value_start = after_declaration + equals_offset + 1;
+                while source[value_start..].starts_with(' ') {
+                    value_start += 1;
+                }
+
+                if let Some(value_end_offset) = source[value_start..].find(';') {
+                    let value_end = value_start + value_end_offset;
+                    let replacement = format!("{value}u");
+                    source.replace_range(value_start..value_end, &replacement);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::{
+        lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
+        MAX_TEXTURES,
+    };
 
     #[test]
     fn test_builder_basic() {
@@ -146,6 +211,22 @@ mod tests {
 
         assert!(shader.contains("const PI:"));
         assert!(shader.contains("fn main()"));
+        assert!(shader.contains(&format!(
+            "const MAX_DIRECTIONAL_LIGHTS: u32 = {}u;",
+            MAX_DIRECTIONAL_LIGHTS as u32
+        )));
+        assert!(shader.contains(&format!(
+            "const MAX_POINT_LIGHTS: u32 = {}u;",
+            MAX_POINT_LIGHTS as u32
+        )));
+        assert!(shader.contains(&format!(
+            "const MAX_SPOT_LIGHTS: u32 = {}u;",
+            MAX_SPOT_LIGHTS as u32
+        )));
+        assert!(shader.contains(&format!(
+            "const MAX_TEXTURES: u32 = {}u;",
+            u32::try_from(MAX_TEXTURES).expect("MAX_TEXTURES must fit in u32")
+        )));
     }
 
     #[test]
