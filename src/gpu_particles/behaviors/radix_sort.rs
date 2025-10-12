@@ -137,7 +137,7 @@ impl RadixSort {
         } else {
             1
         };
-        let num_passes = ((max_bits + 3) / 4).max(1);
+        let num_passes = max_bits.div_ceil(4).max(1);
 
         if self.count_bind_group_a.is_none() {
             self.count_bind_group_a = Some(
