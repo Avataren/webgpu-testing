@@ -1,7 +1,8 @@
 use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use wgpu_cube::gpu_particles::{GpuParticleSystem, ParticleFieldSettings, ParticleInit};
+use wgpu_cube::gpu_particles::behaviors::StarfieldBehavior;
+use wgpu_cube::gpu_particles::{GpuParticleSystem, Particle};
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
@@ -13,15 +14,16 @@ const STAR_COUNT: usize = 1_000_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
 const FAR_PLANE: f32 = 150.0;
-const FAR_RESET_BAND: f32 = 25.0;
+const FAR_RESET_BAND: f32 = 5.0; // Smaller band keeps particles more spread out
 const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
-const SPIN_SPEED_RANGE: std::ops::Range<f32> = 0.1..3.5;
-const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.1..0.25;
+const SPIN_SPEED_RANGE: std::ops::Range<f32> = 1.0..5.0;
+const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.15..0.35;
 const MIN_SIZE_FROM_CENTER: f32 = 0.15;
 
 struct StarfieldGpuApp {
     particle_system: Option<GpuParticleSystem>,
     mesh_handle: Option<wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>>,
+    behavior: StarfieldBehavior,
 }
 
 impl StarfieldGpuApp {
@@ -29,6 +31,13 @@ impl StarfieldGpuApp {
         Self {
             particle_system: None,
             mesh_handle: None,
+            behavior: StarfieldBehavior {
+                near_plane: NEAR_PLANE,
+                far_plane: FAR_PLANE,
+                far_reset_band: FAR_RESET_BAND,
+                field_half_size: FIELD_HALF_SIZE,
+                min_radius: MIN_SIZE_FROM_CENTER,
+            },
         }
     }
 }
@@ -39,7 +48,7 @@ impl RenderApplication for StarfieldGpuApp {
     }
 
     fn configure(&self, builder: &mut AppBuilder) {
-        builder.disable_default_lighting();
+        // Keep default lighting enabled for PBR
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
@@ -48,8 +57,10 @@ impl RenderApplication for StarfieldGpuApp {
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
         self.mesh_handle = Some(mesh_handle);
 
-        let mut material = Material::checker();
-        material.roughness_factor = 64;
+        // Create material with checker texture and PBR properties
+        let material = Material::checker()
+            .with_metallic(0.1)
+            .with_roughness(0.7);
 
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
@@ -68,70 +79,105 @@ impl RenderApplication for StarfieldGpuApp {
             ..Default::default()
         });
 
-        let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
-        let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
+        // Add directional light for better visibility
+        let sun_direction = Vec3::new(0.3, -1.0, -0.5).normalize();
+        let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
         ctx.scene.world.spawn((
-            wgpu_cube::scene::Name::new("Default Sky Light"),
+            wgpu_cube::scene::Name::new("Main Light"),
             wgpu_cube::scene::TransformComponent(wgpu_cube::scene::Transform::from_trs(
                 Vec3::ZERO,
-                sun1_rotation,
+                sun_rotation,
                 Vec3::ONE,
             )),
-            DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
+            DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 3.0),
             CanCastShadow(true),
         ));
 
-        let settings = ParticleFieldSettings {
-            near_plane: NEAR_PLANE,
-            far_plane: FAR_PLANE,
-            far_reset_band: FAR_RESET_BAND,
-            field_half_size: FIELD_HALF_SIZE,
-            min_radius: MIN_SIZE_FROM_CENTER,
-            speed_range: STAR_SPEED_RANGE,
-            spin_range: SPIN_SPEED_RANGE,
-            scale_range: STAR_SCALE_RANGE,
-        };
-
         // Generate initial particles
         let particle_count = STAR_COUNT as u32;
-        let particles: Vec<ParticleInit> = (0..particle_count)
+        let initial_particles: Vec<Particle> = (0..particle_count)
             .map(|i| {
                 let mut rng = SmallRng::seed_from_u64(i as u64);
 
                 let position = random_initial_position(&mut rng);
                 let rotation = random_rotation(&mut rng);
+                let rotation_axis = random_unit_vector(&mut rng);
+                let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
                 let scale = random_scale(&mut rng);
                 let speed = rng.gen_range(STAR_SPEED_RANGE);
                 let angular_speed = rng.gen_range(SPIN_SPEED_RANGE);
-                let angular_axis = random_unit_vector(&mut rng);
 
-                ParticleInit {
-                    position,
-                    speed,
-                    rotation,
-                    angular_axis,
-                    angular_speed,
-                    scale,
-                    seed: i,
+                Particle {
+                    position: position.into(),
+                    lifetime: rng.gen_range(0.0..1000.0), // Random start time for variety
+                    velocity: [0.0, 0.0, speed], // Moving in +Z toward camera at origin
+                    max_lifetime: f32::INFINITY,
+                    rotation: [rotation_axis.x, rotation_axis.y, rotation_axis.z, rotation_angle], // axis-angle format
+                    scale: [scale, scale, scale],
+                    angular_velocity: angular_speed,
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    user_data: [0.0; 4],
                 }
             })
             .collect();
 
-        let particle_system =
-            GpuParticleSystem::new(ctx.renderer, particle_count, material, settings, &particles);
+        // Create particle system
+        let mut particle_system = GpuParticleSystem::new(
+            ctx.renderer.get_device(),
+            ctx.renderer.get_queue(),
+            ctx.renderer,
+            particle_count,
+            material,
+            &self.behavior,
+        );
 
-        self.particle_system = Some(particle_system);
+        // Initialize particles
+        particle_system.initialize_particles(ctx.renderer.get_queue(), &initial_particles);
 
         log::info!(
             "GPU Starfield setup complete with {} particles",
             particle_count
         );
+        log::info!(
+            "First particle: pos=({:.2}, {:.2}, {:.2}), vel=({:.2}, {:.2}, {:.2})",
+            initial_particles[0].position[0],
+            initial_particles[0].position[1],
+            initial_particles[0].position[2],
+            initial_particles[0].velocity[0],
+            initial_particles[0].velocity[1],
+            initial_particles[0].velocity[2]
+        );
+
+        self.particle_system = Some(particle_system);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         if let Some(particle_system) = &mut self.particle_system {
-            particle_system.update(ctx.renderer, ctx.dt as f32);
+            let mut encoder =
+                ctx.renderer
+                    .get_device()
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("ParticleUpdateEncoder"),
+                    });
+
+            particle_system.update(
+                ctx.renderer.get_queue(),
+                &mut encoder,
+                &self.behavior,
+                ctx.dt as f32,
+            );
+
+            ctx.renderer.get_queue().submit(Some(encoder.finish()));
+            
+            // Log active particle count every 60 frames
+            static mut FRAME_COUNT: u32 = 0;
+            unsafe {
+                FRAME_COUNT += 1;
+                if FRAME_COUNT % 60 == 0 {
+                    log::info!("Active particles: {}", particle_system.active_particle_count());
+                }
+            }
         }
     }
 
