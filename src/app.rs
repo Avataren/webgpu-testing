@@ -312,7 +312,14 @@ impl App {
         };
 
         let now = Instant::now();
-        let dt = (now - self.scene.last_frame()).as_secs_f64();
+        let last_frame = match self.scene.last_frame_instant() {
+            Some(last_frame) => last_frame,
+            None => {
+                self.scene.set_last_frame(now);
+                now
+            }
+        };
+        let dt = (now - last_frame).as_secs_f64();
         self.scene.set_last_frame(now);
 
         FrameStep { dt, skip_rendering }

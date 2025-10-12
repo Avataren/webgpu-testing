@@ -2,7 +2,7 @@
 set -euo pipefail
 
 RUSTFLAGS="--cfg=web_sys_unstable_apis" \
-    cargo build --target wasm32-unknown-unknown --release --example demo
+    cargo build --target wasm32-unknown-unknown --release --example simple
 
 wasm-bindgen \
     --target web \

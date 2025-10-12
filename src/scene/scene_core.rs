@@ -45,6 +45,10 @@ impl Scene {
             .expect("Scene timer not initialized - call init_timer() first")
     }
 
+    pub fn last_frame_instant(&self) -> Option<Instant> {
+        self.last_frame
+    }
+
     pub fn set_last_frame(&mut self, instant: Instant) {
         self.last_frame = Some(instant);
     }
