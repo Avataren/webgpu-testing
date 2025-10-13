@@ -641,18 +641,18 @@ impl SerializedMaterial {
 
 impl From<SerializedMaterial> for Material {
     fn from(serialized: SerializedMaterial) -> Self {
-        let mut material = Material::default();
-        material.base_color = serialized.base_color;
-        material.flags = MaterialFlags::from_bits(serialized.flags);
-        material.base_color_texture = serialized.base_color_texture;
-        material.metallic_roughness_texture = serialized.metallic_roughness_texture;
-        material.normal_texture = serialized.normal_texture;
-        material.emissive_texture = serialized.emissive_texture;
-        material.occlusion_texture = serialized.occlusion_texture;
-        material.metallic_factor = serialized.metallic_factor;
-        material.roughness_factor = serialized.roughness_factor;
-        material.emissive_strength = serialized.emissive_strength;
-        material
+        Material {
+            base_color: serialized.base_color,
+            flags: MaterialFlags::from_bits(serialized.flags),
+            base_color_texture: serialized.base_color_texture,
+            metallic_roughness_texture: serialized.metallic_roughness_texture,
+            normal_texture: serialized.normal_texture,
+            emissive_texture: serialized.emissive_texture,
+            occlusion_texture: serialized.occlusion_texture,
+            metallic_factor: serialized.metallic_factor,
+            roughness_factor: serialized.roughness_factor,
+            emissive_strength: serialized.emissive_strength,
+        }
     }
 }
 
@@ -829,30 +829,6 @@ pub(crate) fn build_tree_asset_node(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::Vec3;
-
-    #[test]
-    fn serialized_transform_roundtrip() {
-        let transform = Transform::from_trs(
-            Vec3::new(1.0, 2.0, 3.0),
-            glam::Quat::from_rotation_y(1.2),
-            Vec3::new(0.5, 0.75, 1.25),
-        );
-
-        let serialized = SerializedTransform::from(transform);
-        let restored: Transform = serialized.into();
-
-        assert!(restored
-            .translation
-            .abs_diff_eq(transform.translation, 1e-5));
-        assert!(restored.rotation.abs_diff_eq(transform.rotation, 1e-5));
-        assert!(restored.scale.abs_diff_eq(transform.scale, 1e-5));
-    }
-}
-
 pub struct SceneAssetBuilder {
     name: String,
     root_transform: SerializedTransform,
@@ -900,5 +876,29 @@ impl SceneAssetBuilder {
             animations: self.animations,
             animation_states: self.animation_states,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+
+    #[test]
+    fn serialized_transform_roundtrip() {
+        let transform = Transform::from_trs(
+            Vec3::new(1.0, 2.0, 3.0),
+            glam::Quat::from_rotation_y(1.2),
+            Vec3::new(0.5, 0.75, 1.25),
+        );
+
+        let serialized = SerializedTransform::from(transform);
+        let restored: Transform = serialized.into();
+
+        assert!(restored
+            .translation
+            .abs_diff_eq(transform.translation, 1e-5));
+        assert!(restored.rotation.abs_diff_eq(transform.rotation, 1e-5));
+        assert!(restored.scale.abs_diff_eq(transform.scale, 1e-5));
     }
 }
