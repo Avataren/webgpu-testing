@@ -290,10 +290,10 @@ mod tests {
         let shader =
             ShaderBuilder::particles(true).build(include_str!("../shader/particle_render.wgsl"));
 
-        // Should have lighting but not shadows
+        // Should have lighting and shadow sampling support
         assert!(shader.contains("calculate_light_contribution"));
         assert!(shader.contains("calculate_environment_lighting"));
-        assert!(!shader.contains("sample_directional_shadow"));
+        assert!(shader.contains("sample_directional_shadow"));
     }
 
     #[test]
