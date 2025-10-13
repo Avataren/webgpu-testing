@@ -167,13 +167,15 @@ impl ShaderBuilder {
         Self::full_pbr_filtered(bindless, SamplerFilterMode::Linear)
     }
 
-    /// Particle shader (lighting but no shadows)
+    /// Particle shader with full lighting support (including shadows)
     pub fn particles_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
             .with_lighting()
+            .with_shadows()
             .with_environment()
+            .with_lighting_and_shadows()
     }
 
     pub fn particles(bindless: bool) -> Self {
