@@ -2,6 +2,8 @@
 
 /// Determines when a custom render callback runs relative to the renderer's
 /// post-processing step.
+use glam::Mat4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CustomRenderStage {
     /// Execute the custom hook before post-processing so any output is
@@ -10,6 +12,15 @@ pub enum CustomRenderStage {
     /// Execute the custom hook after post-processing, matching the legacy
     /// behaviour where the callback rendered directly to the surface.
     AfterPostprocess,
+    /// Execute the custom hook while shadow maps are rendered.
+    Shadow(ShadowPassStage),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShadowPassStage {
+    Directional { light_index: u32 },
+    Spot { light_index: u32 },
+    Point { light_index: u32, face_index: u32 },
 }
 
 /// Convenience alias for the callback type accepted by the renderer.
@@ -20,6 +31,7 @@ pub type CustomRenderCallback = dyn for<'a> FnMut(&mut CustomRenderContext<'a>);
 pub struct CustomRenderRequest<'a> {
     pub callback: &'a mut CustomRenderCallback,
     pub stage: CustomRenderStage,
+    pub render_in_shadow_pass: bool,
 }
 
 /// Context provided to custom render callbacks
@@ -39,6 +51,7 @@ pub struct CustomRenderContext<'a> {
     pub color_view: &'a wgpu::TextureView,
     pub depth_view: &'a wgpu::TextureView,
     pub stage: CustomRenderStage,
+    pub shadow_view_proj: Option<Mat4>,
 }
 
 impl<'a> CustomRenderContext<'a> {
@@ -50,6 +63,7 @@ impl<'a> CustomRenderContext<'a> {
         color_view: &'a wgpu::TextureView,
         depth_view: &'a wgpu::TextureView,
         stage: CustomRenderStage,
+        shadow_view_proj: Option<Mat4>,
     ) -> Self {
         Self {
             encoder,
@@ -58,6 +72,7 @@ impl<'a> CustomRenderContext<'a> {
             color_view,
             depth_view,
             stage,
+            shadow_view_proj,
         }
     }
 
@@ -71,6 +86,11 @@ impl<'a> CustomRenderContext<'a> {
     /// current custom render stage.
     pub fn sample_count(&self) -> u32 {
         self.renderer.sample_count_for_stage(self.stage)
+    }
+
+    /// Returns the view-projection matrix for the current shadow pass, if any.
+    pub fn shadow_view_proj(&self) -> Option<Mat4> {
+        self.shadow_view_proj
     }
 
     /// Begin a render pass with sensible defaults for custom rendering

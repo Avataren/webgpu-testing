@@ -280,7 +280,7 @@ impl Scene {
         &mut self,
         renderer: &mut Renderer,
         batcher: &mut RenderBatcher,
-        custom_render: Option<CustomRenderRequest<'_>>,
+        custom_render: &mut Option<CustomRenderRequest<'_>>,
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         batcher.clear();
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);

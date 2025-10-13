@@ -179,6 +179,7 @@ impl AppBuilder {
             renderer: None,
             custom_render_callback: None,
             custom_render_stage: CustomRenderStage::BeforePostprocess,
+            custom_render_in_shadows: false,
         }
     }
 }
@@ -227,6 +228,7 @@ pub struct App {
     renderer: Option<Renderer>,
     custom_render_callback: Option<Box<CustomRenderCallback>>,
     custom_render_stage: CustomRenderStage,
+    custom_render_in_shadows: bool,
 }
 
 impl App {
@@ -241,6 +243,10 @@ impl App {
 
     pub fn set_custom_render_stage(&mut self, stage: CustomRenderStage) {
         self.custom_render_stage = stage;
+    }
+
+    pub fn enable_custom_render_shadows(&mut self, enabled: bool) {
+        self.custom_render_in_shadows = enabled;
     }
 
     #[cfg(feature = "egui")]
@@ -628,17 +634,18 @@ impl App {
             Self::apply_postprocess_effects(&self.postprocess_effects, renderer);
         }
 
-        let custom_render_request =
+        let mut custom_render_request =
             self.custom_render_callback
                 .as_mut()
                 .map(|callback| CustomRenderRequest {
                     callback: &mut **callback,
                     stage: self.custom_render_stage,
+                    render_in_shadow_pass: self.custom_render_in_shadows,
                 });
 
-        let render_frame = self
-            .scene
-            .render(renderer, &mut self.batcher, custom_render_request)?;
+        let render_frame =
+            self.scene
+                .render(renderer, &mut self.batcher, &mut custom_render_request)?;
 
         #[cfg(feature = "egui")]
         {

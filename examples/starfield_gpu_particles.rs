@@ -134,6 +134,8 @@ impl RenderApplication for StarfieldGpuApp {
             &self.behavior,
         );
 
+        particle_system.set_casts_shadows(true);
+
         // Initialize particles
         particle_system.initialize_particles(ctx.renderer.get_queue(), &initial_particles);
 
@@ -180,16 +182,15 @@ impl RenderApplication for StarfieldGpuApp {
             (self.particle_system.as_mut(), self.mesh_handle)
         {
             if let Some(mesh) = ctx.scene.assets.meshes.get(mesh_handle) {
-                particle_system.render(
-                    ctx.encoder,
-                    ctx.renderer,
-                    mesh,
-                    ctx.color_view,
-                    ctx.depth_view,
-                    ctx.stage,
-                );
+                particle_system.render(ctx, mesh);
             }
         }
+    }
+
+    fn custom_render_includes_shadows(&self) -> bool {
+        self.particle_system
+            .as_ref()
+            .is_some_and(|system| system.casts_shadows())
     }
 }
 

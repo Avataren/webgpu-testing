@@ -213,14 +213,7 @@ impl RenderApplication for BoidsOptimizedApp {
             (self.particle_system.as_mut(), self.mesh_handle)
         {
             if let Some(mesh) = ctx.scene.assets.meshes.get(mesh_handle) {
-                particle_system.render(
-                    ctx.encoder,
-                    ctx.renderer,
-                    mesh,
-                    ctx.color_view,
-                    ctx.depth_view,
-                    ctx.stage,
-                );
+                particle_system.render(ctx, mesh);
             }
         }
     }
