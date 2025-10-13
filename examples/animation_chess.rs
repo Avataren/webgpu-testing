@@ -28,7 +28,7 @@ impl RenderApplication for ExampleApp {
         let renderer = &mut *ctx.renderer;
         let scene = &mut *ctx.scene;
 
-        let animation_asset =
+        let mut animation_asset =
             match SceneLoader::load_gltf_asset(ANIMATION_GLTF, renderer, ANIMATION_SCALE) {
                 Ok(asset) => asset,
                 Err(err) => {
@@ -37,7 +37,8 @@ impl RenderApplication for ExampleApp {
                 }
             };
 
-        let chess_asset = match SceneLoader::load_gltf_asset(CHESS_GLTF, renderer, CHESS_SCALE) {
+        let mut chess_asset = match SceneLoader::load_gltf_asset(CHESS_GLTF, renderer, CHESS_SCALE)
+        {
             Ok(asset) => asset,
             Err(err) => {
                 log::error!("Failed to load chess glTF: {err}");
@@ -47,23 +48,30 @@ impl RenderApplication for ExampleApp {
 
         info!(
             "Loaded animation asset with {} entities",
-            animation_asset.entities.len()
+            animation_asset.asset.entities.len()
         );
         info!(
             "Loaded chess asset with {} entities",
-            chess_asset.entities.len()
+            chess_asset.asset.entities.len()
         );
 
         scene.add_default_lighting();
 
         let root = scene.create_node("CombinedRoot", None);
 
+        let mut textures_changed = animation_asset.register_resources(scene);
         let animation_node =
-            scene.instantiate_asset_named(&animation_asset, "AnimatedBoxes", Some(root));
+            scene.instantiate_asset_named(&animation_asset.asset, "AnimatedBoxes", Some(root));
         scene.node_local_transform_mut(animation_node).translation = Vec3::new(-8.0, 0.0, 0.0);
 
-        let chess_node = scene.instantiate_asset_named(&chess_asset, "ChessBoard", Some(root));
+        textures_changed |= chess_asset.register_resources(scene);
+        let chess_node =
+            scene.instantiate_asset_named(&chess_asset.asset, "ChessBoard", Some(root));
         scene.node_local_transform_mut(chess_node).translation = Vec3::new(8.0, 0.0, 0.0);
+
+        if textures_changed {
+            renderer.update_texture_bind_group(&scene.assets);
+        }
 
         scene.update(0.0);
 
