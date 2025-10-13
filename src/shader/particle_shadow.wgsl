@@ -1,29 +1,29 @@
 // src/shader/particle_shadow.wgsl
 
 struct Particle {
-    position: vec3<f32>;
-    lifetime: f32;
-    velocity: vec3<f32>;
-    max_lifetime: f32;
-    rotation: vec4<f32>;
-    scale: vec3<f32>;
-    angular_velocity: f32;
-    color: vec4<f32>;
-    user_data: vec4<f32>;
+    position: vec3<f32>,
+    lifetime: f32,
+    velocity: vec3<f32>,
+    max_lifetime: f32,
+    rotation: vec4<f32>,
+    scale: vec3<f32>,
+    angular_velocity: f32,
+    color: vec4<f32>,
+    user_data: vec4<f32>,
 }
 
 struct ParticleShadowUniform {
-    view_proj: mat4x4<f32>;
+    view_proj: mat4x4<f32>
 }
 
 @group(0) @binding(0) var<uniform> shadow_uniform: ParticleShadowUniform;
 @group(1) @binding(0) var<storage, read> particles: array<Particle>;
 
 struct VertexInput {
-    @location(0) position: vec3<f32>;
-    @location(1) normal: vec3<f32>;
-    @location(2) uv: vec2<f32>;
-    @location(3) tangent: vec4<f32>;
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) tangent: vec4<f32>,
 }
 
 fn axis_angle_to_matrix(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
