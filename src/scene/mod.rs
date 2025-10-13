@@ -13,7 +13,7 @@ pub mod transform;
 pub use builder::EntityBuilder;
 pub use camera::Camera;
 pub use loader::SceneLoader;
-pub use scene_core::{Scene, SceneAsset, SceneNodeId};
+pub use scene_core::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneNodeId};
 pub use transform::Transform;
 
 // Re-export all components

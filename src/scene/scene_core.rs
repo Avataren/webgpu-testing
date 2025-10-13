@@ -7,16 +7,17 @@ use super::components::{
     TransformComponent, Visible,
 };
 use super::internal::{animations, lights, rendering, transforms};
-use crate::asset::{Assets, Handle};
+use crate::asset::{Assets, Handle, Mesh};
 use crate::environment::Environment;
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{CustomRenderRequest, Material, RenderBatcher, Renderer};
+use crate::renderer::{CustomRenderRequest, Material, RenderBatcher, Renderer, Texture};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::time::Instant;
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SceneNodeId(u32);
@@ -340,6 +341,94 @@ impl SceneAsset {
 
         instance
     }
+
+    fn apply_resource_offsets(&mut self, mesh_offset: usize, texture_offset: u32) {
+        if mesh_offset == 0 && texture_offset == 0 {
+            return;
+        }
+
+        for entity in &mut self.entities {
+            if let Some(mesh) = &mut entity.mesh_handle {
+                *mesh += mesh_offset;
+            }
+
+            if let Some(material) = &mut entity.material {
+                material.apply_texture_offset(texture_offset);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SceneAssetResources {
+    meshes: Vec<Mesh>,
+    textures: Vec<Texture>,
+}
+
+impl SceneAssetResources {
+    pub fn new(meshes: Vec<Mesh>, textures: Vec<Texture>) -> Self {
+        Self { meshes, textures }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.meshes.is_empty() && self.textures.is_empty()
+    }
+}
+
+#[derive(Debug)]
+pub struct SceneAssetBundle {
+    pub asset: SceneAsset,
+    resources: SceneAssetResources,
+    resources_registered: bool,
+}
+
+impl SceneAssetBundle {
+    pub fn new(asset: SceneAsset, resources: SceneAssetResources) -> Self {
+        Self {
+            asset,
+            resources,
+            resources_registered: false,
+        }
+    }
+
+    pub fn is_registered(&self) -> bool {
+        self.resources_registered
+    }
+
+    pub fn register_resources(&mut self, scene: &mut Scene) -> bool {
+        if self.resources_registered {
+            return false;
+        }
+
+        let mesh_offset = scene.assets.meshes.len();
+        for mesh in std::mem::take(&mut self.resources.meshes) {
+            let _ = scene.assets.meshes.insert(mesh);
+        }
+
+        let texture_offset_usize = scene.assets.textures.len();
+        let texture_offset = match u32::try_from(texture_offset_usize) {
+            Ok(offset) => offset,
+            Err(_) => {
+                log::warn!(
+                    "Texture count {} exceeds u32::MAX; new textures may reference invalid indices",
+                    texture_offset_usize
+                );
+                u32::MAX
+            }
+        };
+
+        let mut textures_added = false;
+        for texture in std::mem::take(&mut self.resources.textures) {
+            let _ = scene.assets.textures.insert(texture);
+            textures_added = true;
+        }
+
+        self.asset
+            .apply_resource_offsets(mesh_offset, texture_offset);
+
+        self.resources_registered = true;
+        textures_added
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,6 +545,36 @@ impl From<SerializedMaterial> for Material {
             metallic_factor: serialized.metallic_factor,
             roughness_factor: serialized.roughness_factor,
             emissive_strength: serialized.emissive_strength,
+        }
+    }
+}
+
+impl SerializedMaterial {
+    fn apply_texture_offset(&mut self, offset: u32) {
+        if offset == 0 {
+            return;
+        }
+
+        let flags = MaterialFlags::from_bits(self.flags);
+
+        if flags.contains(MaterialFlags::USE_BASE_COLOR_TEXTURE) {
+            self.base_color_texture = self.base_color_texture.wrapping_add(offset);
+        }
+
+        if flags.contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE) {
+            self.metallic_roughness_texture = self.metallic_roughness_texture.wrapping_add(offset);
+        }
+
+        if flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
+            self.normal_texture = self.normal_texture.wrapping_add(offset);
+        }
+
+        if flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE) {
+            self.emissive_texture = self.emissive_texture.wrapping_add(offset);
+        }
+
+        if flags.contains(MaterialFlags::USE_OCCLUSION_TEXTURE) {
+            self.occlusion_texture = self.occlusion_texture.wrapping_add(offset);
         }
     }
 }

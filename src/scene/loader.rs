@@ -10,7 +10,7 @@ use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
 };
-use crate::scene::{Scene, SceneAsset, Transform};
+use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources, Transform};
 use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
@@ -393,7 +393,7 @@ impl SceneLoader {
         path: impl AsRef<Path>,
         renderer: &mut Renderer,
         scale: f32,
-    ) -> Result<SceneAsset, String> {
+    ) -> Result<SceneAssetBundle, String> {
         let mut temp_scene = Scene::new();
         Self::load_gltf(path.as_ref(), &mut temp_scene, renderer, scale)?;
 
@@ -403,9 +403,18 @@ impl SceneLoader {
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Scene".to_string());
 
-        temp_scene
+        let asset = temp_scene
             .export_main_asset(default_name)
-            .ok_or_else(|| "Scene export produced no asset".to_string())
+            .ok_or_else(|| "Scene export produced no asset".to_string())?;
+
+        let assets = std::mem::take(&mut temp_scene.assets);
+        let meshes = assets.meshes.into_inner();
+        let textures = assets.textures.into_inner();
+
+        Ok(SceneAssetBundle::new(
+            asset,
+            SceneAssetResources::new(meshes, textures),
+        ))
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -30,6 +30,10 @@ impl<T> AssetCache<T> {
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+
+    pub fn into_inner(self) -> Vec<T> {
+        self.items
+    }
 }
 
 impl<T> Default for AssetCache<T> {
