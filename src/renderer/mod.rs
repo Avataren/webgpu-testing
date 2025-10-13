@@ -37,6 +37,7 @@ pub use pipeline_builder::PipelineBuilder;
 pub use primitives::*;
 pub use render_context::{
     CustomRenderCallback, CustomRenderContext, CustomRenderRequest, CustomRenderStage,
+    ShadowPassStage,
 };
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};

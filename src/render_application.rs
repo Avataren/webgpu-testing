@@ -39,6 +39,10 @@ pub trait RenderApplication: Sized + 'static {
         CustomRenderStage::BeforePostprocess
     }
 
+    fn custom_render_includes_shadows(&self) -> bool {
+        false
+    }
+
     #[cfg(feature = "egui")]
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         let _ = ctx;
@@ -184,6 +188,10 @@ where
     {
         let stage = app_rc.borrow().custom_render_stage();
         app.set_custom_render_stage(stage);
+
+        if app_rc.borrow().custom_render_includes_shadows() {
+            app.enable_custom_render_shadows(true);
+        }
 
         let app_ref = app_rc.clone();
         app.set_custom_render_callback(Box::new(move |ctx| {

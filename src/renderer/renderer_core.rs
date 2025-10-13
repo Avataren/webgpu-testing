@@ -2,6 +2,7 @@
 use crate::asset::{Assets, Mesh};
 use crate::environment::Environment;
 use crate::renderer::batch::InstanceData;
+use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, OrderedBatch,
     PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
@@ -254,7 +255,7 @@ impl Renderer {
         batcher: &RenderBatcher,
         lights: &LightsData,
         environment: &Environment,
-        mut custom_render: Option<CustomRenderRequest<'_>>,
+        custom_render: &mut Option<CustomRenderRequest<'_>>,
     ) -> Result<RenderFrame, wgpu::SurfaceError> {
         let frame = self.context.surface.get_current_texture()?;
         let view = frame
@@ -305,6 +306,11 @@ impl Renderer {
         )?;
         self.lights_buffer.update(&self.context.queue, lights);
 
+        let custom_shadow_enabled = custom_render
+            .as_ref()
+            .is_some_and(|req| req.render_in_shadow_pass);
+        let mut shadow_invocations: Vec<ShadowInvocation> = Vec::new();
+
         self.shadows.render(
             &self.context,
             &mut encoder,
@@ -313,7 +319,26 @@ impl Renderer {
             lights,
             &self.objects_buffer,
             prepared_batches.materials(),
+            custom_shadow_enabled,
+            &mut shadow_invocations,
         );
+
+        if custom_shadow_enabled {
+            if let Some(request) = custom_render.as_mut() {
+                for invocation in &shadow_invocations {
+                    let mut ctx = CustomRenderContext::new(
+                        &mut encoder,
+                        self,
+                        scene,
+                        &invocation.view,
+                        &invocation.view,
+                        CustomRenderStage::Shadow(invocation.stage),
+                        Some(invocation.view_proj),
+                    );
+                    (request.callback)(&mut ctx);
+                }
+            }
+        }
 
         let (scene_view, resolve_target) = {
             let (view, resolve) = self.postprocess.scene_color_views();
@@ -409,6 +434,7 @@ impl Renderer {
                     &scene_view,
                     &depth_view,
                     CustomRenderStage::BeforePostprocess,
+                    None,
                 );
                 (request.callback)(&mut ctx);
             }
@@ -504,6 +530,7 @@ impl Renderer {
                     &view,
                     &depth_view,
                     CustomRenderStage::AfterPostprocess,
+                    None,
                 );
                 (request.callback)(&mut ctx);
             }
@@ -533,6 +560,7 @@ impl Renderer {
         match stage {
             CustomRenderStage::BeforePostprocess => self.scene_texture_format(),
             CustomRenderStage::AfterPostprocess => self.surface_format(),
+            CustomRenderStage::Shadow(_) => wgpu::TextureFormat::Depth32Float,
         }
     }
 
@@ -548,6 +576,7 @@ impl Renderer {
         match stage {
             CustomRenderStage::BeforePostprocess => self.sample_count(),
             CustomRenderStage::AfterPostprocess => 1,
+            CustomRenderStage::Shadow(_) => 1,
         }
     }
 

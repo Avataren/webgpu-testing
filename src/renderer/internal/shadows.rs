@@ -10,8 +10,7 @@ use crate::renderer::lights::{
     LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
 };
 use crate::renderer::material::Material;
-use crate::renderer::Vertex;
-use crate::renderer::{PipelineBuilder, RenderPass, ShaderBuilder};
+use crate::renderer::{PipelineBuilder, RenderPass, ShaderBuilder, ShadowPassStage, Vertex};
 
 const POINT_SHADOW_FACE_COUNT: usize = 6;
 const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
@@ -26,6 +25,13 @@ struct ShadowArray {
     _texture: wgpu::Texture,
     array_view: wgpu::TextureView,
     layer_views: Vec<wgpu::TextureView>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ShadowInvocation {
+    pub stage: ShadowPassStage,
+    pub view: wgpu::TextureView,
+    pub view_proj: Mat4,
 }
 
 impl ShadowArray {
@@ -273,8 +279,10 @@ impl ShadowResources {
         lights: &LightsData,
         objects: &DynamicObjectsBuffer,
         materials: &[Material],
+        record_custom_passes: bool,
+        custom_invocations: &mut Vec<ShadowInvocation>,
     ) {
-        if batches.is_empty() {
+        if batches.is_empty() && !record_custom_passes {
             return;
         }
 
@@ -367,6 +375,16 @@ impl ShadowResources {
                 materials,
             );
 
+            if record_custom_passes {
+                custom_invocations.push(ShadowInvocation {
+                    stage: ShadowPassStage::Directional {
+                        light_index: index as u32,
+                    },
+                    view: self.directional.layer_view(index).clone(),
+                    view_proj: Mat4::from_cols_array_2d(&shadow.view_proj),
+                });
+            }
+
             staging_offset += uniform_size;
         }
 
@@ -397,6 +415,16 @@ impl ShadowResources {
                 objects,
                 materials,
             );
+
+            if record_custom_passes {
+                custom_invocations.push(ShadowInvocation {
+                    stage: ShadowPassStage::Spot {
+                        light_index: index as u32,
+                    },
+                    view: self.spot.layer_view(index).clone(),
+                    view_proj: Mat4::from_cols_array_2d(&shadow.view_proj),
+                });
+            }
 
             spot_staging_offset += uniform_size;
         }
@@ -432,6 +460,17 @@ impl ShadowResources {
                     objects,
                     materials,
                 );
+
+                if record_custom_passes {
+                    custom_invocations.push(ShadowInvocation {
+                        stage: ShadowPassStage::Point {
+                            light_index: index as u32,
+                            face_index: face as u32,
+                        },
+                        view: self.point.layer_view(layer_index).clone(),
+                        view_proj: Mat4::from_cols_array_2d(&shadow.view_proj[face]),
+                    });
+                }
 
                 point_staging_offset += uniform_size;
             }
