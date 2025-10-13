@@ -51,6 +51,10 @@ impl MaterialFlags {
     pub fn remove(&mut self, other: Self) {
         self.0 &= !other.0;
     }
+
+    pub const fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
 }
 
 impl std::ops::BitOr for MaterialFlags {

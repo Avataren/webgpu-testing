@@ -47,7 +47,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
     scene.assets.textures.insert(texture);
     renderer.update_texture_bind_group(&scene.assets);
 
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Red Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(-2.0, 0.0, 0.0),
@@ -59,7 +59,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
         .visible(true)
         .spawn();
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Green Cube"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 0.0, 0.0),
@@ -71,7 +71,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Blue Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(2.0, 0.0, 0.0),
@@ -83,7 +83,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
         .visible(true)
         .spawn();
 
-    info!("Simple scene: {} entities", scene.world.len());
+    info!("Simple scene: {} entities", scene.world().len());
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {

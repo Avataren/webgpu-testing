@@ -55,7 +55,7 @@ fn setup_grid_scene(ctx: &mut StartupContext<'_>) {
             let pos = Vec3::new(x as f32 * spacing, 0.0, z as f32 * spacing);
             let texture_idx = ((x.abs() + z.abs()) % 5) as u32;
 
-            scene.world.spawn((
+            scene.world_mut().spawn((
                 Name::new(format!("Cube_{}_{}", x, z)),
                 TransformComponent(Transform::from_trs(pos, Quat::IDENTITY, Vec3::splat(0.4))),
                 MeshComponent(cube_handle),
@@ -65,7 +65,7 @@ fn setup_grid_scene(ctx: &mut StartupContext<'_>) {
         }
     }
 
-    info!("Grid scene: {} entities", scene.world.len());
+    info!("Grid scene: {} entities", scene.world().len());
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {

@@ -78,7 +78,7 @@ impl RenderApplication for BoidsOptimizedApp {
         // Lighting setup
         let sun_direction = Vec3::new(0.4, -1.2, -0.5).normalize();
         let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
-        ctx.scene.world.spawn((
+        ctx.scene.world_mut().spawn((
             Name::new("Main Light"),
             TransformComponent(Transform::from_trs(
                 Vec3::ZERO,

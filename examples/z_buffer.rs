@@ -40,7 +40,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
 
     // Ground plane to provide context.
     let floor_material = Material::new([70, 80, 90, 255]).with_roughness(1.0);
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Test Floor")
         .with_transform(Transform::from_trs(
             Vec3::new(0.0, -0.05, 0.0),
@@ -54,7 +54,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
 
     // Intersecting cubes show which surfaces win the depth test.
     let red_material = Material::new([205, 75, 65, 255]).with_roughness(0.4);
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Front Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(-0.35, 0.6, -0.2),
@@ -67,7 +67,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         .spawn();
 
     let blue_material = Material::new([65, 115, 205, 255]).with_roughness(0.35);
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Back Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(0.35, 0.6, -0.05),
@@ -80,7 +80,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         .spawn();
 
     // Cube with depth writes disabled still tests depth but lets previously drawn pixels win.
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("No Depth Write Cube"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 0.6, 1.1),
@@ -98,7 +98,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     // Cube with depth testing disabled ignores the Z-buffer and always draws last.
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Depth Test Disabled Cube"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 0.6, -1.4),
@@ -117,14 +117,14 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
         Vec3::splat(2.5),
     );
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Reference Quad"),
         TransformComponent(base_plate),
         MeshComponent(quad_handle),
         MaterialComponent(Material::new([220, 220, 220, 255]).with_roughness(0.9)),
         Visible(true),
     ));
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Offset Quad"),
         TransformComponent(Transform::from_trs(
             Vec3::new(-2.5, 0.022, 0.0),
@@ -142,7 +142,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     // Simple point light to keep the scene readable.
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Z Buffer Light"),
         TransformComponent(Transform::from_trs(
             Vec3::new(4.0, 5.0, 4.0),

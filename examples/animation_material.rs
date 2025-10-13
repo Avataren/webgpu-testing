@@ -39,7 +39,7 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
                 up: Vec3::Y,
                 ..Camera::default()
             });
-            info!("glTF loaded: {} entities", scene.world.len());
+            info!("glTF loaded: {} entities", scene.world().len());
         }
         Err(err) => {
             log::error!("Failed to load glTF: {}", err);

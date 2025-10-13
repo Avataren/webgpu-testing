@@ -57,7 +57,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_base_color_texture(checker_handle.index() as u32)
         .with_roughness(1.0);
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Shadow Test Floor"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, -0.05, 0.0),
@@ -73,7 +73,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         .with_metallic(0.0)
         .with_roughness(0.3);
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Shadow Test Cube"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 1.0, 0.0),
@@ -106,7 +106,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
             offset: sprite_offset,
         });
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Shadow Test Sprite"),
         TransformComponent(sprite_transform),
         MeshComponent(quad_handle),
@@ -118,7 +118,10 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
 
     renderer.update_texture_bind_group(&scene.assets);
 
-    info!("Shadow test scene created: {} entities", scene.world.len());
+    info!(
+        "Shadow test scene created: {} entities",
+        scene.world().len()
+    );
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {

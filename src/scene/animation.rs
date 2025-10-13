@@ -1,7 +1,8 @@
 use glam::{Quat, Vec3, Vec4};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnimationInterpolation {
     Step,
     Linear,
@@ -299,14 +300,14 @@ impl AnimationSampler {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransformProperty {
     Translation,
     Rotation,
     Scale,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MaterialProperty {
     BaseColorFactor,
 }
@@ -396,7 +397,7 @@ impl AnimationClip {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnimationState {
     pub clip_index: usize,
     pub time: f32,
