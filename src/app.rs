@@ -180,6 +180,7 @@ impl AppBuilder {
             custom_render_callback: None,
             custom_render_stage: CustomRenderStage::BeforePostprocess,
             custom_render_in_shadows: false,
+            custom_render_shadow_query: None,
         }
     }
 }
@@ -229,6 +230,7 @@ pub struct App {
     custom_render_callback: Option<Box<CustomRenderCallback>>,
     custom_render_stage: CustomRenderStage,
     custom_render_in_shadows: bool,
+    custom_render_shadow_query: Option<Box<dyn FnMut() -> bool>>,
 }
 
 impl App {
@@ -247,6 +249,13 @@ impl App {
 
     pub fn enable_custom_render_shadows(&mut self, enabled: bool) {
         self.custom_render_in_shadows = enabled;
+    }
+
+    pub fn set_custom_render_shadow_query<F>(&mut self, query: F)
+    where
+        F: FnMut() -> bool + 'static,
+    {
+        self.custom_render_shadow_query = Some(Box::new(query));
     }
 
     #[cfg(feature = "egui")]
@@ -632,6 +641,10 @@ impl App {
         {
             Self::apply_environment_settings(&self.environment_settings, &mut self.scene);
             Self::apply_postprocess_effects(&self.postprocess_effects, renderer);
+        }
+
+        if let Some(query) = self.custom_render_shadow_query.as_mut() {
+            self.custom_render_in_shadows = query();
         }
 
         let mut custom_render_request =
