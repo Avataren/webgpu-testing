@@ -76,7 +76,7 @@ impl RenderApplication for ExampleApp {
         scene.update(0.0);
 
         scene.set_camera(Camera {
-            eye: Vec3::new(0.0, 18.0, 26.0),
+            eye: Vec3::new(0.0, 6.0, 12.0),
             target: Vec3::ZERO,
             up: Vec3::Y,
             ..Camera::default()
@@ -94,8 +94,8 @@ impl RenderApplication for ExampleApp {
             transform.rotation = rotation;
         }
 
-        let radius = 26.0;
-        let height = 12.0;
+        let radius = 12.0;
+        let height = 6.0;
         let camera = ctx.scene.camera_mut();
         camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
         camera.target = Vec3::ZERO;
