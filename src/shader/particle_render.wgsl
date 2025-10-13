@@ -1,5 +1,5 @@
 // src/shader/particle_render.wgsl
-// Particle rendering with full PBR lighting support
+// Particle rendering with full PBR lighting support, including shadows
 
 // ============================================================================
 // Camera Uniform
@@ -168,9 +168,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     let V = normalize(camera.camera_pos - in.world_position);
     
-    // Use shared lighting functions (without shadows for particles)
-    // This function is from lighting_common.wgsl
-    let Lo = calculate_scene_lighting_no_shadows(
+    // Use shared lighting functions with full shadow support
+    let Lo = calculate_scene_lighting(
         in.world_position, N, V, base_color.rgb, metallic, roughness
     );
     
