@@ -81,7 +81,7 @@ impl RenderApplication for StarfieldGpuApp {
         let sun_direction = Vec3::new(0.3, -1.0, -0.5).normalize();
         let sun_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun_direction);
 
-        ctx.scene.world.spawn((
+        ctx.scene.world_mut().spawn((
             wgpu_cube::scene::Name::new("Main Light"),
             wgpu_cube::scene::TransformComponent(wgpu_cube::scene::Transform::from_trs(
                 Vec3::ZERO,

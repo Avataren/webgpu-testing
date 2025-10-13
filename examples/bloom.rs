@@ -44,7 +44,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     let cube_mesh = renderer.create_mesh(&cube_verts, &cube_idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
-    EntityBuilder::new(&mut scene.world)
+    EntityBuilder::new(scene.world_mut())
         .with_name("Floor")
         .with_transform(Transform::from_trs(
             Vec3::new(0.0, -1.25, 0.0),
@@ -68,7 +68,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (idx, pos) in column_positions.iter().enumerate() {
-        EntityBuilder::new(&mut scene.world)
+        EntityBuilder::new(scene.world_mut())
             .with_name(format!("Reflector {}", idx))
             .with_transform(Transform::from_trs(
                 *pos,
@@ -94,7 +94,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (idx, (position, color, intensity)) in bloom_emitters.iter().enumerate() {
-        EntityBuilder::new(&mut scene.world)
+        EntityBuilder::new(scene.world_mut())
             .with_name(format!("Pedestal {}", idx))
             .with_transform(Transform::from_trs(
                 Vec3::new(position.x, -0.4, position.z),
@@ -109,7 +109,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
         let mut orb_material = Material::pbr().with_roughness(0.05);
         orb_material.base_color = to_srgb(*color);
 
-        EntityBuilder::new(&mut scene.world)
+        EntityBuilder::new(scene.world_mut())
             .with_name(format!("Emitter {}", idx))
             .with_transform(Transform::from_trs(
                 *position,
@@ -121,7 +121,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             .visible(true)
             .spawn();
 
-        scene.world.spawn((
+        scene.world_mut().spawn((
             Name::new(format!("Bloom Light {}", idx)),
             TransformComponent(Transform::from_trs(*position, Quat::IDENTITY, Vec3::ONE)),
             PointLight {
@@ -135,7 +135,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
 
     let key_direction = Vec3::new(-0.45, -1.1, -0.35).normalize();
     let key_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, key_direction);
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Fill Light"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
         DirectionalLight::new(Vec3::splat(0.75), 1.4),

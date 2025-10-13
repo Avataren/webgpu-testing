@@ -14,7 +14,8 @@ impl RenderApplication for ExampleApp {
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
 
-        EntityBuilder::new(&mut ctx.scene.world)
+        let world = ctx.scene.world_mut();
+        EntityBuilder::new(world)
             .with_name("Test Cube")
             .with_mesh(mesh_handle)
             .with_material(Material::red())

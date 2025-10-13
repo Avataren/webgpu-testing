@@ -78,7 +78,7 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
                 .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX)
                 .with_metallic_roughness_texture(unit_mr_handle.index() as u32);
 
-            scene.world.spawn((
+            scene.world_mut().spawn((
                 Name::new(format!("Sphere_M{:.2}_R{:.2}", metallic, roughness)),
                 TransformComponent(Transform::from_trs(
                     Vec3::new(x, 0.0, z),
@@ -94,14 +94,14 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
 
     spawn_pbr_lighting(scene);
 
-    info!("PBR test scene: {} entities", scene.world.len());
+    info!("PBR test scene: {} entities", scene.world().len());
 }
 
 fn spawn_pbr_lighting(scene: &mut Scene) {
     let key_direction = Vec3::new(-0.4, -1.0, 0.25).normalize();
     let key_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, key_direction);
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("PBR Key Light"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
         DirectionalLight::new(Vec3::new(1.0, 0.97, 0.9), 2.2),
@@ -109,7 +109,7 @@ fn spawn_pbr_lighting(scene: &mut Scene) {
     ));
 
     let fill_position = Vec3::new(0.0, 2.5, 5.5);
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("PBR Fill Light"),
         TransformComponent(Transform::from_trs(
             fill_position,

@@ -9,17 +9,26 @@ use crate::scene::transform::Transform;
 use glam::{Mat4, Quat, Vec3};
 use hecs::World;
 
-pub(crate) fn collect_lights(world: &World, camera: CameraVectors) -> LightsData {
+pub(crate) fn collect_lights(
+    world: &World,
+    camera: CameraVectors,
+    root_transform: Transform,
+) -> LightsData {
     let mut lights = LightsData::default();
 
-    collect_directional_lights(world, camera, &mut lights);
-    collect_point_lights(world, &mut lights);
-    collect_spot_lights(world, &mut lights);
+    collect_directional_lights(world, camera, &mut lights, root_transform);
+    collect_point_lights(world, &mut lights, root_transform);
+    collect_spot_lights(world, &mut lights, root_transform);
 
     lights
 }
 
-fn collect_directional_lights(world: &World, camera: CameraVectors, lights: &mut LightsData) {
+fn collect_directional_lights(
+    world: &World,
+    camera: CameraVectors,
+    lights: &mut LightsData,
+    root_transform: Transform,
+) {
     for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &DirectionalLight,
@@ -29,7 +38,8 @@ fn collect_directional_lights(world: &World, camera: CameraVectors, lights: &mut
         )>()
         .iter()
     {
-        let transform = resolve_light_transform(world_transform, local_transform);
+        let mut transform = resolve_light_transform(world_transform, local_transform);
+        transform = root_transform.mul_transform(&transform);
         let direction = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::new(0.0, -1.0, 0.0));
 
         let shadow = if shadow_enabled(shadow_flag) {
@@ -47,7 +57,7 @@ fn collect_directional_lights(world: &World, camera: CameraVectors, lights: &mut
     }
 }
 
-fn collect_point_lights(world: &World, lights: &mut LightsData) {
+fn collect_point_lights(world: &World, lights: &mut LightsData, root_transform: Transform) {
     for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &PointLight,
@@ -57,7 +67,8 @@ fn collect_point_lights(world: &World, lights: &mut LightsData) {
         )>()
         .iter()
     {
-        let transform = resolve_light_transform(world_transform, local_transform);
+        let mut transform = resolve_light_transform(world_transform, local_transform);
+        transform = root_transform.mul_transform(&transform);
 
         let shadow = if shadow_enabled(shadow_flag) {
             Some(build_point_shadow(transform.translation, light.range))
@@ -75,7 +86,7 @@ fn collect_point_lights(world: &World, lights: &mut LightsData) {
     }
 }
 
-fn collect_spot_lights(world: &World, lights: &mut LightsData) {
+fn collect_spot_lights(world: &World, lights: &mut LightsData, root_transform: Transform) {
     for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &SpotLight,
@@ -85,7 +96,8 @@ fn collect_spot_lights(world: &World, lights: &mut LightsData) {
         )>()
         .iter()
     {
-        let transform = resolve_light_transform(world_transform, local_transform);
+        let mut transform = resolve_light_transform(world_transform, local_transform);
+        transform = root_transform.mul_transform(&transform);
         let direction = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::new(0.0, -1.0, 0.0));
 
         let shadow = if shadow_enabled(shadow_flag) {

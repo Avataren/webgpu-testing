@@ -81,6 +81,27 @@ impl LightsData {
             .push(SpotShadowRaw::from_data(descriptor.shadow));
     }
 
+    pub fn extend_from(&mut self, other: &Self) {
+        let remaining_dir = MAX_DIRECTIONAL_LIGHTS.saturating_sub(self.directional.len());
+        let take_dir = remaining_dir.min(other.directional.len());
+        self.directional
+            .extend_from_slice(&other.directional[..take_dir]);
+        self.directional_shadows
+            .extend_from_slice(&other.directional_shadows[..take_dir]);
+
+        let remaining_point = MAX_POINT_LIGHTS.saturating_sub(self.point.len());
+        let take_point = remaining_point.min(other.point.len());
+        self.point.extend_from_slice(&other.point[..take_point]);
+        self.point_shadows
+            .extend_from_slice(&other.point_shadows[..take_point]);
+
+        let remaining_spot = MAX_SPOT_LIGHTS.saturating_sub(self.spot.len());
+        let take_spot = remaining_spot.min(other.spot.len());
+        self.spot.extend_from_slice(&other.spot[..take_spot]);
+        self.spot_shadows
+            .extend_from_slice(&other.spot_shadows[..take_spot]);
+    }
+
     pub fn directional_lights(&self) -> &[DirectionalLightRaw] {
         &self.directional
     }

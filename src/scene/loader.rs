@@ -10,7 +10,7 @@ use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
 };
-use crate::scene::{Scene, Transform};
+use crate::scene::{Scene, SceneAsset, Transform};
 use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
@@ -364,7 +364,7 @@ impl SceneLoader {
                     None,
                     &mesh_handles,
                     &material_handles,
-                    &mut scene.world,
+                    scene.world_mut(),
                     scale,
                     &mut node_entities,
                 )?;
@@ -375,18 +375,37 @@ impl SceneLoader {
         Self::load_animations(&document, &buffers, &node_entities, scene, path, scale)?;
 
         log::info!("=== glTF loaded successfully ===");
-        log::info!("Total entities in scene: {}", scene.world.len());
+        log::info!("Total entities in scene: {}", scene.world().len());
 
         // Count entities with different components
-        let mesh_count = scene.world.query::<&MeshComponent>().iter().count();
-        let parent_count = scene.world.query::<&Parent>().iter().count();
-        let children_count = scene.world.query::<&Children>().iter().count();
+        let mesh_count = scene.world().query::<&MeshComponent>().iter().count();
+        let parent_count = scene.world().query::<&Parent>().iter().count();
+        let children_count = scene.world().query::<&Children>().iter().count();
 
         log::info!("  Entities with meshes: {}", mesh_count);
         log::info!("  Entities with parent: {}", parent_count);
         log::info!("  Entities with children: {}", children_count);
 
         Ok(())
+    }
+
+    pub fn load_gltf_asset(
+        path: impl AsRef<Path>,
+        renderer: &mut Renderer,
+        scale: f32,
+    ) -> Result<SceneAsset, String> {
+        let mut temp_scene = Scene::new();
+        Self::load_gltf(path.as_ref(), &mut temp_scene, renderer, scale)?;
+
+        let default_name = path
+            .as_ref()
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Scene".to_string());
+
+        temp_scene
+            .export_main_asset(default_name)
+            .ok_or_else(|| "Scene export produced no asset".to_string())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1453,7 +1472,7 @@ mod tests {
 
         let mut node_entities = vec![None; document.nodes().len()];
         for node in document.nodes() {
-            let entity = scene.world.spawn((
+            let entity = scene.world_mut().spawn((
                 Name::new(node.name().unwrap_or("")),
                 TransformComponent(Transform::IDENTITY),
                 Visible(true),
@@ -1592,7 +1611,7 @@ mod tests {
 
         let mut node_entities = vec![None; document.nodes().len()];
         for node in document.nodes() {
-            let entity = scene.world.spawn((
+            let entity = scene.world_mut().spawn((
                 Name::new(node.name().unwrap_or("")),
                 TransformComponent(Transform::IDENTITY),
                 Visible(true),

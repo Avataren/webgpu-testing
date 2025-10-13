@@ -51,7 +51,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         scene.assets.textures.insert(texture);
     }
 
-    let parent1 = scene.world.spawn((
+    let parent1 = scene.world_mut().spawn((
         Name::new("Parent1 (Red)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(-6.0, 0.0, 0.0),
@@ -63,7 +63,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    let child1 = scene.world.spawn((
+    let child1 = scene.world_mut().spawn((
         Name::new("Child1 (Green)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(2.0, 0.0, 0.0),
@@ -76,9 +76,12 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Parent(parent1),
     ));
 
-    scene.world.insert_one(parent1, Children(vec![child1])).ok();
+    scene
+        .world_mut()
+        .insert_one(parent1, Children(vec![child1]))
+        .ok();
 
-    let grandparent = scene.world.spawn((
+    let grandparent = scene.world_mut().spawn((
         Name::new("Grandparent (Blue)"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
         MeshComponent(cube_handle),
@@ -86,7 +89,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    let parent2 = scene.world.spawn((
+    let parent2 = scene.world_mut().spawn((
         Name::new("Parent2 (Yellow)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 2.0, 0.0),
@@ -99,7 +102,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Parent(grandparent),
     ));
 
-    let child2 = scene.world.spawn((
+    let child2 = scene.world_mut().spawn((
         Name::new("Child2 (Magenta)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 1.5, 0.0),
@@ -113,12 +116,15 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     scene
-        .world
+        .world_mut()
         .insert_one(grandparent, Children(vec![parent2]))
         .ok();
-    scene.world.insert_one(parent2, Children(vec![child2])).ok();
+    scene
+        .world_mut()
+        .insert_one(parent2, Children(vec![child2]))
+        .ok();
 
-    let rotating_parent = scene.world.spawn((
+    let rotating_parent = scene.world_mut().spawn((
         Name::new("Rotating Parent (Red)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(6.0, 0.0, 0.0),
@@ -134,7 +140,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         },
     ));
 
-    let rotating_child = scene.world.spawn((
+    let rotating_child = scene.world_mut().spawn((
         Name::new("Rotating Child (Green)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(3.0, 0.0, 0.0),
@@ -148,11 +154,11 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     scene
-        .world
+        .world_mut()
         .insert_one(rotating_parent, Children(vec![rotating_child]))
         .ok();
 
-    let scaled_parent = scene.world.spawn((
+    let scaled_parent = scene.world_mut().spawn((
         Name::new("Scaled Parent (Blue)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, -3.0, 0.0),
@@ -164,7 +170,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    let scaled_child = scene.world.spawn((
+    let scaled_child = scene.world_mut().spawn((
         Name::new("Scaled Child (Yellow)"),
         TransformComponent(Transform::from_trs(
             Vec3::new(1.5, 0.0, 0.0),
@@ -178,11 +184,11 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     scene
-        .world
+        .world_mut()
         .insert_one(scaled_parent, Children(vec![scaled_child]))
         .ok();
 
-    let billboard_parent = scene.world.spawn((
+    let billboard_parent = scene.world_mut().spawn((
         Name::new("Billboard Parent"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 0.0, -6.0),
@@ -194,7 +200,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    let billboard_child = scene.world.spawn((
+    let billboard_child = scene.world_mut().spawn((
         Name::new("Billboard Child"),
         TransformComponent(Transform::from_trs(
             Vec3::new(0.0, 2.0, 0.0),
@@ -209,13 +215,13 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     scene
-        .world
+        .world_mut()
         .insert_one(billboard_parent, Children(vec![billboard_child]))
         .ok();
 
     info!(
         "Hierarchy test scene created: {} entities",
-        scene.world.len()
+        scene.world().len()
     );
 }
 

@@ -473,7 +473,7 @@ impl App {
         // Find roots
         let roots: Vec<_> = self
             .scene
-            .world
+            .world()
             .query::<()>()
             .without::<&Parent>()
             .iter()
@@ -494,14 +494,14 @@ impl App {
 
         let name = self
             .scene
-            .world
+            .world()
             .get::<&Name>(entity)
             .map(|n| n.0.clone())
             .unwrap_or_else(|_| format!("{:?}", entity));
 
         let local_transform = self
             .scene
-            .world
+            .world()
             .get::<&TransformComponent>(entity)
             .map(|t| {
                 format!(
@@ -513,12 +513,12 @@ impl App {
 
         let world_transform = self
             .scene
-            .world
+            .world()
             .get::<&crate::scene::components::WorldTransform>(entity)
             .map(|t| format!("WorldT:{:?}", t.0.translation))
             .unwrap_or_else(|_| "No WorldTransform".to_string());
 
-        let has_mesh = self.scene.world.get::<&MeshComponent>(entity).is_ok();
+        let has_mesh = self.scene.world().get::<&MeshComponent>(entity).is_ok();
 
         log::info!(
             "{}└─ {} [{}]",
@@ -530,7 +530,7 @@ impl App {
         log::info!("{}   {}", indent, world_transform);
 
         // Print children
-        if let Ok(children) = self.scene.world.get::<&Children>(entity) {
+        if let Ok(children) = self.scene.world().get::<&Children>(entity) {
             for child in &children.0 {
                 self.debug_print_entity(*child, depth + 1);
             }

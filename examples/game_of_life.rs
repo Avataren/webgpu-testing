@@ -298,7 +298,7 @@ fn spawn_billboard(
     let scale_x = (width as f32) / 128.0;
     let scale_y = (height as f32) / 128.0;
 
-    let entity = EntityBuilder::new(&mut scene.world)
+    let entity = EntityBuilder::new(scene.world_mut())
         .with_name("Game of Life Board")
         .with_transform(Transform::from_trs(
             Vec3::ZERO,
@@ -316,7 +316,7 @@ fn spawn_billboard(
         .spawn();
 
     scene
-        .world
+        .world_mut()
         .insert(
             entity,
             (Billboard::new(BillboardOrientation::FaceCamera).with_space(BillboardSpace::World),),

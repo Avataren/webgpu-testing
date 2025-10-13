@@ -90,7 +90,7 @@ impl RenderApplication for StarfieldApp {
         let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
         let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
 
-        ctx.scene.world.spawn((
+        ctx.scene.world_mut().spawn((
             Name::new("Default Sky Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun1_rotation, Vec3::ONE)),
             DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
@@ -107,7 +107,7 @@ impl RenderApplication for StarfieldApp {
 
             let motion = StarfieldMotion::random(&mut self.rng);
 
-            ctx.scene.world.spawn((
+            ctx.scene.world_mut().spawn((
                 TransformComponent(transform),
                 MeshComponent(mesh_handle),
                 MaterialComponent(material),
@@ -128,7 +128,7 @@ impl RenderApplication for StarfieldApp {
         // Note: `into_iter_batched` (not `iter_batched`)
         let q = ctx
             .scene
-            .world
+            .world_mut()
             .query_mut::<(&mut TransformComponent, &mut StarfieldMotion)>();
 
         q.into_iter_batched(batch)

@@ -50,7 +50,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
             .with_roughness(roughness)
             .with_metallic_roughness_texture(mr_handle.index() as u32);
 
-        scene.world.spawn((
+        scene.world_mut().spawn((
             Name::new(format!("Sphere_R{roughness:.2}")),
             TransformComponent(Transform::from_trs(
                 Vec3::new(start_x + i as f32 * spacing, 0.0, 0.0),
@@ -63,7 +63,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         ));
     }
 
-    scene.world.spawn((
+    scene.world_mut().spawn((
         Name::new("Key Light"),
         TransformComponent(Transform::from_trs(
             Vec3::ZERO,
