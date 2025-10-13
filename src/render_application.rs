@@ -189,13 +189,17 @@ where
         let stage = app_rc.borrow().custom_render_stage();
         app.set_custom_render_stage(stage);
 
-        if app_rc.borrow().custom_render_includes_shadows() {
-            app.enable_custom_render_shadows(true);
-        }
+        let initial_shadow = app_rc.borrow().custom_render_includes_shadows();
+        app.enable_custom_render_shadows(initial_shadow);
 
-        let app_ref = app_rc.clone();
+        let shadow_query_app = app_rc.clone();
+        app.set_custom_render_shadow_query(Box::new(move || {
+            shadow_query_app.borrow().custom_render_includes_shadows()
+        }));
+
+        let callback_app = app_rc.clone();
         app.set_custom_render_callback(Box::new(move |ctx| {
-            app_ref.borrow_mut().custom_render(ctx);
+            callback_app.borrow_mut().custom_render(ctx);
         }));
     }
 
@@ -272,6 +276,14 @@ where
     {
         let stage = app_rc.borrow().custom_render_stage();
         app.set_custom_render_stage(stage);
+
+        let initial_shadow = app_rc.borrow().custom_render_includes_shadows();
+        app.enable_custom_render_shadows(initial_shadow);
+
+        let shadow_query_app = app_rc.clone();
+        app.set_custom_render_shadow_query(Box::new(move || {
+            shadow_query_app.borrow().custom_render_includes_shadows()
+        }));
 
         let app_ref = app_rc.clone();
         app.set_custom_render_callback(Box::new(move |ctx| {
