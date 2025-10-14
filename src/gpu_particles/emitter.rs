@@ -216,6 +216,20 @@ impl ParticleEmitter {
             }
         }
 
+        if self.spawn_rate <= 0.0 {
+            if let Some(burst_count) = self.burst_count {
+                let remaining = burst_count.saturating_sub(self.total_spawned);
+                if remaining == 0 {
+                    return Vec::new();
+                }
+
+                self.total_spawned += remaining;
+                return (0..remaining).map(|_| self.spawn_particle()).collect();
+            }
+
+            return Vec::new();
+        }
+
         self.spawn_accumulator += dt * self.spawn_rate;
         let to_spawn = self.spawn_accumulator.floor() as u32;
         self.spawn_accumulator -= to_spawn as f32;
