@@ -9,7 +9,7 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
-    user_data: vec4<f32>, // [start_size, end_size, original_scale_magnitude, unused]
+    user_data: vec4<f32>, // [start_size, end_size, original_scale_magnitude, end_alpha]
 }
 
 struct Params {
@@ -18,7 +18,7 @@ struct Params {
     turbulence_strength: f32,
     turbulence_frequency: f32,
     gravity: vec3<f32>,
-    _padding_vec3: f32,          // alignment padding
+    _padding_vec3: f32,
     particle_count: u32,
     ground_level: f32,
     bounce_factor: f32,
@@ -59,12 +59,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // ✅ FIX: Store original scale magnitude on first frame
-    if p.lifetime == 0.0 && p.user_data.z == 0.0 {
-        // Calculate the average scale magnitude from the spawn scale
+    // ✅ CRITICAL FIX: Store original scale BEFORE updating lifetime
+    // This ensures it's available on the first frame
+    let is_first_frame = p.lifetime == 0.0 && p.user_data.z == 0.0;
+    if is_first_frame {
+        // Store original scale magnitude
         let scale_magnitude = (p.scale.x + p.scale.y + p.scale.z) / 3.0;
         p.user_data.z = scale_magnitude;
     }
+    
+    // Store start values for interpolation
+    let start_alpha = p.color.a;
+    let start_rgb = p.color.rgb;
     
     // Update lifetime
     p.lifetime += params.delta_time;
@@ -72,7 +78,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Kill old particles and mark for recycling
     if p.lifetime >= p.max_lifetime {
         p.lifetime = -1.0;
-        p.position = vec3<f32>(0.0, -10000.0, 0.0); // Hide offscreen
+        p.position = vec3<f32>(0.0, -10000.0, 0.0);
         p.velocity = vec3<f32>(0.0);
         let slot = atomicAdd(&dead_list.count, 1u);
         if slot < arrayLength(&dead_list.indices) {
@@ -88,11 +94,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Apply gravity
     var acceleration = params.gravity;
     
-    // Apply turbulence if enabled
+    // ✅ FIX: Reduce turbulence impact significantly
     if params.turbulence_strength > 0.0 {
         let turbulence_pos = p.position * params.turbulence_frequency + vec3<f32>(p.lifetime * 0.5);
         let turbulence = noise3d(turbulence_pos) * params.turbulence_strength;
-        acceleration += turbulence;
+        // Scale down turbulence to prevent chaotic motion
+        acceleration += turbulence * 0.5;
     }
     
     // Apply drag
@@ -106,13 +113,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if p.position.y < params.ground_level {
         p.position.y = params.ground_level;
         
-        // Bounce if velocity is significant
         if p.velocity.y < -0.1 {
             p.velocity.y = -p.velocity.y * params.bounce_factor;
             p.velocity.x *= params.velocity_damping;
             p.velocity.z *= params.velocity_damping;
         } else {
-            // Stop bouncing if velocity is too small
             p.velocity.y = 0.0;
             p.velocity.x *= 0.95;
             p.velocity.z *= 0.95;
@@ -122,24 +127,31 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update rotation
     p.rotation.w += p.angular_velocity * params.delta_time;
     
-    // Interpolate size using ORIGINAL scale
+    // ✅ FIX: Properly interpolate size using original scale
     let start_size = p.user_data.x;
     let end_size = p.user_data.y;
     let original_scale = p.user_data.z;
     
-    let current_size = start_size + (end_size - start_size) * life_ratio;
+    // Interpolate size multiplier
+    let current_size_multiplier = start_size + (end_size - start_size) * life_ratio;
     
-    // Apply size curve to original spawn scale (prevents drift)
+    // Apply to original spawn scale (prevents drift and compounding)
     if original_scale > 0.0 {
-        p.scale = vec3<f32>(original_scale * current_size);
+        p.scale = vec3<f32>(original_scale * current_size_multiplier);
     }
     
-    // Fade out near end of life (affects alpha in color)
-    let fade_start = 0.8;
-    if life_ratio > fade_start {
-        let fade_factor = 1.0 - (life_ratio - fade_start) / (1.0 - fade_start);
-        p.color.a *= fade_factor;
-    }
+    // ✅ FIX: Properly interpolate color and alpha
+    let end_alpha = p.user_data.w;
+    
+    // Linear interpolation from start to end alpha
+    let current_alpha = start_alpha + (end_alpha - start_alpha) * life_ratio;
+    
+    // Darken RGB over time (smoke darkens as it dissipates)
+    let darken_factor = 1.0 - life_ratio * 0.6;
+    let current_rgb = start_rgb * darken_factor;
+    
+    // Set the interpolated color (direct assignment, not multiplication!)
+    p.color = vec4<f32>(current_rgb, current_alpha);
     
     particles[index] = p;
 }

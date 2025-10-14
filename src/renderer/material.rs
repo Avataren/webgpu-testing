@@ -35,6 +35,7 @@ impl MaterialFlags {
     pub const DOUBLE_SIDED: Self = Self(1 << 6);
     pub const UNLIT: Self = Self(1 << 7);
     pub const USE_NEAREST_FILTERING: Self = Self(1 << 8);
+    pub const BILLBOARDED: Self = Self(1 << 9);
 
     pub const fn bits(&self) -> u32 {
         self.0
@@ -91,6 +92,22 @@ impl Material {
             .with_metallic(0.0)
             .with_roughness(0.5)
     }
+
+   pub fn with_billboarding(mut self) -> Self {
+        self.flags.insert(MaterialFlags::BILLBOARDED);
+        self
+    }
+    
+    /// Disable billboarding (use 3D rotation)
+    pub fn without_billboarding(mut self) -> Self {
+        self.flags.remove(MaterialFlags::BILLBOARDED);
+        self
+    }
+    
+    /// Check if billboarding is enabled
+    pub fn is_billboarded(&self) -> bool {
+        self.flags.contains(MaterialFlags::BILLBOARDED)
+    }    
 
     pub fn with_metallic(mut self, metallic: f32) -> Self {
         self.metallic_factor = (metallic.clamp(0.0, 1.0) * 255.0) as u8;

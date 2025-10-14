@@ -1,4 +1,4 @@
-// examples/particle_effects.rs - CORRECTED FOR YOUR MATERIAL API
+// examples/particle_effects.rs - Updated for your Material system
 use glam::{Quat, Vec3};
 
 use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
@@ -16,7 +16,8 @@ struct ParticleEffectsApp {
     fountain_system: Option<GpuParticleSystem>,
     fireworks_system: Option<GpuParticleSystem>,
     smoke_system: Option<GpuParticleSystem>,
-    mesh_handle: Option<wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>>,
+    cube_mesh_handle: Option<wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>>,
+    quad_mesh_handle: Option<wgpu_cube::asset::Handle<wgpu_cube::asset::Mesh>>,
     fountain_behavior: PhysicsBehavior,
     fireworks_behavior: PhysicsBehavior,
     smoke_behavior: PhysicsBehavior,
@@ -30,18 +31,25 @@ impl ParticleEffectsApp {
             fountain_system: None,
             fireworks_system: None,
             smoke_system: None,
-            mesh_handle: None,
+            cube_mesh_handle: None,
+            quad_mesh_handle: None,
+            
+            // Fountain: Water with gravity and bounce
             fountain_behavior: PhysicsBehavior::default()
                 .with_gravity(Vec3::new(0.0, -15.0, 0.0))
                 .with_drag(0.2)
                 .with_ground_collision(0.0, 0.3, 0.7),
+            
+            // Fireworks: Explosive motion with gravity
             fireworks_behavior: PhysicsBehavior::default()
                 .with_gravity(Vec3::new(0.0, -8.0, 0.0))
                 .with_drag(0.15),
+            
+            // Smoke: Gentle upward drift, NO turbulence for smooth motion
             smoke_behavior: PhysicsBehavior::default()
-                .with_gravity(Vec3::new(0.0, 1.0, 0.0)) // Smoke rises
-                .with_drag(0.5)
-                .with_turbulence(2.0, 0.3),
+                .with_gravity(Vec3::new(0.0, 1.5, 0.0))
+                .with_drag(1.5),
+            
             firework_timer: 0.0,
             next_firework_time: 2.0,
         }
@@ -50,19 +58,21 @@ impl ParticleEffectsApp {
 
 impl RenderApplication for ParticleEffectsApp {
     fn name(&self) -> &str {
-        "GPU Particle Effects Showcase"
+        "GPU Particle Effects - Billboarded & 3D"
     }
 
-    fn configure(&self, _builder: &mut AppBuilder) {
-        // Keep default settings
-    }
+    fn configure(&self, _builder: &mut AppBuilder) {}
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        // Create mesh for particles
-        let (vertices, indices) = wgpu_cube::renderer::cube_mesh();
-        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
-        let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-        self.mesh_handle = Some(mesh_handle);
+        // Create cube mesh for 3D particles (fountain)
+        let (cube_vertices, cube_indices) = wgpu_cube::renderer::cube_mesh();
+        let cube_mesh = ctx.renderer.create_mesh(&cube_vertices, &cube_indices);
+        self.cube_mesh_handle = Some(ctx.scene.assets.meshes.insert(cube_mesh));
+
+        // Create quad mesh for billboarded particles (smoke, fireworks)
+        let (quad_vertices, quad_indices) = wgpu_cube::renderer::quad_mesh();
+        let quad_mesh = ctx.renderer.create_mesh(&quad_vertices, &quad_indices);
+        self.quad_mesh_handle = Some(ctx.scene.assets.meshes.insert(quad_mesh));
 
         // Scene setup
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
@@ -73,12 +83,10 @@ impl RenderApplication for ParticleEffectsApp {
         });
         ctx.scene.environment_mut().disable_hdr_background();
 
-        #[allow(clippy::needless_update)]
         ctx.scene.set_camera(wgpu_cube::scene::Camera {
             eye: Vec3::new(0.0, 5.0, 20.0),
             target: Vec3::new(0.0, 5.0, 0.0),
             up: Vec3::Y,
-            //fov: 60.0,
             fov_y_radians: 60f32.to_radians(),
             near: 0.1,
             far: 100.0,
@@ -100,11 +108,13 @@ impl RenderApplication for ParticleEffectsApp {
             CanCastShadow(true),
         ));
 
-        // Create fountain system (continuous)
-        // Blue water particles with transparency
-        let fountain_material = Material::new([76, 128, 255, 204]) // RGB(76, 128, 255) with alpha 204
-            .with_alpha()
+        // ====================================================================
+        // FOUNTAIN: 3D Cube Particles (no billboarding)
+        // ====================================================================
+        let fountain_material = Material::new([76, 128, 255, 204])
+            .with_alpha()  // ✅ Your API uses with_alpha_blend()
             .with_unlit();
+        // Note: NO .with_billboarding() - uses 3D rotation
 
         let mut fountain_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -115,19 +125,16 @@ impl RenderApplication for ParticleEffectsApp {
             &self.fountain_behavior,
         );
 
-        let fountain_emitter = ParticleEmitter::fountain(Vec3::new(-8.0, 0.0, 0.0));
-        fountain_system.add_emitter(fountain_emitter);
-
-        log::info!(
-            "Fountain system created with {} max particles",
-            MAX_PARTICLES
-        );
+        fountain_system.add_emitter(ParticleEmitter::fountain(Vec3::new(-8.0, 0.0, 0.0)));
+        log::info!("Fountain: 3D cubes with physics");
         self.fountain_system = Some(fountain_system);
 
-        // Create fireworks system (bursts)
-        // Yellow-orange particles
-        let fireworks_material = Material::new([255, 204, 51, 255]) // Bright yellow-orange
-            .with_unlit();
+        // ====================================================================
+        // FIREWORKS: Billboarded Quad Particles
+        // ====================================================================
+        let fireworks_material = Material::new([255, 204, 51, 255])
+            .with_unlit()
+            .with_billboarding();  // ✅ Enable billboarding
 
         let fireworks_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -138,17 +145,16 @@ impl RenderApplication for ParticleEffectsApp {
             &self.fireworks_behavior,
         );
 
-        log::info!(
-            "Fireworks system created with {} max particles",
-            MAX_PARTICLES
-        );
+        log::info!("Fireworks: Billboarded quads");
         self.fireworks_system = Some(fireworks_system);
 
-        // Create smoke system (continuous)
-        // Gray smoke with transparency
-        let smoke_material = Material::new([128, 128, 128, 153]) // Gray with alpha 153 (~60%)
+        // ====================================================================
+        // SMOKE: Billboarded Quad Particles
+        // ====================================================================
+        let smoke_material = Material::new([128, 128, 128, 153])
             .with_alpha()
-            .with_unlit();
+            .with_unlit()
+            .with_billboarding();  // ✅ Enable billboarding
 
         let mut smoke_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -159,25 +165,21 @@ impl RenderApplication for ParticleEffectsApp {
             &self.smoke_behavior,
         );
 
-        let smoke_emitter = ParticleEmitter::smoke(Vec3::new(8.0, 0.0, 0.0));
-        smoke_system.add_emitter(smoke_emitter);
-
-        log::info!("Smoke system created");
+        smoke_system.add_emitter(ParticleEmitter::smoke(Vec3::new(8.0, 0.0, 0.0)));
+        log::info!("Smoke: Billboarded quads");
         self.smoke_system = Some(smoke_system);
 
-        log::info!("Particle effects showcase ready!");
-        log::info!("- Left: Fountain (continuous water)");
-        log::info!("- Center: Fireworks (timed bursts)");
-        log::info!("- Right: Smoke plume (continuous)");
+        log::info!("=== Particle Effects Ready ===");
+        log::info!("Left: Fountain (3D cubes)");
+        log::info!("Center: Fireworks (billboarded)");
+        log::info!("Right: Smoke (billboarded)");
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
-        let mut encoder =
-            ctx.renderer
-                .get_device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("ParticleUpdateEncoder"),
-                });
+        let mut encoder = ctx.renderer.get_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("ParticleUpdateEncoder"),
+            });
 
         // Update fountain
         if let Some(system) = &mut self.fountain_system {
@@ -190,45 +192,41 @@ impl RenderApplication for ParticleEffectsApp {
             );
         }
 
-        // Update fireworks (spawn new bursts periodically)
+        // Spawn fireworks periodically
         self.firework_timer += ctx.dt as f32;
         if self.firework_timer >= self.next_firework_time {
             self.firework_timer = 0.0;
             self.next_firework_time = 2.0 + (rand::random::<f32>() * 2.0);
 
-            // Spawn a new firework at random position
             let x = -4.0 + rand::random::<f32>() * 8.0;
             let y = 8.0 + rand::random::<f32>() * 4.0;
             let z = -2.0 + rand::random::<f32>() * 4.0;
 
-            // Pick random color gradient
             let colors = [
-                // Orange to red
                 ColorGradient::new()
                     .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
                     .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.3)
                     .with_keyframe([1.0, 0.2, 0.0, 0.3], 1.0),
-                // Cyan to blue
                 ColorGradient::new()
                     .with_keyframe([0.2, 0.8, 1.0, 1.0], 0.0)
                     .with_keyframe([0.0, 0.5, 1.0, 1.0], 0.3)
                     .with_keyframe([0.0, 0.2, 1.0, 0.3], 1.0),
-                // Green to yellow
                 ColorGradient::new()
                     .with_keyframe([0.2, 1.0, 0.3, 1.0], 0.0)
                     .with_keyframe([0.0, 1.0, 0.5, 1.0], 0.3)
                     .with_keyframe([0.0, 1.0, 0.2, 0.3], 1.0),
             ];
+            
             let color = colors[(rand::random::<f32>() * 3.0) as usize % 3].clone();
-
-            let firework = ParticleEmitter::firework(Vec3::new(x, y, z)).with_color_gradient(color);
+            let firework = ParticleEmitter::firework(Vec3::new(x, y, z))
+                .with_color_gradient(color);
 
             if let Some(system) = &mut self.fireworks_system {
                 system.add_emitter(firework);
-                log::info!("Launched firework at ({:.1}, {:.1}, {:.1})", x, y, z);
             }
         }
 
+        // Update fireworks
         if let Some(system) = &mut self.fireworks_system {
             system.update(
                 ctx.renderer.get_device(),
@@ -254,19 +252,21 @@ impl RenderApplication for ParticleEffectsApp {
     }
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
-        if let Some(mesh_handle) = self.mesh_handle {
-            if let Some(mesh) = ctx.scene.assets.meshes.get(mesh_handle) {
-                // Render fountain
+        // Render fountain with cube mesh (3D geometry)
+        if let Some(cube_handle) = self.cube_mesh_handle {
+            if let Some(mesh) = ctx.scene.assets.meshes.get(cube_handle) {
                 if let Some(system) = self.fountain_system.as_mut() {
                     system.render(ctx, mesh);
                 }
+            }
+        }
 
-                // Render fireworks
+        // Render fireworks and smoke with quad mesh (billboarded)
+        if let Some(quad_handle) = self.quad_mesh_handle {
+            if let Some(mesh) = ctx.scene.assets.meshes.get(quad_handle) {
                 if let Some(system) = self.fireworks_system.as_mut() {
                     system.render(ctx, mesh);
                 }
-
-                // Render smoke
                 if let Some(system) = self.smoke_system.as_mut() {
                     system.render(ctx, mesh);
                 }

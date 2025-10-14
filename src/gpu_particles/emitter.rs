@@ -387,8 +387,10 @@ impl ParticleEmitter {
 
         let lifetime = sample_range(&mut self.rng, self.lifetime_range.0, self.lifetime_range.1);
 
-        // Sample gradient at start and end for interpolation
+        // ✅ FIX: Sample gradient at both START (0.0) and END (1.0)
         let start_color = self.color_gradient.sample(0.0);
+        let end_color = self.color_gradient.sample(1.0);
+        
         let start_size = self.size_curve.sample(0.0);
         let end_size = self.size_curve.sample(1.0);
 
@@ -401,11 +403,20 @@ impl ParticleEmitter {
             scale: scale.into(),
             angular_velocity: self.rng.gen_range(-1.0..1.0),
             color: start_color,
-            user_data: [start_size, end_size, 0.0, 0.0],
+            // ✅ FIX: Store end_alpha in user_data[3] for GPU interpolation
+            // user_data layout: [start_size, end_size, original_scale_magnitude, end_alpha]
+            // - [0]: start_size (for size interpolation)
+            // - [1]: end_size (for size interpolation)
+            // - [2]: original_scale_magnitude (filled by shader on first frame)
+            // - [3]: end_alpha (for alpha interpolation from start_color.a to end_alpha)
+            user_data: [start_size, end_size, 0.0, end_color[3]],
         }
     }
 
-    // Preset constructors
+    // =========================================================================
+    // PRESET CONSTRUCTORS
+    // =========================================================================
+
     pub fn fountain(position: Vec3) -> Self {
         Self::new(position, 50.0)
             .with_emission_shape(EmissionShape::Cone {
@@ -418,10 +429,18 @@ impl ParticleEmitter {
             .with_scale(Vec3::splat(0.05), Vec3::splat(0.15))
             .with_color_gradient(
                 ColorGradient::new()
-                    .with_keyframe([0.3, 0.5, 1.0, 1.0], 0.0)
-                    .with_keyframe([0.3, 0.5, 1.0, 0.3], 1.0),
+                    // Blue water, opaque
+                    .with_keyframe([0.3, 0.5, 1.0, 0.9], 0.0)
+                    // Still blue, fading
+                    .with_keyframe([0.3, 0.5, 1.0, 0.6], 0.7)
+                    // Fade to transparent at end
+                    .with_keyframe([0.2, 0.4, 0.9, 0.0], 1.0),
             )
-            .with_size_curve(SizeCurve::new(1.0).with_keyframe(0.3, 1.0))
+            .with_size_curve(
+                SizeCurve::new(1.0)
+                    .with_keyframe(0.8, 0.5)
+                    .with_keyframe(0.3, 1.0)
+            )
     }
 
     pub fn firework(position: Vec3) -> Self {
@@ -435,7 +454,8 @@ impl ParticleEmitter {
                 ColorGradient::new()
                     .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
                     .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.3)
-                    .with_keyframe([1.0, 0.2, 0.0, 0.3], 1.0),
+                    .with_keyframe([1.0, 0.2, 0.0, 0.5], 0.7)
+                    .with_keyframe([0.5, 0.1, 0.0, 0.0], 1.0),
             )
             .with_size_curve(
                 SizeCurve::new(1.2)
@@ -445,20 +465,26 @@ impl ParticleEmitter {
     }
 
     pub fn smoke(position: Vec3) -> Self {
-        Self::new(position, 10.0)
-            .with_emission_shape(EmissionShape::Sphere { radius: 0.2 })
-            .with_velocity(Vec3::new(-0.2, 2.0, -0.2), Vec3::new(0.2, 4.0, 0.2))
-            .with_lifetime(3.0, 5.0)
-            .with_scale(Vec3::splat(0.2), Vec3::splat(0.4))
+        Self::new(position, 15.0)
+            .with_emission_shape(EmissionShape::Sphere { radius: 0.25 })
+            .with_velocity(
+                Vec3::new(-0.3, 0.5, -0.3),
+                Vec3::new(0.3, 1.2, 0.3)
+            )
+            .with_lifetime(4.0, 6.0)
+            .with_scale(Vec3::splat(0.15), Vec3::splat(0.3))
             .with_color_gradient(
                 ColorGradient::new()
-                    .with_keyframe([0.5, 0.5, 0.5, 0.8], 0.0)
-                    .with_keyframe([0.3, 0.3, 0.3, 0.3], 0.5)
-                    .with_keyframe([0.2, 0.2, 0.2, 0.0], 1.0),
+                    // Start: Medium gray, fairly visible
+                    .with_keyframe([0.6, 0.6, 0.6, 0.7], 0.0)
+                    // Middle: Darker, more transparent
+                    .with_keyframe([0.45, 0.45, 0.45, 0.45], 0.5)
+                    // End: Very dark and transparent
+                    .with_keyframe([0.25, 0.25, 0.25, 0.0], 1.0),
             )
             .with_size_curve(
-                SizeCurve::new(0.5)
-                    .with_keyframe(1.5, 0.5)
+                SizeCurve::new(0.4)
+                    .with_keyframe(1.2, 0.5)
                     .with_keyframe(2.0, 1.0),
             )
     }
@@ -472,9 +498,15 @@ impl ParticleEmitter {
             .with_scale(Vec3::splat(0.1), Vec3::splat(0.2))
             .with_color_gradient(
                 ColorGradient::new()
-                    .with_keyframe([1.0, 1.0, 0.8, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.2)
-                    .with_keyframe([0.5, 0.1, 0.0, 0.5], 0.6)
+                    // Flash: Bright yellow-white
+                    .with_keyframe([1.0, 1.0, 0.9, 1.0], 0.0)
+                    // Hot: Orange
+                    .with_keyframe([1.0, 0.6, 0.1, 1.0], 0.15)
+                    // Fire: Red-orange
+                    .with_keyframe([0.9, 0.3, 0.0, 0.8], 0.4)
+                    // Smoke: Dark and fading
+                    .with_keyframe([0.3, 0.2, 0.2, 0.3], 0.7)
+                    // Gone
                     .with_keyframe([0.2, 0.2, 0.2, 0.0], 1.0),
             )
             .with_size_curve(

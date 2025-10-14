@@ -53,6 +53,7 @@ const FLAG_USE_EMISSIVE_TEXTURE: u32 = 8u;
 const FLAG_USE_OCCLUSION_TEXTURE: u32 = 16u;
 const FLAG_ALPHA_BLEND: u32 = 32u;
 const FLAG_UNLIT: u32 = 128u;
+const FLAG_BILLBOARDED: u32 = 256u; 
 
 @group(1) @binding(0) var<storage, read> particles: array<Particle>;
 @group(1) @binding(1) var<uniform> material_data: MaterialData;
@@ -83,6 +84,20 @@ struct VertexOutput {
     @location(3) world_tangent: vec3<f32>,
     @location(4) world_bitangent: vec3<f32>,
     @location(5) particle_color: vec4<f32>,
+}
+
+fn billboard_matrix(particle_pos: vec3<f32>, camera_pos: vec3<f32>) -> mat3x3<f32> {
+    let forward = normalize(camera_pos - particle_pos);
+    let world_up = vec3<f32>(0.0, 1.0, 0.0);
+    var right = normalize(cross(world_up, forward));
+    
+    let right_len = length(right);
+    if (right_len < 0.001) {
+        right = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    
+    let up = cross(forward, right);
+    return mat3x3<f32>(right, up, forward);
 }
 
 // Build rotation matrix from axis-angle (Rodrigues' rotation formula)
@@ -116,12 +131,22 @@ fn vs_main(
 ) -> VertexOutput {
     let particle = particles[instance_idx];
 
-    // Build rotation matrix from axis-angle
-    let axis = safe_normalized_axis(particle.rotation.xyz);
-    let angle = particle.rotation.w;
-    let rot_mat = axis_angle_to_matrix(axis, angle);
+    // ✅ CHECK BILLBOARDING FLAG
+    let is_billboarded = (material_data.material_flags & FLAG_BILLBOARDED) != 0u;
     
-    // Apply scale and rotation to vertex
+    var rot_mat: mat3x3<f32>;
+    
+    if (is_billboarded) {
+        // Billboard mode: face camera
+        rot_mat = billboard_matrix(particle.position, camera.camera_pos);
+    } else {
+        // 3D mode: use particle rotation
+        let axis = safe_normalized_axis(particle.rotation.xyz);
+        let angle = particle.rotation.w;
+        rot_mat = axis_angle_to_matrix(axis, angle);
+    }
+    
+    // Apply scale and rotation to vertex (unchanged)
     let scaled_pos = vertex.position * particle.scale;
     let rotated_pos = rot_mat * scaled_pos;
     let world_pos = rotated_pos + particle.position;

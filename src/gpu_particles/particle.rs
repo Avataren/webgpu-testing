@@ -1,5 +1,6 @@
 // src/gpu_particles/particle.rs
 use bytemuck::{Pod, Zeroable};
+
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct Particle {
@@ -11,7 +12,12 @@ pub struct Particle {
     pub scale: [f32; 3],
     pub angular_velocity: f32,
     pub color: [f32; 4],
-    pub user_data: [f32; 4], // [start_size, end_size, unused, unused]
+    /// User data layout:
+    /// - `[0]`: start_size - Size multiplier at spawn (for size curve interpolation)
+    /// - `[1]`: end_size - Size multiplier at death (for size curve interpolation)
+    /// - `[2]`: original_scale_magnitude - Computed by shader on first frame (prevents scale drift)
+    /// - `[3]`: end_alpha - Alpha value at death (for gradient alpha interpolation)
+    pub user_data: [f32; 4],
 }
 
 impl Default for Particle {
@@ -25,7 +31,7 @@ impl Default for Particle {
             scale: [1.0; 3],
             angular_velocity: 0.0,
             color: [1.0; 4],
-            user_data: [1.0, 1.0, 0.0, 0.0], // Default: no size change
+            user_data: [1.0, 1.0, 0.0, 1.0], // Default: no size change, full opacity
         }
     }
 }
