@@ -9,7 +9,9 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
-    user_data: vec4<f32>, // [start_size, end_size, original_scale_magnitude, end_alpha]
+    color_mid: vec4<f32>,
+    color_end: vec4<f32>,
+    user_data: vec4<f32>, // [spawn_scale, end_size_ratio, mid_color_ratio, reserved]
 }
 
 struct Params {
@@ -58,9 +60,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    let start_alpha = p.color.a;
-    let start_rgb = p.color.rgb;
-    
     p.lifetime += params.delta_time;
     
     if p.lifetime >= p.max_lifetime {
@@ -108,33 +107,33 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // ✅ SIMPLE: Size interpolation with uniform scale
     let spawn_scale = p.user_data.x;
     let size_ratio = p.user_data.y;
-    
+    let mid_ratio = clamp(p.user_data.z, 0.001, 0.999);
+
     // Interpolate from 1.0x to size_ratio
     let current_size_multiplier = 1.0 + (size_ratio - 1.0) * life_ratio;
-    
+
     // Apply uniformly to all axes (no drift, no aspect ratio issues)
     let new_scale = spawn_scale * current_size_multiplier;
     p.scale = vec3<f32>(new_scale, new_scale, new_scale);
-    
-    // ✅ 3-point alpha interpolation
-    let mid_alpha = p.user_data.z;
-    let end_alpha = p.user_data.w;
-    
-    var current_alpha: f32;
-    
-    if life_ratio < 0.5 {
-        let t = life_ratio * 2.0;
-        current_alpha = start_alpha + (mid_alpha - start_alpha) * t;
+
+    // ✅ Piecewise color interpolation with configurable midpoint
+    let start_color = p.color;
+    let mid_color = p.color_mid;
+    let end_color = p.color_end;
+
+    var current_color: vec4<f32>;
+
+    if life_ratio < mid_ratio {
+        let denom = max(mid_ratio, 1e-4);
+        let t = life_ratio / denom;
+        current_color = mix(start_color, mid_color, t);
     } else {
-        let t = (life_ratio - 0.5) * 2.0;
-        current_alpha = mid_alpha + (end_alpha - mid_alpha) * t;
+        let denom = max(1.0 - mid_ratio, 1e-4);
+        let t = (life_ratio - mid_ratio) / denom;
+        current_color = mix(mid_color, end_color, t);
     }
-    
-    // Darken RGB over time
-    let darken_factor = 1.0 - life_ratio * 0.6;
-    let current_rgb = start_rgb * darken_factor;
-    
-    p.color = vec4<f32>(current_rgb, current_alpha);
-    
+
+    p.color = current_color;
+
     particles[index] = p;
 }

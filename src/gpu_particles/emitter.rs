@@ -43,15 +43,20 @@ impl ColorGradient {
         }
 
         let t = t.clamp(0.0, 1.0);
+        let (start_time, end_time) = match self.time_bounds() {
+            Some(bounds) => bounds,
+            None => return self.keyframes[0].0,
+        };
 
-        // Find surrounding keyframes
+        let target_time = start_time + (end_time - start_time) * t;
+
         let mut before = &self.keyframes[0];
         let mut after = &self.keyframes[self.keyframes.len() - 1];
 
-        for i in 0..self.keyframes.len() - 1 {
-            if self.keyframes[i].1 <= t && self.keyframes[i + 1].1 >= t {
-                before = &self.keyframes[i];
-                after = &self.keyframes[i + 1];
+        for window in self.keyframes.windows(2) {
+            if window[0].1 <= target_time && target_time <= window[1].1 {
+                before = &window[0];
+                after = &window[1];
                 break;
             }
         }
@@ -60,13 +65,68 @@ impl ColorGradient {
             return before.0;
         }
 
-        let factor = (t - before.1) / (after.1 - before.1);
+        let factor = (target_time - before.1) / (after.1 - before.1);
         [
             before.0[0] + (after.0[0] - before.0[0]) * factor,
             before.0[1] + (after.0[1] - before.0[1]) * factor,
             before.0[2] + (after.0[2] - before.0[2]) * factor,
             before.0[3] + (after.0[3] - before.0[3]) * factor,
         ]
+    }
+
+    fn time_bounds(&self) -> Option<(f32, f32)> {
+        let start_time = self.keyframes.first()?.1;
+        let end_time = self.keyframes.last()?.1;
+        if (end_time - start_time).abs() < f32::EPSILON {
+            None
+        } else {
+            Some((start_time, end_time))
+        }
+    }
+
+    pub fn sample_triplet(&self) -> ([f32; 4], [f32; 4], [f32; 4], f32) {
+        if self.keyframes.is_empty() {
+            return ([1.0; 4], [1.0; 4], [1.0; 4], 0.5);
+        }
+
+        if self.keyframes.len() == 1 {
+            let color = self.keyframes[0].0;
+            return (color, color, color, 0.5);
+        }
+
+        let start = self.keyframes.first().copied().unwrap();
+        let end = self.keyframes.last().copied().unwrap();
+        let duration = (end.1 - start.1).max(1e-6);
+
+        if self.keyframes.len() == 2 {
+            let mid_color = self.sample(0.5);
+            return (start.0, mid_color, end.0, 0.5);
+        }
+
+        let mut best_index = 1usize;
+        let mut best_distance = f32::MAX;
+
+        for (index, &(_, time)) in self.keyframes.iter().enumerate() {
+            if index == 0 || index == self.keyframes.len() - 1 {
+                continue;
+            }
+
+            let normalized = ((time - start.1) / duration).clamp(0.0, 1.0);
+            let distance = (normalized - 0.5).abs();
+
+            if distance < best_distance
+                || (distance == best_distance
+                    && normalized < ((self.keyframes[best_index].1 - start.1) / duration))
+            {
+                best_distance = distance;
+                best_index = index;
+            }
+        }
+
+        let mid = self.keyframes[best_index];
+        let mid_ratio = ((mid.1 - start.1) / duration).clamp(0.0, 1.0);
+
+        (start.0, mid.0, end.0, mid_ratio)
     }
 }
 
@@ -394,10 +454,8 @@ impl ParticleEmitter {
 
         let lifetime = sample_range(&mut self.rng, self.lifetime_range.0, self.lifetime_range.1);
 
-        // ✅ Sample gradient at 3 points
-        let start_color = self.color_gradient.sample(0.0);
-        let mid_color = self.color_gradient.sample(0.5);
-        let end_color = self.color_gradient.sample(1.0);
+        // ✅ Sample gradient at 3 representative points
+        let (start_color, mid_color, end_color, mid_ratio) = self.color_gradient.sample_triplet();
 
         let start_size = self.size_curve.sample(0.0);
         let end_size = self.size_curve.sample(1.0);
@@ -415,16 +473,18 @@ impl ParticleEmitter {
             scale: [spawn_scale, spawn_scale, spawn_scale],
             angular_velocity: self.rng.gen_range(-1.0..1.0),
             color: start_color,
+            color_mid: mid_color,
+            color_end: end_color,
             // ✅ Clean user_data layout:
             // [0] = spawn_scale (single value)
             // [1] = end_size / start_size (size ratio)
-            // [2] = mid_alpha
-            // [3] = end_alpha
+            // [2] = normalized lifetime when mid color is reached
+            // [3] = reserved for future use
             user_data: [
                 spawn_scale,
                 end_size / start_size.max(0.001),
-                mid_color[3],
-                end_color[3],
+                mid_ratio,
+                0.0,
             ],
         }
     }

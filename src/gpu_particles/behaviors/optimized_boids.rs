@@ -12,7 +12,7 @@ use super::radix_sort::RadixSort;
 
 const MAX_TOTAL_CELLS: u32 = 256;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct OptimizedBoidsParams {
     delta_time: f32,
@@ -31,7 +31,7 @@ struct OptimizedBoidsParams {
     _padding: u32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GridBuildParams {
     bounds: f32,
@@ -430,11 +430,13 @@ mod tests {
     #[test]
     fn optimized_boids_params_alignment() {
         assert_eq!(std::mem::size_of::<OptimizedBoidsParams>(), 64);
+        assert_eq!(std::mem::align_of::<OptimizedBoidsParams>(), 16);
     }
 
     #[test]
     fn grid_build_params_alignment() {
         assert_eq!(std::mem::size_of::<GridBuildParams>(), 48);
+        assert_eq!(std::mem::align_of::<GridBuildParams>(), 16);
     }
 
     #[test]

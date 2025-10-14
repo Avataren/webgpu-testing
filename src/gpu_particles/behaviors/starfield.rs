@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct StarfieldParams {
     delta_time: f32,
@@ -81,5 +81,6 @@ mod tests {
     #[test]
     fn starfield_params_alignment() {
         assert_eq!(std::mem::size_of::<StarfieldParams>(), 32);
+        assert_eq!(std::mem::align_of::<StarfieldParams>(), 16);
     }
 }

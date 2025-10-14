@@ -5,7 +5,7 @@ use crate::renderer::compute_resources::{
 };
 use crate::renderer::ComputePipelineBuilder;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct RadixSortParams {
     count: u32,
@@ -30,6 +30,17 @@ pub(super) struct RadixSort {
     prefix_sum_bind_group: wgpu::BindGroup,
     scatter_bind_group_a: Option<wgpu::BindGroup>,
     scatter_bind_group_b: Option<wgpu::BindGroup>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radix_sort_params_alignment() {
+        assert_eq!(std::mem::size_of::<RadixSortParams>(), 16);
+        assert_eq!(std::mem::align_of::<RadixSortParams>(), 16);
+    }
 }
 
 impl RadixSort {
@@ -243,15 +254,5 @@ impl RadixSort {
                 (count as usize * std::mem::size_of::<[u32; 2]>()) as u64,
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn radix_sort_params_alignment() {
-        assert_eq!(std::mem::size_of::<RadixSortParams>(), 16);
     }
 }

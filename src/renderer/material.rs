@@ -93,21 +93,21 @@ impl Material {
             .with_roughness(0.5)
     }
 
-   pub fn with_billboarding(mut self) -> Self {
+    pub fn with_billboarding(mut self) -> Self {
         self.flags.insert(MaterialFlags::BILLBOARDED);
         self
     }
-    
+
     /// Disable billboarding (use 3D rotation)
     pub fn without_billboarding(mut self) -> Self {
         self.flags.remove(MaterialFlags::BILLBOARDED);
         self
     }
-    
+
     /// Check if billboarding is enabled
     pub fn is_billboarded(&self) -> bool {
         self.flags.contains(MaterialFlags::BILLBOARDED)
-    }    
+    }
 
     pub fn with_metallic(mut self, metallic: f32) -> Self {
         self.metallic_factor = (metallic.clamp(0.0, 1.0) * 255.0) as u8;

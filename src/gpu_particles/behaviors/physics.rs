@@ -5,7 +5,7 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PhysicsParams {
     delta_time: f32,
@@ -13,7 +13,7 @@ struct PhysicsParams {
     turbulence_strength: f32,
     turbulence_frequency: f32,
     gravity: [f32; 3],
-    _padding_vec3: f32,          // ✅ vec3 needs padding to 16 bytes
+    _padding_vec3: f32, // ✅ vec3 needs padding to 16 bytes
     particle_count: u32,
     ground_level: f32,
     bounce_factor: f32,
@@ -85,7 +85,7 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_strength: self.turbulence_strength,
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
-            _padding_vec3: 0.0,  // ✅ Initialize padding
+            _padding_vec3: 0.0, // ✅ Initialize padding
             particle_count: 0,
             ground_level: self.ground_level,
             bounce_factor: self.bounce_factor,
@@ -112,7 +112,7 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_strength: self.turbulence_strength,
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
-            _padding_vec3: 0.0,  // ✅ Initialize padding
+            _padding_vec3: 0.0, // ✅ Initialize padding
             particle_count: active_count,
             ground_level: self.ground_level,
             bounce_factor: self.bounce_factor,
@@ -140,12 +140,13 @@ mod tests {
     fn physics_params_alignment() {
         // Size should still be 48 bytes, but now properly aligned
         assert_eq!(std::mem::size_of::<PhysicsParams>(), 48);
+        assert_eq!(std::mem::align_of::<PhysicsParams>(), 16);
     }
-    
+
     #[test]
     fn physics_params_layout() {
         use std::mem::offset_of;
-        
+
         // Verify proper vec3 alignment
         assert_eq!(offset_of!(PhysicsParams, gravity), 16);
         assert_eq!(offset_of!(PhysicsParams, particle_count), 32); // After 16-byte aligned vec3

@@ -19,6 +19,8 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
+    color_mid: vec4<f32>,
+    color_end: vec4<f32>,
     user_data: vec4<f32>,
 }
 

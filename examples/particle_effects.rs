@@ -2,10 +2,14 @@
 use glam::{Quat, Vec3};
 
 use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
-use wgpu_cube::gpu_particles::{ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, SizeCurve};
+use wgpu_cube::gpu_particles::{
+    ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, SizeCurve,
+};
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
-use wgpu_cube::scene::{MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible};
+use wgpu_cube::scene::{
+    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+};
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
     StartupContext,
@@ -49,7 +53,7 @@ impl ParticleEffectsApp {
                 .with_drag(0.15),
             smoke_behavior: PhysicsBehavior::default()
                 .with_gravity(Vec3::new(0.0, 1.5, 0.0))
-                .with_turbulence(0.0001,10.0)
+                .with_turbulence(0.0001, 10.0)
                 .with_drag(1.5),
             firework_timer: 0.0,
             next_firework_time: 2.0,
@@ -103,28 +107,22 @@ impl RenderApplication for ParticleEffectsApp {
 
         ctx.scene.world_mut().spawn((
             Name::new("Main Light"),
-            TransformComponent(Transform::from_trs(
-                Vec3::ZERO,
-                sun_rotation,
-                Vec3::ONE,
-            )),
+            TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
             DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 3.0),
-            CanCastShadow(true),  // ✅ Enable shadow casting
+            CanCastShadow(true), // ✅ Enable shadow casting
         ));
 
         // ====================================================================
         // FLOOR - Scaled cube with checker material
         // ====================================================================
-        let floor_material = Material::checker()
-            .with_metallic(0.1)
-            .with_roughness(0.8);
+        let floor_material = Material::checker().with_metallic(0.1).with_roughness(0.8);
 
         ctx.scene.world_mut().spawn((
             Name::new("Floor"),
             TransformComponent(Transform::from_trs(
-                Vec3::new(0.0, -0.5, 0.0),      // Position: just below y=0
+                Vec3::new(0.0, -0.5, 0.0), // Position: just below y=0
                 Quat::IDENTITY,
-                Vec3::new(50.0, 0.1, 50.0),     // Scale: 50x50 wide, 0.1 thick
+                Vec3::new(50.0, 0.1, 50.0), // Scale: 50x50 wide, 0.1 thick
             )),
             MeshComponent(cube_mesh_handle),
             MaterialComponent(floor_material),
@@ -136,9 +134,7 @@ impl RenderApplication for ParticleEffectsApp {
         // ====================================================================
         // FOUNTAIN: 3D Cubes
         // ====================================================================
-        let fountain_material = Material::new([76, 128, 255, 204])
-            .with_alpha()
-            .with_unlit();
+        let fountain_material = Material::new([76, 128, 255, 204]).with_alpha().with_unlit();
 
         let mut fountain_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -149,7 +145,7 @@ impl RenderApplication for ParticleEffectsApp {
             &self.fountain_behavior,
         );
 
-        fountain_system.set_casts_shadows(true);  // ✅ Enable shadows
+        fountain_system.set_casts_shadows(true); // ✅ Enable shadows
 
         let fountain_emitter = ParticleEmitter::new(Vec3::new(-8.0, 0.0, 0.0), FOUNTAIN_RATE)
             .with_emission_shape(EmissionShape::Cone {
@@ -169,7 +165,7 @@ impl RenderApplication for ParticleEffectsApp {
             .with_size_curve(
                 SizeCurve::new(1.0)
                     .with_keyframe(0.8, 1.0)
-                    .with_keyframe(0.3, 2.0)
+                    .with_keyframe(0.3, 2.0),
             );
 
         fountain_system.add_emitter(fountain_emitter);
@@ -192,7 +188,7 @@ impl RenderApplication for ParticleEffectsApp {
             &self.fireworks_behavior,
         );
 
-        fireworks_system.set_casts_shadows(true);  // ✅ Enable shadows
+        fireworks_system.set_casts_shadows(true); // ✅ Enable shadows
 
         log::info!("Fireworks: Billboarded quads with shadows enabled");
         self.fireworks_system = Some(fireworks_system);
@@ -214,7 +210,7 @@ impl RenderApplication for ParticleEffectsApp {
             &self.smoke_behavior,
         );
 
-        smoke_system.set_casts_shadows(true);  // ✅ Enable shadows
+        smoke_system.set_casts_shadows(true); // ✅ Enable shadows
 
         let smoke_emitter = ParticleEmitter::new(Vec3::new(8.0, 0.0, 0.0), SMOKE_RATE)
             .with_emission_shape(EmissionShape::Sphere { radius: 0.15 })
@@ -246,10 +242,12 @@ impl RenderApplication for ParticleEffectsApp {
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
-        let mut encoder = ctx.renderer.get_device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("ParticleUpdateEncoder"),
-            });
+        let mut encoder =
+            ctx.renderer
+                .get_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("ParticleUpdateEncoder"),
+                });
 
         // Update fountain
         if let Some(system) = &mut self.fountain_system {
@@ -286,9 +284,9 @@ impl RenderApplication for ParticleEffectsApp {
                     .with_keyframe([0.0, 1.0, 0.5, 1.0], 0.99)
                     .with_keyframe([0.0, 1.0, 0.2, 0.3], 1.0),
             ];
-            
+
             let color = colors[(rand::random::<f32>() * 3.0) as usize % 3].clone();
-            
+
             let firework = ParticleEmitter::new(Vec3::new(x, y, z), 0.0)
                 .with_burst(FIREWORK_BURST_SIZE)
                 .with_emission_shape(EmissionShape::RadialBurst)
@@ -353,16 +351,19 @@ impl RenderApplication for ParticleEffectsApp {
     // ✅ CRITICAL: Tell the renderer that custom render includes shadow passes
     fn custom_render_includes_shadows(&self) -> bool {
         // Return true if any particle system has shadows enabled
-        let fountain_shadows = self.fountain_system
+        let fountain_shadows = self
+            .fountain_system
             .as_ref()
             .is_some_and(|s| s.casts_shadows());
-        let fireworks_shadows = self.fireworks_system
+        let fireworks_shadows = self
+            .fireworks_system
             .as_ref()
             .is_some_and(|s| s.casts_shadows());
-        let smoke_shadows = self.smoke_system
+        let smoke_shadows = self
+            .smoke_system
             .as_ref()
             .is_some_and(|s| s.casts_shadows());
-        
+
         fountain_shadows || fireworks_shadows || smoke_shadows
     }
 }

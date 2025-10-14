@@ -80,7 +80,9 @@ impl MultiSceneParticlesExample {
                     scale: [scale, scale, scale],
                     angular_velocity: angular_speed,
                     color: [1.0, 1.0, 1.0, 1.0],
-                    user_data: [0.0; 4],
+                    color_mid: [1.0, 1.0, 1.0, 1.0],
+                    color_end: [1.0, 1.0, 1.0, 1.0],
+                    user_data: [scale, 1.0, 0.5, 0.0],
                 }
             })
             .collect()

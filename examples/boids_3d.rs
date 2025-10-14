@@ -196,7 +196,9 @@ fn initial_boid_particles() -> Vec<Particle> {
                 scale: [scale * 0.3, scale * 0.6, scale],
                 angular_velocity: 0.0,
                 color: [rgb[0], rgb[1], rgb[2], 1.0],
-                user_data: [0.0; 4],
+                color_mid: [rgb[0], rgb[1], rgb[2], 1.0],
+                color_end: [rgb[0], rgb[1], rgb[2], 1.0],
+                user_data: [scale, 1.0, 0.5, 0.0],
             }
         })
         .collect()

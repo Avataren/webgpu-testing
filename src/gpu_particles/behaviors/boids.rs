@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct BoidsParams {
     delta_time: f32,
@@ -143,5 +143,6 @@ mod tests {
     #[test]
     fn boids_params_alignment() {
         assert_eq!(std::mem::size_of::<BoidsParams>(), 48);
+        assert_eq!(std::mem::align_of::<BoidsParams>(), 16);
     }
 }
