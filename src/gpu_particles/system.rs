@@ -42,7 +42,7 @@ pub struct GpuParticleSystem {
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
-    slot_allocator: ParticleSlotAllocator,
+    free_slots: Vec<u32>,
     spawn_scratch: Vec<Particle>,
     spawn_requests: Vec<(u32, Particle)>,
     upload_scratch: Vec<Particle>,
@@ -401,7 +401,7 @@ impl GpuParticleSystem {
             active_particles: 0,
             workgroup_count,
             emitters: Vec::new(),
-            slot_allocator: ParticleSlotAllocator::default(),
+            free_slots: Vec::new(),
             spawn_scratch: Vec::new(),
             spawn_requests: Vec::new(),
             upload_scratch: Vec::new(),
@@ -525,7 +525,11 @@ impl GpuParticleSystem {
         self.spawn_requests.clear();
 
         for &particle in &self.spawn_scratch {
-            let Some(slot) = self.slot_allocator.allocate(self.max_particles) else {
+            let slot = if let Some(slot) = self.free_slots.pop() {
+                slot
+            } else if self.active_particles < self.max_particles {
+                self.active_particles
+            } else {
                 dropped += 1;
                 continue;
             };
@@ -614,7 +618,8 @@ impl GpuParticleSystem {
             index_bytes.copy_from_slice(chunk);
             let index = u32::from_ne_bytes(index_bytes);
 
-            if self.slot_allocator.reclaim(index, self.max_particles) {
+            if index < self.max_particles {
+                self.free_slots.push(index);
                 reclaimed += 1;
             } else {
                 log::warn!(
@@ -631,7 +636,6 @@ impl GpuParticleSystem {
 
         if reclaimed > 0 {
             self.active_particles = self.active_particles.saturating_sub(reclaimed);
-            self.slot_allocator.compact_trailing_free_slots();
         }
 
         if recorded > to_process {
@@ -726,14 +730,13 @@ impl GpuParticleSystem {
     }
 
     pub fn render(&mut self, ctx: &mut CustomRenderContext<'_>, mesh: &Mesh) {
-        let high_water = self.slot_allocator.high_water();
-        if high_water == 0 {
+        if self.render_high_water == 0 {
             return;
         }
 
         log::debug!(
             "Rendering {} particles (active: {})",
-            high_water,
+            self.render_high_water,
             self.active_particles
         );
 
@@ -773,7 +776,7 @@ impl GpuParticleSystem {
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
-                pass.draw_indexed(0..mesh.index_count(), 0, 0..high_water);
+                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
             }
             CustomRenderStage::Shadow(stage_info) => {
                 if !self.casts_shadows {
@@ -825,11 +828,7 @@ impl GpuParticleSystem {
         pass.set_bind_group(1, &self.render_bind_group, &[]);
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-        pass.draw_indexed(
-            0..mesh.index_count(),
-            0,
-            0..self.slot_allocator.high_water(),
-        );
+        pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
     }
 
     pub fn active_particle_count(&self) -> u32 {
@@ -845,7 +844,8 @@ impl GpuParticleSystem {
             bytemuck::cast_slice(&particles[..count]),
         );
         self.active_particles = count as u32;
-        self.slot_allocator.initialize_with_count(count as u32);
+        self.render_high_water = count as u32;
+        self.free_slots.clear();
     }
 
     pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
