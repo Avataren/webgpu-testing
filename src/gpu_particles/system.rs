@@ -52,6 +52,7 @@ pub struct GpuParticleSystem {
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
     sampler_filtering: SamplerFilterMode,
+    blend_state: wgpu::BlendState,
     casts_shadows: bool,
 }
 
@@ -236,6 +237,7 @@ impl GpuParticleSystem {
         });
 
         let sampler_filtering = material.sampler_filtering();
+        let blend_state = Self::blend_state_for_material(&material);
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ParticleMaterial"),
@@ -350,7 +352,7 @@ impl GpuParticleSystem {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility:  wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -384,6 +386,7 @@ impl GpuParticleSystem {
             render_sample_count,
             uses_bindless,
             sampler_filtering,
+            blend_state,
         );
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
@@ -415,10 +418,31 @@ impl GpuParticleSystem {
             render_format,
             render_sample_count,
             sampler_filtering,
+            blend_state,
             casts_shadows: false,
         }
     }
 
+    fn blend_state_for_material(material: &Material) -> wgpu::BlendState {
+        if material.requires_separate_pass() {
+            wgpu::BlendState::ALPHA_BLENDING
+        } else {
+            wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn create_render_pipeline(
         device: &wgpu::Device,
         renderer: &Renderer,
@@ -427,6 +451,7 @@ impl GpuParticleSystem {
         sample_count: u32,
         uses_bindless: bool,
         filtering: SamplerFilterMode,
+        blend_state: wgpu::BlendState,
     ) -> wgpu::RenderPipeline {
         let shader_source = ShaderBuilder::particles_filtered(uses_bindless, filtering)
             .build(include_str!("../shader/particle_render.wgsl"));
@@ -454,7 +479,7 @@ impl GpuParticleSystem {
         PipelineBuilder::new(device, &pipeline_layout, &render_shader)
             .with_label("ParticleRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
-            .with_color_target(color_format, Some(wgpu::BlendState::REPLACE))
+            .with_color_target(color_format, Some(blend_state))
             .with_depth_stencil(
                 wgpu::TextureFormat::Depth32Float,
                 true,
@@ -731,6 +756,7 @@ impl GpuParticleSystem {
             target_sample_count,
             uses_bindless,
             self.sampler_filtering,
+            self.blend_state,
         );
 
         self.render_pipeline = pipeline;
