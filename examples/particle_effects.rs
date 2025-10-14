@@ -171,14 +171,6 @@ impl RenderApplication for ParticleEffectsApp {
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
-        log::info!("=== Frame Update ===");
-
-        if let Some(system) = &self.fountain_system {
-            log::info!(
-                "Fountain active particles: {}",
-                system.active_particle_count()
-            );
-        }
         let mut encoder =
             ctx.renderer
                 .get_device()
