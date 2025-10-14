@@ -54,28 +54,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var p = particles[index];
     
-    // Skip already dead particles
     if p.lifetime < 0.0 {
         return;
     }
     
-    // ✅ CRITICAL FIX: Store original scale BEFORE updating lifetime
-    // This ensures it's available on the first frame
-    let is_first_frame = p.lifetime == 0.0 && p.user_data.z == 0.0;
-    if is_first_frame {
-        // Store original scale magnitude
-        let scale_magnitude = (p.scale.x + p.scale.y + p.scale.z) / 3.0;
-        p.user_data.z = scale_magnitude;
-    }
-    
-    // Store start values for interpolation
     let start_alpha = p.color.a;
     let start_rgb = p.color.rgb;
     
-    // Update lifetime
     p.lifetime += params.delta_time;
     
-    // Kill old particles and mark for recycling
     if p.lifetime >= p.max_lifetime {
         p.lifetime = -1.0;
         p.position = vec3<f32>(0.0, -10000.0, 0.0);
@@ -88,31 +75,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
-    // Calculate life ratio for effects
     let life_ratio = clamp(p.lifetime / p.max_lifetime, 0.0, 1.0);
     
-    // Apply gravity
+    // Physics updates (gravity, drag, turbulence, collision, rotation)
     var acceleration = params.gravity;
     
-    // ✅ FIX: Reduce turbulence impact significantly
     if params.turbulence_strength > 0.0 {
         let turbulence_pos = p.position * params.turbulence_frequency + vec3<f32>(p.lifetime * 0.5);
         let turbulence = noise3d(turbulence_pos) * params.turbulence_strength;
-        // Scale down turbulence to prevent chaotic motion
         acceleration += turbulence * 0.5;
     }
     
-    // Apply drag
     acceleration -= p.velocity * params.drag;
-    
-    // Update velocity and position
     p.velocity += acceleration * params.delta_time;
     p.position += p.velocity * params.delta_time;
     
-    // Ground collision with bounce
     if p.position.y < params.ground_level {
         p.position.y = params.ground_level;
-        
         if p.velocity.y < -0.1 {
             p.velocity.y = -p.velocity.y * params.bounce_factor;
             p.velocity.x *= params.velocity_damping;
@@ -124,33 +103,37 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // Update rotation
     p.rotation.w += p.angular_velocity * params.delta_time;
     
-    // ✅ FIX: Properly interpolate size using original scale
-    let start_size = p.user_data.x;
-    let end_size = p.user_data.y;
-    let original_scale = p.user_data.z;
+    // ✅ SIMPLE: Size interpolation with uniform scale
+    let spawn_scale = p.user_data.x;
+    let size_ratio = p.user_data.y;
     
-    // Interpolate size multiplier
-    let current_size_multiplier = start_size + (end_size - start_size) * life_ratio;
+    // Interpolate from 1.0x to size_ratio
+    let current_size_multiplier = 1.0 + (size_ratio - 1.0) * life_ratio;
     
-    // Apply to original spawn scale (prevents drift and compounding)
-    if original_scale > 0.0 {
-        p.scale = vec3<f32>(original_scale * current_size_multiplier);
-    }
+    // Apply uniformly to all axes (no drift, no aspect ratio issues)
+    let new_scale = spawn_scale * current_size_multiplier;
+    p.scale = vec3<f32>(new_scale, new_scale, new_scale);
     
-    // ✅ FIX: Properly interpolate color and alpha
+    // ✅ 3-point alpha interpolation
+    let mid_alpha = p.user_data.z;
     let end_alpha = p.user_data.w;
     
-    // Linear interpolation from start to end alpha
-    let current_alpha = start_alpha + (end_alpha - start_alpha) * life_ratio;
+    var current_alpha: f32;
     
-    // Darken RGB over time (smoke darkens as it dissipates)
+    if life_ratio < 0.5 {
+        let t = life_ratio * 2.0;
+        current_alpha = start_alpha + (mid_alpha - start_alpha) * t;
+    } else {
+        let t = (life_ratio - 0.5) * 2.0;
+        current_alpha = mid_alpha + (end_alpha - mid_alpha) * t;
+    }
+    
+    // Darken RGB over time
     let darken_factor = 1.0 - life_ratio * 0.6;
     let current_rgb = start_rgb * darken_factor;
     
-    // Set the interpolated color (direct assignment, not multiplication!)
     p.color = vec4<f32>(current_rgb, current_alpha);
     
     particles[index] = p;

@@ -275,16 +275,16 @@ impl RenderApplication for ParticleEffectsApp {
             let colors = [
                 ColorGradient::new()
                     .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 2.3)
-                    .with_keyframe([1.0, 0.2, 0.0, 0.3], 4.0),
+                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.99)
+                    .with_keyframe([1.0, 0.2, 0.0, 0.3], 1.0),
                 ColorGradient::new()
                     .with_keyframe([0.2, 0.8, 1.0, 1.0], 0.0)
-                    .with_keyframe([0.0, 0.5, 1.0, 1.0], 2.3)
-                    .with_keyframe([0.0, 0.2, 1.0, 0.3], 4.0),
+                    .with_keyframe([0.0, 0.5, 1.0, 1.0], 0.99)
+                    .with_keyframe([0.0, 0.2, 1.0, 0.3], 1.0),
                 ColorGradient::new()
                     .with_keyframe([0.2, 1.0, 0.3, 1.0], 0.0)
-                    .with_keyframe([0.0, 1.0, 0.5, 1.0], 2.3)
-                    .with_keyframe([0.0, 1.0, 0.2, 0.3], 4.0),
+                    .with_keyframe([0.0, 1.0, 0.5, 1.0], 0.99)
+                    .with_keyframe([0.0, 1.0, 0.2, 0.3], 1.0),
             ];
             
             let color = colors[(rand::random::<f32>() * 3.0) as usize % 3].clone();

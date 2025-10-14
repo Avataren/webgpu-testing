@@ -379,20 +379,31 @@ impl ParticleEmitter {
             base_velocity
         };
 
-        let scale = sample_vec3(
-            &mut self.rng,
-            self.initial_scale_range.0,
-            self.initial_scale_range.1,
+        // ✅ Use uniform scale (single value for all axes)
+        let scale_range = (
+            (self.initial_scale_range.0.x
+                + self.initial_scale_range.0.y
+                + self.initial_scale_range.0.z)
+                / 3.0,
+            (self.initial_scale_range.1.x
+                + self.initial_scale_range.1.y
+                + self.initial_scale_range.1.z)
+                / 3.0,
         );
+        let scale_uniform = sample_range(&mut self.rng, scale_range.0, scale_range.1);
 
         let lifetime = sample_range(&mut self.rng, self.lifetime_range.0, self.lifetime_range.1);
 
-        // ✅ FIX: Sample gradient at both START (0.0) and END (1.0)
+        // ✅ Sample gradient at 3 points
         let start_color = self.color_gradient.sample(0.0);
+        let mid_color = self.color_gradient.sample(0.5);
         let end_color = self.color_gradient.sample(1.0);
-        
+
         let start_size = self.size_curve.sample(0.0);
         let end_size = self.size_curve.sample(1.0);
+
+        // ✅ Store spawn scale with start_size applied
+        let spawn_scale = scale_uniform * start_size;
 
         Particle {
             position: position.into(),
@@ -400,16 +411,21 @@ impl ParticleEmitter {
             velocity: velocity.into(),
             max_lifetime: lifetime,
             rotation: Particle::AXIS_ANGLE_IDENTITY,
-            scale: scale.into(),
+            // ✅ Uniform scale on all axes
+            scale: [spawn_scale, spawn_scale, spawn_scale],
             angular_velocity: self.rng.gen_range(-1.0..1.0),
             color: start_color,
-            // ✅ FIX: Store end_alpha in user_data[3] for GPU interpolation
-            // user_data layout: [start_size, end_size, original_scale_magnitude, end_alpha]
-            // - [0]: start_size (for size interpolation)
-            // - [1]: end_size (for size interpolation)
-            // - [2]: original_scale_magnitude (filled by shader on first frame)
-            // - [3]: end_alpha (for alpha interpolation from start_color.a to end_alpha)
-            user_data: [start_size, end_size, 0.0, end_color[3]],
+            // ✅ Clean user_data layout:
+            // [0] = spawn_scale (single value)
+            // [1] = end_size / start_size (size ratio)
+            // [2] = mid_alpha
+            // [3] = end_alpha
+            user_data: [
+                spawn_scale,
+                end_size / start_size.max(0.001),
+                mid_color[3],
+                end_color[3],
+            ],
         }
     }
 
@@ -439,7 +455,7 @@ impl ParticleEmitter {
             .with_size_curve(
                 SizeCurve::new(1.0)
                     .with_keyframe(0.8, 0.5)
-                    .with_keyframe(0.3, 1.0)
+                    .with_keyframe(0.3, 1.0),
             )
     }
 
@@ -467,10 +483,7 @@ impl ParticleEmitter {
     pub fn smoke(position: Vec3) -> Self {
         Self::new(position, 15.0)
             .with_emission_shape(EmissionShape::Sphere { radius: 0.25 })
-            .with_velocity(
-                Vec3::new(-0.3, 0.5, -0.3),
-                Vec3::new(0.3, 1.2, 0.3)
-            )
+            .with_velocity(Vec3::new(-0.3, 0.5, -0.3), Vec3::new(0.3, 1.2, 0.3))
             .with_lifetime(4.0, 6.0)
             .with_scale(Vec3::splat(0.15), Vec3::splat(0.3))
             .with_color_gradient(
