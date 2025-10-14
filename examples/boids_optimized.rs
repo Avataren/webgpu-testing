@@ -123,7 +123,6 @@ impl RenderApplication for BoidsOptimizedApp {
         // Initialize particles
         let initial_particles = initial_boid_particles();
         let particle_count = initial_particles.len() as u32;
-        behavior.set_particle_count(particle_count);
 
         // Create GPU particle system
         let mut particle_system = GpuParticleSystem::new(
@@ -136,7 +135,6 @@ impl RenderApplication for BoidsOptimizedApp {
         );
 
         particle_system.initialize_particles(ctx.renderer.get_queue(), &initial_particles);
-        behavior.set_particle_count(particle_system.active_particle_count());
 
         log::info!(
             "Optimized Boids GPU simulation initialized with {} boids",
@@ -167,8 +165,6 @@ impl RenderApplication for BoidsOptimizedApp {
                 println!("dt = {} seconds", ctx.dt);
             }
             let frame_start = std::time::Instant::now();
-            behavior.set_particle_count(particle_system.active_particle_count());
-
             let mut encoder =
                 ctx.renderer
                     .get_device()
@@ -182,10 +178,12 @@ impl RenderApplication for BoidsOptimizedApp {
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 particle_system.particles_buffer(),
+                particle_system.active_particle_count(),
             );
 
             // Update particles (using possibly slightly stale grid)
             particle_system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 behavior,

@@ -24,8 +24,14 @@ struct Params {
     velocity_damping: f32,
 }
 
+struct DeadList {
+    count: atomic<u32>,
+    indices: array<u32>,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> dead_list: DeadList;
 
 fn noise3d(p: vec3<f32>) -> vec3<f32> {
     let i = floor(p);
@@ -41,6 +47,10 @@ fn noise3d(p: vec3<f32>) -> vec3<f32> {
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
+    if index >= arrayLength(&particles) {
+        return;
+    }
+
     var p = particles[index];
     
     // Skip already dead particles
@@ -56,6 +66,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         p.lifetime = -1.0;
         p.position = vec3<f32>(0.0, -10000.0, 0.0); // Hide offscreen
         p.velocity = vec3<f32>(0.0);
+        let slot = atomicAdd(&dead_list.count, 1u);
+        if slot < arrayLength(&dead_list.indices) {
+            dead_list.indices[slot] = index;
+        }
         particles[index] = p;
         return;
     }

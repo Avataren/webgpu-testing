@@ -260,6 +260,7 @@ impl RenderApplication for MultiSceneParticlesExample {
                     });
 
             system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.star_behavior,

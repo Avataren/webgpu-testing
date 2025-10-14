@@ -73,6 +73,7 @@ impl RenderApplication for ParticleEffectsApp {
         });
         ctx.scene.environment_mut().disable_hdr_background();
 
+        #[allow(clippy::needless_update)]
         ctx.scene.set_camera(wgpu_cube::scene::Camera {
             eye: Vec3::new(0.0, 5.0, 20.0),
             target: Vec3::new(0.0, 5.0, 0.0),
@@ -181,6 +182,7 @@ impl RenderApplication for ParticleEffectsApp {
         // Update fountain
         if let Some(system) = &mut self.fountain_system {
             system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.fountain_behavior,
@@ -229,6 +231,7 @@ impl RenderApplication for ParticleEffectsApp {
 
         if let Some(system) = &mut self.fireworks_system {
             system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.fireworks_behavior,
@@ -239,6 +242,7 @@ impl RenderApplication for ParticleEffectsApp {
         // Update smoke
         if let Some(system) = &mut self.smoke_system {
             system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.smoke_behavior,
