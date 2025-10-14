@@ -164,7 +164,7 @@ impl ParticleSlotAllocator {
     }
 
     fn reclaim(&mut self, index: u32, max_particles: u32) -> bool {
-        if index >= max_particles {
+        if index >= max_particles || index >= self.next_slot {
             return false;
         }
 
@@ -868,5 +868,32 @@ impl GpuParticleSystem {
 
     pub fn emitters_mut(&mut self) -> &mut Vec<ParticleEmitter> {
         &mut self.emitters
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ParticleSlotAllocator;
+
+    #[test]
+    fn reclaim_ignores_unallocated_indices() {
+        let mut allocator = ParticleSlotAllocator::default();
+        let max_particles = 100;
+
+        let mut allocated = Vec::new();
+        for _ in 0..5 {
+            allocated.push(
+                allocator
+                    .allocate(max_particles)
+                    .expect("should allocate slot"),
+            );
+        }
+
+        assert_eq!(allocator.high_water(), 5);
+
+        assert!(!allocator.reclaim(50, max_particles));
+        assert_eq!(allocator.high_water(), 5);
+
+        assert!(allocator.reclaim(allocated[2], max_particles));
     }
 }
