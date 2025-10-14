@@ -9,7 +9,7 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
-    user_data: vec4<f32>, // [start_size, end_size, unused, unused]
+    user_data: vec4<f32>, // [start_size, end_size, original_scale_magnitude, unused]
 }
 
 struct Params {
@@ -18,6 +18,7 @@ struct Params {
     turbulence_strength: f32,
     turbulence_frequency: f32,
     gravity: vec3<f32>,
+    _padding_vec3: f32,          // alignment padding
     particle_count: u32,
     ground_level: f32,
     bounce_factor: f32,
@@ -56,6 +57,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Skip already dead particles
     if p.lifetime < 0.0 {
         return;
+    }
+    
+    // ✅ FIX: Store original scale magnitude on first frame
+    if p.lifetime == 0.0 && p.user_data.z == 0.0 {
+        // Calculate the average scale magnitude from the spawn scale
+        let scale_magnitude = (p.scale.x + p.scale.y + p.scale.z) / 3.0;
+        p.user_data.z = scale_magnitude;
     }
     
     // Update lifetime
@@ -114,18 +122,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update rotation
     p.rotation.w += p.angular_velocity * params.delta_time;
     
-    // Interpolate size based on user_data (start_size, end_size)
+    // Interpolate size using ORIGINAL scale
     let start_size = p.user_data.x;
     let end_size = p.user_data.y;
+    let original_scale = p.user_data.z;
+    
     let current_size = start_size + (end_size - start_size) * life_ratio;
     
-    // Apply size to scale (preserve aspect ratio)
-    let base_scale = length(p.scale) / 1.732; // Normalize by sqrt(3)
-    p.scale = vec3<f32>(base_scale * current_size);
+    // Apply size curve to original spawn scale (prevents drift)
+    if original_scale > 0.0 {
+        p.scale = vec3<f32>(original_scale * current_size);
+    }
     
     // Fade out near end of life (affects alpha in color)
-    // We can't modify color gradient here easily, but we can dim the alpha
-    // The color is set at spawn time with the gradient
     let fade_start = 0.8;
     if life_ratio > fade_start {
         let fade_factor = 1.0 - (life_ratio - fade_start) / (1.0 - fade_start);

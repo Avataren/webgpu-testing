@@ -13,11 +13,11 @@ struct PhysicsParams {
     turbulence_strength: f32,
     turbulence_frequency: f32,
     gravity: [f32; 3],
+    _padding_vec3: f32,          // ✅ vec3 needs padding to 16 bytes
     particle_count: u32,
     ground_level: f32,
     bounce_factor: f32,
     velocity_damping: f32,
-    _padding: f32,
 }
 
 pub struct PhysicsBehavior {
@@ -85,11 +85,11 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_strength: self.turbulence_strength,
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
+            _padding_vec3: 0.0,  // ✅ Initialize padding
             particle_count: 0,
             ground_level: self.ground_level,
             bounce_factor: self.bounce_factor,
             velocity_damping: self.velocity_damping,
-            _padding: 0.0,
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -112,11 +112,11 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_strength: self.turbulence_strength,
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
+            _padding_vec3: 0.0,  // ✅ Initialize padding
             particle_count: active_count,
             ground_level: self.ground_level,
             bounce_factor: self.bounce_factor,
             velocity_damping: self.velocity_damping,
-            _padding: 0.0,
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -138,6 +138,19 @@ mod tests {
 
     #[test]
     fn physics_params_alignment() {
+        // Size should still be 48 bytes, but now properly aligned
         assert_eq!(std::mem::size_of::<PhysicsParams>(), 48);
+    }
+    
+    #[test]
+    fn physics_params_layout() {
+        use std::mem::offset_of;
+        
+        // Verify proper vec3 alignment
+        assert_eq!(offset_of!(PhysicsParams, gravity), 16);
+        assert_eq!(offset_of!(PhysicsParams, particle_count), 32); // After 16-byte aligned vec3
+        assert_eq!(offset_of!(PhysicsParams, ground_level), 36);
+        assert_eq!(offset_of!(PhysicsParams, bounce_factor), 40);
+        assert_eq!(offset_of!(PhysicsParams, velocity_damping), 44);
     }
 }
