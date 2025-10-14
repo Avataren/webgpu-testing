@@ -99,14 +99,20 @@ impl ParticleBehavior for PhysicsBehavior {
         })
     }
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32) {
+    fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        dt: f32,
+        active_count: u32,
+    ) {
         let params = PhysicsParams {
             delta_time: dt,
             drag: self.drag,
             turbulence_strength: self.turbulence_strength,
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
-            particle_count: 0,
+            particle_count: active_count,
             ground_level: self.ground_level,
             bounce_factor: self.bounce_factor,
             velocity_damping: self.velocity_damping,

@@ -5,6 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use wgpu::util::DeviceExt;
 
+use std::sync::{Arc, Mutex};
+
 use crate::asset::Mesh;
 use crate::renderer::{
     CustomRenderContext, CustomRenderStage, Material, MaterialData, PipelineBuilder, Renderer,
@@ -23,6 +25,10 @@ pub struct GpuParticleSystem {
 
     compute_pipeline: wgpu::ComputePipeline,
     compute_bind_group: wgpu::BindGroup,
+    dead_list_buffer: wgpu::Buffer,
+    dead_list_size: u64,
+    dead_list_readback: wgpu::Buffer,
+    pending_readback: bool,
 
     render_pipeline: wgpu::RenderPipeline,
     render_bind_group: wgpu::BindGroup,
@@ -36,6 +42,12 @@ pub struct GpuParticleSystem {
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
+    free_slots: Vec<u32>,
+    spawn_scratch: Vec<Particle>,
+    spawn_requests: Vec<(u32, Particle)>,
+    upload_scratch: Vec<Particle>,
+    dead_list_dirty: bool,
+    render_high_water: u32,
 
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
@@ -150,6 +162,25 @@ impl GpuParticleSystem {
 
         let params_buffer = behavior.create_params_buffer(device, queue);
 
+        let dead_list_entries = max_particles as usize + 1;
+        let dead_list_size = (dead_list_entries * std::mem::size_of::<u32>()) as u64;
+        let dead_list_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ParticleDeadList"),
+            size: dead_list_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&dead_list_buffer, 0, bytemuck::bytes_of(&0u32));
+
+        let dead_list_readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ParticleDeadListReadback"),
+            size: dead_list_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         let sampler_filtering = material.sampler_filtering();
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -186,7 +217,19 @@ impl GpuParticleSystem {
             },
         ];
 
-        layout_entries.extend(behavior.additional_layout_entries());
+        layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
+        let next_binding = 3;
+        layout_entries.extend(behavior.additional_layout_entries(next_binding));
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ParticleComputeBindLayout"),
@@ -219,7 +262,12 @@ impl GpuParticleSystem {
             },
         ];
 
-        bind_entries.extend(behavior.additional_bindings(device));
+        bind_entries.push(wgpu::BindGroupEntry {
+            binding: 2,
+            resource: dead_list_buffer.as_entire_binding(),
+        });
+
+        bind_entries.extend(behavior.additional_bindings(device, next_binding));
 
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ParticleComputeBindGroup"),
@@ -291,6 +339,10 @@ impl GpuParticleSystem {
             params_buffer,
             compute_pipeline,
             compute_bind_group,
+            dead_list_buffer,
+            dead_list_size,
+            dead_list_readback,
+            pending_readback: false,
             render_pipeline,
             render_bind_group,
             particle_bind_group_layout,
@@ -300,6 +352,12 @@ impl GpuParticleSystem {
             active_particles: 0,
             workgroup_count,
             emitters: Vec::new(),
+            free_slots: Vec::new(),
+            spawn_scratch: Vec::new(),
+            spawn_requests: Vec::new(),
+            upload_scratch: Vec::new(),
+            dead_list_dirty: false,
+            render_high_water: 0,
             render_format,
             render_sample_count,
             sampler_filtering,
@@ -360,63 +418,248 @@ impl GpuParticleSystem {
         &self.particles_buffer
     }
 
+    fn harvest_dead_particles(&mut self, device: &wgpu::Device) {
+        if !self.dead_list_dirty || !self.pending_readback {
+            self.dead_list_dirty = false;
+            return;
+        }
+
+        let slice = self.dead_list_readback.slice(..self.dead_list_size);
+        let status = Arc::new(Mutex::new(None));
+        let status_clone = Arc::clone(&status);
+
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            *status_clone.lock().unwrap() = Some(result);
+        });
+
+        if let Err(error) = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        }) {
+            log::error!("Failed to poll device for particle readback: {error}");
+            self.pending_readback = false;
+            self.dead_list_dirty = false;
+            return;
+        }
+
+        let result = status.lock().unwrap().take();
+        match result {
+            Some(Ok(())) => {
+                let data = slice.get_mapped_range();
+                self.process_dead_list_bytes(&data);
+                drop(data);
+                self.dead_list_readback.unmap();
+            }
+            Some(Err(error)) => {
+                log::error!("Failed to map particle dead list: {error}");
+            }
+            None => {
+                log::error!("Particle dead list mapping did not complete");
+            }
+        }
+
+        self.pending_readback = false;
+        self.dead_list_dirty = false;
+    }
+
+    fn reset_dead_list(&self, queue: &wgpu::Queue) {
+        queue.write_buffer(&self.dead_list_buffer, 0, bytemuck::bytes_of(&0u32));
+    }
+
+    fn upload_new_particles(&mut self, queue: &wgpu::Queue) {
+        if self.spawn_scratch.is_empty() {
+            return;
+        }
+
+        let mut spawned = 0u32;
+        let mut dropped = 0u32;
+
+        self.spawn_requests.clear();
+
+        for &particle in &self.spawn_scratch {
+            let slot = if let Some(slot) = self.free_slots.pop() {
+                slot
+            } else if self.render_high_water < self.max_particles {
+                let slot = self.render_high_water;
+                self.render_high_water += 1;
+                slot
+            } else {
+                dropped += 1;
+                continue;
+            };
+
+            if slot >= self.max_particles {
+                log::warn!("Attempted to spawn particle into out-of-range slot {slot}");
+                dropped += 1;
+                continue;
+            }
+
+            self.spawn_requests.push((slot, particle));
+            self.active_particles += 1;
+            spawned += 1;
+        }
+
+        if spawned == 0 {
+            if dropped > 0 {
+                log::debug!("Dropped {dropped} particles due to capacity limits");
+            }
+            self.spawn_scratch.clear();
+            self.spawn_requests.clear();
+            return;
+        }
+
+        if dropped > 0 {
+            log::debug!("Dropped {dropped} particles due to capacity limits");
+        }
+
+        self.spawn_requests.sort_unstable_by_key(|(slot, _)| *slot);
+
+        let particle_size = std::mem::size_of::<Particle>() as u64;
+        let mut index = 0;
+
+        while index < self.spawn_requests.len() {
+            let start_slot = self.spawn_requests[index].0;
+            self.upload_scratch.clear();
+            self.upload_scratch.push(self.spawn_requests[index].1);
+
+            let mut end_slot = start_slot;
+            index += 1;
+
+            while index < self.spawn_requests.len() && self.spawn_requests[index].0 == end_slot + 1
+            {
+                self.upload_scratch.push(self.spawn_requests[index].1);
+                end_slot = self.spawn_requests[index].0;
+                index += 1;
+            }
+
+            let offset = start_slot as u64 * particle_size;
+            queue.write_buffer(
+                &self.particles_buffer,
+                offset,
+                bytemuck::cast_slice(&self.upload_scratch),
+            );
+        }
+
+        self.spawn_scratch.clear();
+        self.spawn_requests.clear();
+    }
+
+    fn process_dead_list_bytes(&mut self, bytes: &[u8]) {
+        if bytes.len() < std::mem::size_of::<u32>() {
+            return;
+        }
+
+        let mut count_bytes = [0u8; 4];
+        count_bytes.copy_from_slice(&bytes[..4]);
+        let recorded = u32::from_ne_bytes(count_bytes);
+
+        if recorded == 0 {
+            return;
+        }
+
+        let available_indices = ((bytes.len() - 4) / 4) as u32;
+        let to_process = recorded.min(available_indices);
+        if to_process == 0 {
+            return;
+        }
+
+        let mut reclaimed = 0u32;
+        for chunk in bytes[4..]
+            .chunks_exact(std::mem::size_of::<u32>())
+            .take(to_process as usize)
+        {
+            let mut index_bytes = [0u8; 4];
+            index_bytes.copy_from_slice(chunk);
+            let index = u32::from_ne_bytes(index_bytes);
+
+            if index < self.max_particles {
+                self.free_slots.push(index);
+                reclaimed += 1;
+            } else {
+                log::warn!(
+                    "Discarding reclaimed particle index {} (max {})",
+                    index,
+                    self.max_particles
+                );
+            }
+
+            if reclaimed == self.max_particles {
+                break;
+            }
+        }
+
+        if reclaimed > 0 {
+            self.active_particles = self.active_particles.saturating_sub(reclaimed);
+            self.compact_trailing_free_slots();
+        }
+
+        if recorded > to_process {
+            log::warn!(
+                "Dead list recorded {} indices but only processed {}",
+                recorded,
+                to_process
+            );
+        }
+    }
+
+    fn compact_trailing_free_slots(&mut self) {
+        while self.render_high_water > 0 {
+            let tail_index = self.render_high_water - 1;
+            if let Some(pos) = self.free_slots.iter().position(|&slot| slot == tail_index) {
+                self.free_slots.swap_remove(pos);
+                self.render_high_water -= 1;
+            } else {
+                break;
+            }
+        }
+    }
+
     pub fn update(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         behavior: &dyn ParticleBehavior,
         dt: f32,
     ) {
-        // Collect new particles from all emitters
-        let mut new_particles = Vec::new();
+        self.harvest_dead_particles(device);
+        self.reset_dead_list(queue);
+
+        self.spawn_scratch.clear();
         for emitter in &mut self.emitters {
-            let particles = emitter.update(dt);
-            new_particles.extend(particles);
+            emitter.emit_into(dt, &mut self.spawn_scratch);
         }
 
-        // Debug logging
-        if !new_particles.is_empty() {
-            log::debug!("Generated {} new particles", new_particles.len());
-        }
-
-        // Place new particles in buffer
-        if !new_particles.is_empty() && self.active_particles < self.max_particles {
-            let space_available = (self.max_particles - self.active_particles) as usize;
-            let to_spawn = new_particles.len().min(space_available);
-
-            if to_spawn > 0 {
-                let offset =
-                    (self.active_particles as usize * std::mem::size_of::<Particle>()) as u64;
-
-                log::debug!(
-                    "Writing {} particles at offset {}, active: {} -> {}",
-                    to_spawn,
-                    offset,
-                    self.active_particles,
-                    self.active_particles + to_spawn as u32
-                );
-
-                queue.write_buffer(
-                    &self.particles_buffer,
-                    offset,
-                    bytemuck::cast_slice(&new_particles[..to_spawn]),
-                );
-                self.active_particles += to_spawn as u32;
-            }
+        if !self.spawn_scratch.is_empty() {
+            log::debug!("Generated {} new particles", self.spawn_scratch.len());
+            self.upload_new_particles(queue);
         }
 
         // Update shader parameters
-        behavior.update_params(queue, &self.params_buffer, dt);
+        behavior.update_params(queue, &self.params_buffer, dt, self.active_particles);
 
         // Run compute shader to update all particles
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("ParticleComputePass"),
-            timestamp_writes: None,
-        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("ParticleComputePass"),
+                timestamp_writes: None,
+            });
 
-        pass.set_pipeline(&self.compute_pipeline);
-        pass.set_bind_group(0, &self.compute_bind_group, &[]);
-        pass.dispatch_workgroups(self.workgroup_count, 1, 1);
+            pass.set_pipeline(&self.compute_pipeline);
+            pass.set_bind_group(0, &self.compute_bind_group, &[]);
+            pass.dispatch_workgroups(self.workgroup_count, 1, 1);
+        }
+
+        encoder.copy_buffer_to_buffer(
+            &self.dead_list_buffer,
+            0,
+            &self.dead_list_readback,
+            0,
+            self.dead_list_size,
+        );
+
+        self.pending_readback = true;
+        self.dead_list_dirty = true;
     }
 
     fn ensure_render_pipeline(
@@ -454,12 +697,15 @@ impl GpuParticleSystem {
     }
 
     pub fn render(&mut self, ctx: &mut CustomRenderContext<'_>, mesh: &Mesh) {
-        if self.active_particles == 0 {
-            log::warn!("Render called but no active particles!");
+        if self.render_high_water == 0 {
             return;
         }
 
-        log::debug!("Rendering {} particles", self.active_particles);
+        log::debug!(
+            "Rendering {} particles (active: {})",
+            self.render_high_water,
+            self.active_particles
+        );
 
         match ctx.stage {
             CustomRenderStage::BeforePostprocess | CustomRenderStage::AfterPostprocess => {
@@ -497,7 +743,7 @@ impl GpuParticleSystem {
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
-                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.active_particles);
+                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
             }
             CustomRenderStage::Shadow(stage_info) => {
                 if !self.casts_shadows {
@@ -549,7 +795,7 @@ impl GpuParticleSystem {
         pass.set_bind_group(1, &self.render_bind_group, &[]);
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-        pass.draw_indexed(0..mesh.index_count(), 0, 0..self.active_particles);
+        pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
     }
 
     pub fn active_particle_count(&self) -> u32 {
@@ -565,6 +811,8 @@ impl GpuParticleSystem {
             bytemuck::cast_slice(&particles[..count]),
         );
         self.active_particles = count as u32;
+        self.render_high_water = count as u32;
+        self.free_slots.clear();
     }
 
     pub fn set_casts_shadows(&mut self, casts_shadows: bool) {

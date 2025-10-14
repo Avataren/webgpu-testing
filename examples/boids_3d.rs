@@ -101,7 +101,6 @@ impl RenderApplication for BoidsGpuApp {
 
         let initial_particles = initial_boid_particles();
         let particle_count = initial_particles.len() as u32;
-        self.behavior.set_particle_count(particle_count);
 
         let mut particle_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -112,8 +111,6 @@ impl RenderApplication for BoidsGpuApp {
             &self.behavior,
         );
         particle_system.initialize_particles(ctx.renderer.get_queue(), &initial_particles);
-        self.behavior
-            .set_particle_count(particle_system.active_particle_count());
 
         log::info!(
             "Boids GPU simulation initialized with {} boids",
@@ -130,9 +127,6 @@ impl RenderApplication for BoidsGpuApp {
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         if let Some(particle_system) = &mut self.particle_system {
-            self.behavior
-                .set_particle_count(particle_system.active_particle_count());
-
             let mut encoder =
                 ctx.renderer
                     .get_device()
@@ -141,6 +135,7 @@ impl RenderApplication for BoidsGpuApp {
                     });
 
             particle_system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.behavior,
