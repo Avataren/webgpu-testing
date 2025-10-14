@@ -1,9 +1,12 @@
 #[cfg(feature = "profile")]
 use once_cell::sync::Lazy;
-
+#[cfg(feature = "profile")]
 use std::fs::{File, OpenOptions};
+#[cfg(feature = "profile")]
 use std::io::Write;
+#[cfg(feature = "profile")]
 use std::sync::Mutex;
+#[cfg(feature = "profile")]
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Only compile this section when the "profile" feature is enabled

@@ -1,3 +1,4 @@
+// src/gpu_particles/particle.rs
 use bytemuck::{Pod, Zeroable};
 use glam::Quat;
 
@@ -12,7 +13,7 @@ pub struct Particle {
     pub scale: [f32; 3],
     pub angular_velocity: f32,
     pub color: [f32; 4],
-    pub user_data: [f32; 4],
+    pub user_data: [f32; 4], // [start_size, end_size, unused, unused]
 }
 
 impl Default for Particle {
@@ -26,7 +27,20 @@ impl Default for Particle {
             scale: [1.0; 3],
             angular_velocity: 0.0,
             color: [1.0; 4],
-            user_data: [0.0; 4],
+            user_data: [1.0, 1.0, 0.0, 0.0], // Default: no size change
         }
+    }
+}
+
+impl Particle {
+    /// Check if this particle is dead (available for recycling)
+    pub fn is_dead(&self) -> bool {
+        self.lifetime < 0.0 || self.lifetime >= self.max_lifetime
+    }
+
+    /// Mark this particle as dead/available for recycling
+    pub fn mark_dead(&mut self) {
+        self.lifetime = -1.0;
+        self.position = [0.0, -10000.0, 0.0]; // Hide far offscreen
     }
 }

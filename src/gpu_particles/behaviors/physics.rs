@@ -1,3 +1,4 @@
+// src/gpu_particles/behaviors/physics.rs
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -13,6 +14,10 @@ struct PhysicsParams {
     turbulence_frequency: f32,
     gravity: [f32; 3],
     particle_count: u32,
+    ground_level: f32,
+    bounce_factor: f32,
+    velocity_damping: f32,
+    _padding: f32,
 }
 
 pub struct PhysicsBehavior {
@@ -20,6 +25,9 @@ pub struct PhysicsBehavior {
     pub turbulence_strength: f32,
     pub turbulence_frequency: f32,
     pub gravity: Vec3,
+    pub ground_level: f32,
+    pub bounce_factor: f32,
+    pub velocity_damping: f32,
 }
 
 impl Default for PhysicsBehavior {
@@ -29,7 +37,35 @@ impl Default for PhysicsBehavior {
             turbulence_strength: 0.0,
             turbulence_frequency: 1.0,
             gravity: Vec3::new(0.0, -9.81, 0.0),
+            ground_level: 0.0,
+            bounce_factor: 0.3,
+            velocity_damping: 0.8,
         }
+    }
+}
+
+impl PhysicsBehavior {
+    pub fn with_gravity(mut self, gravity: Vec3) -> Self {
+        self.gravity = gravity;
+        self
+    }
+
+    pub fn with_drag(mut self, drag: f32) -> Self {
+        self.drag = drag;
+        self
+    }
+
+    pub fn with_ground_collision(mut self, ground_level: f32, bounce: f32, damping: f32) -> Self {
+        self.ground_level = ground_level;
+        self.bounce_factor = bounce;
+        self.velocity_damping = damping;
+        self
+    }
+
+    pub fn with_turbulence(mut self, strength: f32, frequency: f32) -> Self {
+        self.turbulence_strength = strength;
+        self.turbulence_frequency = frequency;
+        self
     }
 }
 
@@ -50,6 +86,10 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
             particle_count: 0,
+            ground_level: self.ground_level,
+            bounce_factor: self.bounce_factor,
+            velocity_damping: self.velocity_damping,
+            _padding: 0.0,
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -67,6 +107,10 @@ impl ParticleBehavior for PhysicsBehavior {
             turbulence_frequency: self.turbulence_frequency,
             gravity: self.gravity.into(),
             particle_count: 0,
+            ground_level: self.ground_level,
+            bounce_factor: self.bounce_factor,
+            velocity_damping: self.velocity_damping,
+            _padding: 0.0,
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -88,6 +132,6 @@ mod tests {
 
     #[test]
     fn physics_params_alignment() {
-        assert_eq!(std::mem::size_of::<PhysicsParams>(), 32);
+        assert_eq!(std::mem::size_of::<PhysicsParams>(), 48);
     }
 }

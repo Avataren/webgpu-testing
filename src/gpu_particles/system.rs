@@ -1,3 +1,6 @@
+// src/gpu_particles/system.rs - COMPLETE WORKING VERSION
+// This is the FULL file - replace your entire system.rs with this
+
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use wgpu::util::DeviceExt;
@@ -364,11 +367,19 @@ impl GpuParticleSystem {
         behavior: &dyn ParticleBehavior,
         dt: f32,
     ) {
+        // Collect new particles from all emitters
         let mut new_particles = Vec::new();
         for emitter in &mut self.emitters {
-            new_particles.extend(emitter.update(dt));
+            let particles = emitter.update(dt);
+            new_particles.extend(particles);
         }
 
+        // Debug logging
+        if !new_particles.is_empty() {
+            log::debug!("Generated {} new particles", new_particles.len());
+        }
+
+        // Place new particles in buffer
         if !new_particles.is_empty() && self.active_particles < self.max_particles {
             let space_available = (self.max_particles - self.active_particles) as usize;
             let to_spawn = new_particles.len().min(space_available);
@@ -376,6 +387,15 @@ impl GpuParticleSystem {
             if to_spawn > 0 {
                 let offset =
                     (self.active_particles as usize * std::mem::size_of::<Particle>()) as u64;
+
+                log::debug!(
+                    "Writing {} particles at offset {}, active: {} -> {}",
+                    to_spawn,
+                    offset,
+                    self.active_particles,
+                    self.active_particles + to_spawn as u32
+                );
+
                 queue.write_buffer(
                     &self.particles_buffer,
                     offset,
@@ -385,8 +405,10 @@ impl GpuParticleSystem {
             }
         }
 
+        // Update shader parameters
         behavior.update_params(queue, &self.params_buffer, dt);
 
+        // Run compute shader to update all particles
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("ParticleComputePass"),
             timestamp_writes: None,
@@ -433,8 +455,11 @@ impl GpuParticleSystem {
 
     pub fn render(&mut self, ctx: &mut CustomRenderContext<'_>, mesh: &Mesh) {
         if self.active_particles == 0 {
+            log::warn!("Render called but no active particles!");
             return;
         }
+
+        log::debug!("Rendering {} particles", self.active_particles);
 
         match ctx.stage {
             CustomRenderStage::BeforePostprocess | CustomRenderStage::AfterPostprocess => {
@@ -481,8 +506,6 @@ impl GpuParticleSystem {
 
                 if let Some(matrix) = ctx.shadow_view_proj() {
                     self.render_shadow(ctx, mesh, stage_info, matrix);
-                } else {
-                    log::warn!("Shadow render requested without view-projection matrix");
                 }
             }
         }
@@ -503,7 +526,7 @@ impl GpuParticleSystem {
             self.shadow_resources = Some(resources);
         }
 
-        let resources = self.shadow_resources.as_mut().expect("shadow resources");
+        let resources = self.shadow_resources.as_mut().unwrap();
         resources.update_view_proj(ctx.renderer.get_queue(), view_proj);
 
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -535,6 +558,7 @@ impl GpuParticleSystem {
 
     pub fn initialize_particles(&mut self, queue: &wgpu::Queue, particles: &[Particle]) {
         let count = particles.len().min(self.max_particles as usize);
+        log::info!("Initializing {} particles", count);
         queue.write_buffer(
             &self.particles_buffer,
             0,
@@ -549,5 +573,9 @@ impl GpuParticleSystem {
 
     pub fn casts_shadows(&self) -> bool {
         self.casts_shadows
+    }
+
+    pub fn emitters_mut(&mut self) -> &mut Vec<ParticleEmitter> {
+        &mut self.emitters
     }
 }
