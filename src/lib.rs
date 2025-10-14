@@ -3,12 +3,12 @@ pub mod asset;
 pub mod environment;
 pub mod gpu_particles;
 pub mod io;
+pub mod profiler;
 pub mod render_application;
 pub mod renderer;
 pub mod scene;
 pub mod settings;
 pub mod time;
-
 #[cfg(feature = "egui")]
 pub mod ui;
 
