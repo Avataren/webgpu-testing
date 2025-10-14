@@ -163,7 +163,7 @@ impl RenderApplication for ParticleEffectsApp {
             )
             .with_size_curve(
                 SizeCurve::new(1.0)
-                    .with_keyframe(0.8, 1.0)
+                    .with_keyframe(1.0, 1.0)
                     .with_keyframe(0.3, 2.0),
             );
 
@@ -225,7 +225,7 @@ impl RenderApplication for ParticleEffectsApp {
             .with_size_curve(
                 SizeCurve::new(0.5)
                     .with_keyframe(1.0, 0.5)
-                    .with_keyframe(1.8, 1.0),
+                    .with_keyframe(2.8, 1.0),
             );
 
         smoke_system.add_emitter(smoke_emitter);
@@ -291,8 +291,9 @@ impl RenderApplication for ParticleEffectsApp {
                 .with_emission_shape(EmissionShape::RadialBurst)
                 .with_radial_velocity(10.0, 15.0)
                 .with_lifetime(1.5, 2.5)
-                .with_scale(Vec3::splat(0.08), Vec3::splat(0.12))
+                .with_scale(Vec3::splat(0.18), Vec3::splat(0.22))
                 .with_color_gradient(color);
+            
 
             if let Some(system) = &mut self.fireworks_system {
                 system.add_emitter(firework);

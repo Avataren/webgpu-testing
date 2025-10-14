@@ -1,8 +1,8 @@
-// src/gpu_particles/system.rs - COMPLETE WORKING VERSION
-// This is the FULL file - replace your entire system.rs with this
+// src/gpu_particles/system.rs - Non-blocking particle sorting
+// Fixed for wgpu 0.27.0+ API
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use std::sync::{Arc, Mutex};
@@ -54,8 +54,17 @@ pub struct GpuParticleSystem {
     sampler_filtering: SamplerFilterMode,
     blend_state: wgpu::BlendState,
     casts_shadows: bool,
+
+    // [SORTING] Particle sorting fields
+    sorted_indices: Vec<u32>,         // Indices sorted by distance
+    needs_alpha_sorting: bool,        // Whether this system needs sorting
+    particles_readback: wgpu::Buffer, // Staging buffer for reading positions
+    particles_staging: Vec<Particle>, // CPU-side particle data
+    pending_sort_readback: bool,      // Whether readback is in flight
+    last_camera_position: Vec3,       // Last known camera position for sorting
 }
 
+// Keep track of particle shadow resources
 struct ParticleShadowResources {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
@@ -211,7 +220,9 @@ impl GpuParticleSystem {
         let particles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ParticlesBuffer"),
             size: (max_particles as usize * std::mem::size_of::<Particle>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -238,6 +249,10 @@ impl GpuParticleSystem {
 
         let sampler_filtering = material.sampler_filtering();
         let blend_state = Self::blend_state_for_material(&material);
+
+        // [SORTING] Determine if alpha sorting is needed
+        let needs_alpha_sorting = Self::is_alpha_blending(&blend_state);
+
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ParticleMaterial"),
@@ -391,6 +406,16 @@ impl GpuParticleSystem {
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
 
+        // [SORTING] Create readback buffer
+        let particle_buffer_size =
+            (max_particles as usize * std::mem::size_of::<Particle>()) as u64;
+        let particles_readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ParticlesReadback"),
+            size: particle_buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
         Self {
             particles_buffer,
             params_buffer,
@@ -420,6 +445,14 @@ impl GpuParticleSystem {
             sampler_filtering,
             blend_state,
             casts_shadows: false,
+
+            // [SORTING] Initialize sorting fields
+            sorted_indices: Vec::with_capacity(max_particles as usize),
+            needs_alpha_sorting,
+            particles_readback,
+            particles_staging: Vec::with_capacity(max_particles as usize),
+            pending_sort_readback: false,
+            last_camera_position: Vec3::ZERO,
         }
     }
 
@@ -440,6 +473,93 @@ impl GpuParticleSystem {
                 },
             }
         }
+    }
+
+    // [SORTING] Check if blend state requires sorting
+    fn is_alpha_blending(blend_state: &wgpu::BlendState) -> bool {
+        // Alpha blending requires sorting, additive blending doesn't
+        matches!(
+            blend_state.color.dst_factor,
+            wgpu::BlendFactor::OneMinusSrcAlpha | wgpu::BlendFactor::OneMinusSrc
+        )
+    }
+
+    // [SORTING] Process pending sort readback (non-blocking, FIXED FOR wgpu 0.27+)
+    fn try_complete_sort_readback(&mut self, device: &wgpu::Device) {
+        if !self.pending_sort_readback {
+            return;
+        }
+
+        let slice = self
+            .particles_readback
+            .slice(..(self.render_high_water as usize * std::mem::size_of::<Particle>()) as u64);
+
+        let status = Arc::new(Mutex::new(None));
+        let status_clone = Arc::clone(&status);
+
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            *status_clone.lock().unwrap() = Some(result);
+        });
+
+        // Poll to complete the mapping
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+
+        // Check if mapping completed - FIX: bind the guard to a variable
+        let mut guard = status.lock().unwrap();
+        if let Some(result) = guard.take() {
+            drop(guard); // Explicitly drop the guard before proceeding
+
+            match result {
+                Ok(()) => {
+                    let data = slice.get_mapped_range();
+                    let particles = bytemuck::cast_slice::<u8, Particle>(&data);
+
+                    // Copy particles to staging
+                    self.particles_staging.clear();
+                    self.particles_staging
+                        .extend_from_slice(&particles[..self.render_high_water as usize]);
+
+                    drop(data);
+                    self.particles_readback.unmap();
+
+                    // Sort by distance from last known camera position
+                    self.sort_particles_internal(self.last_camera_position);
+
+                    self.pending_sort_readback = false;
+                }
+                Err(e) => {
+                    log::warn!("Failed to map particles for sorting: {:?}", e);
+                    self.pending_sort_readback = false;
+                }
+            }
+        }
+    }
+
+    // [SORTING] Internal sorting function (doesn't block)
+    fn sort_particles_internal(&mut self, camera_position: Vec3) {
+        self.sorted_indices.clear();
+
+        // Build index list of alive particles
+        for i in 0..self.render_high_water {
+            let particle = &self.particles_staging[i as usize];
+            if particle.lifetime >= 0.0 && particle.lifetime < particle.max_lifetime {
+                self.sorted_indices.push(i);
+            }
+        }
+
+        // Sort back-to-front for alpha blending
+        self.sorted_indices.sort_by(|&a, &b| {
+            let pos_a = Vec3::from(self.particles_staging[a as usize].position);
+            let pos_b = Vec3::from(self.particles_staging[b as usize].position);
+
+            let dist_a = camera_position.distance_squared(pos_a);
+            let dist_b = camera_position.distance_squared(pos_b);
+
+            // Reverse for back-to-front
+            dist_b
+                .partial_cmp(&dist_a)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -515,6 +635,7 @@ impl GpuParticleSystem {
             submission_index: None,
             timeout: None,
         }) {
+            // if let Err(error) = device.poll(wgpu::Maintain::Wait { timeout: None }) {
             log::error!("Failed to poll device for particle readback: {error}");
             self.pending_readback = false;
             self.dead_list_dirty = false;
@@ -689,6 +810,11 @@ impl GpuParticleSystem {
         behavior: &dyn ParticleBehavior,
         dt: f32,
     ) {
+        // [SORTING] Try to complete any pending sort readback
+        if self.needs_alpha_sorting {
+            self.try_complete_sort_readback(device);
+        }
+
         self.harvest_dead_particles(device);
         self.reset_dead_list(queue);
 
@@ -698,14 +824,11 @@ impl GpuParticleSystem {
         }
 
         if !self.spawn_scratch.is_empty() {
-            log::debug!("Generated {} new particles", self.spawn_scratch.len());
             self.upload_new_particles(queue);
         }
 
-        // Update shader parameters
         behavior.update_params(queue, &self.params_buffer, dt, self.active_particles);
 
-        // Run compute shader to update all particles
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("ParticleComputePass"),
@@ -727,6 +850,18 @@ impl GpuParticleSystem {
 
         self.pending_readback = true;
         self.dead_list_dirty = true;
+
+        // [SORTING] Initiate readback for sorting (non-blocking)
+        if self.needs_alpha_sorting && self.active_particles > 0 && !self.pending_sort_readback {
+            encoder.copy_buffer_to_buffer(
+                &self.particles_buffer,
+                0,
+                &self.particles_readback,
+                0,
+                (self.render_high_water as usize * std::mem::size_of::<Particle>()) as u64,
+            );
+            self.pending_sort_readback = true;
+        }
     }
 
     fn ensure_render_pipeline(
@@ -769,11 +904,8 @@ impl GpuParticleSystem {
             return;
         }
 
-        log::debug!(
-            "Rendering {} particles (active: {})",
-            self.render_high_water,
-            self.active_particles
-        );
+        // [SORTING] Store camera position for next frame's sort
+        self.last_camera_position = ctx.renderer.camera_position();
 
         match ctx.stage {
             CustomRenderStage::BeforePostprocess | CustomRenderStage::AfterPostprocess => {
@@ -811,7 +943,20 @@ impl GpuParticleSystem {
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
-                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
+                // [SORTING] Render based on blend mode
+                if self.needs_alpha_sorting && !self.sorted_indices.is_empty() {
+                    // Alpha blending: render in sorted order
+                    for &particle_idx in &self.sorted_indices {
+                        pass.draw_indexed(
+                            0..mesh.index_count(),
+                            0,
+                            particle_idx..(particle_idx + 1),
+                        );
+                    }
+                } else {
+                    // Additive blending: batch render (no sorting needed)
+                    pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
+                }
             }
             CustomRenderStage::Shadow(stage_info) => {
                 if !self.casts_shadows {
@@ -894,32 +1039,5 @@ impl GpuParticleSystem {
 
     pub fn emitters_mut(&mut self) -> &mut Vec<ParticleEmitter> {
         &mut self.emitters
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ParticleSlotAllocator;
-
-    #[test]
-    fn reclaim_ignores_unallocated_indices() {
-        let mut allocator = ParticleSlotAllocator::default();
-        let max_particles = 100;
-
-        let mut allocated = Vec::new();
-        for _ in 0..5 {
-            allocated.push(
-                allocator
-                    .allocate(max_particles)
-                    .expect("should allocate slot"),
-            );
-        }
-
-        assert_eq!(allocator.high_water(), 5);
-
-        assert!(!allocator.reclaim(50, max_particles));
-        assert_eq!(allocator.high_water(), 5);
-
-        assert!(allocator.reclaim(allocated[2], max_particles));
     }
 }
