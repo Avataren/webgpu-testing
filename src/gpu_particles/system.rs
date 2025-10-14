@@ -47,7 +47,6 @@ pub struct GpuParticleSystem {
     spawn_requests: Vec<(u32, Particle)>,
     upload_scratch: Vec<Particle>,
     dead_list_dirty: bool,
-    render_high_water: u32,
 
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
@@ -357,7 +356,6 @@ impl GpuParticleSystem {
             spawn_requests: Vec::new(),
             upload_scratch: Vec::new(),
             dead_list_dirty: false,
-            render_high_water: 0,
             render_format,
             render_sample_count,
             sampler_filtering,
@@ -479,10 +477,8 @@ impl GpuParticleSystem {
         for &particle in &self.spawn_scratch {
             let slot = if let Some(slot) = self.free_slots.pop() {
                 slot
-            } else if self.render_high_water < self.max_particles {
-                let slot = self.render_high_water;
-                self.render_high_water += 1;
-                slot
+            } else if self.active_particles < self.max_particles {
+                self.active_particles
             } else {
                 dropped += 1;
                 continue;
@@ -590,7 +586,6 @@ impl GpuParticleSystem {
 
         if reclaimed > 0 {
             self.active_particles = self.active_particles.saturating_sub(reclaimed);
-            self.compact_trailing_free_slots();
         }
 
         if recorded > to_process {
@@ -599,18 +594,6 @@ impl GpuParticleSystem {
                 recorded,
                 to_process
             );
-        }
-    }
-
-    fn compact_trailing_free_slots(&mut self) {
-        while self.render_high_water > 0 {
-            let tail_index = self.render_high_water - 1;
-            if let Some(pos) = self.free_slots.iter().position(|&slot| slot == tail_index) {
-                self.free_slots.swap_remove(pos);
-                self.render_high_water -= 1;
-            } else {
-                break;
-            }
         }
     }
 
