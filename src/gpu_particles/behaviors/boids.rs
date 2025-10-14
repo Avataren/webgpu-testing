@@ -88,7 +88,13 @@ impl ParticleBehavior for BoidsBehavior {
         })
     }
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32) {
+    fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        dt: f32,
+        active_count: u32,
+    ) {
         let params = BoidsParams {
             delta_time: dt,
             separation_radius: self.separation_radius,
@@ -100,7 +106,7 @@ impl ParticleBehavior for BoidsBehavior {
             max_speed: self.max_speed,
             max_force: self.max_force,
             bounds: self.bounds,
-            particle_count: self.particle_count,
+            particle_count: active_count,
             _padding: 0,
         };
 

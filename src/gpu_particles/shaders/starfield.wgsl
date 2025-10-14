@@ -22,8 +22,14 @@ struct Params {
     particle_count: u32,
 }
 
+struct DeadList {
+    count: atomic<u32>,
+    indices: array<u32>,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> dead_list: DeadList;
 
 fn hash(x: u32) -> f32 {
     var h = x;

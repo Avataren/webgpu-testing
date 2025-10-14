@@ -84,6 +84,7 @@ mod chrome_profiler {
         }
     }
 
+    #[allow(dead_code)]
     struct FileEndMarker;
     static _CLOSE_TRACE: Lazy<FileEndMarker> = Lazy::new(|| FileEndMarker);
 

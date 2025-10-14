@@ -7,13 +7,17 @@ pub trait ParticleBehavior: PlatformBehaviorBounds {
 
     fn create_params_buffer(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer;
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32);
+    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32, active_count: u32);
 
-    fn additional_bindings(&self, _device: &wgpu::Device) -> Vec<wgpu::BindGroupEntry<'_>> {
+    fn additional_bindings(
+        &self,
+        _device: &wgpu::Device,
+        _start_binding: u32,
+    ) -> Vec<wgpu::BindGroupEntry<'_>> {
         Vec::new()
     }
 
-    fn additional_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
+    fn additional_layout_entries(&self, _start_binding: u32) -> Vec<wgpu::BindGroupLayoutEntry> {
         Vec::new()
     }
 }

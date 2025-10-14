@@ -166,6 +166,7 @@ impl RenderApplication for StarfieldGpuApp {
                     });
 
             particle_system.update(
+                ctx.renderer.get_device(),
                 ctx.renderer.get_queue(),
                 &mut encoder,
                 &self.behavior,
