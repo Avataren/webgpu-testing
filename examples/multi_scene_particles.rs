@@ -66,6 +66,10 @@ impl MultiSceneParticlesExample {
                 let speed = rng.gen_range(STAR_SPEED_RANGE);
                 let angular_speed = rng.gen_range(SPIN_SPEED_RANGE);
 
+                let color_rgba = [1.0, 1.0, 1.0, 1.0];
+                let mut color_key_times = [1.0; Particle::MAX_COLOR_KEYS];
+                color_key_times[0] = 0.0;
+
                 Particle {
                     position: position.into(),
                     lifetime: rng.gen_range(0.0..500.0),
@@ -79,8 +83,10 @@ impl MultiSceneParticlesExample {
                     ],
                     scale: [scale, scale, scale],
                     angular_velocity: angular_speed,
-                    color: [1.0, 1.0, 1.0, 1.0],
-                    user_data: [0.0; 4],
+                    color: color_rgba,
+                    color_keys: [color_rgba; Particle::MAX_COLOR_KEYS],
+                    color_key_times,
+                    user_data: [0.0, 0.0, 1.0, 0.0],
                 }
             })
             .collect()

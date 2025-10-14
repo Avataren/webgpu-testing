@@ -1,6 +1,8 @@
 // src/gpu_particles/particle.rs
 use bytemuck::{Pod, Zeroable};
 
+pub const MAX_COLOR_KEYS: usize = 4;
+
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct Particle {
@@ -12,11 +14,13 @@ pub struct Particle {
     pub scale: [f32; 3],
     pub angular_velocity: f32,
     pub color: [f32; 4],
+    pub color_keys: [[f32; 4]; MAX_COLOR_KEYS],
+    pub color_key_times: [f32; MAX_COLOR_KEYS],
     /// User data layout:
-    /// - `[0]`: start_size - Size multiplier at spawn (for size curve interpolation)
-    /// - `[1]`: end_size - Size multiplier at death (for size curve interpolation)
-    /// - `[2]`: original_scale_magnitude - Computed by shader on first frame (prevents scale drift)
-    /// - `[3]`: end_alpha - Alpha value at death (for gradient alpha interpolation)
+    /// - `[0]`: spawn_scale - Size multiplier at spawn (for size curve interpolation)
+    /// - `[1]`: size_ratio - Ratio between end size and start size
+    /// - `[2]`: color_key_count - Number of valid color keys stored in the particle
+    /// - `[3]`: reserved
     pub user_data: [f32; 4],
 }
 
@@ -31,7 +35,9 @@ impl Default for Particle {
             scale: [1.0; 3],
             angular_velocity: 0.0,
             color: [1.0; 4],
-            user_data: [1.0, 1.0, 0.0, 1.0], // Default: no size change, full opacity
+            color_keys: [[1.0; 4]; MAX_COLOR_KEYS],
+            color_key_times: [0.0, 1.0, 1.0, 1.0],
+            user_data: [1.0, 1.0, 1.0, 0.0], // Default: no size change, single color key
         }
     }
 }
@@ -39,6 +45,7 @@ impl Default for Particle {
 impl Particle {
     /// Axis-angle representation of the identity rotation used by the GPU shaders.
     pub const AXIS_ANGLE_IDENTITY: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
+    pub const MAX_COLOR_KEYS: usize = MAX_COLOR_KEYS;
 
     /// Check if this particle is dead (available for recycling)
     pub fn is_dead(&self) -> bool {

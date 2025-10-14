@@ -10,6 +10,8 @@
 // The spatial hash grid divides 3D space into uniform cubic cells.
 // Cell size is chosen as ~1.5x the largest interaction radius.
 
+const MAX_COLOR_KEYS: u32 = 4u;
+
 struct Particle {
     position: vec3<f32>,
     lifetime: f32,
@@ -19,6 +21,8 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
+    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
+    color_key_times: vec4<f32>,
     user_data: vec4<f32>,
 }
 

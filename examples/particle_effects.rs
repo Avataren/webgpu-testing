@@ -274,16 +274,16 @@ impl RenderApplication for ParticleEffectsApp {
             let colors = [
                 ColorGradient::new()
                     .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.9)
-                    .with_keyframe([1.0, 0.2, 0.0, 0.3], 1.0),
+                    .with_keyframe([1.0, 0.5, 0.0, 0.3], 0.2)
+                    .with_keyframe([1.0, 0.2, 0.0, 0.0], 1.0),
                 ColorGradient::new()
                     .with_keyframe([0.2, 0.8, 1.0, 1.0], 0.0)
-                    .with_keyframe([0.0, 0.5, 1.0, 1.0], 0.9)
-                    .with_keyframe([0.0, 0.2, 1.0, 0.3], 1.0),
+                    .with_keyframe([0.0, 0.5, 1.0, 0.3], 0.2)
+                    .with_keyframe([0.0, 0.2, 1.0, 0.0], 1.0),
                 ColorGradient::new()
                     .with_keyframe([0.2, 1.0, 0.3, 1.0], 0.0)
-                    .with_keyframe([0.0, 1.0, 0.5, 1.0], 0.9)
-                    .with_keyframe([0.0, 1.0, 0.2, 0.3], 1.0),
+                    .with_keyframe([0.0, 1.0, 0.5, 0.3], 0.2)
+                    .with_keyframe([0.0, 1.0, 0.2, 0.0], 1.0),
             ];
 
             let color = colors[(rand::random::<f32>() * 3.0) as usize % 3].clone();
@@ -295,7 +295,6 @@ impl RenderApplication for ParticleEffectsApp {
                 .with_lifetime(1.5, 2.5)
                 .with_scale(Vec3::splat(0.18), Vec3::splat(0.22))
                 .with_color_gradient(color);
-            
 
             if let Some(system) = &mut self.fireworks_system {
                 system.add_emitter(firework);

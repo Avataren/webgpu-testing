@@ -247,6 +247,10 @@ fn initial_boid_particles() -> Vec<Particle> {
             let hue = (i as f32 / BOID_COUNT as f32) * 360.0;
             let rgb = hue_to_rgb(hue);
 
+            let color_rgba = [rgb[0], rgb[1], rgb[2], 1.0];
+            let mut color_key_times = [1.0; Particle::MAX_COLOR_KEYS];
+            color_key_times[0] = 0.0;
+
             Particle {
                 position: position.into(),
                 lifetime: 0.0,
@@ -255,8 +259,10 @@ fn initial_boid_particles() -> Vec<Particle> {
                 rotation,
                 scale: [scale * 0.3, scale * 0.6, scale],
                 angular_velocity: 0.0,
-                color: [rgb[0], rgb[1], rgb[2], 1.0],
-                user_data: [0.0; 4],
+                color: color_rgba,
+                color_keys: [color_rgba; Particle::MAX_COLOR_KEYS],
+                color_key_times,
+                user_data: [1.0, 1.0, 1.0, 0.0],
             }
         })
         .collect()

@@ -457,7 +457,7 @@ impl GpuParticleSystem {
             particles_staging: Vec::with_capacity(max_particles as usize),
             pending_sort_readback: false,
             last_camera_position: Vec3::ZERO,
-            depth_write_enabled: depth_write_enabled,
+            depth_write_enabled,
             pipeline_depth_write_state: depth_write_enabled,
         }
     }

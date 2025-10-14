@@ -2,7 +2,7 @@
 use glam::Vec3;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
-use super::particle::Particle;
+use super::particle::{Particle, MAX_COLOR_KEYS};
 
 #[derive(Clone, Copy, Debug)]
 pub enum EmissionShape {
@@ -28,7 +28,7 @@ impl ColorGradient {
     }
 
     pub fn with_keyframe(mut self, color: [f32; 4], time: f32) -> Self {
-        self.keyframes.push((color, time));
+        self.keyframes.push((color, time.clamp(0.0, 1.0)));
         self.keyframes
             .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         self
@@ -394,10 +394,35 @@ impl ParticleEmitter {
 
         let lifetime = sample_range(&mut self.rng, self.lifetime_range.0, self.lifetime_range.1);
 
-        // ✅ Sample gradient at 3 points
-        let start_color = self.color_gradient.sample(0.0);
-        let mid_color = self.color_gradient.sample(0.5);
-        let end_color = self.color_gradient.sample(1.0);
+        // Prepare gradient key data
+        let mut color_keys = [[1.0; 4]; MAX_COLOR_KEYS];
+        let mut color_key_times = [0.0_f32; MAX_COLOR_KEYS];
+
+        let mut key_count = self.color_gradient.keyframes.len().min(MAX_COLOR_KEYS);
+
+        if key_count == 0 {
+            color_key_times = [0.0, 1.0, 1.0, 1.0];
+            key_count = 1;
+        } else {
+            for (i, (color, time)) in self
+                .color_gradient
+                .keyframes
+                .iter()
+                .take(MAX_COLOR_KEYS)
+                .enumerate()
+            {
+                color_keys[i] = *color;
+                color_key_times[i] = time.clamp(0.0, 1.0);
+            }
+
+            let last_index = key_count - 1;
+            for slot in key_count..MAX_COLOR_KEYS {
+                color_keys[slot] = color_keys[last_index];
+                color_key_times[slot] = color_key_times[last_index];
+            }
+        }
+
+        let initial_color = color_keys[0];
 
         let start_size = self.size_curve.sample(0.0);
         let end_size = self.size_curve.sample(1.0);
@@ -414,17 +439,19 @@ impl ParticleEmitter {
             // ✅ Uniform scale on all axes
             scale: [spawn_scale, spawn_scale, spawn_scale],
             angular_velocity: self.rng.gen_range(-1.0..1.0),
-            color: start_color,
+            color: initial_color,
+            color_keys,
+            color_key_times,
             // ✅ Clean user_data layout:
             // [0] = spawn_scale (single value)
             // [1] = end_size / start_size (size ratio)
-            // [2] = mid_alpha
-            // [3] = end_alpha
+            // [2] = color key count
+            // [3] = reserved
             user_data: [
                 spawn_scale,
                 end_size / start_size.max(0.001),
-                mid_color[3],
-                end_color[3],
+                key_count as f32,
+                0.0,
             ],
         }
     }

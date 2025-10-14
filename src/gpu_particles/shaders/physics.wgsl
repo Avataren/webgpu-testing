@@ -1,5 +1,7 @@
 // src/gpu_particles/shaders/physics.wgsl
 
+const MAX_COLOR_KEYS: u32 = 4u;
+
 struct Particle {
     position: vec3<f32>,
     lifetime: f32,
@@ -9,7 +11,9 @@ struct Particle {
     scale: vec3<f32>,
     angular_velocity: f32,
     color: vec4<f32>,
-    user_data: vec4<f32>, // [start_size, end_size, original_scale_magnitude, end_alpha]
+    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
+    color_key_times: vec4<f32>,
+    user_data: vec4<f32>, // [spawn_scale, size_ratio, color_key_count, reserved]
 }
 
 struct Params {
@@ -45,6 +49,13 @@ fn noise3d(p: vec3<f32>) -> vec3<f32> {
     ) * 2.0 - 1.0;
 }
 
+fn sample_time(times: vec4<f32>, index: u32) -> f32 {
+    if index == 0u { return times.x; }
+    if index == 1u { return times.y; }
+    if index == 2u { return times.z; }
+    return times.w;
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
@@ -57,9 +68,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if p.lifetime < 0.0 {
         return;
     }
-    
-    let start_alpha = p.color.a;
-    let start_rgb = p.color.rgb;
     
     p.lifetime += params.delta_time;
     
@@ -116,25 +124,51 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let new_scale = spawn_scale * current_size_multiplier;
     p.scale = vec3<f32>(new_scale, new_scale, new_scale);
     
-    // ✅ 3-point alpha interpolation
-    let mid_alpha = p.user_data.z;
-    let end_alpha = p.user_data.w;
-    
-    var current_alpha: f32;
-    
-    if life_ratio < 0.5 {
-        let t = life_ratio * 2.0;
-        current_alpha = start_alpha + (mid_alpha - start_alpha) * t;
-    } else {
-        let t = (life_ratio - 0.5) * 2.0;
-        current_alpha = mid_alpha + (end_alpha - mid_alpha) * t;
+    // Gradient interpolation driven by stored keyframes
+    let raw_count = u32(p.user_data.z);
+    let key_count = max(min(raw_count, MAX_COLOR_KEYS), 1u);
+    let color_times = p.color_key_times;
+
+    var lower_index = 0u;
+    var upper_index = key_count - 1u;
+    var found_span = false;
+
+    for (var i = 0u; i + 1u < key_count; i = i + 1u) {
+        let start_time = sample_time(color_times, i);
+        let end_time = sample_time(color_times, i + 1u);
+
+        if life_ratio <= start_time {
+            lower_index = i;
+            upper_index = i;
+            found_span = true;
+            break;
+        }
+
+        if life_ratio < end_time {
+            lower_index = i;
+            upper_index = i + 1u;
+            found_span = true;
+            break;
+        }
     }
-    
-    // Darken RGB over time
-    let darken_factor = 1.0 - life_ratio * 0.6;
-    let current_rgb = start_rgb * darken_factor;
-    
-    p.color = vec4<f32>(current_rgb, current_alpha);
-    
+
+    if !found_span {
+        lower_index = key_count - 1u;
+        upper_index = key_count - 1u;
+    }
+
+    let lower_color = p.color_keys[lower_index];
+    let upper_color = p.color_keys[upper_index];
+
+    if lower_index == upper_index {
+        p.color = lower_color;
+    } else {
+        let lower_time = sample_time(color_times, lower_index);
+        let upper_time = sample_time(color_times, upper_index);
+        let span = max(upper_time - lower_time, 1e-5);
+        let mix_t = clamp((life_ratio - lower_time) / span, 0.0, 1.0);
+        p.color = lower_color + (upper_color - lower_color) * mix_t;
+    }
+
     particles[index] = p;
 }
