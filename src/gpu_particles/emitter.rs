@@ -245,6 +245,23 @@ impl ParticleEmitter {
     }
 
     fn spawn_particle(&self) -> Particle {
+        fn sample_range(rng: &mut impl Rng, min: f32, max: f32) -> f32 {
+            let (lo, hi) = if max < min { (max, min) } else { (min, max) };
+            if hi <= lo {
+                lo
+            } else {
+                rng.gen_range(lo..hi)
+            }
+        }
+
+        fn sample_vec3(rng: &mut impl Rng, min: Vec3, max: Vec3) -> Vec3 {
+            Vec3::new(
+                sample_range(rng, min.x, max.x),
+                sample_range(rng, min.y, max.y),
+                sample_range(rng, min.z, max.z),
+            )
+        }
+
         let mut rng = rand::thread_rng();
 
         let (offset, direction) = match self.emission_shape {
@@ -252,7 +269,7 @@ impl ParticleEmitter {
             EmissionShape::Sphere { radius } => {
                 let theta = rng.gen_range(0.0..std::f32::consts::TAU);
                 let phi = rng.gen_range(0.0..std::f32::consts::PI);
-                let r = rng.gen_range(0.0..radius);
+                let r = sample_range(&mut rng, 0.0, radius.max(0.0));
                 let pos = Vec3::new(
                     r * phi.sin() * theta.cos(),
                     r * phi.sin() * theta.sin(),
@@ -262,16 +279,16 @@ impl ParticleEmitter {
             }
             EmissionShape::Box { half_extents } => {
                 let pos = Vec3::new(
-                    rng.gen_range(-half_extents.x..half_extents.x),
-                    rng.gen_range(-half_extents.y..half_extents.y),
-                    rng.gen_range(-half_extents.z..half_extents.z),
+                    sample_range(&mut rng, -half_extents.x, half_extents.x),
+                    sample_range(&mut rng, -half_extents.y, half_extents.y),
+                    sample_range(&mut rng, -half_extents.z, half_extents.z),
                 );
                 (pos, Vec3::ZERO)
             }
             EmissionShape::Cone { angle, radius } => {
                 let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-                let phi = rng.gen_range(0.0..angle);
-                let r = rng.gen_range(0.0..radius);
+                let phi = sample_range(&mut rng, 0.0, angle.max(0.0));
+                let r = sample_range(&mut rng, 0.0, radius.max(0.0));
                 let pos = Vec3::new(
                     r * phi.sin() * theta.cos(),
                     r * phi.cos(),
@@ -281,13 +298,14 @@ impl ParticleEmitter {
             }
             EmissionShape::Disc { radius } => {
                 let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-                let r = rng.gen_range(0.0..radius);
+                let r = sample_range(&mut rng, 0.0, radius.max(0.0));
                 let pos = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
                 (pos, Vec3::ZERO)
             }
             EmissionShape::Ring { radius, thickness } => {
                 let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-                let r = radius + rng.gen_range(-thickness / 2.0..thickness / 2.0);
+                let half_thickness = (thickness / 2.0).max(0.0);
+                let r = radius + sample_range(&mut rng, -half_thickness, half_thickness);
                 let pos = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
                 (pos, Vec3::ZERO)
             }
@@ -303,15 +321,16 @@ impl ParticleEmitter {
         let position = self.position + offset;
 
         // Calculate velocity
-        let base_velocity = Vec3::new(
-            rng.gen_range(self.initial_velocity_range.0.x..self.initial_velocity_range.1.x),
-            rng.gen_range(self.initial_velocity_range.0.y..self.initial_velocity_range.1.y),
-            rng.gen_range(self.initial_velocity_range.0.z..self.initial_velocity_range.1.z),
+        let base_velocity = sample_vec3(
+            &mut rng,
+            self.initial_velocity_range.0,
+            self.initial_velocity_range.1,
         );
 
         let velocity = if self.radial_velocity.1 > 0.0 {
             // Add radial component if specified
-            let radial_speed = rng.gen_range(self.radial_velocity.0..self.radial_velocity.1);
+            let radial_speed =
+                sample_range(&mut rng, self.radial_velocity.0, self.radial_velocity.1);
             let radial_dir = if direction.length_squared() > 1e-6 {
                 direction.normalize()
             } else {
@@ -327,13 +346,13 @@ impl ParticleEmitter {
             base_velocity
         };
 
-        let scale = Vec3::new(
-            rng.gen_range(self.initial_scale_range.0.x..self.initial_scale_range.1.x),
-            rng.gen_range(self.initial_scale_range.0.y..self.initial_scale_range.1.y),
-            rng.gen_range(self.initial_scale_range.0.z..self.initial_scale_range.1.z),
+        let scale = sample_vec3(
+            &mut rng,
+            self.initial_scale_range.0,
+            self.initial_scale_range.1,
         );
 
-        let lifetime = rng.gen_range(self.lifetime_range.0..self.lifetime_range.1);
+        let lifetime = sample_range(&mut rng, self.lifetime_range.0, self.lifetime_range.1);
 
         // Sample gradient at start and end for interpolation
         let start_color = self.color_gradient.sample(0.0);
