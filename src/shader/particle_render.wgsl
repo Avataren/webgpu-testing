@@ -101,15 +101,23 @@ fn axis_angle_to_matrix(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
     );
 }
 
+fn safe_normalized_axis(axis: vec3<f32>) -> vec3<f32> {
+    let len = length(axis);
+    if (len < 1e-5) {
+        return vec3<f32>(0.0, 1.0, 0.0);
+    }
+    return axis / len;
+}
+
 @vertex
 fn vs_main(
     vertex: VertexInput,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
     let particle = particles[instance_idx];
-    
+
     // Build rotation matrix from axis-angle
-    let axis = normalize(particle.rotation.xyz);
+    let axis = safe_normalized_axis(particle.rotation.xyz);
     let angle = particle.rotation.w;
     let rot_mat = axis_angle_to_matrix(axis, angle);
     

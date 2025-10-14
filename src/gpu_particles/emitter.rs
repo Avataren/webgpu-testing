@@ -1,5 +1,5 @@
 // src/gpu_particles/emitter.rs
-use glam::{Quat, Vec3};
+use glam::Vec3;
 use rand::Rng;
 
 use super::particle::Particle;
@@ -331,7 +331,7 @@ impl ParticleEmitter {
             lifetime: 0.0,
             velocity: velocity.into(),
             max_lifetime: lifetime,
-            rotation: Quat::IDENTITY.into(),
+            rotation: Particle::AXIS_ANGLE_IDENTITY,
             scale: scale.into(),
             angular_velocity: rng.gen_range(-1.0..1.0),
             color: start_color,

@@ -2,7 +2,7 @@
 use glam::{Quat, Vec3};
 
 use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
-use wgpu_cube::gpu_particles::{ColorGradient, GpuParticleSystem, ParticleEmitter, SizeCurve};
+use wgpu_cube::gpu_particles::{ColorGradient, GpuParticleSystem, ParticleEmitter};
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
