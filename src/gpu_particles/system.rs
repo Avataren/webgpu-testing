@@ -680,12 +680,15 @@ impl GpuParticleSystem {
     }
 
     pub fn render(&mut self, ctx: &mut CustomRenderContext<'_>, mesh: &Mesh) {
-        if self.active_particles == 0 {
-            log::warn!("Render called but no active particles!");
+        if self.render_high_water == 0 {
             return;
         }
 
-        log::debug!("Rendering {} particles", self.active_particles);
+        log::debug!(
+            "Rendering {} particles (active: {})",
+            self.render_high_water,
+            self.active_particles
+        );
 
         match ctx.stage {
             CustomRenderStage::BeforePostprocess | CustomRenderStage::AfterPostprocess => {
@@ -723,7 +726,7 @@ impl GpuParticleSystem {
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
-                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.active_particles);
+                pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
             }
             CustomRenderStage::Shadow(stage_info) => {
                 if !self.casts_shadows {
@@ -775,7 +778,7 @@ impl GpuParticleSystem {
         pass.set_bind_group(1, &self.render_bind_group, &[]);
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-        pass.draw_indexed(0..mesh.index_count(), 0, 0..self.active_particles);
+        pass.draw_indexed(0..mesh.index_count(), 0, 0..self.render_high_water);
     }
 
     pub fn active_particle_count(&self) -> u32 {
@@ -791,6 +794,8 @@ impl GpuParticleSystem {
             bytemuck::cast_slice(&particles[..count]),
         );
         self.active_particles = count as u32;
+        self.render_high_water = count as u32;
+        self.free_slots.clear();
     }
 
     pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
