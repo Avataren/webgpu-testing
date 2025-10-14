@@ -251,7 +251,10 @@ impl OptimizedBoidsBehavior {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         particles_buffer: &wgpu::Buffer,
+        particle_count: u32,
     ) {
+        self.particle_count = particle_count;
+
         if self.particle_count == 0 {
             return;
         }
@@ -347,7 +350,13 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
         })
     }
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32) {
+    fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        dt: f32,
+        active_count: u32,
+    ) {
         let params = OptimizedBoidsParams {
             delta_time: dt,
             separation_radius: self.separation_radius,
@@ -359,7 +368,7 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
             max_speed: self.max_speed,
             max_force: self.max_force,
             bounds: self.bounds,
-            particle_count: self.particle_count,
+            particle_count: active_count,
             cell_size: self.cell_size,
             grid_dimensions: self.grid_dimensions,
             _padding: 0,
@@ -368,14 +377,18 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
     }
 
-    fn additional_bindings(&self, _device: &wgpu::Device) -> Vec<wgpu::BindGroupEntry<'_>> {
+    fn additional_bindings(
+        &self,
+        _device: &wgpu::Device,
+        start_binding: u32,
+    ) -> Vec<wgpu::BindGroupEntry<'_>> {
         vec![
             wgpu::BindGroupEntry {
-                binding: 2,
+                binding: start_binding,
                 resource: self.spatial_grid_buffer.buffer().as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 3,
+                binding: start_binding + 1,
                 resource: self
                     .sorted_particle_data_buffer
                     .buffer()
@@ -384,10 +397,10 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
         ]
     }
 
-    fn additional_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
+    fn additional_layout_entries(&self, start_binding: u32) -> Vec<wgpu::BindGroupLayoutEntry> {
         vec![
             wgpu::BindGroupLayoutEntry {
-                binding: 2,
+                binding: start_binding,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -397,7 +410,7 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 3,
+                binding: start_binding + 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },

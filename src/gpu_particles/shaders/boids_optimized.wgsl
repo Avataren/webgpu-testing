@@ -45,10 +45,16 @@ struct ParticleGridData {
     particle_index: u32,
 }
 
+struct DeadList {
+    count: atomic<u32>,
+    indices: array<u32>,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
-@group(0) @binding(2) var<storage, read> spatial_grid: array<CellData>;
-@group(0) @binding(3) var<storage, read> sorted_particle_data: array<ParticleGridData>;
+@group(0) @binding(2) var<storage, read_write> dead_list: DeadList;
+@group(0) @binding(3) var<storage, read> spatial_grid: array<CellData>;
+@group(0) @binding(4) var<storage, read> sorted_particle_data: array<ParticleGridData>;
 
 // ============================================================================
 // Spatial Grid Helper Functions

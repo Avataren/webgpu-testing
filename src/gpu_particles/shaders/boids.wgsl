@@ -26,8 +26,14 @@ struct Params {
     particle_count: u32,
 }
 
+struct DeadList {
+    count: atomic<u32>,
+    indices: array<u32>,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
+@group(0) @binding(2) var<storage, read_write> dead_list: DeadList;
 
 fn limit_magnitude(v: vec3<f32>, max_length: f32) -> vec3<f32> {
     let len = length(v);

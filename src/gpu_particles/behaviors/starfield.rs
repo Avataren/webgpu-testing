@@ -52,7 +52,13 @@ impl ParticleBehavior for StarfieldBehavior {
         })
     }
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32) {
+    fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        dt: f32,
+        active_count: u32,
+    ) {
         let params = StarfieldParams {
             delta_time: dt,
             near_plane: self.near_plane,
@@ -60,7 +66,7 @@ impl ParticleBehavior for StarfieldBehavior {
             far_reset_band: self.far_reset_band,
             field_half_size: self.field_half_size,
             min_radius: self.min_radius,
-            particle_count: 0,
+            particle_count: active_count,
             _padding: 0,
         };
 
