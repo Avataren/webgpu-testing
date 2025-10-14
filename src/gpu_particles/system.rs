@@ -62,6 +62,8 @@ pub struct GpuParticleSystem {
     particles_staging: Vec<Particle>, // CPU-side particle data
     pending_sort_readback: bool,      // Whether readback is in flight
     last_camera_position: Vec3,       // Last known camera position for sorting
+    depth_write_enabled: bool,
+    pipeline_depth_write_state: bool,
 }
 
 // Keep track of particle shadow resources
@@ -252,6 +254,7 @@ impl GpuParticleSystem {
 
         // [SORTING] Determine if alpha sorting is needed
         let needs_alpha_sorting = Self::is_alpha_blending(&blend_state);
+        let depth_write_enabled = !Self::is_alpha_blending(&blend_state);
 
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -402,6 +405,7 @@ impl GpuParticleSystem {
             uses_bindless,
             sampler_filtering,
             blend_state,
+            depth_write_enabled,
         );
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
@@ -453,6 +457,15 @@ impl GpuParticleSystem {
             particles_staging: Vec::with_capacity(max_particles as usize),
             pending_sort_readback: false,
             last_camera_position: Vec3::ZERO,
+            depth_write_enabled: depth_write_enabled,
+            pipeline_depth_write_state: depth_write_enabled,
+        }
+    }
+
+    pub fn set_depth_write_enabled(&mut self, enabled: bool) {
+        if self.depth_write_enabled != enabled {
+            self.depth_write_enabled = enabled;
+            // Pipeline needs rebuilding on next render
         }
     }
 
@@ -572,6 +585,7 @@ impl GpuParticleSystem {
         uses_bindless: bool,
         filtering: SamplerFilterMode,
         blend_state: wgpu::BlendState,
+        depth_write_enabled: bool,
     ) -> wgpu::RenderPipeline {
         let shader_source = ShaderBuilder::particles_filtered(uses_bindless, filtering)
             .build(include_str!("../shader/particle_render.wgsl"));
@@ -602,7 +616,7 @@ impl GpuParticleSystem {
             .with_color_target(color_format, Some(blend_state))
             .with_depth_stencil(
                 wgpu::TextureFormat::Depth32Float,
-                true,
+                depth_write_enabled, // ✅ Use the parameter instead of hardcoded true
                 wgpu::CompareFunction::LessEqual,
             )
             .with_multisample(sample_count)
@@ -877,7 +891,12 @@ impl GpuParticleSystem {
         let target_format = renderer.color_format_for_stage(stage);
         let target_sample_count = renderer.sample_count_for_stage(stage);
 
-        if self.render_format == target_format && self.render_sample_count == target_sample_count {
+        // ✅ CHECK ALL THREE CONDITIONS
+        if self.render_format == target_format
+            && self.render_sample_count == target_sample_count
+            && self.pipeline_depth_write_state == self.depth_write_enabled
+        // ✅ Added this check
+        {
             return;
         }
 
@@ -892,11 +911,13 @@ impl GpuParticleSystem {
             uses_bindless,
             self.sampler_filtering,
             self.blend_state,
+            self.depth_write_enabled,
         );
 
         self.render_pipeline = pipeline;
         self.render_format = target_format;
         self.render_sample_count = target_sample_count;
+        self.pipeline_depth_write_state = self.depth_write_enabled; // ✅ Update tracked state
     }
 
     pub fn render(&mut self, ctx: &mut CustomRenderContext<'_>, mesh: &Mesh) {

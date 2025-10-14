@@ -145,6 +145,7 @@ impl RenderApplication for ParticleEffectsApp {
         );
 
         fountain_system.set_casts_shadows(true); // ✅ Enable shadows
+        fountain_system.set_depth_write_enabled(true);
 
         let fountain_emitter = ParticleEmitter::new(Vec3::new(-8.0, 0.0, 0.0), FOUNTAIN_RATE)
             .with_emission_shape(EmissionShape::Cone {
@@ -188,7 +189,7 @@ impl RenderApplication for ParticleEffectsApp {
         );
 
         fireworks_system.set_casts_shadows(true); // ✅ Enable shadows
-
+        fireworks_system.set_depth_write_enabled(false);
         log::info!("Fireworks: Billboarded quads with shadows enabled");
         self.fireworks_system = Some(fireworks_system);
 
@@ -196,7 +197,7 @@ impl RenderApplication for ParticleEffectsApp {
         // SMOKE: Billboarded
         // ====================================================================
         let smoke_material = Material::new([128, 128, 128, 153])
-            .with_alpha()
+            //.with_alpha()
             .with_unlit()
             .with_billboarding();
 
@@ -210,6 +211,7 @@ impl RenderApplication for ParticleEffectsApp {
         );
 
         smoke_system.set_casts_shadows(true); // ✅ Enable shadows
+        smoke_system.set_depth_write_enabled(false);
 
         let smoke_emitter = ParticleEmitter::new(Vec3::new(8.0, 0.0, 0.0), SMOKE_RATE)
             .with_emission_shape(EmissionShape::Sphere { radius: 0.15 })
@@ -218,8 +220,8 @@ impl RenderApplication for ParticleEffectsApp {
             .with_scale(Vec3::splat(0.3), Vec3::splat(0.5))
             .with_color_gradient(
                 ColorGradient::new()
-                    .with_keyframe([0.7, 0.7, 0.7, 0.6], 0.0)
-                    .with_keyframe([0.5, 0.5, 0.5, 0.4], 0.5)
+                    .with_keyframe([0.7, 0.7, 0.7, 0.9], 0.0)
+                    .with_keyframe([0.5, 0.5, 0.5, 0.6], 0.8)
                     .with_keyframe([0.3, 0.3, 0.3, 0.0], 1.0),
             )
             .with_size_curve(
@@ -272,7 +274,7 @@ impl RenderApplication for ParticleEffectsApp {
             let colors = [
                 ColorGradient::new()
                     .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.8)
+                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.9)
                     .with_keyframe([1.0, 0.2, 0.0, 0.3], 1.0),
                 ColorGradient::new()
                     .with_keyframe([0.2, 0.8, 1.0, 1.0], 0.0)
