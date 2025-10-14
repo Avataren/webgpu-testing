@@ -39,10 +39,11 @@ pub struct GpuParticleSystem {
 
     max_particles: u32,
     active_particles: u32,
+    render_high_water: u32,
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
-    free_slots: Vec<u32>,
+    slot_allocator: ParticleSlotAllocator,
     spawn_scratch: Vec<Particle>,
     spawn_requests: Vec<(u32, Particle)>,
     upload_scratch: Vec<Particle>,
@@ -164,6 +165,10 @@ impl ParticleSlotAllocator {
 
     fn reclaim(&mut self, index: u32, max_particles: u32) -> bool {
         if index >= max_particles {
+            return false;
+        }
+
+        if self.free_slots.contains(&index) {
             return false;
         }
 
@@ -399,9 +404,10 @@ impl GpuParticleSystem {
             shadow_resources: None,
             max_particles,
             active_particles: 0,
+            render_high_water: 0,
             workgroup_count,
             emitters: Vec::new(),
-            free_slots: Vec::new(),
+            slot_allocator: ParticleSlotAllocator::default(),
             spawn_scratch: Vec::new(),
             spawn_requests: Vec::new(),
             upload_scratch: Vec::new(),
@@ -525,11 +531,7 @@ impl GpuParticleSystem {
         self.spawn_requests.clear();
 
         for &particle in &self.spawn_scratch {
-            let slot = if let Some(slot) = self.free_slots.pop() {
-                slot
-            } else if self.active_particles < self.max_particles {
-                self.active_particles
-            } else {
+            let Some(slot) = self.slot_allocator.allocate(self.max_particles) else {
                 dropped += 1;
                 continue;
             };
@@ -588,6 +590,7 @@ impl GpuParticleSystem {
 
         self.spawn_scratch.clear();
         self.spawn_requests.clear();
+        self.render_high_water = self.slot_allocator.high_water();
     }
 
     fn process_dead_list_bytes(&mut self, bytes: &[u8]) {
@@ -618,15 +621,19 @@ impl GpuParticleSystem {
             index_bytes.copy_from_slice(chunk);
             let index = u32::from_ne_bytes(index_bytes);
 
-            if index < self.max_particles {
-                self.free_slots.push(index);
-                reclaimed += 1;
-            } else {
+            if index >= self.max_particles {
                 log::warn!(
                     "Discarding reclaimed particle index {} (max {})",
                     index,
                     self.max_particles
                 );
+                continue;
+            }
+
+            if self.slot_allocator.reclaim(index, self.max_particles) {
+                reclaimed += 1;
+            } else {
+                log::debug!("Ignoring duplicate reclaimed particle index {index}");
             }
 
             if reclaimed == self.max_particles {
@@ -636,6 +643,8 @@ impl GpuParticleSystem {
 
         if reclaimed > 0 {
             self.active_particles = self.active_particles.saturating_sub(reclaimed);
+            self.slot_allocator.compact_trailing_free_slots();
+            self.render_high_water = self.slot_allocator.high_water();
         }
 
         if recorded > to_process {
@@ -845,7 +854,8 @@ impl GpuParticleSystem {
         );
         self.active_particles = count as u32;
         self.render_high_water = count as u32;
-        self.free_slots.clear();
+        self.slot_allocator
+            .initialize_with_count(self.render_high_water);
     }
 
     pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
