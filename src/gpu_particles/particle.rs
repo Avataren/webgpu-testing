@@ -1,7 +1,5 @@
 // src/gpu_particles/particle.rs
 use bytemuck::{Pod, Zeroable};
-use glam::Quat;
-
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct Particle {
@@ -23,7 +21,7 @@ impl Default for Particle {
             lifetime: 0.0,
             velocity: [0.0; 3],
             max_lifetime: 5.0,
-            rotation: Quat::IDENTITY.into(),
+            rotation: Self::AXIS_ANGLE_IDENTITY,
             scale: [1.0; 3],
             angular_velocity: 0.0,
             color: [1.0; 4],
@@ -33,6 +31,9 @@ impl Default for Particle {
 }
 
 impl Particle {
+    /// Axis-angle representation of the identity rotation used by the GPU shaders.
+    pub const AXIS_ANGLE_IDENTITY: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
+
     /// Check if this particle is dead (available for recycling)
     pub fn is_dead(&self) -> bool {
         self.lifetime < 0.0 || self.lifetime >= self.max_lifetime
