@@ -1,12 +1,15 @@
 // src/gpu_particles/pools.rs
 
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 /// RAII guard that returns pooled object on drop
 pub struct PooledVec<T> {
     vec: Option<Vec<T>>,
     pool: *const RefCell<VecPool<T>>,
+    _not_send_sync: PhantomData<Rc<RefCell<VecPool<T>>>>,
 }
 
 impl<T> PooledVec<T> {
@@ -137,6 +140,7 @@ pub fn acquire_particle_vec() -> PooledVec<Particle> {
         PooledVec {
             vec: Some(vec),
             pool: pool as *const _, // ✅ Explicit cast instead of as_ptr()
+            _not_send_sync: PhantomData,
         }
     })
 }
@@ -148,6 +152,7 @@ pub fn acquire_u32_vec() -> PooledVec<u32> {
         PooledVec {
             vec: Some(vec),
             pool: pool as *const _, // ✅ Explicit cast
+            _not_send_sync: PhantomData,
         }
     })
 }
@@ -159,6 +164,7 @@ pub fn acquire_spawn_request_vec() -> PooledVec<(u32, Particle)> {
         PooledVec {
             vec: Some(vec),
             pool: pool as *const _, // ✅ Explicit cast
+            _not_send_sync: PhantomData,
         }
     })
 }
