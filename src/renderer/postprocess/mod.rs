@@ -1,7 +1,7 @@
 use crate::environment::ColorGrading;
 use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec2, Vec3};
 
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const BLOOM_MIP_COUNT: usize = 5;
@@ -141,6 +141,16 @@ impl PostProcessEffects {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PostProcessCamera {
+    pub proj: Mat4,
+    pub view_proj: Mat4,
+    pub view_proj_inv: Mat4,
+    pub position: Vec3,
+    pub near: f32,
+    pub far: f32,
+}
+
 pub struct PostProcess {
     scene_source: TextureBundle,
     scene: TextureBundle,
@@ -188,8 +198,14 @@ pub struct PostProcess {
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
     last_proj: Mat4,
+    last_view_proj: Mat4,
+    last_view_proj_inv: Mat4,
+    last_camera_position: Vec3,
     last_near: f32,
     last_far: f32,
+    viewport_resolution: Vec2,
+    viewport_offset: Vec2,
+    viewport_scale: Vec2,
     sample_count: u32,
     color_grading: ColorGrading,
 }
@@ -616,6 +632,16 @@ impl PostProcess {
             label: Some("CompositeLayout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
                     binding: 50,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
@@ -718,8 +744,14 @@ impl PostProcess {
             cached_depth_view: None,
             bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
+            last_view_proj: Mat4::IDENTITY,
+            last_view_proj_inv: Mat4::IDENTITY,
+            last_camera_position: Vec3::ZERO,
             last_near: 0.01,
             last_far: 100.0,
+            viewport_resolution: Vec2::new(size.width as f32, size.height as f32),
+            viewport_offset: Vec2::ZERO,
+            viewport_scale: Vec2::ONE,
             sample_count,
             color_grading: ColorGrading::default(),
         };
@@ -727,8 +759,12 @@ impl PostProcess {
         let initial_uniform = PostProcessUniform::new(
             post.last_proj,
             post.last_proj.inverse(),
-            post.size.width as f32,
-            post.size.height as f32,
+            post.last_view_proj,
+            post.last_view_proj_inv,
+            post.last_camera_position,
+            post.viewport_resolution,
+            post.viewport_offset,
+            post.viewport_scale,
             post.last_near,
             post.last_far,
             post.effects,
@@ -768,14 +804,48 @@ impl PostProcess {
         let (down_chain, up_chain) = Self::create_bloom_chain(device, &self.size);
         self.bloom_down_chain = down_chain;
         self.bloom_up_chain = up_chain;
+        self.viewport_resolution = Vec2::new(width as f32, height as f32);
+        self.viewport_offset = Vec2::ZERO;
+        self.viewport_scale = Vec2::ONE;
         self.mark_bind_groups_dirty();
         self.upload_uniform(queue);
     }
 
-    pub fn update_camera(&mut self, queue: &wgpu::Queue, proj: Mat4, near: f32, far: f32) {
-        self.last_proj = proj;
-        self.last_near = near;
-        self.last_far = far;
+    pub fn update_viewport(&mut self, queue: &wgpu::Queue, region: Option<RenderRegion>) {
+        let full_width = self.size.width.max(1) as f32;
+        let full_height = self.size.height.max(1) as f32;
+
+        let (resolution, offset, scale) = if let Some(region) = region {
+            let region_width = region.width().max(1) as f32;
+            let region_height = region.height().max(1) as f32;
+            let offset = Vec2::new(
+                region.x() as f32 / full_width,
+                region.y() as f32 / full_height,
+            );
+            let scale = Vec2::new(region_width / full_width, region_height / full_height);
+            (Vec2::new(region_width, region_height), offset, scale)
+        } else {
+            (Vec2::new(full_width, full_height), Vec2::ZERO, Vec2::ONE)
+        };
+
+        if self.viewport_resolution != resolution
+            || self.viewport_offset != offset
+            || self.viewport_scale != scale
+        {
+            self.viewport_resolution = resolution;
+            self.viewport_offset = offset;
+            self.viewport_scale = scale;
+            self.upload_uniform(queue);
+        }
+    }
+
+    pub fn update_camera(&mut self, queue: &wgpu::Queue, camera: PostProcessCamera) {
+        self.last_proj = camera.proj;
+        self.last_view_proj = camera.view_proj;
+        self.last_view_proj_inv = camera.view_proj_inv;
+        self.last_camera_position = camera.position;
+        self.last_near = camera.near;
+        self.last_far = camera.far;
         self.upload_uniform(queue);
     }
 
@@ -1138,8 +1208,12 @@ impl PostProcess {
         let uniform = PostProcessUniform::new(
             self.last_proj,
             proj_inv,
-            self.size.width as f32,
-            self.size.height as f32,
+            self.last_view_proj,
+            self.last_view_proj_inv,
+            self.last_camera_position,
+            self.viewport_resolution,
+            self.viewport_offset,
+            self.viewport_scale,
             self.last_near,
             self.last_far,
             self.effects,
@@ -1372,10 +1446,21 @@ impl PostProcess {
             });
         }
 
+        let composite_depth_view: &wgpu::TextureView =
+            if let Some(resolved) = self.resolved_depth.as_ref() {
+                &resolved.view
+            } else {
+                depth_view
+            };
+
         self.composite_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CompositeBindGroup"),
             layout: &self.composite_layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(composite_depth_view),
+                },
                 wgpu::BindGroupEntry {
                     binding: 50,
                     resource: wgpu::BindingResource::TextureView(&self.scene.view),
@@ -1467,15 +1552,20 @@ impl PostProcess {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PostProcessUniform {
+    view_proj: [[f32; 4]; 4],
+    view_proj_inv: [[f32; 4]; 4],
     proj: [[f32; 4]; 4],
     proj_inv: [[f32; 4]; 4],
+    camera_position: [f32; 4],
     resolution: [f32; 2],
+    viewport_offset: [f32; 2],
+    viewport_scale: [f32; 2],
     radius_bias: [f32; 2],
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
     // Ensure `effects` starts on a 16-byte boundary to match WGSL uniform layout.
-    _effects_padding: [f32; 2],
+    _padding0: [f32; 2],
     color_adjust: [f32; 4],
     bloom_params: [f32; 4],
     effects: [f32; 4],
@@ -1486,8 +1576,12 @@ impl PostProcessUniform {
     fn new(
         proj: Mat4,
         proj_inv: Mat4,
-        width: f32,
-        height: f32,
+        view_proj: Mat4,
+        view_proj_inv: Mat4,
+        camera_position: Vec3,
+        viewport_resolution: Vec2,
+        viewport_offset: Vec2,
+        viewport_scale: Vec2,
         near: f32,
         far: f32,
         effects: PostProcessEffects,
@@ -1496,22 +1590,29 @@ impl PostProcessUniform {
     ) -> Self {
         let ssao = effects.ssao_settings;
         let bloom = effects.bloom_settings;
+        let resolution_width = viewport_resolution.x.max(1.0);
+        let resolution_height = viewport_resolution.y.max(1.0);
         let noise_scale = [
-            width / NOISE_TEXTURE_SIZE as f32,
-            height / NOISE_TEXTURE_SIZE as f32,
+            resolution_width / NOISE_TEXTURE_SIZE as f32,
+            resolution_height / NOISE_TEXTURE_SIZE as f32,
         ];
         let mut effects_arr = effects.uniform_components();
         // Store sample_count in w component so the depth resolve pass can iterate samples.
         effects_arr[3] = sample_count as f32;
         Self {
+            view_proj: view_proj.to_cols_array_2d(),
+            view_proj_inv: view_proj_inv.to_cols_array_2d(),
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
-            resolution: [width, height],
+            camera_position: [camera_position.x, camera_position.y, camera_position.z, 1.0],
+            resolution: [resolution_width, resolution_height],
+            viewport_offset: [viewport_offset.x, viewport_offset.y],
+            viewport_scale: [viewport_scale.x, viewport_scale.y],
             radius_bias: [ssao.radius, ssao.bias],
             intensity_power: [ssao.intensity, ssao.power],
             noise_scale,
             near_far: [near, far],
-            _effects_padding: [0.0, 0.0],
+            _padding0: [0.0, 0.0],
             color_adjust: [
                 grading.exposure(),
                 grading.saturation(),

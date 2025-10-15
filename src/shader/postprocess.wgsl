@@ -19,9 +19,14 @@ fn vs_fullscreen(@builtin(vertex_index) vertex_index : u32) -> VertexOutput {
 }
 
 struct PostUniform {
+    view_proj : mat4x4<f32>,
+    view_proj_inv : mat4x4<f32>,
     proj : mat4x4<f32>,
     proj_inv : mat4x4<f32>,
+    camera_position : vec4<f32>,
     resolution : vec2<f32>,
+    viewport_offset : vec2<f32>,
+    viewport_scale : vec2<f32>,
     radius_bias : vec2<f32>,
     intensity_power : vec2<f32>,
     noise_scale : vec2<f32>,
@@ -55,6 +60,24 @@ var color_source : texture_2d<f32>;
 @group(1) @binding(11)
 var color_sampler : sampler;
 
+fn viewport_to_scene_uv(uv : vec2<f32>) -> vec2<f32> {
+    return post_uniform.viewport_offset + uv * post_uniform.viewport_scale;
+}
+
+fn scene_to_viewport_uv(uv : vec2<f32>) -> vec2<f32> {
+    let scale = max(post_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
+    return (uv - post_uniform.viewport_offset) / scale;
+}
+
+fn viewport_texel_size() -> vec2<f32> {
+    let res = max(post_uniform.resolution, vec2<f32>(1.0, 1.0));
+    return vec2<f32>(1.0, 1.0) / res;
+}
+
+fn scene_texel_size() -> vec2<f32> {
+    return post_uniform.viewport_scale * viewport_texel_size();
+}
+
 fn linearize_depth(depth: f32) -> f32 {
     let near = post_uniform.near_far.x;
     let far = post_uniform.near_far.y;
@@ -69,6 +92,13 @@ fn reconstruct_view_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
     return view.xyz / view.w;
 }
 
+fn reconstruct_world_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
+    let clip = vec4<f32>(ndc, 1.0);
+    let world = post_uniform.view_proj_inv * clip;
+    return world.xyz / world.w;
+}
+
 fn fetch_depth(uv : vec2<f32>) -> f32 {
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         return 1.0;
@@ -81,31 +111,33 @@ fn fetch_depth(uv : vec2<f32>) -> f32 {
 }
 
 fn view_normal(uv : vec2<f32>, view_pos : vec3<f32>) -> vec3<f32> {
-    let texel = 1.0 / post_uniform.resolution;
+    let texel_viewport = viewport_texel_size();
+    let texel_scene = scene_texel_size();
+    let scene_uv = viewport_to_scene_uv(uv);
 
-    let depth_left = fetch_depth(uv - vec2<f32>(texel.x, 0.0));
-    let depth_right = fetch_depth(uv + vec2<f32>(texel.x, 0.0));
-    let depth_down = fetch_depth(uv - vec2<f32>(0.0, texel.y));
-    let depth_up = fetch_depth(uv + vec2<f32>(0.0, texel.y));
+    let depth_left = fetch_depth(scene_uv - vec2<f32>(texel_scene.x, 0.0));
+    let depth_right = fetch_depth(scene_uv + vec2<f32>(texel_scene.x, 0.0));
+    let depth_down = fetch_depth(scene_uv - vec2<f32>(0.0, texel_scene.y));
+    let depth_up = fetch_depth(scene_uv + vec2<f32>(0.0, texel_scene.y));
 
     var pos_left = view_pos;
     if (depth_left < 1.0) {
-        pos_left = reconstruct_view_position(uv - vec2<f32>(texel.x, 0.0), depth_left);
+        pos_left = reconstruct_view_position(uv - vec2<f32>(texel_viewport.x, 0.0), depth_left);
     }
 
     var pos_right = view_pos;
     if (depth_right < 1.0) {
-        pos_right = reconstruct_view_position(uv + vec2<f32>(texel.x, 0.0), depth_right);
+        pos_right = reconstruct_view_position(uv + vec2<f32>(texel_viewport.x, 0.0), depth_right);
     }
 
     var pos_down = view_pos;
     if (depth_down < 1.0) {
-        pos_down = reconstruct_view_position(uv - vec2<f32>(0.0, texel.y), depth_down);
+        pos_down = reconstruct_view_position(uv - vec2<f32>(0.0, texel_viewport.y), depth_down);
     }
 
     var pos_up = view_pos;
     if (depth_up < 1.0) {
-        pos_up = reconstruct_view_position(uv + vec2<f32>(0.0, texel.y), depth_up);
+        pos_up = reconstruct_view_position(uv + vec2<f32>(0.0, texel_viewport.y), depth_up);
     }
 
     var dx = pos_right - pos_left;
@@ -200,14 +232,20 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
-    let depth = fetch_depth(in.uv);
-    let noise_sample = textureSample(noise_texture, noise_sampler, in.uv * post_uniform.noise_scale);
+    let scene_uv = in.uv;
+    let viewport_uv = scene_to_viewport_uv(scene_uv);
+    let depth = fetch_depth(scene_uv);
+    let noise_sample = textureSample(
+        noise_texture,
+        noise_sampler,
+        clamp(viewport_uv, vec2<f32>(0.0), vec2<f32>(1.0)) * post_uniform.noise_scale,
+    );
     if (depth >= 1.0) {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
-    let view_pos = reconstruct_view_position(in.uv, depth);
-    let normal = view_normal(in.uv, view_pos);
+    let view_pos = reconstruct_view_position(viewport_uv, depth);
+    let normal = view_normal(viewport_uv, view_pos);
     var tangent = vec3<f32>(noise_sample.xy, 0.0);
     if (dot(tangent, tangent) < 1e-4) {
         tangent = vec3<f32>(1.0, 0.0, 0.0);
@@ -233,7 +271,7 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         if (offset_ndc.z >= 1.0) {
             continue;
         }
-        let sample_depth = fetch_depth(offset_uv);
+        let sample_depth = fetch_depth(viewport_to_scene_uv(offset_uv));
         if (sample_depth >= 1.0) {
             continue;
         }
@@ -256,9 +294,9 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
 }
 
 fn ssao_texel_size() -> vec2<f32> {
-    let width = max(post_uniform.resolution.x, 1.0);
-    let height = max(post_uniform.resolution.y, 1.0);
-    return vec2<f32>(1.0 / width, 1.0 / height);
+    let dims = vec2<f32>(textureDimensions(ssao_blur_texture, 0));
+    let safe = max(dims, vec2<f32>(1.0, 1.0));
+    return vec2<f32>(1.0, 1.0) / safe;
 }
 
 fn ssao_blur_value(uv : vec2<f32>, direction : vec2<f32>) -> f32 {
@@ -398,7 +436,7 @@ fn fs_bloom_upsample(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(base + filtered * scatter, 1.0);
 }
 
-// Composite stage inputs (group 1 bindings 50-53)
+// Composite stage inputs (group 1 bindings 0, 50-53)
 @group(1) @binding(50)
 var composite_scene : texture_2d<f32>;
 @group(1) @binding(51)
@@ -419,7 +457,8 @@ fn safe_texel_size() -> vec2<f32> {
 }
 
 fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
-    let uv_clamped = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let scene_uv = viewport_to_scene_uv(uv);
+    let uv_clamped = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
     let base = textureSampleLevel(composite_scene, composite_sampler, uv_clamped, 0.0);
     let ssao_enabled = post_uniform.effects.x > 0.5;
     let bloom_enabled = post_uniform.effects.y > 0.5;
@@ -432,6 +471,77 @@ fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
         bloom = textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb;
     }
     return base.rgb * ssao + bloom;
+}
+
+fn grid_line_mask(coord : vec2<f32>, width : f32) -> f32 {
+    let cell = abs(fract(coord) - vec2<f32>(0.5, 0.5));
+    let distance = min(cell.x, cell.y);
+    return smoothstep(width, 0.0, distance);
+}
+
+fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
+    let camera_pos = post_uniform.camera_position.xyz;
+    let world_far = reconstruct_world_position(uv, 1.0);
+    var ray = world_far - camera_pos;
+    let ray_len_sq = dot(ray, ray);
+    if (ray_len_sq < 1e-6) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    let dir = normalize(ray);
+    let denom = dir.y;
+    if (abs(denom) < 1e-5) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let t = -camera_pos.y / denom;
+    if (t <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let point = camera_pos + dir * t;
+    let clip = post_uniform.view_proj * vec4<f32>(point, 1.0);
+    if (clip.w <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let grid_depth = clip.z / clip.w;
+    if (grid_depth < 0.0 || grid_depth > 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let depth = fetch_depth(viewport_to_scene_uv(uv));
+    if (depth < 1.0 && depth + 1e-4 < grid_depth) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let grid_pos = point.xz;
+    let minor = grid_line_mask(grid_pos, 0.015);
+    let major = grid_line_mask(grid_pos / 10.0, 0.02);
+    let axis_x = smoothstep(0.1, 0.0, abs(grid_pos.x));
+    let axis_z = smoothstep(0.1, 0.0, abs(grid_pos.y));
+
+    let distance = length(point - camera_pos);
+    let fade = 1.0 - smoothstep(0.0, 1.0, distance / 120.0);
+    if (fade <= 0.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+
+    let minor_strength = minor * 0.6;
+    let major_strength = major;
+    let axis_x_strength = axis_x * 0.9;
+    let axis_z_strength = axis_z * 0.9;
+
+    var grid_color = vec3<f32>(0.0, 0.0, 0.0);
+    grid_color = grid_color + vec3<f32>(0.32, 0.34, 0.38) * minor_strength;
+    grid_color = grid_color + vec3<f32>(0.55, 0.57, 0.62) * major_strength;
+    grid_color = grid_color + vec3<f32>(0.85, 0.3, 0.3) * axis_x_strength;
+    grid_color = grid_color + vec3<f32>(0.3, 0.48, 0.85) * axis_z_strength;
+
+    let intensity = clamp(max(max(minor_strength, major_strength), max(axis_x_strength, axis_z_strength)), 0.0, 1.0);
+    let alpha = clamp(intensity * fade, 0.0, 1.0);
+
+    grid_color = clamp(grid_color * fade, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(grid_color, alpha);
 }
 
 fn luminance(color : vec3<f32>) -> f32 {
@@ -490,16 +600,20 @@ fn fxaa(uv : vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
+    let viewport_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let scene_uv = viewport_to_scene_uv(viewport_uv);
     let base = textureSampleLevel(
         composite_scene,
         composite_sampler,
-        clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0)),
+        clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0)),
         0.0,
     );
-    var color = sample_lit_color(in.uv);
+    var color = sample_lit_color(viewport_uv);
     if post_uniform.effects.z > 0.5 {
-        color = fxaa(in.uv);
+        color = fxaa(viewport_uv);
     }
+    let grid = grid_overlay(viewport_uv);
+    color = mix(color, grid.rgb, grid.a);
     return vec4<f32>(color, base.a);
 }
 

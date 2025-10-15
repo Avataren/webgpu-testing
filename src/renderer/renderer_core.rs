@@ -10,7 +10,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::{PostProcess, PostProcessEffects},
+    postprocess::{PostProcess, PostProcessCamera, PostProcessEffects},
     CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
     Material, RenderBatcher, RenderPass, RenderRegion, Vertex,
 };
@@ -228,8 +228,17 @@ impl Renderer {
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
         let proj = camera.proj(aspect);
-        self.postprocess
-            .update_camera(&self.context.queue, proj, camera.near, camera.far);
+        self.postprocess.update_camera(
+            &self.context.queue,
+            PostProcessCamera {
+                proj,
+                view_proj: vp,
+                view_proj_inv: inv_vp,
+                position: camera.position(),
+                near: camera.near,
+                far: camera.far,
+            },
+        );
     }
 
     pub fn camera_position(&self) -> Vec3 {
@@ -359,6 +368,9 @@ impl Renderer {
         let render_region = self
             .render_region
             .or_else(|| RenderRegion::full(surface_width, surface_height));
+
+        self.postprocess
+            .update_viewport(&self.context.queue, render_region);
 
         // Depth-only prepass
         {
