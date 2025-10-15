@@ -14,6 +14,7 @@ pub struct Particle {
     pub scale: [f32; 3],
     pub angular_velocity: f32,
     pub color: [f32; 4],
+    pub spawn_color: [f32; 4],
     pub color_keys: [[f32; 4]; MAX_COLOR_KEYS],
     pub color_key_times: [f32; MAX_COLOR_KEYS],
     /// User data layout:
@@ -35,6 +36,7 @@ impl Default for Particle {
             scale: [1.0; 3],
             angular_velocity: 0.0,
             color: [1.0; 4],
+            spawn_color: [1.0; 4],
             color_keys: [[1.0; 4]; MAX_COLOR_KEYS],
             color_key_times: [0.0, 1.0, 1.0, 1.0],
             user_data: [1.0, 1.0, 1.0, 0.0], // Default: no size change, single color key

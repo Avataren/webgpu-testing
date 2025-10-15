@@ -3,7 +3,7 @@ use glam::{Quat, Vec3};
 
 use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
 use wgpu_cube::gpu_particles::{
-    ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, SizeCurve,
+    ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, ParticleRenderMode, SizeCurve,
 };
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
@@ -181,13 +181,14 @@ impl RenderApplication for ParticleEffectsApp {
             .with_unlit()
             .with_billboarding();
 
-        let mut fireworks_system = GpuParticleSystem::new(
+        let mut fireworks_system = GpuParticleSystem::new_with_mode(
             ctx.renderer.get_device(),
             ctx.renderer.get_queue(),
             ctx.renderer,
             MAX_PARTICLES_FIREWORKS,
             fireworks_material,
             &self.fireworks_behavior,
+            ParticleRenderMode::Additive,
         );
 
         fireworks_system.set_casts_shadows(true); // ✅ Enable shadows
@@ -203,13 +204,14 @@ impl RenderApplication for ParticleEffectsApp {
             .with_unlit()
             .with_billboarding();
 
-        let mut smoke_system = GpuParticleSystem::new(
+        let mut smoke_system = GpuParticleSystem::new_with_mode(
             ctx.renderer.get_device(),
             ctx.renderer.get_queue(),
             ctx.renderer,
             MAX_PARTICLES_SMOKE,
             smoke_material,
             &self.smoke_behavior,
+            ParticleRenderMode::Additive,
         );
 
         smoke_system.set_casts_shadows(true); // ✅ Enable shadows

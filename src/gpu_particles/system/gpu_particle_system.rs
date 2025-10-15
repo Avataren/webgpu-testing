@@ -12,13 +12,53 @@ use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
 use super::{
-    pipeline::{blend_state_for_material, create_render_pipeline, is_alpha_blending},
-    shadow::ParticleShadowResources,
-    slot_allocator_v2::SlotAllocator,
-    sorting::ParticleSorting,
+    pipeline::create_render_pipeline, shadow::ParticleShadowResources,
+    slot_allocator_v2::SlotAllocator, sorting::ParticleSorting,
 };
 
 const WORKGROUP_SIZE: u32 = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParticleRenderMode {
+    Opaque,
+    AlphaBlend,
+    Additive,
+}
+
+impl ParticleRenderMode {
+    fn default_depth_write(self) -> bool {
+        matches!(self, Self::Opaque)
+    }
+
+    fn needs_sorting(self) -> bool {
+        matches!(self, Self::AlphaBlend)
+    }
+
+    fn blend_state(self) -> Option<wgpu::BlendState> {
+        match self {
+            Self::Opaque => None,
+            Self::AlphaBlend => Some(wgpu::BlendState::ALPHA_BLENDING),
+            Self::Additive => Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            }),
+        }
+    }
+}
+
+impl Default for ParticleRenderMode {
+    fn default() -> Self {
+        Self::Opaque
+    }
+}
 
 pub struct GpuParticleSystem {
     particles_buffer: wgpu::Buffer,
@@ -51,7 +91,8 @@ pub struct GpuParticleSystem {
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
     sampler_filtering: SamplerFilterMode,
-    blend_state: wgpu::BlendState,
+    blend_state: Option<wgpu::BlendState>,
+    render_mode: ParticleRenderMode,
     casts_shadows: bool,
 
     sorting: ParticleSorting,
@@ -68,6 +109,33 @@ impl GpuParticleSystem {
         max_particles: u32,
         material: Material,
         behavior: &dyn ParticleBehavior,
+    ) -> Self {
+        let default_mode = if material.requires_separate_pass() {
+            ParticleRenderMode::AlphaBlend
+        } else {
+            ParticleRenderMode::Opaque
+        };
+
+        Self::new_with_mode(
+            device,
+            queue,
+            renderer,
+            max_particles,
+            material,
+            behavior,
+            default_mode,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_mode(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &Renderer,
+        max_particles: u32,
+        material: Material,
+        behavior: &dyn ParticleBehavior,
+        render_mode: ParticleRenderMode,
     ) -> Self {
         let buffer_size = (max_particles as usize * std::mem::size_of::<Particle>()) as u64;
         let particles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -101,10 +169,10 @@ impl GpuParticleSystem {
         });
 
         let sampler_filtering = material.sampler_filtering();
-        let blend_state = blend_state_for_material(&material);
+        let blend_state = render_mode.blend_state();
 
-        let needs_alpha_sorting = is_alpha_blending(&blend_state);
-        let depth_write_enabled = !needs_alpha_sorting;
+        let depth_write_enabled = render_mode.default_depth_write();
+        let needs_alpha_sorting = render_mode.needs_sorting();
 
         let material_data = MaterialData::from_material(&material);
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -288,6 +356,7 @@ impl GpuParticleSystem {
             render_sample_count,
             sampler_filtering,
             blend_state,
+            render_mode,
             casts_shadows: false,
             sorting,
             depth_write_enabled,
@@ -299,6 +368,10 @@ impl GpuParticleSystem {
         if self.depth_write_enabled != enabled {
             self.depth_write_enabled = enabled;
         }
+    }
+
+    pub fn render_mode(&self) -> ParticleRenderMode {
+        self.render_mode
     }
 
     pub fn add_emitter(&mut self, emitter: ParticleEmitter) {

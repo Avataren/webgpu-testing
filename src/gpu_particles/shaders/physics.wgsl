@@ -129,8 +129,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         upper_index = key_count - 1u;
     }
 
-    let lower_color = p.color_keys[lower_index];
-    let upper_color = p.color_keys[upper_index];
+    var lower_color = p.color_keys[lower_index];
+    var upper_color = p.color_keys[upper_index];
+
+    if lower_index == 0u {
+        lower_color = p.spawn_color;
+    }
+    if upper_index == 0u {
+        upper_color = p.spawn_color;
+    }
 
     if lower_index == upper_index {
         p.color = lower_color;

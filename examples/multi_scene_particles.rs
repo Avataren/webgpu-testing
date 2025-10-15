@@ -84,6 +84,7 @@ impl MultiSceneParticlesExample {
                     scale: [scale, scale, scale],
                     angular_velocity: angular_speed,
                     color: color_rgba,
+                    spawn_color: color_rgba,
                     color_keys: [color_rgba; Particle::MAX_COLOR_KEYS],
                     color_key_times,
                     user_data: [0.0, 0.0, 1.0, 0.0],

@@ -11,4 +11,4 @@ pub mod pools;
 pub use behavior::ParticleBehavior;
 pub use emitter::{ColorGradient, EmissionShape, ParticleEmitter, SizeCurve};
 pub use particle::Particle;
-pub use system::GpuParticleSystem;
+pub use system::{GpuParticleSystem, ParticleRenderMode};
