@@ -1,5 +1,5 @@
 use crate::environment::ColorGrading;
-use crate::renderer::{PipelineBuilder, ShaderBuilder};
+use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
@@ -826,6 +826,7 @@ impl PostProcess {
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
         target: &wgpu::TextureView,
+        region: Option<RenderRegion>,
     ) {
         self.ensure_cached_bind_groups(device);
 
@@ -1120,6 +1121,9 @@ impl PostProcess {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            if let Some(region) = region {
+                region.apply_to_pass(&mut pass);
+            }
             pass.set_pipeline(&self.composite_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, composite_bind_group, &[]);

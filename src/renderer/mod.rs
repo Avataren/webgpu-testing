@@ -12,6 +12,7 @@ pub mod pipeline_builder;
 pub mod postprocess;
 pub mod primitives;
 pub mod render_context;
+pub mod render_region;
 mod renderer_core;
 pub mod shader_builder;
 pub mod texture;
@@ -39,6 +40,7 @@ pub use render_context::{
     CustomRenderCallback, CustomRenderContext, CustomRenderRequest, CustomRenderStage,
     ShadowPassStage,
 };
+pub use render_region::RenderRegion;
 pub use renderer_core::{RenderFrame, Renderer, RendererStats};
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;

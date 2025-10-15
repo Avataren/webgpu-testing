@@ -12,7 +12,7 @@ use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessEffects},
     CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
-    Material, RenderBatcher, RenderPass, Vertex,
+    Material, RenderBatcher, RenderPass, RenderRegion, Vertex,
 };
 use crate::scene::{Camera, Scene};
 use crate::settings::RenderSettings;
@@ -72,6 +72,7 @@ pub struct Renderer {
     stats: RendererStats,
     pipeline: RenderPipeline,
     context: RenderContext,
+    render_region: Option<RenderRegion>,
 }
 
 impl Renderer {
@@ -130,6 +131,7 @@ impl Renderer {
             #[cfg(feature = "egui")]
             ui_hook: None,
             stats: RendererStats::default(),
+            render_region: None,
         }
     }
 
@@ -137,6 +139,12 @@ impl Renderer {
     #[cfg(feature = "egui")]
     pub fn set_ui_hook(&mut self, hook: UiHook) {
         self.ui_hook = Some(hook);
+    }
+
+    pub fn set_render_region(&mut self, region: Option<RenderRegion>) {
+        let clamped =
+            region.and_then(|r| r.clamp(self.context.config.width, self.context.config.height));
+        self.render_region = clamped;
     }
 
     pub fn supports_bindless_textures(&self) -> bool {
@@ -334,6 +342,7 @@ impl Renderer {
                         &invocation.view,
                         CustomRenderStage::Shadow(invocation.stage),
                         Some(invocation.view_proj),
+                        None,
                     );
                     (request.callback)(&mut ctx);
                 }
@@ -345,6 +354,11 @@ impl Renderer {
             (view.clone(), resolve.cloned())
         };
         let depth_view = self.context.depth.view.clone();
+        let surface_width = self.context.config.width;
+        let surface_height = self.context.config.height;
+        let render_region = self
+            .render_region
+            .or_else(|| RenderRegion::full(surface_width, surface_height));
 
         // Depth-only prepass
         {
@@ -363,6 +377,10 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut pass);
+            }
 
             pass.set_pipeline(self.pipeline.depth_prepass());
             pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
@@ -415,6 +433,10 @@ impl Renderer {
                 self.draw_environment_background(&mut rpass);
             }
 
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut rpass);
+            }
+
             frame_stats.opaque_draw_calls += self.record_batches(
                 &mut rpass,
                 assets,
@@ -435,6 +457,7 @@ impl Renderer {
                     &depth_view,
                     CustomRenderStage::BeforePostprocess,
                     None,
+                    render_region,
                 );
                 (request.callback)(&mut ctx);
             }
@@ -442,7 +465,7 @@ impl Renderer {
 
         // Resolve scene → swapchain
         self.postprocess
-            .execute(&mut encoder, &self.context.device, &view);
+            .execute(&mut encoder, &self.context.device, &view, render_region);
 
         // Transparent pass (drawn after post-process so SSAO/Fxaa apply only to opaque surfaces).
         if !prepared_batches.transparent().is_empty() {
@@ -468,6 +491,10 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut rpass);
+            }
 
             frame_stats.transparent_draw_calls += self.record_batches(
                 &mut rpass,
@@ -497,6 +524,10 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut rpass);
+            }
 
             frame_stats.overlay_draw_calls += self.record_batches(
                 &mut rpass,
@@ -531,6 +562,7 @@ impl Renderer {
                     &depth_view,
                     CustomRenderStage::AfterPostprocess,
                     None,
+                    render_region,
                 );
                 (request.callback)(&mut ctx);
             }
