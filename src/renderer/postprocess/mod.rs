@@ -1,7 +1,7 @@
 use crate::environment::ColorGrading;
 use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const BLOOM_MIP_COUNT: usize = 5;
@@ -141,6 +141,16 @@ impl PostProcessEffects {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PostProcessCamera {
+    pub proj: Mat4,
+    pub view_proj: Mat4,
+    pub view_proj_inv: Mat4,
+    pub position: Vec3,
+    pub near: f32,
+    pub far: f32,
+}
+
 pub struct PostProcess {
     scene_source: TextureBundle,
     scene: TextureBundle,
@@ -188,6 +198,9 @@ pub struct PostProcess {
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
     last_proj: Mat4,
+    last_view_proj: Mat4,
+    last_view_proj_inv: Mat4,
+    last_camera_position: Vec3,
     last_near: f32,
     last_far: f32,
     sample_count: u32,
@@ -616,6 +629,16 @@ impl PostProcess {
             label: Some("CompositeLayout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
                     binding: 50,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
@@ -718,6 +741,9 @@ impl PostProcess {
             cached_depth_view: None,
             bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
+            last_view_proj: Mat4::IDENTITY,
+            last_view_proj_inv: Mat4::IDENTITY,
+            last_camera_position: Vec3::ZERO,
             last_near: 0.01,
             last_far: 100.0,
             sample_count,
@@ -727,6 +753,9 @@ impl PostProcess {
         let initial_uniform = PostProcessUniform::new(
             post.last_proj,
             post.last_proj.inverse(),
+            post.last_view_proj,
+            post.last_view_proj_inv,
+            post.last_camera_position,
             post.size.width as f32,
             post.size.height as f32,
             post.last_near,
@@ -772,10 +801,13 @@ impl PostProcess {
         self.upload_uniform(queue);
     }
 
-    pub fn update_camera(&mut self, queue: &wgpu::Queue, proj: Mat4, near: f32, far: f32) {
-        self.last_proj = proj;
-        self.last_near = near;
-        self.last_far = far;
+    pub fn update_camera(&mut self, queue: &wgpu::Queue, camera: PostProcessCamera) {
+        self.last_proj = camera.proj;
+        self.last_view_proj = camera.view_proj;
+        self.last_view_proj_inv = camera.view_proj_inv;
+        self.last_camera_position = camera.position;
+        self.last_near = camera.near;
+        self.last_far = camera.far;
         self.upload_uniform(queue);
     }
 
@@ -1138,6 +1170,9 @@ impl PostProcess {
         let uniform = PostProcessUniform::new(
             self.last_proj,
             proj_inv,
+            self.last_view_proj,
+            self.last_view_proj_inv,
+            self.last_camera_position,
             self.size.width as f32,
             self.size.height as f32,
             self.last_near,
@@ -1372,10 +1407,21 @@ impl PostProcess {
             });
         }
 
+        let composite_depth_view: &wgpu::TextureView =
+            if let Some(resolved) = self.resolved_depth.as_ref() {
+                &resolved.view
+            } else {
+                depth_view
+            };
+
         self.composite_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CompositeBindGroup"),
             layout: &self.composite_layout,
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(composite_depth_view),
+                },
                 wgpu::BindGroupEntry {
                     binding: 50,
                     resource: wgpu::BindingResource::TextureView(&self.scene.view),
@@ -1467,8 +1513,11 @@ impl PostProcess {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PostProcessUniform {
+    view_proj: [[f32; 4]; 4],
+    view_proj_inv: [[f32; 4]; 4],
     proj: [[f32; 4]; 4],
     proj_inv: [[f32; 4]; 4],
+    camera_position: [f32; 4],
     resolution: [f32; 2],
     radius_bias: [f32; 2],
     intensity_power: [f32; 2],
@@ -1486,6 +1535,9 @@ impl PostProcessUniform {
     fn new(
         proj: Mat4,
         proj_inv: Mat4,
+        view_proj: Mat4,
+        view_proj_inv: Mat4,
+        camera_position: Vec3,
         width: f32,
         height: f32,
         near: f32,
@@ -1504,8 +1556,11 @@ impl PostProcessUniform {
         // Store sample_count in w component so the depth resolve pass can iterate samples.
         effects_arr[3] = sample_count as f32;
         Self {
+            view_proj: view_proj.to_cols_array_2d(),
+            view_proj_inv: view_proj_inv.to_cols_array_2d(),
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
+            camera_position: [camera_position.x, camera_position.y, camera_position.z, 1.0],
             resolution: [width, height],
             radius_bias: [ssao.radius, ssao.bias],
             intensity_power: [ssao.intensity, ssao.power],
