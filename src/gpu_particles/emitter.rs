@@ -471,8 +471,9 @@ impl ParticleEmitter {
     // PRESET CONSTRUCTORS
     // =========================================================================
 
-    pub fn fountain(position: Vec3) -> Self {
-        Self::new(position, 50.0)
+    /// Create a fountain effect (convenience method)
+    pub fn fountain(position: Vec3, rate: f32) -> Self {
+        Self::new(position, rate)
             .with_emission_shape(EmissionShape::Cone {
                 angle: std::f32::consts::PI / 8.0,
                 radius: 0.3,
@@ -481,22 +482,9 @@ impl ParticleEmitter {
             .with_radial_velocity(8.0, 12.0)
             .with_lifetime(2.0, 3.0)
             .with_scale(Vec3::splat(0.05), Vec3::splat(0.15))
-            .with_color_gradient(
-                ColorGradient::new()
-                    // Blue water, opaque
-                    .with_keyframe([0.3, 0.5, 1.0, 0.9], 0.0)
-                    // Still blue, fading
-                    .with_keyframe([0.3, 0.5, 1.0, 0.6], 0.7)
-                    // Fade to transparent at end
-                    .with_keyframe([0.2, 0.4, 0.9, 0.0], 1.0),
-            )
-            .with_size_curve(
-                SizeCurve::new(1.0)
-                    .with_keyframe(0.8, 0.5)
-                    .with_keyframe(0.3, 1.0),
-            )
     }
 
+    /// Create a firework effect (convenience method)
     pub fn firework(position: Vec3) -> Self {
         Self::new(position, 0.0)
             .with_burst(300)
@@ -504,18 +492,6 @@ impl ParticleEmitter {
             .with_radial_velocity(10.0, 15.0)
             .with_lifetime(1.5, 2.5)
             .with_scale(Vec3::splat(0.08), Vec3::splat(0.12))
-            .with_color_gradient(
-                ColorGradient::new()
-                    .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 1.0], 0.3)
-                    .with_keyframe([1.0, 0.2, 0.0, 0.5], 0.7)
-                    .with_keyframe([0.5, 0.1, 0.0, 0.0], 1.0),
-            )
-            .with_size_curve(
-                SizeCurve::new(1.2)
-                    .with_keyframe(1.5, 0.2)
-                    .with_keyframe(0.2, 1.0),
-            )
     }
 
     pub fn smoke(position: Vec3) -> Self {
