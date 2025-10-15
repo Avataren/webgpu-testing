@@ -154,8 +154,8 @@ impl RenderApplication for ParticleEffectsApp {
             })
             .with_velocity(Vec3::ZERO, Vec3::new(1.5, 5.5, 1.5))
             .with_radial_velocity(8.0, 12.0)
-            .with_lifetime(2.0, 6.0)
-            .with_scale(Vec3::splat(0.05), Vec3::splat(0.15))
+            .with_lifetime(3.0, 8.0)
+            .with_scale(Vec3::splat(0.15), Vec3::splat(0.25))
             .with_color_gradient(
                 ColorGradient::new()
                     .with_keyframe([0.3, 0.5, 1.0, 0.9], 0.0)
@@ -167,6 +167,8 @@ impl RenderApplication for ParticleEffectsApp {
                     .with_keyframe(1.0, 1.0)
                     .with_keyframe(0.3, 2.0),
             );
+
+        // Can customize the preset as needed
 
         fountain_system.add_emitter(fountain_emitter);
         log::info!("Fountain: 3D cubes with shadows enabled");
