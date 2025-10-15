@@ -597,7 +597,7 @@ impl GpuParticleSystem {
         let mut dropped = 0u32;
 
         let mut spawn_requests = acquire_spawn_request_vec();
-        spawn_requests.clear(); // ✅ ADD THIS - be defensive!
+        spawn_requests.clear();
 
         for &particle in &self.spawn_scratch {
             let Some(slot) = self.slot_allocator.allocate() else {
@@ -637,7 +637,7 @@ impl GpuParticleSystem {
             let start_slot = spawn_requests[index].0;
 
             let mut upload_batch = acquire_particle_vec();
-            upload_batch.clear(); // ✅ ADD THIS - be defensive!
+            upload_batch.clear();
             upload_batch.push(spawn_requests[index].1);
 
             let mut end_slot = start_slot;
@@ -658,6 +658,9 @@ impl GpuParticleSystem {
         }
 
         self.spawn_scratch.clear();
+
+        // ✅ CRITICAL: Update render high water mark after spawning
+        self.render_high_water = self.slot_allocator.high_water();
     }
 
     fn process_dead_list_bytes(&mut self, bytes: &[u8]) {
