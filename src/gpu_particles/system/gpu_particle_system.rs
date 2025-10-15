@@ -14,7 +14,7 @@ use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particl
 use super::{
     pipeline::{blend_state_for_material, create_render_pipeline, is_alpha_blending},
     shadow::ParticleShadowResources,
-    slot_allocator::ParticleSlotAllocator,
+    slot_allocator_v2::SlotAllocator,
     sorting::ParticleSorting,
 };
 
@@ -44,7 +44,7 @@ pub struct GpuParticleSystem {
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
-    slot_allocator: ParticleSlotAllocator,
+    slot_allocator: SlotAllocator,
     spawn_scratch: Vec<Particle>,
     spawn_requests: Vec<(u32, Particle)>,
     upload_scratch: Vec<Particle>,
@@ -283,7 +283,7 @@ impl GpuParticleSystem {
             render_high_water: 0,
             workgroup_count,
             emitters: Vec::new(),
-            slot_allocator: ParticleSlotAllocator::default(),
+            slot_allocator: SlotAllocator::new(max_particles),
             spawn_scratch: Vec::new(),
             spawn_requests: Vec::new(),
             upload_scratch: Vec::new(),
@@ -598,7 +598,7 @@ impl GpuParticleSystem {
         self.spawn_requests.clear();
 
         for &particle in &self.spawn_scratch {
-            let Some(slot) = self.slot_allocator.allocate(self.max_particles) else {
+            let Some(slot) = self.slot_allocator.allocate() else {
                 dropped += 1;
                 continue;
             };
@@ -697,7 +697,7 @@ impl GpuParticleSystem {
                 continue;
             }
 
-            if self.slot_allocator.reclaim(index, self.max_particles) {
+            if self.slot_allocator.reclaim(index) {
                 reclaimed += 1;
             } else {
                 log::debug!("Ignoring duplicate reclaimed particle index {index}");
