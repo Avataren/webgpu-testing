@@ -229,8 +229,9 @@ impl RenderPipeline {
                     push_constant_ranges: &[],
                 });
 
-        let depth_shader_source =
-            ShaderBuilder::new().build(include_str!("../../shader/depth_prepass.wgsl"));
+        let depth_shader_source = ShaderBuilder::new()
+            .with_material_system()
+            .build(include_str!("../../shader/depth_prepass.wgsl"));
 
         let depth_shader = context
             .device

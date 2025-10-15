@@ -33,6 +33,13 @@ impl ShaderBuilder {
         }
     }
 
+    /// Share the material data layout and flag constants across shaders.
+    pub fn with_material_system(mut self) -> Self {
+        self.modules
+            .push(include_str!("../shader/material_common.wgsl"));
+        self
+    }
+
     /// Add an arbitrary shader module to the builder.
     pub fn with_module(mut self, module: &'static str) -> Self {
         self.modules.push(module);
@@ -161,6 +168,7 @@ impl ShaderBuilder {
     /// Complete PBR shader with all features (main geometry)
     pub fn full_pbr_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
+            .with_material_system()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
             .with_lighting()
@@ -176,6 +184,7 @@ impl ShaderBuilder {
     /// Particle shader with full lighting support (including shadows)
     pub fn particles_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
+            .with_material_system()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
             .with_lighting()
@@ -191,6 +200,7 @@ impl ShaderBuilder {
     /// Simple shader (no lighting, just textures)
     pub fn unlit_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
+            .with_material_system()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
     }

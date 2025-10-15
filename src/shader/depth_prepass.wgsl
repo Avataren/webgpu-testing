@@ -13,20 +13,6 @@ struct Object {
 };
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 
-struct MaterialData {
-    color: vec4<f32>,
-    base_color_texture: u32,
-    metallic_roughness_texture: u32,
-    normal_texture: u32,
-    emissive_texture: u32,
-    occlusion_texture: u32,
-    material_flags: u32,
-    metallic_factor: f32,
-    roughness_factor: f32,
-    emissive_strength: f32,
-    _padding: u32,
-    _padding2: vec2<u32>,
-};
 @group(1) @binding(1) var<storage, read> materials: array<MaterialData>;
 
 struct VsIn {

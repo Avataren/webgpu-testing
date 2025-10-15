@@ -213,7 +213,9 @@ impl ShadowResources {
             }],
         });
 
-        let shader_source = ShaderBuilder::new().build(include_str!("../../shader/shadow.wgsl"));
+        let shader_source = ShaderBuilder::new()
+            .with_material_system()
+            .build(include_str!("../../shader/shadow.wgsl"));
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ShadowShader"),
