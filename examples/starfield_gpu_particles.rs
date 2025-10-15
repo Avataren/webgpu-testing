@@ -89,7 +89,7 @@ impl RenderApplication for StarfieldGpuApp {
                 Vec3::ONE,
             )),
             DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 3.0),
-            CanCastShadow(true),
+            CanCastShadow(false),
         ));
 
         // Generate initial particles
@@ -139,8 +139,8 @@ impl RenderApplication for StarfieldGpuApp {
             material,
             &self.behavior,
         );
-
-        particle_system.set_casts_shadows(true);
+        particle_system.set_depth_write_enabled(true);
+        particle_system.set_casts_shadows(false);
 
         // Initialize particles
         particle_system.initialize_particles(ctx.renderer.get_queue(), &initial_particles);
