@@ -20,7 +20,8 @@ use crate::renderer::{
         DEFAULT_CHECKER_TEXTURE_INDEX, DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX,
         DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
     },
-    CustomRenderCallback, CustomRenderRequest, CustomRenderStage, RenderBatcher, Renderer, Texture,
+    CustomRenderCallback, CustomRenderRequest, CustomRenderStage, RenderBatcher, RenderRegion,
+    Renderer, Texture,
 };
 use crate::settings::RenderSettings;
 
@@ -174,6 +175,8 @@ impl AppBuilder {
             postprocess_effects: PostProcessWindow::handle(),
             #[cfg(feature = "egui")]
             environment_settings,
+            #[cfg(feature = "egui")]
+            render_region_query: None,
             window: None,
             window_id: None,
             renderer: None,
@@ -231,6 +234,8 @@ pub struct App {
     custom_render_stage: CustomRenderStage,
     custom_render_in_shadows: bool,
     custom_render_shadow_query: Option<Box<dyn FnMut() -> bool>>,
+    #[cfg(feature = "egui")]
+    render_region_query: Option<Box<dyn FnMut() -> Option<RenderRegion>>>,
 }
 
 impl App {
@@ -256,6 +261,14 @@ impl App {
         F: FnMut() -> bool + 'static,
     {
         self.custom_render_shadow_query = Some(Box::new(query));
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn set_render_region_query<F>(&mut self, query: F)
+    where
+        F: FnMut() -> Option<RenderRegion> + 'static,
+    {
+        self.render_region_query = Some(Box::new(query));
     }
 
     #[cfg(feature = "egui")]
@@ -655,6 +668,12 @@ impl App {
                     stage: self.custom_render_stage,
                     render_in_shadow_pass: self.custom_render_in_shadows,
                 });
+
+        #[cfg(feature = "egui")]
+        {
+            let region = self.render_region_query.as_mut().and_then(|query| query());
+            renderer.set_render_region(region);
+        }
 
         let render_frame =
             self.scene

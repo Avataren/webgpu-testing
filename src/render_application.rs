@@ -3,7 +3,7 @@
 
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
-use crate::renderer::{CustomRenderContext, CustomRenderStage};
+use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
@@ -41,6 +41,10 @@ pub trait RenderApplication: Sized + 'static {
 
     fn custom_render_includes_shadows(&self) -> bool {
         false
+    }
+
+    fn render_region(&self) -> Option<RenderRegion> {
+        None
     }
 
     #[cfg(feature = "egui")]
@@ -205,6 +209,12 @@ where
 
     #[cfg(feature = "egui")]
     {
+        let region_app = app_rc.clone();
+        app.set_render_region_query(move || region_app.borrow().render_region());
+    }
+
+    #[cfg(feature = "egui")]
+    {
         let show_default = app_rc.borrow().show_default_ui();
         let ui_style = app_rc.borrow().ui_style(); // Get the style
         let stats_handle = app.frame_stats_handle();
@@ -289,6 +299,12 @@ where
         app.set_custom_render_callback(Box::new(move |ctx| {
             app_ref.borrow_mut().custom_render(ctx);
         }));
+    }
+
+    #[cfg(feature = "egui")]
+    {
+        let region_app = app_rc.clone();
+        app.set_render_region_query(move || region_app.borrow().render_region());
     }
 
     #[cfg(feature = "egui")]

@@ -44,6 +44,8 @@ pub struct CustomRenderRequest<'a> {
 /// drives the [`color_format`](CustomRenderContext::color_format) and
 /// [`sample_count`](CustomRenderContext::sample_count) helpers so custom
 /// pipelines can be configured correctly.
+use super::render_region::RenderRegion;
+
 pub struct CustomRenderContext<'a> {
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub renderer: &'a crate::renderer::Renderer,
@@ -52,6 +54,7 @@ pub struct CustomRenderContext<'a> {
     pub depth_view: &'a wgpu::TextureView,
     pub stage: CustomRenderStage,
     pub shadow_view_proj: Option<Mat4>,
+    render_region: Option<RenderRegion>,
 }
 
 impl<'a> CustomRenderContext<'a> {
@@ -64,6 +67,7 @@ impl<'a> CustomRenderContext<'a> {
         depth_view: &'a wgpu::TextureView,
         stage: CustomRenderStage,
         shadow_view_proj: Option<Mat4>,
+        render_region: Option<RenderRegion>,
     ) -> Self {
         Self {
             encoder,
@@ -73,6 +77,7 @@ impl<'a> CustomRenderContext<'a> {
             depth_view,
             stage,
             shadow_view_proj,
+            render_region,
         }
     }
 
@@ -93,12 +98,16 @@ impl<'a> CustomRenderContext<'a> {
         self.shadow_view_proj
     }
 
+    pub fn render_region(&self) -> Option<RenderRegion> {
+        self.render_region
+    }
+
     /// Begin a render pass with sensible defaults for custom rendering
     ///
     /// The pass loads existing color and depth, allowing you to draw on top
     /// of the main scene rendering.
     pub fn begin_render_pass(&mut self, label: &str) -> wgpu::RenderPass<'_> {
-        self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.color_view,
@@ -119,14 +128,20 @@ impl<'a> CustomRenderContext<'a> {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
-        })
+        });
+
+        if let Some(region) = self.render_region {
+            region.apply_to_pass(&mut pass);
+        }
+
+        pass
     }
 
     /// Begin a render pass that clears the depth buffer
     ///
     /// Useful when you want your custom rendering to ignore the main scene depth.
     pub fn begin_render_pass_clear_depth(&mut self, label: &str) -> wgpu::RenderPass<'_> {
-        self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.color_view,
@@ -147,6 +162,12 @@ impl<'a> CustomRenderContext<'a> {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
-        })
+        });
+
+        if let Some(region) = self.render_region {
+            region.apply_to_pass(&mut pass);
+        }
+
+        pass
     }
 }
