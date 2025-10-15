@@ -15,11 +15,11 @@ use wgpu_cube::{
     StartupContext,
 };
 
-const MAX_PARTICLES_FOUNTAIN: u32 = 5000;
+const MAX_PARTICLES_FOUNTAIN: u32 = 25000;
 const MAX_PARTICLES_FIREWORKS: u32 = 35000;
 const MAX_PARTICLES_SMOKE: u32 = 5000;
 
-const FOUNTAIN_RATE: f32 = 250.0;
+const FOUNTAIN_RATE: f32 = 1250.0;
 const SMOKE_RATE: f32 = 120.0;
 const FIREWORK_BURST_SIZE: u32 = 12500;
 
@@ -150,11 +150,11 @@ impl RenderApplication for ParticleEffectsApp {
         let fountain_emitter = ParticleEmitter::new(Vec3::new(-8.0, 0.0, 0.0), FOUNTAIN_RATE)
             .with_emission_shape(EmissionShape::Cone {
                 angle: std::f32::consts::PI / 8.0,
-                radius: 0.3,
+                radius: 1.0,
             })
-            .with_velocity(Vec3::ZERO, Vec3::new(0.5, 0.5, 0.5))
+            .with_velocity(Vec3::ZERO, Vec3::new(1.5, 5.5, 1.5))
             .with_radial_velocity(8.0, 12.0)
-            .with_lifetime(2.0, 3.0)
+            .with_lifetime(2.0, 6.0)
             .with_scale(Vec3::splat(0.05), Vec3::splat(0.15))
             .with_color_gradient(
                 ColorGradient::new()
