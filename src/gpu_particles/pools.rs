@@ -105,3 +105,64 @@ mod tests {
         assert!(vec2.capacity() >= 10);
     }
 }
+
+// Add to end of src/gpu_particles/pools.rs
+
+use crate::gpu_particles::particle::Particle;
+
+thread_local! {
+    static PARTICLE_VEC_POOL: RefCell<VecPool<Particle>> = RefCell::new(
+        VecPool::with_preallocated(4, 1024)
+    );
+
+    static U32_VEC_POOL: RefCell<VecPool<u32>> = RefCell::new(
+        VecPool::with_preallocated(4, 256)
+    );
+
+    static SPAWN_REQUEST_POOL: RefCell<VecPool<(u32, Particle)>> = RefCell::new(
+        VecPool::with_preallocated(2, 256)
+    );
+}
+
+/// Acquire a pooled vector of particles
+// In src/gpu_particles/pools.rs
+
+/// Acquire a pooled vector of particles
+pub fn acquire_particle_vec() -> PooledVec<Particle> {
+    PARTICLE_VEC_POOL.with(|pool| {
+        let vec = pool.borrow_mut().acquire();
+        PooledVec {
+            vec: Some(vec),
+            pool: pool as *const _, // ✅ Explicit cast instead of as_ptr()
+        }
+    })
+}
+
+/// Acquire a pooled vector of u32
+pub fn acquire_u32_vec() -> PooledVec<u32> {
+    U32_VEC_POOL.with(|pool| {
+        let vec = pool.borrow_mut().acquire();
+        PooledVec {
+            vec: Some(vec),
+            pool: pool as *const _, // ✅ Explicit cast
+        }
+    })
+}
+
+/// Acquire a pooled vector of spawn requests
+pub fn acquire_spawn_request_vec() -> PooledVec<(u32, Particle)> {
+    SPAWN_REQUEST_POOL.with(|pool| {
+        let vec = pool.borrow_mut().acquire();
+        PooledVec {
+            vec: Some(vec),
+            pool: pool as *const _, // ✅ Explicit cast
+        }
+    })
+}
+
+/// Periodically clean up pools
+pub fn maintain_pools() {
+    PARTICLE_VEC_POOL.with(|pool| pool.borrow_mut().shrink_to(4));
+    U32_VEC_POOL.with(|pool| pool.borrow_mut().shrink_to(4));
+    SPAWN_REQUEST_POOL.with(|pool| pool.borrow_mut().shrink_to(2));
+}
