@@ -636,7 +636,14 @@ impl App {
             return Ok(());
         }
 
-        let aspect = renderer.aspect_ratio();
+        #[cfg(feature = "egui")]
+        let render_region = self.render_region_query.as_mut().and_then(|query| query());
+        #[cfg(not(feature = "egui"))]
+        let render_region: Option<RenderRegion> = None;
+
+        let aspect = render_region
+            .map(|region| region.width() as f32 / region.height() as f32)
+            .unwrap_or_else(|| renderer.aspect_ratio());
         renderer.set_camera(self.scene.camera(), aspect);
 
         #[cfg(feature = "egui")]
@@ -671,8 +678,7 @@ impl App {
 
         #[cfg(feature = "egui")]
         {
-            let region = self.render_region_query.as_mut().and_then(|query| query());
-            renderer.set_render_region(region);
+            renderer.set_render_region(render_region);
         }
 
         let render_frame =
