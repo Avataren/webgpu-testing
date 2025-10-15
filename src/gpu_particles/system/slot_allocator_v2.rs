@@ -55,6 +55,14 @@ impl SlotAllocator {
     }
 
     #[inline]
+    pub fn reclaim_batch(&mut self, slots: &[u32]) {
+        for &slot in slots {
+            self.reclaim(slot);
+        }
+        self.compact_trailing_free_slots();
+    }
+
+    #[inline]
     pub fn reclaim(&mut self, slot: u32) -> bool {
         if slot >= self.capacity || !self.is_occupied(slot) {
             return false;
@@ -182,5 +190,19 @@ mod tests {
 
         let slot4 = allocator.allocate().unwrap();
         assert_eq!(slot4, slot2);
+    }
+    #[test]
+    fn test_batch_reclaim() {
+        let mut allocator = SlotAllocator::new(100);
+
+        let mut slots = Vec::new();
+        for _ in 0..20 {
+            slots.push(allocator.allocate().unwrap());
+        }
+
+        let to_reclaim = vec![5, 10, 15, 19];
+        allocator.reclaim_batch(&to_reclaim);
+
+        assert_eq!(allocator.high_water(), 19);
     }
 }
