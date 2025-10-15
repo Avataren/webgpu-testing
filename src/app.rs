@@ -1,9 +1,11 @@
 // app.rs - Complete fixed version with hierarchy test scene
+use glam::Vec2;
+use std::collections::HashSet;
 use winit::{
     application::ApplicationHandler,
     event::*,
     event_loop::ActiveEventLoop,
-    keyboard::{Key, NamedKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{Window, WindowId},
 };
 
@@ -53,6 +55,7 @@ pub struct StartupContext<'a> {
 pub struct UpdateContext<'a> {
     pub scene: &'a mut Scene,
     pub dt: f64,
+    pub input: &'a InputState,
 }
 
 pub struct GpuUpdateContext<'a> {
@@ -64,6 +67,110 @@ pub struct GpuUpdateContext<'a> {
 pub type StartupSystem = Box<dyn for<'a> FnMut(&mut StartupContext<'a>) + 'static>;
 pub type UpdateSystem = Box<dyn for<'a> FnMut(&mut UpdateContext<'a>) + 'static>;
 pub type GpuUpdateSystem = Box<dyn for<'a> FnMut(&mut GpuUpdateContext<'a>) + 'static>;
+
+#[derive(Debug, Clone)]
+pub struct InputState {
+    pressed_keys: HashSet<KeyCode>,
+    right_mouse_pressed: bool,
+    cursor_position: Option<Vec2>,
+    mouse_delta: Vec2,
+    viewport_region: Option<RenderRegion>,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            pressed_keys: HashSet::new(),
+            right_mouse_pressed: false,
+            cursor_position: None,
+            mouse_delta: Vec2::ZERO,
+            viewport_region: None,
+        }
+    }
+}
+
+impl InputState {
+    pub fn is_key_pressed(&self, code: KeyCode) -> bool {
+        self.pressed_keys.contains(&code)
+    }
+
+    pub fn right_mouse_pressed(&self) -> bool {
+        self.right_mouse_pressed
+    }
+
+    pub fn mouse_delta(&self) -> Vec2 {
+        self.mouse_delta
+    }
+
+    pub fn cursor_in_viewport(&self) -> bool {
+        if let (Some(position), Some(region)) = (self.cursor_position, self.viewport_region) {
+            return Self::position_in_region(position, region);
+        }
+        false
+    }
+
+    pub fn cursor_position(&self) -> Option<Vec2> {
+        self.cursor_position
+    }
+
+    pub fn set_viewport_region(&mut self, region: Option<RenderRegion>) {
+        self.viewport_region = region;
+    }
+
+    pub fn set_key_pressed(&mut self, code: KeyCode, pressed: bool) {
+        if pressed {
+            self.pressed_keys.insert(code);
+        } else {
+            self.pressed_keys.remove(&code);
+        }
+    }
+
+    pub fn set_right_mouse_pressed(&mut self, pressed: bool) {
+        self.right_mouse_pressed = pressed;
+    }
+
+    pub fn update_cursor_position(&mut self, position: Vec2) {
+        if let Some(previous) = self.cursor_position {
+            if self.right_mouse_pressed
+                && self
+                    .viewport_region
+                    .map(|region| {
+                        Self::position_in_region(previous, region)
+                            && Self::position_in_region(position, region)
+                    })
+                    .unwrap_or(false)
+            {
+                self.mouse_delta += position - previous;
+            }
+        }
+
+        self.cursor_position = Some(position);
+    }
+
+    pub fn clear_cursor(&mut self) {
+        self.cursor_position = None;
+    }
+
+    pub fn clear_all(&mut self) {
+        self.pressed_keys.clear();
+        self.right_mouse_pressed = false;
+        self.mouse_delta = Vec2::ZERO;
+        self.cursor_position = None;
+    }
+
+    pub fn finish_frame(&mut self) {
+        self.mouse_delta = Vec2::ZERO;
+    }
+
+    fn position_in_region(position: Vec2, region: RenderRegion) -> bool {
+        let min_x = region.x() as f32;
+        let min_y = region.y() as f32;
+        let max_x = min_x + region.width() as f32;
+        let max_y = min_y + region.height() as f32;
+
+        position.x >= min_x && position.x <= max_x && position.y >= min_y && position.y <= max_y
+    }
+}
 
 pub trait Plugin {
     fn build(&self, app: &mut AppBuilder);
@@ -180,6 +287,7 @@ impl AppBuilder {
             window: None,
             window_id: None,
             renderer: None,
+            input_state: InputState::default(),
             custom_render_callback: None,
             custom_render_stage: CustomRenderStage::BeforePostprocess,
             custom_render_in_shadows: false,
@@ -229,6 +337,7 @@ pub struct App {
     #[cfg(feature = "egui")]
     environment_settings: EnvironmentSettingsHandle,
     scene: Scene,
+    input_state: InputState,
     renderer: Option<Renderer>,
     custom_render_callback: Option<Box<CustomRenderCallback>>,
     custom_render_stage: CustomRenderStage,
@@ -569,14 +678,17 @@ impl App {
         self.scene.update(dt);
 
         for system in &mut self.update_systems {
+            let input = &self.input_state;
             let mut ctx = UpdateContext {
                 scene: &mut self.scene,
                 dt,
+                input,
             };
             (system)(&mut ctx);
         }
 
         self.scene.propagate_transforms();
+        self.input_state.finish_frame();
     }
 
     fn run_gpu_systems(
@@ -640,6 +752,8 @@ impl App {
         let render_region = self.render_region_query.as_mut().and_then(|query| query());
         #[cfg(not(feature = "egui"))]
         let render_region: Option<RenderRegion> = None;
+
+        self.input_state.set_viewport_region(render_region);
 
         let aspect = render_region
             .map(|region| region.width() as f32 / region.height() as f32)
@@ -906,23 +1020,47 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key,
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => match logical_key {
-                Key::Named(NamedKey::Escape) => {
-                    event_loop.exit();
+            WindowEvent::KeyboardInput { event, .. } => {
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    match event.state {
+                        ElementState::Pressed => {
+                            self.input_state.set_key_pressed(code, true);
+                            match event.logical_key {
+                                Key::Named(NamedKey::Escape) => {
+                                    event_loop.exit();
+                                }
+                                Key::Character(c) if c.as_str() == "h" => {
+                                    self.debug_print_hierarchy();
+                                }
+                                _ => {}
+                            }
+                        }
+                        ElementState::Released => {
+                            self.input_state.set_key_pressed(code, false);
+                        }
+                    }
                 }
-                Key::Character(c) if c.as_str() == "h" => {
-                    self.debug_print_hierarchy();
+            }
+
+            WindowEvent::MouseInput { button, state, .. } => {
+                if button == MouseButton::Right {
+                    self.input_state
+                        .set_right_mouse_pressed(state == ElementState::Pressed);
                 }
-                _ => {}
-            },
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input_state
+                    .update_cursor_position(Vec2::new(position.x as f32, position.y as f32));
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                self.input_state.clear_cursor();
+            }
+
+            WindowEvent::Focused(false) => {
+                self.input_state.clear_all();
+            }
 
             _ => {}
         }

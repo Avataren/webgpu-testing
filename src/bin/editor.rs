@@ -3,14 +3,17 @@
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
 use glam::{Quat, Vec3};
+use std::f32::consts::FRAC_PI_2;
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{cube_mesh, CustomRenderContext, Material, RenderRegion};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
+use wgpu_cube::scene::Camera;
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
+use winit::keyboard::KeyCode;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -20,6 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct EditorApplication {
     dock_tree: Tree<EditorPane>,
     viewport_region: Option<RenderRegion>,
+    camera_controller: FirstPersonCameraController,
 }
 
 impl EditorApplication {
@@ -27,6 +31,7 @@ impl EditorApplication {
         Self {
             dock_tree: create_editor_layout(),
             viewport_region: None,
+            camera_controller: FirstPersonCameraController::default(),
         }
     }
 
@@ -72,6 +77,8 @@ impl EditorApplication {
             camera.target = Vec3::new(0.0, 0.5, 0.0);
             camera.up = Vec3::Y;
         }
+
+        self.camera_controller.sync_from_camera(ctx.scene.camera());
     }
 
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
@@ -97,7 +104,9 @@ impl RenderApplication for EditorApplication {
         self.ensure_default_scene(ctx);
     }
 
-    fn update(&mut self, _ctx: &mut UpdateContext) {}
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        self.camera_controller.update(ctx);
+    }
 
     fn gpu_update(&mut self, _ctx: &mut GpuUpdateContext) {}
 
@@ -110,7 +119,10 @@ impl RenderApplication for EditorApplication {
         let dock_tree = &mut self.dock_tree;
         let viewport_region = &mut self.viewport_region;
         egui::CentralPanel::default().show(ctx, |ui| {
-            let mut behavior = EditorBehavior { viewport_region };
+            let mut behavior = EditorBehavior {
+                viewport_region,
+                camera_controller: &mut self.camera_controller,
+            };
             dock_tree.ui(&mut behavior, ui);
         });
     }
@@ -133,6 +145,7 @@ enum EditorPane {
 
 struct EditorBehavior<'a> {
     viewport_region: &'a mut Option<RenderRegion>,
+    camera_controller: &'a mut FirstPersonCameraController,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -147,6 +160,28 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
             EditorPane::Inspector => {
                 ui.heading("Inspector");
                 ui.label("Select an entity to view its components.");
+                ui.separator();
+                ui.heading("Camera Controls");
+
+                let mut move_speed = self.camera_controller.move_speed();
+                if ui
+                    .add(egui::Slider::new(&mut move_speed, 0.5..=20.0).text("Move speed"))
+                    .changed()
+                {
+                    self.camera_controller.set_move_speed(move_speed);
+                }
+
+                let mut look_sensitivity = self.camera_controller.look_sensitivity();
+                if ui
+                    .add(
+                        egui::Slider::new(&mut look_sensitivity, 0.0005..=0.01)
+                            .text("Look sensitivity"),
+                    )
+                    .changed()
+                {
+                    self.camera_controller
+                        .set_look_sensitivity(look_sensitivity);
+                }
             }
             EditorPane::Console => {
                 ui.heading("Console");
@@ -224,4 +259,118 @@ fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion>
 
     let region = RenderRegion::new(min_x as u32, min_y as u32, width as u32, height as u32)?;
     region.clamp(max_width, max_height)
+}
+
+#[derive(Debug, Clone)]
+struct FirstPersonCameraController {
+    yaw: f32,
+    pitch: f32,
+    move_speed: f32,
+    look_sensitivity: f32,
+    initialized: bool,
+}
+
+impl Default for FirstPersonCameraController {
+    fn default() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: 0.0,
+            move_speed: 5.0,
+            look_sensitivity: 0.0025,
+            initialized: false,
+        }
+    }
+}
+
+impl FirstPersonCameraController {
+    fn set_move_speed(&mut self, speed: f32) {
+        self.move_speed = speed;
+    }
+
+    fn set_look_sensitivity(&mut self, sensitivity: f32) {
+        self.look_sensitivity = sensitivity;
+    }
+
+    fn move_speed(&self) -> f32 {
+        self.move_speed
+    }
+
+    fn look_sensitivity(&self) -> f32 {
+        self.look_sensitivity
+    }
+
+    fn sync_from_camera(&mut self, camera: &Camera) {
+        let direction = camera.target - camera.eye;
+        if direction.length_squared() <= f32::EPSILON {
+            return;
+        }
+
+        let forward = direction.normalize();
+        self.yaw = forward.x.atan2(forward.z);
+        self.pitch = forward
+            .y
+            .asin()
+            .clamp(-(FRAC_PI_2 - 0.01), FRAC_PI_2 - 0.01);
+        self.initialized = true;
+    }
+
+    fn forward_vector(&self) -> Vec3 {
+        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
+        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
+        Vec3::new(sin_yaw * cos_pitch, sin_pitch, cos_yaw * cos_pitch).normalize_or_zero()
+    }
+
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        let input = ctx.input;
+        let active = input.right_mouse_pressed() && input.cursor_in_viewport();
+
+        if !self.initialized || !active {
+            let camera = ctx.scene.camera();
+            self.sync_from_camera(camera);
+        }
+
+        if !self.initialized {
+            return;
+        }
+
+        if active {
+            let delta = input.mouse_delta();
+            self.yaw -= delta.x * self.look_sensitivity;
+            self.pitch -= delta.y * self.look_sensitivity;
+
+            let limit = FRAC_PI_2 - 0.01;
+            self.pitch = self.pitch.clamp(-limit, limit);
+        }
+
+        let forward = self.forward_vector();
+        let forward_flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
+        let right = forward_flat.cross(Vec3::Y).normalize_or_zero();
+
+        let camera = ctx.scene.camera_mut();
+
+        if active {
+            let mut movement = Vec3::ZERO;
+            if input.is_key_pressed(KeyCode::KeyW) {
+                movement += forward_flat;
+            }
+            if input.is_key_pressed(KeyCode::KeyS) {
+                movement -= forward_flat;
+            }
+            if input.is_key_pressed(KeyCode::KeyA) {
+                movement -= right;
+            }
+            if input.is_key_pressed(KeyCode::KeyD) {
+                movement += right;
+            }
+
+            if movement.length_squared() > 0.0 {
+                let distance = movement.normalize() * self.move_speed * ctx.dt as f32;
+                camera.eye += distance;
+                camera.target += distance;
+            }
+        }
+
+        camera.target = camera.eye + forward;
+        camera.up = Vec3::Y;
+    }
 }
