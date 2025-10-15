@@ -16,6 +16,7 @@ use crate::renderer::{
 use super::behavior::ParticleBehavior;
 use super::emitter::ParticleEmitter;
 use super::particle::Particle;
+use super::shader_modules::GPU_PARTICLE_COMMON;
 
 const WORKGROUP_SIZE: u32 = 256;
 
@@ -82,8 +83,9 @@ struct ParticleShadowUniform {
 
 impl ParticleShadowResources {
     fn new(device: &wgpu::Device, particle_layout: &wgpu::BindGroupLayout) -> Self {
-        let shader_source =
-            ShaderBuilder::new().build(include_str!("../shader/particle_shadow.wgsl"));
+        let shader_source = ShaderBuilder::new()
+            .with_module(GPU_PARTICLE_COMMON)
+            .build(include_str!("../shader/particle_shadow.wgsl"));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ParticleShadowShader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
@@ -263,9 +265,10 @@ impl GpuParticleSystem {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        let compute_shader_source = behavior.build_shader();
         let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ParticleComputeShader"),
-            source: wgpu::ShaderSource::Wgsl(behavior.shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(compute_shader_source.into()),
         });
 
         let mut layout_entries = vec![

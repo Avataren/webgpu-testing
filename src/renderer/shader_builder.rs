@@ -33,6 +33,12 @@ impl ShaderBuilder {
         }
     }
 
+    /// Add an arbitrary shader module to the builder.
+    pub fn with_module(mut self, module: &'static str) -> Self {
+        self.modules.push(module);
+        self
+    }
+
     /// Add constants (PI, TWO_PI, etc.)
     pub fn with_constants(mut self) -> Self {
         self.modules.push(include_str!("../shader/constants.wgsl"));

@@ -1,9 +1,10 @@
 use bytemuck::{Pod, Zeroable};
 
+use crate::gpu_particles::shader_modules::GPU_PARTICLE_COMMON;
 use crate::renderer::compute_resources::{
     BindGroupBuilder, BindGroupLayoutBuilder, StorageBuffer, UniformBuffer,
 };
-use crate::renderer::ComputePipelineBuilder;
+use crate::renderer::{ComputePipelineBuilder, ShaderBuilder};
 use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
@@ -161,11 +162,12 @@ impl OptimizedBoidsBehavior {
 
         let grid_params_buffer = UniformBuffer::new(device, "GridParams", &grid_params);
 
+        let cell_indices_source = ShaderBuilder::new()
+            .with_module(GPU_PARTICLE_COMMON)
+            .build(include_str!("../shaders/spatial_grid_build.wgsl"));
         let cell_indices_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("CellIndicesShader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/spatial_grid_build.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(cell_indices_source.into()),
         });
 
         let prefix_sum_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -317,7 +319,7 @@ impl OptimizedBoidsBehavior {
 }
 
 impl ParticleBehavior for OptimizedBoidsBehavior {
-    fn shader_source(&self) -> &str {
+    fn shader_source(&self) -> &'static str {
         include_str!("../shaders/boids_optimized.wgsl")
     }
 

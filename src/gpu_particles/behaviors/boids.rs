@@ -57,7 +57,7 @@ impl BoidsBehavior {
 }
 
 impl ParticleBehavior for BoidsBehavior {
-    fn shader_source(&self) -> &str {
+    fn shader_source(&self) -> &'static str {
         include_str!("../shaders/boids.wgsl")
     }
 

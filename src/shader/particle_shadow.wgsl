@@ -1,21 +1,5 @@
 // src/shader/particle_shadow.wgsl
 
-const MAX_COLOR_KEYS: u32 = 4u;
-
-struct Particle {
-    position: vec3<f32>,
-    lifetime: f32,
-    velocity: vec3<f32>,
-    max_lifetime: f32,
-    rotation: vec4<f32>,
-    scale: vec3<f32>,
-    angular_velocity: f32,
-    color: vec4<f32>,
-    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
-    color_key_times: vec4<f32>,
-    user_data: vec4<f32>,
-}
-
 struct ParticleShadowUniform {
     view_proj: mat4x4<f32>
 }

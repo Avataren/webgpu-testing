@@ -2,6 +2,7 @@
 mod behavior;
 mod emitter;
 mod particle;
+mod shader_modules;
 mod system;
 
 pub mod behaviors;

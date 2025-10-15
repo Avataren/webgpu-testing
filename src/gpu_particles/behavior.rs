@@ -1,5 +1,16 @@
+use crate::gpu_particles::shader_modules::GPU_PARTICLE_COMMON;
+use crate::renderer::ShaderBuilder;
+
 pub trait ParticleBehavior: PlatformBehaviorBounds {
-    fn shader_source(&self) -> &str;
+    fn shader_source(&self) -> &'static str;
+
+    fn shader_builder(&self) -> ShaderBuilder {
+        ShaderBuilder::new().with_module(GPU_PARTICLE_COMMON)
+    }
+
+    fn build_shader(&self) -> String {
+        self.shader_builder().build(self.shader_source())
+    }
 
     fn entry_point(&self) -> &str {
         "main"

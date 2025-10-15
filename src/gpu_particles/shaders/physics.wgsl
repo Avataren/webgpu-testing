@@ -1,21 +1,5 @@
 // src/gpu_particles/shaders/physics.wgsl
 
-const MAX_COLOR_KEYS: u32 = 4u;
-
-struct Particle {
-    position: vec3<f32>,
-    lifetime: f32,
-    velocity: vec3<f32>,
-    max_lifetime: f32,
-    rotation: vec4<f32>,
-    scale: vec3<f32>,
-    angular_velocity: f32,
-    color: vec4<f32>,
-    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
-    color_key_times: vec4<f32>,
-    user_data: vec4<f32>, // [spawn_scale, size_ratio, color_key_count, reserved]
-}
-
 struct Params {
     delta_time: f32,
     drag: f32,
@@ -27,11 +11,6 @@ struct Params {
     ground_level: f32,
     bounce_factor: f32,
     velocity_damping: f32,
-}
-
-struct DeadList {
-    count: atomic<u32>,
-    indices: array<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -47,13 +26,6 @@ fn noise3d(p: vec3<f32>) -> vec3<f32> {
         sin(i.x * 93.989 + i.y * 67.345 + i.z * 12.456) * 43758.5453,
         sin(i.x * 45.678 + i.y * 23.456 + i.z * 89.123) * 43758.5453
     ) * 2.0 - 1.0;
-}
-
-fn sample_time(times: vec4<f32>, index: u32) -> f32 {
-    if index == 0u { return times.x; }
-    if index == 1u { return times.y; }
-    if index == 2u { return times.z; }
-    return times.w;
 }
 
 @compute @workgroup_size(256)

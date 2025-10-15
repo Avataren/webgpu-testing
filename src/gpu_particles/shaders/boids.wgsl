@@ -1,21 +1,5 @@
 // src/gpu_particles/shaders/boids.wgsl
 
-const MAX_COLOR_KEYS: u32 = 4u;
-
-struct Particle {
-    position: vec3<f32>,
-    lifetime: f32,
-    velocity: vec3<f32>,
-    max_lifetime: f32,
-    rotation: vec4<f32>,
-    scale: vec3<f32>,
-    angular_velocity: f32,
-    color: vec4<f32>,
-    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
-    color_key_times: vec4<f32>,
-    user_data: vec4<f32>,
-}
-
 struct Params {
     delta_time: f32,
     separation_radius: f32,
@@ -28,11 +12,6 @@ struct Params {
     max_force: f32,
     bounds: f32,
     particle_count: u32,
-}
-
-struct DeadList {
-    count: atomic<u32>,
-    indices: array<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;

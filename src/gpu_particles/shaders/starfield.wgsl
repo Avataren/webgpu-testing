@@ -1,21 +1,5 @@
 // src/gpu_particles/shaders/starfield.wgsl
 
-const MAX_COLOR_KEYS: u32 = 4u;
-
-struct Particle {
-    position: vec3<f32>,
-    lifetime: f32,
-    velocity: vec3<f32>,
-    max_lifetime: f32,
-    rotation: vec4<f32>,  // We'll use this as [axis.xyz, angle] instead of quaternion
-    scale: vec3<f32>,
-    angular_velocity: f32,
-    color: vec4<f32>,
-    color_keys: array<vec4<f32>, MAX_COLOR_KEYS>,
-    color_key_times: vec4<f32>,
-    user_data: vec4<f32>,
-}
-
 struct Params {
     delta_time: f32,
     near_plane: f32,
@@ -24,11 +8,6 @@ struct Params {
     field_half_size: f32,
     min_radius: f32,
     particle_count: u32,
-}
-
-struct DeadList {
-    count: atomic<u32>,
-    indices: array<u32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;

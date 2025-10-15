@@ -70,7 +70,7 @@ impl PhysicsBehavior {
 }
 
 impl ParticleBehavior for PhysicsBehavior {
-    fn shader_source(&self) -> &str {
+    fn shader_source(&self) -> &'static str {
         include_str!("../shaders/physics.wgsl")
     }
 
