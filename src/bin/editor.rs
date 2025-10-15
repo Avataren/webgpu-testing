@@ -2,10 +2,15 @@
 
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
+use glam::{Quat, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
-use wgpu_cube::renderer::{CustomRenderContext, RenderRegion};
+use wgpu_cube::renderer::{cube_mesh, CustomRenderContext, Material, RenderRegion};
+use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
+use wgpu_cube::scene::{
+    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -22,6 +27,50 @@ impl EditorApplication {
         Self {
             dock_tree: create_editor_layout(),
             viewport_region: None,
+        }
+    }
+
+    fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
+        let has_mesh = ctx
+            .scene
+            .world()
+            .query::<&MeshComponent>()
+            .iter()
+            .next()
+            .is_some();
+        if has_mesh {
+            return;
+        }
+
+        let (vertices, indices) = cube_mesh();
+        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
+        let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
+
+        {
+            let world = ctx.scene.main_world_mut();
+            world.spawn((
+                Name::new("Default Cube"),
+                TransformComponent(Transform::from_translation(Vec3::new(0.0, 0.5, 0.0))),
+                MeshComponent(mesh_handle),
+                MaterialComponent(Material::pbr()),
+                Visible(true),
+            ));
+
+            let light_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
+            let light_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, light_direction);
+            world.spawn((
+                Name::new("Directional Light"),
+                TransformComponent(Transform::from_trs(Vec3::ZERO, light_rotation, Vec3::ONE)),
+                DirectionalLight::new(Vec3::new(1.0, 0.98, 0.92), 3.0),
+                CanCastShadow(true),
+            ));
+        }
+
+        {
+            let camera = ctx.scene.camera_mut();
+            camera.eye = Vec3::new(6.0, 4.0, 6.0);
+            camera.target = Vec3::new(0.0, 0.5, 0.0);
+            camera.up = Vec3::Y;
         }
     }
 
@@ -44,7 +93,9 @@ impl RenderApplication for EditorApplication {
         "Engine Editor"
     }
 
-    fn setup(&mut self, _ctx: &mut StartupContext) {}
+    fn setup(&mut self, ctx: &mut StartupContext) {
+        self.ensure_default_scene(ctx);
+    }
 
     fn update(&mut self, _ctx: &mut UpdateContext) {}
 
