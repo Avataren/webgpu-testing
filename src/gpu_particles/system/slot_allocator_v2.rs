@@ -182,7 +182,7 @@ mod tests {
     fn test_reclaim_and_reuse() {
         let mut allocator = SlotAllocator::new(100);
 
-        let slot1 = allocator.allocate().unwrap();
+        let _slot1 = allocator.allocate().unwrap();
         let slot2 = allocator.allocate().unwrap();
         allocator.allocate().unwrap();
 

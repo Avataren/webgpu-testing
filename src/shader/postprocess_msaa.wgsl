@@ -21,11 +21,19 @@ fn vs_fullscreen(@builtin(vertex_index) vertex_index : u32) -> VertexOutput {
 struct PostUniform {
     proj : mat4x4<f32>,
     proj_inv : mat4x4<f32>,
+    view : mat4x4<f32>,
+    view_inv : mat4x4<f32>,
+    camera_position : vec4<f32>,
     resolution : vec2<f32>,
     radius_bias : vec2<f32>,
     intensity_power : vec2<f32>,
     noise_scale : vec2<f32>,
     near_far : vec2<f32>,
+    grid_scale_fade : vec4<f32>,
+    grid_thickness_intensity : vec4<f32>,
+    grid_options : vec4<f32>,
+    color_adjust : vec4<f32>,
+    bloom_params : vec4<f32>,
     effects : vec4<f32>,
 };
 

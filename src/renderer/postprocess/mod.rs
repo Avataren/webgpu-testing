@@ -1,7 +1,7 @@
 use crate::environment::ColorGrading;
 use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const BLOOM_MIP_COUNT: usize = 5;
@@ -83,6 +83,21 @@ pub struct PostProcessEffects {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GridSettings {
+    pub enabled: bool,
+    pub minor_spacing: f32,
+    pub major_spacing: f32,
+    pub fade_start: f32,
+    pub fade_end: f32,
+    pub line_thickness: f32,
+    pub axis_thickness: f32,
+    pub minor_intensity: f32,
+    pub major_intensity: f32,
+    pub axis_intensity: f32,
+    pub horizon_fade_power: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SsaoSettings {
     pub radius: f32,
     pub bias: f32,
@@ -141,6 +156,31 @@ impl PostProcessEffects {
     }
 }
 
+impl Default for GridSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            minor_spacing: 1.0,
+            major_spacing: 10.0,
+            fade_start: 10.0,
+            fade_end: 60.0,
+            line_thickness: 1.0,
+            axis_thickness: 1.5,
+            minor_intensity: 0.35,
+            major_intensity: 0.65,
+            axis_intensity: 0.8,
+            horizon_fade_power: 1.5,
+        }
+    }
+}
+
+impl GridSettings {
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+}
+
 pub struct PostProcess {
     scene_source: TextureBundle,
     scene: TextureBundle,
@@ -188,10 +228,14 @@ pub struct PostProcess {
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
     last_proj: Mat4,
+    last_view: Mat4,
+    last_view_inv: Mat4,
     last_near: f32,
     last_far: f32,
+    last_camera_pos: Vec3,
     sample_count: u32,
     color_grading: ColorGrading,
+    grid_settings: GridSettings,
 }
 
 impl PostProcess {
@@ -651,6 +695,16 @@ impl PostProcess {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 54,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -718,21 +772,29 @@ impl PostProcess {
             cached_depth_view: None,
             bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
+            last_view: Mat4::IDENTITY,
+            last_view_inv: Mat4::IDENTITY,
             last_near: 0.01,
             last_far: 100.0,
+            last_camera_pos: Vec3::ZERO,
             sample_count,
             color_grading: ColorGrading::default(),
+            grid_settings: GridSettings::default(),
         };
 
         let initial_uniform = PostProcessUniform::new(
             post.last_proj,
             post.last_proj.inverse(),
+            post.last_view,
+            post.last_view_inv,
+            post.last_camera_pos,
             post.size.width as f32,
             post.size.height as f32,
             post.last_near,
             post.last_far,
             post.effects,
             post.color_grading,
+            post.grid_settings,
             post.sample_count,
         );
         queue.write_buffer(
@@ -772,10 +834,21 @@ impl PostProcess {
         self.upload_uniform(queue);
     }
 
-    pub fn update_camera(&mut self, queue: &wgpu::Queue, proj: Mat4, near: f32, far: f32) {
+    pub fn update_camera(
+        &mut self,
+        queue: &wgpu::Queue,
+        view: Mat4,
+        proj: Mat4,
+        near: f32,
+        far: f32,
+        camera_position: Vec3,
+    ) {
+        self.last_view = view;
+        self.last_view_inv = view.inverse();
         self.last_proj = proj;
         self.last_near = near;
         self.last_far = far;
+        self.last_camera_pos = camera_position;
         self.upload_uniform(queue);
     }
 
@@ -812,6 +885,17 @@ impl PostProcess {
 
     pub fn effects(&self) -> PostProcessEffects {
         self.effects
+    }
+
+    pub fn set_grid_settings(&mut self, queue: &wgpu::Queue, settings: GridSettings) {
+        if self.grid_settings != settings {
+            self.grid_settings = settings;
+            self.upload_uniform(queue);
+        }
+    }
+
+    pub fn grid_settings(&self) -> GridSettings {
+        self.grid_settings
     }
 
     pub fn set_color_grading(&mut self, queue: &wgpu::Queue, grading: ColorGrading) {
@@ -1138,12 +1222,16 @@ impl PostProcess {
         let uniform = PostProcessUniform::new(
             self.last_proj,
             proj_inv,
+            self.last_view,
+            self.last_view_inv,
+            self.last_camera_pos,
             self.size.width as f32,
             self.size.height as f32,
             self.last_near,
             self.last_far,
             self.effects,
             self.color_grading,
+            self.grid_settings,
             self.sample_count,
         );
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
@@ -1372,6 +1460,12 @@ impl PostProcess {
             });
         }
 
+        let depth_texture_view = if let Some(resolved) = self.resolved_depth.as_ref() {
+            &resolved.view
+        } else {
+            depth_view
+        };
+
         self.composite_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CompositeBindGroup"),
             layout: &self.composite_layout,
@@ -1391,6 +1485,10 @@ impl PostProcess {
                 wgpu::BindGroupEntry {
                     binding: 53,
                     resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 54,
+                    resource: wgpu::BindingResource::TextureView(depth_texture_view),
                 },
             ],
         }));
@@ -1469,13 +1567,18 @@ impl PostProcess {
 struct PostProcessUniform {
     proj: [[f32; 4]; 4],
     proj_inv: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
+    view_inv: [[f32; 4]; 4],
+    camera_position: [f32; 4],
     resolution: [f32; 2],
     radius_bias: [f32; 2],
     intensity_power: [f32; 2],
     noise_scale: [f32; 2],
     near_far: [f32; 2],
-    // Ensure `effects` starts on a 16-byte boundary to match WGSL uniform layout.
-    _effects_padding: [f32; 2],
+    _padding0: [f32; 2],
+    grid_scale_fade: [f32; 4],
+    grid_thickness_intensity: [f32; 4],
+    grid_options: [f32; 4],
     color_adjust: [f32; 4],
     bloom_params: [f32; 4],
     effects: [f32; 4],
@@ -1486,12 +1589,16 @@ impl PostProcessUniform {
     fn new(
         proj: Mat4,
         proj_inv: Mat4,
+        view: Mat4,
+        view_inv: Mat4,
+        camera_position: Vec3,
         width: f32,
         height: f32,
         near: f32,
         far: f32,
         effects: PostProcessEffects,
         grading: ColorGrading,
+        grid: GridSettings,
         sample_count: u32,
     ) -> Self {
         let ssao = effects.ssao_settings;
@@ -1503,15 +1610,37 @@ impl PostProcessUniform {
         let mut effects_arr = effects.uniform_components();
         // Store sample_count in w component so the depth resolve pass can iterate samples.
         effects_arr[3] = sample_count as f32;
+        let camera = [camera_position.x, camera_position.y, camera_position.z, 1.0];
         Self {
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
+            view: view.to_cols_array_2d(),
+            view_inv: view_inv.to_cols_array_2d(),
+            camera_position: camera,
             resolution: [width, height],
             radius_bias: [ssao.radius, ssao.bias],
             intensity_power: [ssao.intensity, ssao.power],
             noise_scale,
             near_far: [near, far],
-            _effects_padding: [0.0, 0.0],
+            _padding0: [0.0, 0.0],
+            grid_scale_fade: [
+                grid.minor_spacing,
+                grid.major_spacing,
+                grid.fade_start,
+                grid.fade_end,
+            ],
+            grid_thickness_intensity: [
+                grid.line_thickness,
+                grid.axis_thickness,
+                grid.minor_intensity,
+                grid.major_intensity,
+            ],
+            grid_options: [
+                grid.axis_intensity,
+                if grid.enabled { 1.0 } else { 0.0 },
+                grid.horizon_fade_power,
+                0.0,
+            ],
             color_adjust: [
                 grading.exposure(),
                 grading.saturation(),

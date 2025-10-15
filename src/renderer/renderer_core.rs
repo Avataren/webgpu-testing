@@ -10,7 +10,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::{PostProcess, PostProcessEffects},
+    postprocess::{GridSettings, PostProcess, PostProcessEffects},
     CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
     Material, RenderBatcher, RenderPass, RenderRegion, Vertex,
 };
@@ -221,15 +221,22 @@ impl Renderer {
         self.camera_position = camera.position(); // Store it
         self.camera_target = camera.target;
         self.camera_up = camera.up;
-        let vp = camera.view_proj(aspect);
+        let view = camera.view();
+        let proj = camera.proj(aspect);
+        let vp = proj * view;
         let inv_vp = vp.inverse();
         let uni = CameraUniform::from_matrices(vp, inv_vp, camera.position());
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
-        let proj = camera.proj(aspect);
-        self.postprocess
-            .update_camera(&self.context.queue, proj, camera.near, camera.far);
+        self.postprocess.update_camera(
+            &self.context.queue,
+            view,
+            proj,
+            camera.near,
+            camera.far,
+            camera.position(),
+        );
     }
 
     pub fn camera_position(&self) -> Vec3 {
@@ -618,6 +625,15 @@ impl Renderer {
 
     pub fn postprocess_effects(&self) -> PostProcessEffects {
         self.postprocess.effects()
+    }
+
+    pub fn set_grid_settings(&mut self, settings: GridSettings) {
+        self.postprocess
+            .set_grid_settings(&self.context.queue, settings);
+    }
+
+    pub fn grid_settings(&self) -> GridSettings {
+        self.postprocess.grid_settings()
     }
 
     pub fn last_frame_stats(&self) -> RendererStats {

@@ -2,10 +2,16 @@
 
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
+use glam::{Quat, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
-use wgpu_cube::renderer::{CustomRenderContext, RenderRegion};
+use wgpu_cube::renderer::postprocess::GridSettings;
+use wgpu_cube::renderer::{cube_mesh, CustomRenderContext, Material, RenderRegion};
+use wgpu_cube::scene::{
+    CanCastShadow, DirectionalLight, MaterialComponent, MeshComponent, Name, Transform,
+    TransformComponent, Visible,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -44,7 +50,9 @@ impl RenderApplication for EditorApplication {
         "Engine Editor"
     }
 
-    fn setup(&mut self, _ctx: &mut StartupContext) {}
+    fn setup(&mut self, ctx: &mut StartupContext) {
+        initialize_editor_scene(ctx);
+    }
 
     fn update(&mut self, _ctx: &mut UpdateContext) {}
 
@@ -71,6 +79,62 @@ impl RenderApplication for EditorApplication {
     fn render_region(&self) -> Option<RenderRegion> {
         self.viewport_region
     }
+}
+
+fn initialize_editor_scene(ctx: &mut StartupContext) {
+    let grid_settings = ctx.renderer.grid_settings().with_enabled(true);
+    ctx.renderer.set_grid_settings(grid_settings);
+
+    ensure_default_cube(ctx);
+    ensure_directional_light(ctx);
+}
+
+fn ensure_default_cube(ctx: &mut StartupContext) {
+    let world = ctx.scene.main_world_mut();
+    let has_mesh = {
+        let mut query = world.query::<&MeshComponent>();
+        query.iter().next().is_some()
+    };
+    if has_mesh {
+        return;
+    }
+
+    let (vertices, indices) = cube_mesh();
+    let mesh = ctx.renderer.create_mesh(&vertices, &indices);
+    let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
+
+    world.spawn((
+        Name::new("Default Cube"),
+        TransformComponent(Transform::from_trs(
+            Vec3::new(0.0, 0.5, 0.0),
+            Quat::IDENTITY,
+            Vec3::splat(1.0),
+        )),
+        MeshComponent(mesh_handle),
+        MaterialComponent(Material::pbr()),
+        Visible(true),
+    ));
+}
+
+fn ensure_directional_light(ctx: &mut StartupContext) {
+    let world = ctx.scene.main_world_mut();
+    let has_directional = {
+        let mut query = world.query::<&DirectionalLight>();
+        query.iter().next().is_some()
+    };
+    if has_directional {
+        return;
+    }
+
+    let direction = Vec3::new(-0.4, -1.0, -0.25).normalize();
+    let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
+
+    world.spawn((
+        Name::new("Directional Light"),
+        TransformComponent(Transform::from_trs(Vec3::ZERO, rotation, Vec3::ONE)),
+        DirectionalLight::new(Vec3::splat(1.0), 4.0).with_shadow_size(40.0),
+        CanCastShadow(true),
+    ));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

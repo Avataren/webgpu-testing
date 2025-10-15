@@ -21,12 +21,17 @@ fn vs_fullscreen(@builtin(vertex_index) vertex_index : u32) -> VertexOutput {
 struct PostUniform {
     proj : mat4x4<f32>,
     proj_inv : mat4x4<f32>,
+    view : mat4x4<f32>,
+    view_inv : mat4x4<f32>,
+    camera_position : vec4<f32>,
     resolution : vec2<f32>,
     radius_bias : vec2<f32>,
     intensity_power : vec2<f32>,
     noise_scale : vec2<f32>,
     near_far : vec2<f32>,
-    _padding0 : vec2<f32>,
+    grid_scale_fade : vec4<f32>,
+    grid_thickness_intensity : vec4<f32>,
+    grid_options : vec4<f32>,
     color_adjust : vec4<f32>,
     bloom_params : vec4<f32>,
     effects : vec4<f32>,
@@ -407,6 +412,8 @@ var composite_ssao : texture_2d<f32>;
 var composite_bloom : texture_2d<f32>;
 @group(1) @binding(53)
 var composite_sampler : sampler;
+@group(1) @binding(54)
+var composite_depth : texture_depth_2d;
 
 const FXAA_REDUCE_MIN : f32 = 1.0 / 128.0;
 const FXAA_REDUCE_MUL : f32 = 1.0 / 8.0;
@@ -488,6 +495,114 @@ fn fxaa(uv : vec2<f32>) -> vec3<f32> {
     return rgb_b;
 }
 
+fn fetch_composite_depth(uv : vec2<f32>) -> f32 {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 1.0;
+    }
+    let tex_dims = textureDimensions(composite_depth, 0);
+    let tex_size = vec2<f32>(f32(tex_dims.x), f32(tex_dims.y));
+    let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
+    let clamped_uv = clamp(uv, vec2<f32>(0.0), max_uv);
+    let coord = vec2<i32>(clamped_uv * tex_size);
+    return textureLoad(composite_depth, coord, 0);
+}
+
+fn clip_depth_from_view(view_pos : vec3<f32>) -> f32 {
+    let clip = post_uniform.proj * vec4<f32>(view_pos, 1.0);
+    let ndc = clip.z / clip.w;
+    return ndc * 0.5 + 0.5;
+}
+
+fn grid_line_mask(coord : f32, spacing : f32, thickness : f32) -> f32 {
+    if (spacing <= 0.0) {
+        return 0.0;
+    }
+    let scaled = coord / spacing;
+    let frac = fract(scaled);
+    let dist = min(frac, 1.0 - frac);
+    let width = max(fwidth(scaled) * thickness, 1e-5);
+    return 1.0 - smoothstep(0.0, width, dist);
+}
+
+fn axis_line_mask(coord : f32, thickness : f32) -> f32 {
+    let width = max(fwidth(coord) * thickness, 1e-5);
+    return 1.0 - smoothstep(0.0, width, abs(coord));
+}
+
+fn compute_grid_overlay(uv : vec2<f32>, scene_depth : f32) -> vec3<f32> {
+    if (post_uniform.grid_options.y < 0.5) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let camera_pos = post_uniform.camera_position.xyz;
+    let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0);
+    let clip = vec4<f32>(ndc, 1.0);
+    let view_sample = post_uniform.proj_inv * clip;
+    let view_dir = normalize(view_sample.xyz / view_sample.w);
+    let world_dir = normalize((post_uniform.view_inv * vec4<f32>(view_dir, 0.0)).xyz);
+
+    let plane_normal = vec3<f32>(0.0, 1.0, 0.0);
+    let denom = dot(world_dir, plane_normal);
+    let horizon_power = max(post_uniform.grid_options.z, 0.5);
+    let horizon_term = pow(clamp(abs(denom), 0.0, 1.0), horizon_power);
+    if (abs(denom) < 1e-5 || horizon_term <= 1e-4) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let t = dot(-camera_pos, plane_normal) / denom;
+    if (t <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let world_hit = camera_pos + world_dir * t;
+    let distance = length(world_hit - camera_pos);
+    let fade_start = post_uniform.grid_scale_fade.z;
+    let fade_end = post_uniform.grid_scale_fade.w;
+    if (distance > fade_end) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let view_hit = (post_uniform.view * vec4<f32>(world_hit, 1.0)).xyz;
+    let grid_depth = clip_depth_from_view(view_hit);
+    if (scene_depth < 1.0 && grid_depth >= scene_depth - 1e-4) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let fade = (1.0 - smoothstep(fade_start, fade_end, distance)) * horizon_term;
+    if (fade <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+
+    let minor_spacing = max(post_uniform.grid_scale_fade.x, 1e-4);
+    let major_spacing = max(post_uniform.grid_scale_fade.y, minor_spacing * 2.0);
+    let line_thickness = max(post_uniform.grid_thickness_intensity.x, 0.2);
+    let axis_thickness = max(post_uniform.grid_thickness_intensity.y, 0.2);
+    let minor_intensity = max(post_uniform.grid_thickness_intensity.z, 0.0);
+    let major_intensity = max(post_uniform.grid_thickness_intensity.w, 0.0);
+    let axis_intensity = max(post_uniform.grid_options.x, 0.0);
+
+    let minor_x = grid_line_mask(world_hit.x, minor_spacing, line_thickness);
+    let minor_z = grid_line_mask(world_hit.z, minor_spacing, line_thickness);
+    let minor_line = max(minor_x, minor_z);
+
+    let major_x = grid_line_mask(world_hit.x, major_spacing, line_thickness);
+    let major_z = grid_line_mask(world_hit.z, major_spacing, line_thickness);
+    let major_line = max(major_x, major_z);
+
+    let axis_x = axis_line_mask(world_hit.x, axis_thickness);
+    let axis_z = axis_line_mask(world_hit.z, axis_thickness);
+
+    let minor_color = vec3<f32>(0.22, 0.24, 0.28) * minor_intensity;
+    let major_color = vec3<f32>(0.38, 0.42, 0.48) * major_intensity;
+    let axis_x_color = vec3<f32>(0.9, 0.28, 0.28) * axis_intensity;
+    let axis_z_color = vec3<f32>(0.28, 0.40, 0.95) * axis_intensity;
+
+    let grid_color = minor_color * minor_line + major_color * major_line;
+    let axis_color = axis_x_color * axis_x + axis_z_color * axis_z;
+
+    return (grid_color + axis_color) * fade;
+}
+
 @fragment
 fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     let base = textureSampleLevel(
@@ -500,6 +615,9 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     if post_uniform.effects.z > 0.5 {
         color = fxaa(in.uv);
     }
+    let scene_depth = fetch_composite_depth(in.uv);
+    let grid_overlay = compute_grid_overlay(in.uv, scene_depth);
+    color = max(color + grid_overlay, vec3<f32>(0.0, 0.0, 0.0));
     return vec4<f32>(color, base.a);
 }
 
