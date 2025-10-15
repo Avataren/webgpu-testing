@@ -147,15 +147,7 @@ impl RenderApplication for ParticleEffectsApp {
         fountain_system.set_casts_shadows(true); // ✅ Enable shadows
         fountain_system.set_depth_write_enabled(true);
 
-        let fountain_emitter = ParticleEmitter::new(Vec3::new(-8.0, 0.0, 0.0), FOUNTAIN_RATE)
-            .with_emission_shape(EmissionShape::Cone {
-                angle: std::f32::consts::PI / 8.0,
-                radius: 0.3,
-            })
-            .with_velocity(Vec3::ZERO, Vec3::new(0.5, 0.5, 0.5))
-            .with_radial_velocity(8.0, 12.0)
-            .with_lifetime(2.0, 3.0)
-            .with_scale(Vec3::splat(0.05), Vec3::splat(0.15))
+        let fountain_emitter = ParticleEmitter::fountain(Vec3::new(-8.0, 0.0, 0.0), FOUNTAIN_RATE)
             .with_color_gradient(
                 ColorGradient::new()
                     .with_keyframe([0.3, 0.5, 1.0, 0.9], 0.0)
@@ -167,6 +159,8 @@ impl RenderApplication for ParticleEffectsApp {
                     .with_keyframe(1.0, 1.0)
                     .with_keyframe(0.3, 2.0),
             );
+
+        // Can customize the preset as needed
 
         fountain_system.add_emitter(fountain_emitter);
         log::info!("Fountain: 3D cubes with shadows enabled");
