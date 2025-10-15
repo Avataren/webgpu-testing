@@ -451,6 +451,7 @@ impl ParticleEmitter {
             scale: [spawn_scale, spawn_scale, spawn_scale],
             angular_velocity: self.rng.gen_range(-1.0..1.0),
             color: initial_color,
+            spawn_color: initial_color,
             color_keys,
             color_key_times,
             // ✅ Clean user_data layout:

@@ -2,7 +2,7 @@ use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use wgpu_cube::gpu_particles::behaviors::StarfieldBehavior;
-use wgpu_cube::gpu_particles::{GpuParticleSystem, Particle};
+use wgpu_cube::gpu_particles::{GpuParticleSystem, Particle, ParticleRenderMode};
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::{
@@ -123,6 +123,7 @@ impl RenderApplication for StarfieldGpuApp {
                     scale: [scale, scale, scale],
                     angular_velocity: angular_speed,
                     color: color_rgba,
+                    spawn_color: color_rgba,
                     color_keys: [color_rgba; Particle::MAX_COLOR_KEYS],
                     color_key_times,
                     user_data: [0.0, 0.0, 1.0, 0.0],
@@ -131,13 +132,14 @@ impl RenderApplication for StarfieldGpuApp {
             .collect();
 
         // Create particle system
-        let mut particle_system = GpuParticleSystem::new(
+        let mut particle_system = GpuParticleSystem::new_with_mode(
             ctx.renderer.get_device(),
             ctx.renderer.get_queue(),
             ctx.renderer,
             particle_count,
             material,
             &self.behavior,
+            ParticleRenderMode::Opaque,
         );
         particle_system.set_depth_write_enabled(true);
         particle_system.set_casts_shadows(false);
