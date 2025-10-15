@@ -10,14 +10,14 @@ use wgpu_cube::{
     StartupContext,
 };
 
-const STAR_COUNT: usize = 1_000;
+const STAR_COUNT: usize = 100_000;
 const FIELD_HALF_SIZE: f32 = 60.0;
 const NEAR_PLANE: f32 = 0.01;
 const FAR_PLANE: f32 = 200.0;
 const FAR_RESET_BAND: f32 = 5.0; // Smaller band keeps particles more spread out
 const STAR_SPEED_RANGE: std::ops::Range<f32> = 5.0..15.0;
 const SPIN_SPEED_RANGE: std::ops::Range<f32> = 1.0..5.0;
-const STAR_SCALE_RANGE: std::ops::Range<f32> = 4.15..5.25;
+const STAR_SCALE_RANGE: std::ops::Range<f32> = 0.15..1.0;
 const MIN_SIZE_FROM_CENTER: f32 = 0.25;
 
 struct StarfieldGpuApp {
