@@ -6,7 +6,7 @@ mod slot_allocator;
 mod slot_allocator_v2;
 mod sorting;
 
-pub use gpu_particle_system::GpuParticleSystem;
+pub use gpu_particle_system::{GpuParticleSystem, ParticleRenderMode};
 
 // Add this type alias for easy migration
 #[cfg(not(feature = "optimized-allocator"))]

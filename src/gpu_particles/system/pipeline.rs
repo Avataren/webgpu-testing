@@ -1,4 +1,3 @@
-use crate::renderer::Material;
 use crate::renderer::{PipelineBuilder, Renderer, SamplerFilterMode, ShaderBuilder, Vertex};
 
 #[allow(clippy::too_many_arguments)]
@@ -10,7 +9,7 @@ pub(crate) fn create_render_pipeline(
     sample_count: u32,
     uses_bindless: bool,
     filtering: SamplerFilterMode,
-    blend_state: wgpu::BlendState,
+    blend_state: Option<wgpu::BlendState>,
     depth_write_enabled: bool,
 ) -> wgpu::RenderPipeline {
     let shader_source = ShaderBuilder::particles_filtered(uses_bindless, filtering)
@@ -39,7 +38,7 @@ pub(crate) fn create_render_pipeline(
     PipelineBuilder::new(device, &pipeline_layout, &render_shader)
         .with_label("ParticleRenderPipeline")
         .with_vertex_buffer(Vertex::layout())
-        .with_color_target(color_format, Some(blend_state))
+        .with_color_target(color_format, blend_state)
         .with_depth_stencil(
             wgpu::TextureFormat::Depth32Float,
             depth_write_enabled,
@@ -47,30 +46,4 @@ pub(crate) fn create_render_pipeline(
         )
         .with_multisample(sample_count)
         .build()
-}
-
-pub(crate) fn blend_state_for_material(material: &Material) -> wgpu::BlendState {
-    if material.requires_separate_pass() {
-        wgpu::BlendState::ALPHA_BLENDING
-    } else {
-        wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        }
-    }
-}
-
-pub(crate) fn is_alpha_blending(blend_state: &wgpu::BlendState) -> bool {
-    matches!(
-        blend_state.color.dst_factor,
-        wgpu::BlendFactor::OneMinusSrcAlpha | wgpu::BlendFactor::OneMinusSrc
-    )
 }
