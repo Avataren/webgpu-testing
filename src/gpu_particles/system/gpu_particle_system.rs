@@ -1,14 +1,14 @@
 // src/gpu_particles/system/gpu_particle_system.rs - Non-blocking particle sorting
 // Fixed for wgpu 0.27.0+ API
 
-use bytemuck::{bytes_of, cast_slice};
-use wgpu::util::DeviceExt;
-
+use super::super::pools::{acquire_particle_vec, acquire_spawn_request_vec};
 use crate::asset::Mesh;
 use crate::renderer::{
     CustomRenderContext, CustomRenderStage, Material, MaterialData, Renderer, SamplerFilterMode,
     ShadowPassStage,
 };
+use bytemuck::{bytes_of, cast_slice};
+use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
 use super::{
@@ -46,8 +46,6 @@ pub struct GpuParticleSystem {
     emitters: Vec<ParticleEmitter>,
     slot_allocator: SlotAllocator,
     spawn_scratch: Vec<Particle>,
-    spawn_requests: Vec<(u32, Particle)>,
-    upload_scratch: Vec<Particle>,
     dead_list_dirty: bool,
 
     render_format: wgpu::TextureFormat,
@@ -285,8 +283,6 @@ impl GpuParticleSystem {
             emitters: Vec::new(),
             slot_allocator: SlotAllocator::new(max_particles),
             spawn_scratch: Vec::new(),
-            spawn_requests: Vec::new(),
-            upload_scratch: Vec::new(),
             dead_list_dirty: false,
             render_format,
             render_sample_count,
@@ -313,6 +309,9 @@ impl GpuParticleSystem {
         &self.particles_buffer
     }
 
+    // In src/gpu_particles/system/gpu_particle_system.rs
+    // Replace the entire update method:
+
     pub fn update(
         &mut self,
         device: &wgpu::Device,
@@ -335,6 +334,8 @@ impl GpuParticleSystem {
         if !self.spawn_scratch.is_empty() {
             self.upload_new_particles(queue);
         }
+
+        self.emitters.retain(|emitter| !emitter.is_complete());
 
         behavior.update_params(queue, &self.params_buffer, dt, self.active_particles);
 
@@ -595,7 +596,8 @@ impl GpuParticleSystem {
         let mut spawned = 0u32;
         let mut dropped = 0u32;
 
-        self.spawn_requests.clear();
+        let mut spawn_requests = acquire_spawn_request_vec();
+        spawn_requests.clear(); // ✅ ADD THIS - be defensive!
 
         for &particle in &self.spawn_scratch {
             let Some(slot) = self.slot_allocator.allocate() else {
@@ -609,7 +611,7 @@ impl GpuParticleSystem {
                 continue;
             }
 
-            self.spawn_requests.push((slot, particle));
+            spawn_requests.push((slot, particle));
             self.active_particles += 1;
             spawned += 1;
         }
@@ -619,7 +621,6 @@ impl GpuParticleSystem {
                 log::debug!("Dropped {dropped} particles due to capacity limits");
             }
             self.spawn_scratch.clear();
-            self.spawn_requests.clear();
             return;
         }
 
@@ -627,23 +628,24 @@ impl GpuParticleSystem {
             log::debug!("Dropped {dropped} particles due to capacity limits");
         }
 
-        self.spawn_requests.sort_unstable_by_key(|(slot, _)| *slot);
+        spawn_requests.sort_unstable_by_key(|(slot, _)| *slot);
 
         let particle_size = std::mem::size_of::<Particle>() as u64;
         let mut index = 0;
 
-        while index < self.spawn_requests.len() {
-            let start_slot = self.spawn_requests[index].0;
-            self.upload_scratch.clear();
-            self.upload_scratch.push(self.spawn_requests[index].1);
+        while index < spawn_requests.len() {
+            let start_slot = spawn_requests[index].0;
+
+            let mut upload_batch = acquire_particle_vec();
+            upload_batch.clear(); // ✅ ADD THIS - be defensive!
+            upload_batch.push(spawn_requests[index].1);
 
             let mut end_slot = start_slot;
             index += 1;
 
-            while index < self.spawn_requests.len() && self.spawn_requests[index].0 == end_slot + 1
-            {
-                self.upload_scratch.push(self.spawn_requests[index].1);
-                end_slot = self.spawn_requests[index].0;
+            while index < spawn_requests.len() && spawn_requests[index].0 == end_slot + 1 {
+                upload_batch.push(spawn_requests[index].1);
+                end_slot = spawn_requests[index].0;
                 index += 1;
             }
 
@@ -651,13 +653,11 @@ impl GpuParticleSystem {
             queue.write_buffer(
                 &self.particles_buffer,
                 offset,
-                cast_slice(&self.upload_scratch),
+                bytemuck::cast_slice(&upload_batch),
             );
         }
 
         self.spawn_scratch.clear();
-        self.spawn_requests.clear();
-        self.render_high_water = self.slot_allocator.high_water();
     }
 
     fn process_dead_list_bytes(&mut self, bytes: &[u8]) {

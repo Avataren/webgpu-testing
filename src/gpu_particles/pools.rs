@@ -67,9 +67,12 @@ impl<T> VecPool<T> {
     }
 
     pub fn acquire(&mut self) -> Vec<T> {
-        self.pool
+        let mut vec = self
+            .pool
             .pop()
-            .unwrap_or_else(|| Vec::with_capacity(self.default_capacity))
+            .unwrap_or_else(|| Vec::with_capacity(self.default_capacity));
+        vec.clear(); // ← ADD THIS LINE
+        vec
     }
 
     fn return_vec(&mut self, mut vec: Vec<T>) {
