@@ -137,7 +137,7 @@ pub struct ParticleEmitter {
     pub size_curve: SizeCurve,
     pub radial_velocity: (f32, f32), // For radial burst effects
     spawn_accumulator: f32,
-    total_spawned: u32,
+    pub total_spawned: u32,
     pub auto_respawn: bool, // Whether to reset after burst completes
     rng: SmallRng,
 }
@@ -221,6 +221,17 @@ impl ParticleEmitter {
     /// Reseed the emitter's random generator without rebuilding the struct.
     pub fn reseed(&mut self, seed: u64) {
         self.rng = SmallRng::seed_from_u64(seed);
+    }
+
+    pub fn is_complete(&self) -> bool {
+        // Check if it's a burst emitter
+        if let Some(burst_count) = self.burst_count {
+            // Burst is complete if we've spawned all particles and not auto-respawning
+            self.total_spawned >= burst_count && !self.auto_respawn
+        } else {
+            // Continuous emitters (spawn_rate > 0) are never "complete"
+            false
+        }
     }
 
     pub fn emit_into(&mut self, dt: f32, output: &mut Vec<Particle>) {
