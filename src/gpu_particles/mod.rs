@@ -6,6 +6,7 @@ mod shader_modules;
 mod system;
 
 pub mod behaviors;
+pub mod pools;
 
 pub use behavior::ParticleBehavior;
 pub use emitter::{ColorGradient, EmissionShape, ParticleEmitter, SizeCurve};

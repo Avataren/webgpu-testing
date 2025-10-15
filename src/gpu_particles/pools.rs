@@ -1,0 +1,107 @@
+// src/gpu_particles/pools.rs
+
+use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
+
+/// RAII guard that returns pooled object on drop
+pub struct PooledVec<T> {
+    vec: Option<Vec<T>>,
+    pool: *const RefCell<VecPool<T>>,
+}
+
+impl<T> PooledVec<T> {
+    pub fn clear(&mut self) {
+        if let Some(vec) = &mut self.vec {
+            vec.clear();
+        }
+    }
+}
+
+impl<T> Deref for PooledVec<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Self::Target {
+        self.vec.as_ref().unwrap()
+    }
+}
+
+impl<T> DerefMut for PooledVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.vec.as_mut().unwrap()
+    }
+}
+
+impl<T> Drop for PooledVec<T> {
+    fn drop(&mut self) {
+        if let Some(mut vec) = self.vec.take() {
+            vec.clear();
+            unsafe {
+                (*self.pool).borrow_mut().return_vec(vec);
+            }
+        }
+    }
+}
+
+/// Pool for Vec<T> objects
+pub struct VecPool<T> {
+    pool: Vec<Vec<T>>,
+    default_capacity: usize,
+}
+
+impl<T> VecPool<T> {
+    pub fn new(default_capacity: usize) -> Self {
+        Self {
+            pool: Vec::new(),
+            default_capacity,
+        }
+    }
+
+    pub fn with_preallocated(count: usize, capacity: usize) -> Self {
+        let mut pool = Vec::with_capacity(count);
+        for _ in 0..count {
+            pool.push(Vec::with_capacity(capacity));
+        }
+        Self {
+            pool,
+            default_capacity: capacity,
+        }
+    }
+
+    pub fn acquire(&mut self) -> Vec<T> {
+        self.pool
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(self.default_capacity))
+    }
+
+    fn return_vec(&mut self, mut vec: Vec<T>) {
+        vec.clear();
+        if vec.capacity() <= self.default_capacity * 4 {
+            self.pool.push(vec);
+        }
+    }
+
+    pub fn shrink_to(&mut self, max_size: usize) {
+        if self.pool.len() > max_size {
+            self.pool.truncate(max_size);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vec_pool_basic() {
+        let mut pool = VecPool::<u32>::new(10);
+
+        let mut vec1 = pool.acquire();
+        vec1.push(1);
+        vec1.push(2);
+
+        pool.return_vec(vec1);
+
+        let vec2 = pool.acquire();
+        assert_eq!(vec2.len(), 0);
+        assert!(vec2.capacity() >= 10);
+    }
+}
