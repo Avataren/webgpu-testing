@@ -873,6 +873,14 @@ impl PostProcess {
         self.mark_bind_groups_dirty();
     }
 
+    pub fn after_postprocess_depth_view(&self) -> Option<&wgpu::TextureView> {
+        if let Some(resolved) = self.resolved_depth.as_ref() {
+            Some(&resolved.view)
+        } else {
+            self.cached_depth_view.as_ref()
+        }
+    }
+
     pub fn set_effects(&mut self, queue: &wgpu::Queue, effects: PostProcessEffects) {
         if self.effects != effects {
             self.effects = effects;
@@ -922,32 +930,32 @@ impl PostProcess {
             pass.draw(0..3, 0..1);
         }
 
-        if self.effects.ssao {
-            if let (Some(pipeline), Some(bind_group), Some(resolved)) = (
-                self.depth_resolve_pipeline.as_ref(),
-                self.depth_resolve_bind_group.as_ref(),
-                self.resolved_depth.as_ref(),
-            ) {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("DepthResolvePass"),
-                    color_attachments: &[],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &resolved.view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
+        if let (Some(pipeline), Some(bind_group), Some(resolved)) = (
+            self.depth_resolve_pipeline.as_ref(),
+            self.depth_resolve_bind_group.as_ref(),
+            self.resolved_depth.as_ref(),
+        ) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("DepthResolvePass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &resolved.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
                     }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
 
+        if self.effects.ssao {
             let ssao_bind_group = self
                 .ssao_bind_group
                 .as_ref()

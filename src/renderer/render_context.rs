@@ -9,8 +9,9 @@ pub enum CustomRenderStage {
     /// Execute the custom hook before post-processing so any output is
     /// affected by the configured effects (default behaviour).
     BeforePostprocess,
-    /// Execute the custom hook after post-processing, matching the legacy
-    /// behaviour where the callback rendered directly to the surface.
+    /// Execute the custom hook immediately after post-processing and before
+    /// the transparent/overlay passes so effects blend with the resolved
+    /// scene color target.
     AfterPostprocess,
     /// Execute the custom hook while shadow maps are rendered.
     Shadow(ShadowPassStage),

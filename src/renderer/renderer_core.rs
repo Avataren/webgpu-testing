@@ -197,6 +197,13 @@ impl Renderer {
         &self.context.depth.view
     }
 
+    /// Returns the depth texture view configured for sampling during
+    /// post-processing passes. This view is multisample-resolved when MSAA is
+    /// enabled, making it suitable for screen-space effects.
+    pub fn depth_sample_view(&self) -> &wgpu::TextureView {
+        &self.context.depth.sampled_view
+    }
+
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
     }
@@ -479,6 +486,26 @@ impl Renderer {
         self.postprocess
             .execute(&mut encoder, &self.context.device, &view, render_region);
 
+        if let Some(request) = custom_render.as_mut() {
+            if request.stage == CustomRenderStage::AfterPostprocess {
+                let depth_view_after = self
+                    .postprocess
+                    .after_postprocess_depth_view()
+                    .unwrap_or(&depth_view);
+                let mut ctx = CustomRenderContext::new(
+                    &mut encoder,
+                    self,
+                    scene,
+                    &view,
+                    depth_view_after,
+                    CustomRenderStage::AfterPostprocess,
+                    None,
+                    render_region,
+                );
+                (request.callback)(&mut ctx);
+            }
+        }
+
         // Transparent pass (drawn after post-process so SSAO/Fxaa apply only to opaque surfaces).
         if !prepared_batches.transparent().is_empty() {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -562,22 +589,6 @@ impl Renderer {
                 &mut encoder,
                 &view,
             );
-        }
-
-        if let Some(request) = custom_render.as_mut() {
-            if request.stage == CustomRenderStage::AfterPostprocess {
-                let mut ctx = CustomRenderContext::new(
-                    &mut encoder,
-                    self,
-                    scene,
-                    &view,
-                    &depth_view,
-                    CustomRenderStage::AfterPostprocess,
-                    None,
-                    render_region,
-                );
-                (request.callback)(&mut ctx);
-            }
         }
 
         frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(
