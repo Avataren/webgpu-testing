@@ -1,4 +1,3 @@
-use env_logger;
 use glam::{Quat, Vec3};
 use hecs::World;
 use std::path::Path;

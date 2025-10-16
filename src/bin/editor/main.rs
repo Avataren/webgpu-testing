@@ -4,7 +4,7 @@ mod postprocess;
 
 use std::f32::consts::FRAC_PI_2;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
@@ -35,6 +35,7 @@ struct EditorApplication {
     viewport_rect: Option<egui::Rect>,
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
+    pending_imports: Vec<PathBuf>,
 }
 
 impl EditorApplication {
@@ -45,17 +46,72 @@ impl EditorApplication {
             viewport_rect: None,
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
+            pending_imports: Vec::new(),
         }
     }
 
-    fn load_script(path: &str) -> Option<RuneScriptSource> {
+    fn load_script_text(path: &str) -> Option<String> {
         let full_path = PathBuf::from("scripts").join(path);
         match fs::read_to_string(&full_path) {
-            Ok(src) => Some(RuneScriptSource::inline(path, src)),
+            Ok(src) => Some(src),
             Err(err) => {
                 error!("Failed to read script {:?}: {err}", full_path);
                 None
             }
+        }
+    }
+
+    fn load_script(path: &str) -> Option<RuneScriptSource> {
+        Self::load_script_text(path).map(|src| RuneScriptSource::inline(path, src))
+    }
+
+    fn create_import_script(path: &Path) -> Option<RuneScriptSource> {
+        let template = Self::load_script_text("editor_import_gltf.rn")?;
+        let path_string = path.to_string_lossy();
+        let encoded_path = match serde_json::to_string(path_string.as_ref()) {
+            Ok(value) => value,
+            Err(err) => {
+                error!("Failed to encode glTF path {path:?}: {err}");
+                return None;
+            }
+        };
+
+        let script_source = template.replace("__GLTF_PATH__", &encoded_path);
+
+        let script_name = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "imported_gltf".to_string());
+
+        Some(RuneScriptSource::inline(
+            format!("editor_import_gltf::{script_name}"),
+            script_source,
+        ))
+    }
+
+    fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
+        if self.pending_imports.is_empty() {
+            return;
+        }
+
+        let imports = std::mem::take(&mut self.pending_imports);
+        for path in imports {
+            let Some(script_source) = Self::create_import_script(&path) else {
+                continue;
+            };
+
+            let entity_name = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Imported glTF".to_string());
+
+            let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
+                .with_name(format!("{entity_name} (glTF)"))
+                .with_transform(Transform::default())
+                .with_script(script_source);
+            builder.spawn();
         }
     }
 
@@ -95,10 +151,11 @@ impl EditorApplication {
         };
 
         if let Some(entity) = cube_entity {
-            if {
+            let missing_mesh = {
                 let world = ctx.scene.main_world();
                 world.get::<&MeshComponent>(entity).is_err()
-            } {
+            };
+            if missing_mesh {
                 let (vertices, indices) = cube_mesh();
                 let mesh = ctx.renderer.create_mesh(&vertices, &indices);
                 let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
@@ -111,10 +168,11 @@ impl EditorApplication {
                 }
             }
 
-            if {
+            let missing_material = {
                 let world = ctx.scene.main_world();
                 world.get::<&MaterialComponent>(entity).is_err()
-            } {
+            };
+            if missing_material {
                 if let Err(err) = ctx
                     .scene
                     .main_world_mut()
@@ -124,10 +182,11 @@ impl EditorApplication {
                 }
             }
 
-            if {
+            let missing_visibility = {
                 let world = ctx.scene.main_world();
                 world.get::<&Visible>(entity).is_err()
-            } {
+            };
+            if missing_visibility {
                 if let Err(err) = ctx.scene.main_world_mut().insert_one(entity, Visible(true)) {
                     error!("failed to mark Editor Cube visible: {err}");
                 }
@@ -164,6 +223,24 @@ impl EditorApplication {
         egui::TopBottomPanel::top("editor_top_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if ui.button("Import glTF...").clicked() {
+                            ui.close();
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("glTF", &["gltf", "glb"])
+                                .pick_file()
+                            {
+                                self.pending_imports.push(path);
+                            }
+                        }
+                    }
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ui.add_enabled(false, egui::Button::new("Import glTF..."));
+                    }
+
                     if ui.button("Exit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         ui.close();
@@ -198,9 +275,12 @@ impl RenderApplication for EditorApplication {
 
     fn update(&mut self, ctx: &mut UpdateContext) {
         self.camera_controller.update_camera(ctx);
+        self.process_pending_imports(ctx);
     }
 
-    fn gpu_update(&mut self, _ctx: &mut GpuUpdateContext) {}
+    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        ctx.scene.process_pending_gltf_imports(ctx.renderer);
+    }
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         let grid = self

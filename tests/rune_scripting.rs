@@ -1,5 +1,5 @@
-use env_logger;
 use glam::Quat;
+use std::f32::consts::FRAC_PI_2;
 use wgpu_cube::scene::components::{Name, TransformComponent};
 use wgpu_cube::scene::Scene;
 use wgpu_cube::scene::Transform;
@@ -73,5 +73,5 @@ fn rune_script_spawns_and_updates_entities() {
     assert!(transform
         .0
         .rotation
-        .abs_diff_eq(Quat::from_rotation_y(1.57079632679_f32), 1e-3));
+        .abs_diff_eq(Quat::from_rotation_y(FRAC_PI_2), 1e-3));
 }

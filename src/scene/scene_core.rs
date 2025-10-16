@@ -5,15 +5,16 @@ use super::assets::{
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
 use super::internal::{lights, rendering};
+use super::loader::SceneLoader;
 use crate::asset::Assets;
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
-use crate::scripting::ScriptingState;
+use crate::scripting::{PendingGltfImport, ScriptingState};
 use crate::time::Instant;
 use hecs::World;
-use log::error;
+use log::{error, warn};
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
@@ -354,6 +355,44 @@ impl Scene {
                 parent_entity,
                 instance.into_world(),
             );
+        }
+    }
+
+    pub fn process_pending_gltf_imports(&mut self, renderer: &mut Renderer) {
+        let pending = self.scripting_mut().take_pending_gltf_imports();
+        if pending.is_empty() {
+            return;
+        }
+
+        for PendingGltfImport {
+            parent,
+            path,
+            scale,
+        } in pending
+        {
+            if self.main_world().entity(parent).is_err() {
+                warn!(
+                    "Skipping glTF import for missing target entity {:?}: {:?}",
+                    parent, path
+                );
+                continue;
+            }
+
+            match SceneLoader::load_gltf_asset(&path, renderer, scale) {
+                Ok(mut bundle) => {
+                    bundle.register_resources(&mut self.assets);
+                    let asset = bundle.asset;
+                    let instance = asset.instantiate();
+                    super::internal::composition::merge_world_as_child(
+                        self.main_world_mut(),
+                        parent,
+                        instance.into_world(),
+                    );
+                }
+                Err(err) => {
+                    error!("Failed to import glTF {:?}: {err}", path);
+                }
+            }
         }
     }
 

@@ -334,7 +334,7 @@ impl ActiveCommands {
 
 thread_local! {
     static ACTIVE_COMMANDS: RefCell<ActiveCommands> = RefCell::new(ActiveCommands::default());
-    static ACTIVE_STATE: RefCell<Option<NonNull<ScriptStateMap>>> = RefCell::new(None);
+    static ACTIVE_STATE: RefCell<Option<NonNull<ScriptStateMap>>> = const { RefCell::new(None) };
 }
 
 struct CommandGuard;
@@ -434,6 +434,11 @@ enum ExistingCommand {
     AttachScript {
         entity_bits: u64,
         source: RuneScriptSource,
+    },
+    ImportGltf {
+        entity_bits: u64,
+        path: String,
+        scale: f32,
     },
 }
 
@@ -571,6 +576,20 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
+    fn import_gltf(&mut self, handle: i64, path: String, scale: f32) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::ImportGltf {
+            entity_bits,
+            path,
+            scale,
+        });
+        VmResult::Ok(())
+    }
+
     fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.existing.is_empty()
     }
@@ -651,6 +670,25 @@ impl ScriptCommands {
                         transform.rotation = rotation;
                     })?;
                 }
+                ExistingCommand::ImportGltf {
+                    entity_bits,
+                    path,
+                    scale,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    result.gltf_imports.push(PendingGltfImport {
+                        parent: entity,
+                        path: PathBuf::from(path),
+                        scale,
+                    });
+                }
                 ExistingCommand::AttachScript {
                     entity_bits,
                     source,
@@ -688,9 +726,17 @@ impl ScriptCommands {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingGltfImport {
+    pub parent: Entity,
+    pub path: PathBuf,
+    pub scale: f32,
+}
+
 #[derive(Default)]
 struct ScriptApplyResult {
     scripts_added: Vec<Entity>,
+    gltf_imports: Vec<PendingGltfImport>,
 }
 
 fn entity_bits(entity: Entity) -> i64 {
@@ -701,6 +747,7 @@ fn entity_bits(entity: Entity) -> i64 {
 pub struct ScriptingState {
     runtime: RuneScriptingRuntime,
     instances: HashMap<Entity, RuneScriptInstance>,
+    pending_gltf_imports: Vec<PendingGltfImport>,
 }
 
 impl ScriptingState {
@@ -709,6 +756,7 @@ impl ScriptingState {
         Ok(Self {
             runtime: RuneScriptingRuntime::new()?,
             instances: HashMap::new(),
+            pending_gltf_imports: Vec::new(),
         })
     }
 
@@ -765,6 +813,10 @@ impl ScriptingState {
                 if !result.scripts_added.is_empty() {
                     any_scripts_added = true;
                 }
+                if !result.gltf_imports.is_empty() {
+                    self.pending_gltf_imports
+                        .extend(result.gltf_imports.into_iter());
+                }
             }
 
             if !any_scripts_added {
@@ -800,10 +852,18 @@ impl ScriptingState {
         }
 
         for commands in pending_commands.iter_mut() {
-            commands.apply(world)?;
+            let result = commands.apply(world)?;
+            if !result.gltf_imports.is_empty() {
+                self.pending_gltf_imports
+                    .extend(result.gltf_imports.into_iter());
+            }
         }
 
         Ok(())
+    }
+
+    pub fn take_pending_gltf_imports(&mut self) -> Vec<PendingGltfImport> {
+        std::mem::take(&mut self.pending_gltf_imports)
     }
 
     fn retain_instances(&mut self, world: &World) {
@@ -885,6 +945,7 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(set_name)?;
     module.function_meta(set_translation)?;
     module.function_meta(set_rotation)?;
+    module.function_meta(import_gltf)?;
     module.function_meta(set_state)?;
     module.function_meta(get_state)?;
     module.function_meta(try_get_state)?;
@@ -930,6 +991,15 @@ fn set_rotation(handle: i64, yaw: f64, pitch: f64, roll: f64) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut()
             .with(|commands| commands.set_rotation(handle, rotation))
+    })
+}
+
+#[rune::function]
+fn import_gltf(handle: i64, path: String, scale: f64) -> VmResult<()> {
+    let scale = scale as f32;
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.import_gltf(handle, path, scale))
     })
 }
 
