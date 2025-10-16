@@ -6,12 +6,14 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{EulerRot, Quat, Vec3};
 use hecs::{ComponentError, Entity, NoSuchEntity, World};
 use rune::alloc::Error as RuneAllocError;
 use rune::runtime::{RuntimeContext, Vm, VmResult};
 use rune::{Context, ContextError, Diagnostics, Module, Source, Sources};
 use thiserror::Error;
+
+use log::{debug, error, info, warn};
 
 use crate::app::{AppBuilder, Plugin, StartupContext};
 use crate::scene::{Name, Transform, TransformComponent};
@@ -372,6 +374,7 @@ impl EntityHandleRegistry {
 struct PendingEntity {
     name: Option<String>,
     translation: Option<Vec3>,
+    rotation: Option<Quat>,
     script: Option<RuneScriptSource>,
 }
 
@@ -383,6 +386,10 @@ enum ExistingCommand {
     SetTranslation {
         entity_bits: u64,
         translation: Vec3,
+    },
+    SetRotation {
+        entity_bits: u64,
+        rotation: Quat,
     },
     AttachScript {
         entity_bits: u64,
@@ -471,6 +478,23 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
+    fn set_rotation(&mut self, handle: i64, rotation: Quat) -> VmResult<()> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.rotation = Some(rotation);
+            return VmResult::Ok(());
+        }
+
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+        self.existing.push(ExistingCommand::SetRotation {
+            entity_bits,
+            rotation,
+        });
+        VmResult::Ok(())
+    }
+
     fn attach_inline_script(&mut self, handle: i64, name: String, source: String) -> VmResult<()> {
         let descriptor = RuneScriptSource::inline(name, source);
         if let Some(entry) = self.pending.get_mut(&handle) {
@@ -514,7 +538,7 @@ impl ScriptCommands {
     fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, RuneScriptingError> {
         let mut result = ScriptApplyResult::default();
 
-        for (handle, pending) in self.pending.drain() {
+        for (handle, mut pending) in self.pending.drain() {
             let entity = world.spawn(());
             self.registry.borrow_mut().resolve(handle, entity);
 
@@ -522,11 +546,15 @@ impl ScriptCommands {
                 world.insert_one(entity, Name(name))?;
             }
 
-            if let Some(translation) = pending.translation {
-                world.insert_one(
-                    entity,
-                    TransformComponent(Transform::from_translation(translation)),
-                )?;
+            if pending.translation.is_some() || pending.rotation.is_some() {
+                let mut transform = Transform::default();
+                if let Some(translation) = pending.translation.take() {
+                    transform.translation = translation;
+                }
+                if let Some(rotation) = pending.rotation.take() {
+                    transform.rotation = rotation;
+                }
+                world.insert_one(entity, TransformComponent(transform))?;
             }
 
             if let Some(script) = pending.script {
@@ -567,25 +595,21 @@ impl ScriptCommands {
                         continue;
                     };
 
-                    let mut needs_insert = false;
-                    match world.get::<&mut TransformComponent>(entity) {
-                        Ok(mut transform) => {
-                            transform.0.translation = translation;
-                        }
-                        Err(ComponentError::MissingComponent(_)) => {
-                            needs_insert = true;
-                        }
-                        Err(ComponentError::NoSuchEntity) => {
-                            return Err(ComponentError::NoSuchEntity.into());
-                        }
-                    }
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.translation = translation;
+                    })?;
+                }
+                ExistingCommand::SetRotation {
+                    entity_bits,
+                    rotation,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
 
-                    if needs_insert {
-                        world.insert_one(
-                            entity,
-                            TransformComponent(Transform::from_translation(translation)),
-                        )?;
-                    }
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.rotation = rotation;
+                    })?;
                 }
                 ExistingCommand::AttachScript {
                     entity_bits,
@@ -601,6 +625,26 @@ impl ScriptCommands {
         }
 
         Ok(result)
+    }
+
+    fn modify_transform(
+        world: &mut World,
+        entity: Entity,
+        apply: impl FnOnce(&mut Transform),
+    ) -> Result<(), RuneScriptingError> {
+        if let Ok(mut transform) = world.get::<&mut TransformComponent>(entity) {
+            apply(&mut transform.0);
+            return Ok(());
+        }
+
+        if world.entity(entity).is_err() {
+            return Err(ComponentError::NoSuchEntity.into());
+        }
+
+        let mut transform = Transform::default();
+        apply(&mut transform);
+        world.insert_one(entity, TransformComponent(transform))?;
+        Ok(())
     }
 }
 
@@ -800,8 +844,13 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(spawn_entity)?;
     module.function_meta(set_name)?;
     module.function_meta(set_translation)?;
+    module.function_meta(set_rotation)?;
     module.function_meta(attach_inline_script)?;
     module.function_meta(attach_script_file)?;
+    module.function_meta(log_debug)?;
+    module.function_meta(log_info)?;
+    module.function_meta(log_warn)?;
+    module.function_meta(log_error)?;
     Ok(module)
 }
 
@@ -830,6 +879,15 @@ fn set_translation(handle: i64, x: f64, y: f64, z: f64) -> VmResult<()> {
     })
 }
 
+#[rune::function]
+fn set_rotation(handle: i64, yaw: f64, pitch: f64, roll: f64) -> VmResult<()> {
+    let rotation = Quat::from_euler(EulerRot::YXZ, yaw as f32, pitch as f32, roll as f32);
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.set_rotation(handle, rotation))
+    })
+}
+
 #[rune::function(path = attach_inline_script)]
 fn attach_inline_script(handle: i64, name: String, source: String) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
@@ -844,4 +902,28 @@ fn attach_script_file(handle: i64, path: String) -> VmResult<()> {
         cell.borrow_mut()
             .with(|commands| commands.attach_file_script(handle, path))
     })
+}
+
+#[rune::function]
+fn log_debug(message: String) -> VmResult<()> {
+    debug!(target: "script", "{message}");
+    VmResult::Ok(())
+}
+
+#[rune::function]
+fn log_info(message: String) -> VmResult<()> {
+    info!(target: "script", "{message}");
+    VmResult::Ok(())
+}
+
+#[rune::function]
+fn log_warn(message: String) -> VmResult<()> {
+    warn!(target: "script", "{message}");
+    VmResult::Ok(())
+}
+
+#[rune::function]
+fn log_error(message: String) -> VmResult<()> {
+    error!(target: "script", "{message}");
+    VmResult::Ok(())
 }

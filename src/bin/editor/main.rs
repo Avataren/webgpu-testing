@@ -7,6 +7,7 @@ use std::f32::consts::FRAC_PI_2;
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
 use glam::{Quat, Vec2, Vec3};
+use log::error;
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
@@ -15,11 +16,25 @@ use wgpu_cube::renderer::{
 };
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+    EntityBuilder, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
-use wgpu_cube::scripting::RuneScriptingPlugin;
+use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 
 use postprocess::ViewportGrid;
+
+const EDITOR_CUBE_SPIN_SCRIPT: &str = r###"
+pub fn on_created(self_entity) {
+    log_info("Editor cube spin script created");
+}
+
+var angle = 0.0;
+
+pub fn update(self_entity, dt) {
+    angle += dt * 1.5;
+    log_debug("Editor cube spinning");
+    set_rotation(self_entity, angle, 0.0, 0.0);
+}
+"###;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -46,33 +61,100 @@ impl EditorApplication {
     }
 
     fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
-        let has_mesh = ctx
+        let has_editor_cube = {
+            ctx.scene
+                .main_world()
+                .query::<&Name>()
+                .iter()
+                .any(|(_, name)| name.0 == "Editor Cube")
+        };
+
+        if !has_editor_cube {
+            let startup_source = format!(
+                r####"
+pub fn on_created(self_entity) {{
+    log_info("Editor startup script running");
+    let cube = spawn_entity(Some("Editor Cube"));
+    log_info("Editor cube entity spawned");
+    set_translation(cube, 0.0, 0.5, 0.0);
+    attach_inline_script(cube, "EditorCubeSpin", r###"{spin}"###);
+}}
+"####,
+                spin = EDITOR_CUBE_SPIN_SCRIPT
+            );
+
+            {
+                let world = ctx.scene.main_world_mut();
+                EntityBuilder::new(world)
+                    .with_name("Editor Startup Script")
+                    .with_script(RuneScriptSource::inline("EditorStartup", startup_source))
+                    .spawn();
+            }
+
+            ctx.scene.update(0.0);
+        }
+
+        let cube_entity = {
+            let world = ctx.scene.main_world();
+            world
+                .query::<&Name>()
+                .iter()
+                .find(|(_, name)| name.0 == "Editor Cube")
+                .map(|(entity, _)| entity)
+        };
+
+        if let Some(entity) = cube_entity {
+            if {
+                let world = ctx.scene.main_world();
+                world.get::<&MeshComponent>(entity).is_err()
+            } {
+                let (vertices, indices) = cube_mesh();
+                let mesh = ctx.renderer.create_mesh(&vertices, &indices);
+                let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
+                if let Err(err) = ctx
+                    .scene
+                    .main_world_mut()
+                    .insert_one(entity, MeshComponent(mesh_handle))
+                {
+                    error!("failed to attach mesh to Editor Cube: {err}");
+                }
+            }
+
+            if {
+                let world = ctx.scene.main_world();
+                world.get::<&MaterialComponent>(entity).is_err()
+            } {
+                if let Err(err) = ctx
+                    .scene
+                    .main_world_mut()
+                    .insert_one(entity, MaterialComponent(Material::pbr()))
+                {
+                    error!("failed to attach material to Editor Cube: {err}");
+                }
+            }
+
+            if {
+                let world = ctx.scene.main_world();
+                world.get::<&Visible>(entity).is_err()
+            } {
+                if let Err(err) = ctx.scene.main_world_mut().insert_one(entity, Visible(true)) {
+                    error!("failed to mark Editor Cube visible: {err}");
+                }
+            }
+        }
+
+        let has_directional_light = ctx
             .scene
-            .world()
-            .query::<&MeshComponent>()
+            .main_world()
+            .query::<&DirectionalLight>()
             .iter()
             .next()
             .is_some();
-        if has_mesh {
-            return;
-        }
 
-        let (vertices, indices) = cube_mesh();
-        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
-        let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-
-        {
-            let world = ctx.scene.main_world_mut();
-            world.spawn((
-                Name::new("Default Cube"),
-                TransformComponent(Transform::from_translation(Vec3::new(0.0, 0.5, 0.0))),
-                MeshComponent(mesh_handle),
-                MaterialComponent(Material::pbr()),
-                Visible(true),
-            ));
-
+        if !has_directional_light {
             let light_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
             let light_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, light_direction);
+            let world = ctx.scene.main_world_mut();
             world.spawn((
                 Name::new("Directional Light"),
                 TransformComponent(Transform::from_trs(Vec3::ZERO, light_rotation, Vec3::ONE)),
@@ -81,12 +163,10 @@ impl EditorApplication {
             ));
         }
 
-        {
-            let camera = ctx.scene.camera_mut();
-            camera.eye = Vec3::new(6.0, 4.0, 6.0);
-            camera.target = Vec3::new(0.0, 0.5, 0.0);
-            camera.up = Vec3::Y;
-        }
+        let camera = ctx.scene.camera_mut();
+        camera.eye = Vec3::new(6.0, 4.0, 6.0);
+        camera.target = Vec3::new(0.0, 0.5, 0.0);
+        camera.up = Vec3::Y;
     }
 
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
