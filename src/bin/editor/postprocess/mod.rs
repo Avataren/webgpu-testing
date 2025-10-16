@@ -107,7 +107,7 @@ impl ViewportGrid {
         let uniform = self.build_uniform(ctx);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
 
-        let depth_view = renderer.depth_sample_view();
+        let depth_view = ctx.depth_view;
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("EditorGridBindGroup"),
             layout: &state.bind_group_layout,
@@ -188,17 +188,19 @@ impl ViewportGrid {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: shader,
-                entry_point: "vs_fullscreen",
+                entry_point: Some("vs_fullscreen"),
                 buffers: &[],
+                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -211,6 +213,7 @@ impl ViewportGrid {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         self.pipeline = Some(PipelineState {
