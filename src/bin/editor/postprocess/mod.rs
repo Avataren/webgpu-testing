@@ -107,7 +107,7 @@ impl ViewportGrid {
         let uniform = self.build_uniform(ctx);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
 
-        let depth_view = renderer.depth_sample_view();
+        let depth_view = ctx.depth_view;
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("EditorGridBindGroup"),
             layout: &state.bind_group_layout,

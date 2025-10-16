@@ -488,12 +488,18 @@ impl Renderer {
 
         if let Some(request) = custom_render.as_mut() {
             if request.stage == CustomRenderStage::AfterPostprocess {
+                let depth_view_after =
+                    if let Some(resolved) = self.postprocess.after_postprocess_depth_view() {
+                        resolved
+                    } else {
+                        &depth_view
+                    };
                 let mut ctx = CustomRenderContext::new(
                     &mut encoder,
                     self,
                     scene,
                     &view,
-                    &depth_view,
+                    depth_view_after,
                     CustomRenderStage::AfterPostprocess,
                     None,
                     render_region,
