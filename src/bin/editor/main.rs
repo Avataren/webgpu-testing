@@ -3,6 +3,8 @@
 mod postprocess;
 
 use std::f32::consts::FRAC_PI_2;
+use std::fs;
+use std::path::PathBuf;
 
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
@@ -21,20 +23,6 @@ use wgpu_cube::scene::{
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 
 use postprocess::ViewportGrid;
-
-const EDITOR_CUBE_SPIN_SCRIPT: &str = r###"
-pub fn on_created(self_entity) {
-    log_info("Editor cube spin script created");
-}
-
-var angle = 0.0;
-
-pub fn update(self_entity, dt) {
-    angle += dt * 1.5;
-    log_debug("Editor cube spinning");
-    set_rotation(self_entity, angle, 0.0, 0.0);
-}
-"###;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -60,6 +48,17 @@ impl EditorApplication {
         }
     }
 
+    fn load_script(path: &str) -> Option<RuneScriptSource> {
+        let full_path = PathBuf::from("scripts").join(path);
+        match fs::read_to_string(&full_path) {
+            Ok(src) => Some(RuneScriptSource::inline(path, src)),
+            Err(err) => {
+                error!("Failed to read script {:?}: {err}", full_path);
+                None
+            }
+        }
+    }
+
     fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
         let has_editor_cube = {
             ctx.scene
@@ -70,28 +69,20 @@ impl EditorApplication {
         };
 
         if !has_editor_cube {
-            let startup_source = format!(
-                r####"
-pub fn on_created(self_entity) {{
-    log_info("Editor startup script running");
-    let cube = spawn_entity(Some("Editor Cube"));
-    log_info("Editor cube entity spawned");
-    set_translation(cube, 0.0, 0.5, 0.0);
-    attach_inline_script(cube, "EditorCubeSpin", r###"{spin}"###);
-}}
-"####,
-                spin = EDITOR_CUBE_SPIN_SCRIPT
-            );
+            let startup_script = Self::load_script("editor_startup.rn");
 
-            {
+            if let Some(script) = startup_script {
                 let world = ctx.scene.main_world_mut();
                 EntityBuilder::new(world)
                     .with_name("Editor Startup Script")
-                    .with_script(RuneScriptSource::inline("EditorStartup", startup_source))
+                    .with_script(script)
                     .spawn();
-            }
 
-            ctx.scene.update(0.0);
+                ctx.scene.update(0.0);
+            } else {
+                error!("Failed to load editor startup script");
+                return;
+            }
         }
 
         let cube_entity = {

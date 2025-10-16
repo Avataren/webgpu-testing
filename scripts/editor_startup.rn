@@ -1,0 +1,5 @@
+pub fn on_created(self_entity) {
+    let cube = spawn_entity(Some("Editor Cube"));
+    set_translation(cube, 0.0, 0.5, 0.0);
+    attach_script(cube, "scripts/editor_cube_spin.rn");
+}

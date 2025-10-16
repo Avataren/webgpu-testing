@@ -1,0 +1,9 @@
+//let mut angle = 0.0;
+
+pub fn on_created(self_entity) {
+}
+
+pub fn update(self_entity, dt) {
+    //angle += dt * 1.5;
+    set_rotation(self_entity, 0.0, 0.0, 0.0);
+}
