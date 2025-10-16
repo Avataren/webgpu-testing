@@ -30,9 +30,6 @@ struct GridUniform {
 @group(0) @binding(0)
 var<uniform> grid_uniform : GridUniform;
 
-@group(0) @binding(1)
-var depth_texture : texture_depth_2d;
-
 fn viewport_to_scene_uv(uv : vec2<f32>) -> vec2<f32> {
     return grid_uniform.viewport_offset + uv * grid_uniform.viewport_scale;
 }
@@ -42,17 +39,6 @@ fn reconstruct_world_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
     let clip = vec4<f32>(ndc, 1.0);
     let world = grid_uniform.view_proj_inv * clip;
     return world.xyz / world.w;
-}
-
-fn fetch_depth(uv : vec2<f32>) -> f32 {
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        return 1.0;
-    }
-    let tex_size = vec2<f32>(textureDimensions(depth_texture, 0));
-    let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
-    let clamped_uv = clamp(uv, vec2<f32>(0.0), max_uv);
-    let coord = vec2<i32>(clamped_uv * tex_size);
-    return textureLoad(depth_texture, coord, 0);
 }
 
 fn grid_line_mask(coord : vec2<f32>, width : f32) -> f32 {
