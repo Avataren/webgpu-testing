@@ -12,12 +12,66 @@
         background: #1a1a1a;
         color: #e0e0e0;
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+        min-height: 100vh;
       }
-      
+
+      #toolbar {
+        width: 100%;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1.5rem;
+        background: rgba(30, 30, 30, 0.95);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+
+      #toolbar-title {
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      #toolbar-actions {
+        display: flex;
+        gap: 0.75rem;
+      }
+
+      #toolbar-actions button {
+        padding: 0.4rem 0.9rem;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        color: inherit;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: background 150ms ease, border-color 150ms ease;
+      }
+
+      #toolbar-actions button:hover {
+        background: rgba(74, 158, 255, 0.25);
+        border-color: rgba(74, 158, 255, 0.45);
+      }
+
       canvas {
         display: block;
-        width: 100%;
-        height: 100%;
+        width: 90vw;
+        height: 80vh;
+        max-width: 1400px;
+        border-radius: 12px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.08);
       }
       
       #loading {
@@ -54,6 +108,13 @@
     </style>
   </head>
   <body>
+    <header id="toolbar">
+      <span id="toolbar-title">WebGPU Scene Viewer</span>
+      <div id="toolbar-actions">
+        <button type="button" onclick="console.log('Reset camera requested');">Reset Camera</button>
+        <button type="button" onclick="console.log('Grid toggle requested');">Toggle Grid</button>
+      </div>
+    </header>
     <div id="loading">
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="1 4 1 10 7 10"></polyline>

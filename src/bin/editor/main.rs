@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use egui::{Color32, Stroke, StrokeKind};
-use egui_tiles::{Behavior, TileId, Tree, UiResponse};
+use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 use glam::{Quat, Vec2, Vec3};
 use log::error;
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
@@ -161,7 +161,7 @@ impl EditorApplication {
     }
 
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("editor_menu_bar").show(ctx, |ui| {
+        egui::TopBottomPanel::top("editor_top_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Exit").clicked() {
@@ -169,6 +169,15 @@ impl EditorApplication {
                         ui.close();
                     }
                 });
+            });
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Toolbar").strong());
+                ui.separator();
+                ui.add_enabled(false, egui::Button::new("Play"));
+                ui.add_enabled(false, egui::Button::new("Pause"));
+                ui.add_enabled(false, egui::Button::new("Stop"));
             });
         });
     }
@@ -466,7 +475,16 @@ fn create_editor_layout() -> Tree<EditorPane> {
     let console_tab = tiles.insert_tab_tile(vec![console]);
 
     let horizontal = tiles.insert_horizontal_tile(vec![viewport_tab, inspector_tab]);
+    if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(horizontal) {
+        linear.shares.set_share(viewport_tab, 0.9);
+        linear.shares.set_share(inspector_tab, 0.1);
+    }
+
     let root = tiles.insert_vertical_tile(vec![horizontal, console_tab]);
+    if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(root) {
+        linear.shares.set_share(horizontal, 0.8);
+        linear.shares.set_share(console_tab, 0.2);
+    }
 
     Tree::new("editor_dock", root, tiles)
 }
