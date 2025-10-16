@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #[derive(Default)]
 pub(crate) struct ParticleSlotAllocator {
     next_slot: u32,

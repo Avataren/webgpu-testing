@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // src/gpu_particles/system/slot_allocator_v2.rs
 
 /// High-performance slot allocator using bitsets for O(1) allocation
@@ -13,7 +14,7 @@ impl SlotAllocator {
     const BITS_PER_WORD: u32 = 64;
 
     pub fn new(capacity: u32) -> Self {
-        let words_needed = ((capacity + Self::BITS_PER_WORD - 1) / Self::BITS_PER_WORD) as usize;
+        let words_needed = capacity.div_ceil(Self::BITS_PER_WORD) as usize;
         Self {
             occupied: vec![0; words_needed],
             high_water: 0,
@@ -182,7 +183,7 @@ mod tests {
     fn test_reclaim_and_reuse() {
         let mut allocator = SlotAllocator::new(100);
 
-        let slot1 = allocator.allocate().unwrap();
+        let _slot1 = allocator.allocate().unwrap();
         let slot2 = allocator.allocate().unwrap();
         allocator.allocate().unwrap();
 

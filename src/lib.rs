@@ -7,6 +7,7 @@ pub mod profiler;
 pub mod render_application;
 pub mod renderer;
 pub mod scene;
+pub mod scripting;
 pub mod settings;
 pub mod time;
 #[cfg(feature = "egui")]
