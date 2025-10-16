@@ -9,6 +9,7 @@ use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::renderer::Material;
 use crate::scene::Transform;
+use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 
 /// Helper for building entities with a fluent API
 /// This is optional - you can also use world.spawn() directly
@@ -65,6 +66,12 @@ impl<'w> EntityBuilder<'w> {
     /// Add a rotation animation component
     pub fn with_rotation_animation(mut self, axis: Vec3, speed: f32) -> Self {
         self.builder.add(RotateAnimation { axis, speed });
+        self
+    }
+
+    /// Attach a scripting component to the entity.
+    pub fn with_script(mut self, source: RuneScriptSource) -> Self {
+        self.builder.add(RuneScriptComponent::new(source));
         self
     }
 
