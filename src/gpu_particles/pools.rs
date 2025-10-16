@@ -130,10 +130,7 @@ thread_local! {
     );
 }
 
-/// Acquire a pooled vector of particles
-// In src/gpu_particles/pools.rs
-
-/// Acquire a pooled vector of particles
+/// Acquire a pooled vector of particles.
 pub fn acquire_particle_vec() -> PooledVec<Particle> {
     PARTICLE_VEC_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();
@@ -145,7 +142,7 @@ pub fn acquire_particle_vec() -> PooledVec<Particle> {
     })
 }
 
-/// Acquire a pooled vector of u32
+/// Acquire a pooled vector of u32.
 pub fn acquire_u32_vec() -> PooledVec<u32> {
     U32_VEC_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();
@@ -157,7 +154,7 @@ pub fn acquire_u32_vec() -> PooledVec<u32> {
     })
 }
 
-/// Acquire a pooled vector of spawn requests
+/// Acquire a pooled vector of spawn requests.
 pub fn acquire_spawn_request_vec() -> PooledVec<(u32, Particle)> {
     SPAWN_REQUEST_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();

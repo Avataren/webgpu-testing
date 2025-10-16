@@ -10,8 +10,10 @@ use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
+use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use hecs::World;
+use log::error;
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
@@ -22,6 +24,7 @@ pub struct Scene {
     free_list: Vec<SceneNodeId>,
     root: SceneNodeId,
     main_scene: SceneNodeId,
+    scripting: ScriptingState,
 }
 
 impl Scene {
@@ -41,6 +44,7 @@ impl Scene {
             free_list: Vec::new(),
             root: root_id,
             main_scene: root_id,
+            scripting: ScriptingState::default(),
         }
     }
 
@@ -99,6 +103,14 @@ impl Scene {
         if self.is_valid_node(node) {
             self.main_scene = node;
         }
+    }
+
+    pub fn scripting(&self) -> &ScriptingState {
+        &self.scripting
+    }
+
+    pub fn scripting_mut(&mut self) -> &mut ScriptingState {
+        &mut self.scripting
     }
 
     pub fn node_name(&self, node: SceneNodeId) -> &str {
@@ -250,6 +262,14 @@ impl Scene {
         }
 
         self.update_world_transforms();
+
+        {
+            let mut scripting = std::mem::take(&mut self.scripting);
+            if let Err(err) = scripting.update_scripts(self.main_world_mut(), dt) {
+                error!("Rune scripting error: {err}");
+            }
+            self.scripting = scripting;
+        }
     }
 
     fn update_world_transforms(&mut self) {

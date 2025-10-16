@@ -9,7 +9,7 @@ use egui_tiles::{Behavior, TileId, Tree, UiResponse};
 use glam::{Quat, Vec2, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
-use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
@@ -17,6 +17,7 @@ use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
+use wgpu_cube::scripting::RuneScriptingPlugin;
 
 use postprocess::ViewportGrid;
 
@@ -105,6 +106,10 @@ impl EditorApplication {
 impl RenderApplication for EditorApplication {
     fn name(&self) -> &str {
         "Engine Editor"
+    }
+
+    fn configure(&self, builder: &mut AppBuilder) {
+        builder.add_plugin(RuneScriptingPlugin::new());
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
