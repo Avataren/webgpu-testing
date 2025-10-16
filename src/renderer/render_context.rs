@@ -139,6 +139,34 @@ impl<'a> CustomRenderContext<'a> {
         pass
     }
 
+    /// Begin a render pass that does not use the depth attachment.
+    ///
+    /// Useful when sampling the depth texture as an input during the pass,
+    /// which conflicts with using it as a depth attachment at the same time.
+    pub fn begin_render_pass_without_depth(&mut self, label: &str) -> wgpu::RenderPass<'_> {
+        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: self.color_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        if let Some(region) = self.render_region {
+            region.apply_to_pass(&mut pass);
+        }
+
+        pass
+    }
+
     /// Begin a render pass that clears the depth buffer
     ///
     /// Useful when you want your custom rendering to ignore the main scene depth.

@@ -1,0 +1,140 @@
+diff --git a/src/bin/editor/postprocess/mod.rs b/src/bin/editor/postprocess/mod.rs
+index 0a9cfeafce49de788ec80b562794399d75a2bb5a..2be97f1f139f882010e19ea6e1663a05a5539633 100644
+--- a/src/bin/editor/postprocess/mod.rs
++++ b/src/bin/editor/postprocess/mod.rs
+@@ -101,51 +101,51 @@ impl ViewportGrid {
+         self.ensure_pipeline(device, color_format, sample_count);
+ 
+         let Some(state) = &self.pipeline else {
+             return;
+         };
+ 
+         let uniform = self.build_uniform(ctx);
+         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+ 
+         let depth_view = ctx.depth_view;
+         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+             label: Some("EditorGridBindGroup"),
+             layout: &state.bind_group_layout,
+             entries: &[
+                 wgpu::BindGroupEntry {
+                     binding: 0,
+                     resource: self.uniform_buffer.as_entire_binding(),
+                 },
+                 wgpu::BindGroupEntry {
+                     binding: 1,
+                     resource: wgpu::BindingResource::TextureView(depth_view),
+                 },
+             ],
+         });
+ 
+-        let mut pass = ctx.begin_render_pass("EditorGridPostprocess");
++        let mut pass = ctx.begin_render_pass_without_depth("EditorGridPostprocess");
+         pass.set_pipeline(&state.pipeline);
+         pass.set_bind_group(0, &bind_group, &[]);
+         pass.draw(0..3, 0..1);
+     }
+ 
+     fn ensure_pipeline(
+         &mut self,
+         device: &wgpu::Device,
+         format: wgpu::TextureFormat,
+         sample_count: u32,
+     ) {
+         let multisampled = sample_count > 1;
+         if let Some(state) = &self.pipeline {
+             if state.target_format == format
+                 && state.sample_count == sample_count
+                 && state.multisampled == multisampled
+             {
+                 return;
+             }
+         }
+ 
+         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+             label: Some("EditorGridBindGroupLayout"),
+             entries: &[
+                 wgpu::BindGroupLayoutEntry {
+diff --git a/src/renderer/render_context.rs b/src/renderer/render_context.rs
+index 007eec711bfd349ad1c0d08d58b282450c362e81..4decd4ab46dd7237bb85261b832049872555b154 100644
+--- a/src/renderer/render_context.rs
++++ b/src/renderer/render_context.rs
+@@ -117,50 +117,78 @@ impl<'a> CustomRenderContext<'a> {
+                 depth_slice: None,
+                 ops: wgpu::Operations {
+                     load: wgpu::LoadOp::Load,
+                     store: wgpu::StoreOp::Store,
+                 },
+             })],
+             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                 view: self.depth_view,
+                 depth_ops: Some(wgpu::Operations {
+                     load: wgpu::LoadOp::Load,
+                     store: wgpu::StoreOp::Store,
+                 }),
+                 stencil_ops: None,
+             }),
+             timestamp_writes: None,
+             occlusion_query_set: None,
+         });
+ 
+         if let Some(region) = self.render_region {
+             region.apply_to_pass(&mut pass);
+         }
+ 
+         pass
+     }
+ 
++    /// Begin a render pass that does not use the depth attachment.
++    ///
++    /// Useful when sampling the depth texture as an input during the pass,
++    /// which conflicts with using it as a depth attachment at the same time.
++    pub fn begin_render_pass_without_depth(&mut self, label: &str) -> wgpu::RenderPass<'_> {
++        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
++            label: Some(label),
++            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
++                view: self.color_view,
++                resolve_target: None,
++                depth_slice: None,
++                ops: wgpu::Operations {
++                    load: wgpu::LoadOp::Load,
++                    store: wgpu::StoreOp::Store,
++                },
++            })],
++            depth_stencil_attachment: None,
++            timestamp_writes: None,
++            occlusion_query_set: None,
++        });
++
++        if let Some(region) = self.render_region {
++            region.apply_to_pass(&mut pass);
++        }
++
++        pass
++    }
++
+     /// Begin a render pass that clears the depth buffer
+     ///
+     /// Useful when you want your custom rendering to ignore the main scene depth.
+     pub fn begin_render_pass_clear_depth(&mut self, label: &str) -> wgpu::RenderPass<'_> {
+         let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+             label: Some(label),
+             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                 view: self.color_view,
+                 resolve_target: None,
+                 depth_slice: None,
+                 ops: wgpu::Operations {
+                     load: wgpu::LoadOp::Load,
+                     store: wgpu::StoreOp::Store,
+                 },
+             })],
+             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                 view: self.depth_view,
+                 depth_ops: Some(wgpu::Operations {
+                     load: wgpu::LoadOp::Clear(1.0),
+                     store: wgpu::StoreOp::Store,
+                 }),
+                 stencil_ops: None,
+             }),
+             timestamp_writes: None,
+             occlusion_query_set: None,

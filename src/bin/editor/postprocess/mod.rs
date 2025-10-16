@@ -123,7 +123,7 @@ impl ViewportGrid {
             ],
         });
 
-        let mut pass = ctx.begin_render_pass("EditorGridPostprocess");
+        let mut pass = ctx.begin_render_pass_without_depth("EditorGridPostprocess");
         pass.set_pipeline(&state.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
