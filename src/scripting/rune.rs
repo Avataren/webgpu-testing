@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -10,7 +10,7 @@ use glam::{EulerRot, Quat, Vec3};
 use hecs::{ComponentError, Entity, NoSuchEntity, World};
 use rune::alloc::Error as RuneAllocError;
 use rune::runtime::{RuntimeContext, Vm, VmResult};
-use rune::{Context, ContextError, Diagnostics, Module, Source, Sources};
+use rune::{Context, ContextError, Diagnostics, FromValue, Module, Source, Sources, Value};
 use thiserror::Error;
 
 use log::{debug, error, info, warn};
@@ -232,12 +232,15 @@ impl RuneScriptComponent {
     }
 }
 
+type ScriptStateMap = HashMap<(i64, String), Value>;
+
 #[derive(Debug)]
 struct RuneScriptInstance {
     _script: Arc<RuneScript>,
     vm: Vm,
     source: RuneScriptSource,
     handles: Rc<RefCell<EntityHandleRegistry>>,
+    state_store: Rc<RefCell<ScriptStateMap>>,
 }
 
 impl RuneScriptInstance {
@@ -251,6 +254,7 @@ impl RuneScriptInstance {
             _script: script,
             source,
             handles: Rc::new(RefCell::new(EntityHandleRegistry::default())),
+            state_store: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -263,7 +267,9 @@ impl RuneScriptInstance {
         entity_bits: i64,
         commands: &mut ScriptCommands,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
-        let _guard = CommandGuard::enter(commands);
+        let _commands_guard = CommandGuard::enter(commands);
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
         self.call_function(["on_created"], (entity_bits,))
     }
 
@@ -273,7 +279,9 @@ impl RuneScriptInstance {
         dt: f64,
         commands: &mut ScriptCommands,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
-        let _guard = CommandGuard::enter(commands);
+        let _commands_guard = CommandGuard::enter(commands);
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
         self.call_function(["update"], (entity_bits, dt))
     }
 
@@ -326,6 +334,7 @@ impl ActiveCommands {
 
 thread_local! {
     static ACTIVE_COMMANDS: RefCell<ActiveCommands> = RefCell::new(ActiveCommands::default());
+    static ACTIVE_STATE: RefCell<Option<NonNull<ScriptStateMap>>> = RefCell::new(None);
 }
 
 struct CommandGuard;
@@ -341,6 +350,37 @@ impl Drop for CommandGuard {
     fn drop(&mut self) {
         ACTIVE_COMMANDS.with(|cell| cell.borrow_mut().clear());
     }
+}
+
+struct StateGuard<'a> {
+    _state: RefMut<'a, ScriptStateMap>,
+}
+
+impl<'a> StateGuard<'a> {
+    fn enter(state: &'a Rc<RefCell<ScriptStateMap>>) -> Self {
+        let mut state_ref = state.borrow_mut();
+        let ptr = NonNull::from(&mut *state_ref);
+        ACTIVE_STATE.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self { _state: state_ref }
+    }
+}
+
+impl Drop for StateGuard<'_> {
+    fn drop(&mut self) {
+        ACTIVE_STATE.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_STATE.with(|cell| {
+        let opt = *cell.borrow();
+        let Some(mut mut_ptr) = opt else {
+            return VmResult::panic("state store missing");
+        };
+        // Safety: populated by `StateGuard` for the duration of the script call.
+        let map = unsafe { mut_ptr.as_mut() };
+        f(map)
+    })
 }
 
 #[derive(Default, Debug)]
@@ -845,6 +885,11 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(set_name)?;
     module.function_meta(set_translation)?;
     module.function_meta(set_rotation)?;
+    module.function_meta(set_state)?;
+    module.function_meta(get_state)?;
+    module.function_meta(try_get_state)?;
+    module.function_meta(get_f64)?;
+    module.function_meta(set_f64)?;
     module.function_meta(attach_inline_script)?;
     module.function_meta(attach_script_file)?;
     module.function_meta(log_debug)?;
@@ -885,6 +930,53 @@ fn set_rotation(handle: i64, yaw: f64, pitch: f64, roll: f64) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut()
             .with(|commands| commands.set_rotation(handle, rotation))
+    })
+}
+
+#[rune::function]
+fn set_state(handle: i64, key: String, value: Value) -> VmResult<()> {
+    with_active_state(move |map| {
+        map.insert((handle, key), value);
+        VmResult::Ok(())
+    })
+}
+
+#[rune::function]
+fn get_state(handle: i64, key: String, default: Value) -> VmResult<Value> {
+    with_active_state(move |map| {
+        let entry_key = (handle, key);
+        match map.get(&entry_key) {
+            Some(value) => VmResult::Ok(value.clone()),
+            None => VmResult::Ok(default),
+        }
+    })
+}
+
+#[rune::function]
+fn try_get_state(handle: i64, key: String) -> VmResult<Option<Value>> {
+    with_active_state(move |map| {
+        let entry_key = (handle, key);
+        let value = map.get(&entry_key).cloned();
+        VmResult::Ok(value)
+    })
+}
+
+#[rune::function]
+fn get_f64(handle: i64, key: String, default: f64) -> VmResult<f64> {
+    with_active_state(move |map| {
+        let entry_key = (handle, key);
+        match map.get(&entry_key) {
+            Some(value) => f64::from_value(value.clone()),
+            None => VmResult::Ok(default),
+        }
+    })
+}
+
+#[rune::function]
+fn set_f64(handle: i64, key: String, value: f64) -> VmResult<()> {
+    with_active_state(move |map| {
+        map.insert((handle, key), Value::from(value));
+        VmResult::Ok(())
     })
 }
 
