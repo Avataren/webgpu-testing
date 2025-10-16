@@ -1,6 +1,5 @@
 #![cfg(feature = "egui")]
 
-#[path = "editor/postprocess/mod.rs"]
 mod postprocess;
 
 use std::f32::consts::FRAC_PI_2;

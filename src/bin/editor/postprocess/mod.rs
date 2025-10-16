@@ -188,19 +188,17 @@ impl ViewportGrid {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: shader,
-                entry_point: Some("vs_fullscreen"),
+                entry_point: "vs_fullscreen",
                 buffers: &[],
-                compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some("fs_main"),
+                entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -213,7 +211,6 @@ impl ViewportGrid {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
-            cache: None,
         });
 
         self.pipeline = Some(PipelineState {
