@@ -70,7 +70,6 @@ impl EditorApplication {
         };
 
         if !has_editor_cube {
-            let spin_script_literal = EDITOR_CUBE_SPIN_SCRIPT.replace('"', "\\\"");
             let startup_source = format!(
                 r####"
 pub fn on_created(self_entity) {{
@@ -78,12 +77,10 @@ pub fn on_created(self_entity) {{
     let cube = spawn_entity(Some("Editor Cube"));
     log_info("Editor cube entity spawned");
     set_translation(cube, 0.0, 0.5, 0.0);
-    attach_inline_script(cube, "EditorCubeSpin", "
-{spin}
-    ");
+    attach_inline_script(cube, "EditorCubeSpin", r###"{spin}"###);
 }}
 "####,
-                spin = spin_script_literal
+                spin = EDITOR_CUBE_SPIN_SCRIPT
             );
 
             {
