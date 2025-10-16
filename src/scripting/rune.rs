@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -266,7 +266,8 @@ impl RuneScriptInstance {
         commands: &mut ScriptCommands,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         let _commands_guard = CommandGuard::enter(commands);
-        let _state_guard = StateGuard::enter(&self.state_f64);
+        let state = Rc::clone(&self.state_f64);
+        let _state_guard = StateGuard::enter(&state);
         self.call_function(["on_created"], (entity_bits,))
     }
 
@@ -277,7 +278,8 @@ impl RuneScriptInstance {
         commands: &mut ScriptCommands,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         let _commands_guard = CommandGuard::enter(commands);
-        let _state_guard = StateGuard::enter(&self.state_f64);
+        let state = Rc::clone(&self.state_f64);
+        let _state_guard = StateGuard::enter(&state);
         self.call_function(["update"], (entity_bits, dt))
     }
 
@@ -349,20 +351,20 @@ impl Drop for CommandGuard {
     }
 }
 
-struct StateGuard;
+struct StateGuard<'a> {
+    _state: RefMut<'a, HashMap<(i64, String), f64>>,
+}
 
-impl StateGuard {
-    fn enter(state: &Rc<RefCell<HashMap<(i64, String), f64>>>) -> Self {
-        let ptr = {
-            let map_ref = &mut *state.borrow_mut();
-            NonNull::from(map_ref)
-        };
+impl<'a> StateGuard<'a> {
+    fn enter(state: &'a Rc<RefCell<HashMap<(i64, String), f64>>>) -> Self {
+        let mut state_ref = state.borrow_mut();
+        let ptr = NonNull::from(&mut *state_ref);
         ACTIVE_STATE_F64.with(|cell| *cell.borrow_mut() = Some(ptr));
-        Self
+        Self { _state: state_ref }
     }
 }
 
-impl Drop for StateGuard {
+impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
         ACTIVE_STATE_F64.with(|cell| *cell.borrow_mut() = None);
     }
