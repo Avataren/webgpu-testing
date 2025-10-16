@@ -1,0 +1,12 @@
+fn on_created(entity) {
+    let handle = engine::spawn_entity(Some("Rune Helper"));
+    engine::set_spawn_translation(handle, 1.5, 1.0, 0.0);
+    engine::set_spawn_visible(handle, true);
+    engine::attach_spawn_script(handle, "editor_helper_orbit");
+}
+
+fn update(entity, _dt, time) {
+    let angle = (time as f32) * 1.5;
+    let height = 0.5 + angle.sin() * 0.25;
+    engine::set_entity_translation(entity, 0.0, height, 0.0);
+}

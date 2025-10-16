@@ -1,0 +1,11 @@
+fn on_created(entity) {
+    engine::set_entity_translation(entity, 1.5, 1.0, 0.0);
+}
+
+fn update(entity, _dt, time) {
+    let angle = (time as f32) * 0.75;
+    let radius = 2.0;
+    let x = angle.cos() * radius;
+    let z = angle.sin() * radius;
+    engine::set_entity_translation(entity, x, 1.0, z);
+}
