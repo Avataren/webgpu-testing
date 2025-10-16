@@ -1,9 +1,9 @@
-//let mut angle = 0.0;
-
 pub fn on_created(self_entity) {
+    set_f64(self_entity, "angle", 0.0);
 }
 
 pub fn update(self_entity, dt) {
-    //angle += dt * 1.5;
-    set_rotation(self_entity, 0.0, 0.0, 0.0);
+    let angle = get_f64(self_entity, "angle", 0.0) + dt * 1.5;
+    set_f64(self_entity, "angle", angle);
+    set_rotation(self_entity, angle, 0.0, 0.0);
 }
