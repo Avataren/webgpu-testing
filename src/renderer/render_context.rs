@@ -60,6 +60,7 @@ pub struct CustomRenderContext<'a> {
 
 impl<'a> CustomRenderContext<'a> {
     /// Create a new custom render context
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         encoder: &'a mut wgpu::CommandEncoder,
         renderer: &'a crate::renderer::Renderer,
