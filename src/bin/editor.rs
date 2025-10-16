@@ -1,19 +1,18 @@
 #![cfg(feature = "egui")]
 
+use std::f32::consts::FRAC_PI_2;
+
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tree, UiResponse};
-use glam::{Quat, Vec3};
-use std::f32::consts::FRAC_PI_2;
+use glam::{Quat, Vec2, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{cube_mesh, CustomRenderContext, Material, RenderRegion};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
-use wgpu_cube::scene::Camera;
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
-use winit::keyboard::KeyCode;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -23,7 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 struct EditorApplication {
     dock_tree: Tree<EditorPane>,
     viewport_region: Option<RenderRegion>,
-    camera_controller: FirstPersonCameraController,
+    viewport_rect: Option<egui::Rect>,
+    camera_controller: EditorCameraController,
 }
 
 impl EditorApplication {
@@ -31,7 +31,8 @@ impl EditorApplication {
         Self {
             dock_tree: create_editor_layout(),
             viewport_region: None,
-            camera_controller: FirstPersonCameraController::default(),
+            viewport_rect: None,
+            camera_controller: EditorCameraController::default(),
         }
     }
 
@@ -77,8 +78,6 @@ impl EditorApplication {
             camera.target = Vec3::new(0.0, 0.5, 0.0);
             camera.up = Vec3::Y;
         }
-
-        self.camera_controller.sync_from_camera(ctx.scene.camera());
     }
 
     fn show_menu_bar(&mut self, ctx: &egui::Context) {
@@ -105,7 +104,7 @@ impl RenderApplication for EditorApplication {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        self.camera_controller.update(ctx);
+        self.camera_controller.update_camera(ctx);
     }
 
     fn gpu_update(&mut self, _ctx: &mut GpuUpdateContext) {}
@@ -114,17 +113,22 @@ impl RenderApplication for EditorApplication {
 
     fn ui(&mut self, ctx: &egui::Context, _default_ui: &mut DefaultUI) {
         self.viewport_region = None;
+        self.viewport_rect = None;
         self.show_menu_bar(ctx);
 
         let dock_tree = &mut self.dock_tree;
         let viewport_region = &mut self.viewport_region;
+        let viewport_rect = &mut self.viewport_rect;
         egui::CentralPanel::default().show(ctx, |ui| {
             let mut behavior = EditorBehavior {
                 viewport_region,
-                camera_controller: &mut self.camera_controller,
+                viewport_rect,
             };
             dock_tree.ui(&mut behavior, ui);
         });
+
+        self.camera_controller.set_viewport_rect(self.viewport_rect);
+        self.camera_controller.capture_input(ctx);
     }
 
     fn show_default_ui(&self) -> bool {
@@ -133,6 +137,184 @@ impl RenderApplication for EditorApplication {
 
     fn render_region(&self) -> Option<RenderRegion> {
         self.viewport_region
+    }
+}
+
+struct EditorCameraController {
+    move_forward: bool,
+    move_back: bool,
+    move_left: bool,
+    move_right: bool,
+    boost: bool,
+    looking: bool,
+    viewport_rect: Option<egui::Rect>,
+    look_delta: Vec2,
+    base_speed: f32,
+    boost_multiplier: f32,
+    look_sensitivity: f32,
+}
+
+impl Default for EditorCameraController {
+    fn default() -> Self {
+        Self {
+            move_forward: false,
+            move_back: false,
+            move_left: false,
+            move_right: false,
+            boost: false,
+            looking: false,
+            viewport_rect: None,
+            look_delta: Vec2::ZERO,
+            base_speed: 5.0,
+            boost_multiplier: 3.0,
+            look_sensitivity: 0.0025,
+        }
+    }
+}
+
+impl EditorCameraController {
+    fn set_viewport_rect(&mut self, rect: Option<egui::Rect>) {
+        self.viewport_rect = rect;
+        if rect.is_none() {
+            self.looking = false;
+            self.reset_movement();
+            self.look_delta = Vec2::ZERO;
+        }
+    }
+
+    fn reset_movement(&mut self) {
+        self.move_forward = false;
+        self.move_back = false;
+        self.move_left = false;
+        self.move_right = false;
+        self.boost = false;
+    }
+
+    fn capture_input(&mut self, ctx: &egui::Context) {
+        let viewport_rect = self.viewport_rect;
+        let wants_keyboard = ctx.wants_keyboard_input();
+        self.look_delta = Vec2::ZERO;
+
+        ctx.input(|input| {
+            if wants_keyboard || viewport_rect.is_none() {
+                self.looking = false;
+                self.reset_movement();
+                return;
+            }
+
+            let rect = viewport_rect.unwrap();
+
+            if input.pointer.secondary_pressed() {
+                let press_pos = input
+                    .pointer
+                    .press_origin()
+                    .or_else(|| input.pointer.hover_pos());
+                self.looking = press_pos.is_some_and(|pos| rect.contains(pos));
+                if !self.looking {
+                    self.reset_movement();
+                }
+            } else if !input.pointer.secondary_down() {
+                self.looking = false;
+                self.reset_movement();
+            }
+
+            if !self.looking {
+                return;
+            }
+
+            self.move_forward = input.key_down(egui::Key::W);
+            self.move_back = input.key_down(egui::Key::S);
+            self.move_left = input.key_down(egui::Key::A);
+            self.move_right = input.key_down(egui::Key::D);
+            self.boost = input.modifiers.shift;
+
+            let motion = input
+                .pointer
+                .motion()
+                .unwrap_or_else(|| input.pointer.delta());
+            self.look_delta = Vec2::new(motion.x, motion.y);
+        });
+    }
+
+    fn update_camera(&mut self, ctx: &mut UpdateContext) {
+        let camera = ctx.scene.camera_mut();
+
+        let mut forward = camera.target - camera.eye;
+        if forward.length_squared() < f32::EPSILON {
+            forward = Vec3::NEG_Z;
+        }
+        forward = forward.normalize();
+
+        let mut up = camera.up;
+        if up.length_squared() < f32::EPSILON {
+            up = Vec3::Y;
+        }
+        up = up.normalize();
+
+        if self.looking && self.look_delta.length_squared() > 0.0 {
+            let delta = self.look_delta * self.look_sensitivity;
+            self.look_delta = Vec2::ZERO;
+
+            let mut yaw = forward.x.atan2(-forward.z);
+            let mut pitch = forward.y.clamp(-1.0, 1.0).asin();
+            yaw += delta.x;
+            let max_pitch = FRAC_PI_2 - 0.01;
+            pitch = (pitch - delta.y).clamp(-max_pitch, max_pitch);
+
+            let cos_pitch = pitch.cos();
+            let sin_pitch = pitch.sin();
+            let sin_yaw = yaw.sin();
+            let cos_yaw = yaw.cos();
+            forward = Vec3::new(cos_pitch * sin_yaw, sin_pitch, -cos_pitch * cos_yaw);
+
+            let mut right = forward.cross(Vec3::Y);
+            if right.length_squared() < 1e-6 {
+                right = Vec3::X;
+            }
+            right = right.normalize();
+            up = right.cross(forward).normalize();
+
+            camera.target = camera.eye + forward;
+            camera.up = up;
+        }
+
+        let dt = ctx.dt as f32;
+        if !self.looking || dt <= 0.0 {
+            return;
+        }
+
+        let mut right = forward.cross(up);
+        if right.length_squared() < 1e-6 {
+            right = Vec3::X;
+        }
+        right = right.normalize();
+
+        let mut movement = Vec3::ZERO;
+        if self.move_forward {
+            movement += forward;
+        }
+        if self.move_back {
+            movement -= forward;
+        }
+        if self.move_left {
+            movement -= right;
+        }
+        if self.move_right {
+            movement += right;
+        }
+
+        if movement.length_squared() < 1e-6 {
+            return;
+        }
+
+        movement = movement.normalize();
+        let mut speed = self.base_speed * dt;
+        if self.boost {
+            speed *= self.boost_multiplier;
+        }
+        let delta = movement * speed;
+        camera.eye += delta;
+        camera.target += delta;
     }
 }
 
@@ -145,7 +327,7 @@ enum EditorPane {
 
 struct EditorBehavior<'a> {
     viewport_region: &'a mut Option<RenderRegion>,
-    camera_controller: &'a mut FirstPersonCameraController,
+    viewport_rect: &'a mut Option<egui::Rect>,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -156,32 +338,10 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
         pane: &mut EditorPane,
     ) -> UiResponse {
         match pane {
-            EditorPane::Viewport => show_viewport(ui, self.viewport_region),
+            EditorPane::Viewport => show_viewport(ui, self.viewport_region, self.viewport_rect),
             EditorPane::Inspector => {
                 ui.heading("Inspector");
                 ui.label("Select an entity to view its components.");
-                ui.separator();
-                ui.heading("Camera Controls");
-
-                let mut move_speed = self.camera_controller.move_speed();
-                if ui
-                    .add(egui::Slider::new(&mut move_speed, 0.5..=20.0).text("Move speed"))
-                    .changed()
-                {
-                    self.camera_controller.set_move_speed(move_speed);
-                }
-
-                let mut look_sensitivity = self.camera_controller.look_sensitivity();
-                if ui
-                    .add(
-                        egui::Slider::new(&mut look_sensitivity, 0.0005..=0.01)
-                            .text("Look sensitivity"),
-                    )
-                    .changed()
-                {
-                    self.camera_controller
-                        .set_look_sensitivity(look_sensitivity);
-                }
             }
             EditorPane::Console => {
                 ui.heading("Console");
@@ -218,13 +378,19 @@ fn create_editor_layout() -> Tree<EditorPane> {
     Tree::new("editor_dock", root, tiles)
 }
 
-fn show_viewport(ui: &mut egui::Ui, region: &mut Option<RenderRegion>) {
+fn show_viewport(
+    ui: &mut egui::Ui,
+    region: &mut Option<RenderRegion>,
+    rect_out: &mut Option<egui::Rect>,
+) {
     let desired = ui.available_size();
     let desired = egui::vec2(desired.x.max(1.0), desired.y.max(1.0));
     let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::click_and_drag());
+    *rect_out = Some(rect);
 
     if rect.width() <= 1.0 || rect.height() <= 1.0 {
         *region = None;
+        *rect_out = None;
         return;
     }
 
@@ -259,118 +425,4 @@ fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion>
 
     let region = RenderRegion::new(min_x as u32, min_y as u32, width as u32, height as u32)?;
     region.clamp(max_width, max_height)
-}
-
-#[derive(Debug, Clone)]
-struct FirstPersonCameraController {
-    yaw: f32,
-    pitch: f32,
-    move_speed: f32,
-    look_sensitivity: f32,
-    initialized: bool,
-}
-
-impl Default for FirstPersonCameraController {
-    fn default() -> Self {
-        Self {
-            yaw: 0.0,
-            pitch: 0.0,
-            move_speed: 5.0,
-            look_sensitivity: 0.0025,
-            initialized: false,
-        }
-    }
-}
-
-impl FirstPersonCameraController {
-    fn set_move_speed(&mut self, speed: f32) {
-        self.move_speed = speed;
-    }
-
-    fn set_look_sensitivity(&mut self, sensitivity: f32) {
-        self.look_sensitivity = sensitivity;
-    }
-
-    fn move_speed(&self) -> f32 {
-        self.move_speed
-    }
-
-    fn look_sensitivity(&self) -> f32 {
-        self.look_sensitivity
-    }
-
-    fn sync_from_camera(&mut self, camera: &Camera) {
-        let direction = camera.target - camera.eye;
-        if direction.length_squared() <= f32::EPSILON {
-            return;
-        }
-
-        let forward = direction.normalize();
-        self.yaw = forward.x.atan2(forward.z);
-        self.pitch = forward
-            .y
-            .asin()
-            .clamp(-(FRAC_PI_2 - 0.01), FRAC_PI_2 - 0.01);
-        self.initialized = true;
-    }
-
-    fn forward_vector(&self) -> Vec3 {
-        let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
-        let (sin_pitch, cos_pitch) = self.pitch.sin_cos();
-        Vec3::new(sin_yaw * cos_pitch, sin_pitch, cos_yaw * cos_pitch).normalize_or_zero()
-    }
-
-    fn update(&mut self, ctx: &mut UpdateContext) {
-        let input = ctx.input;
-        let active = input.right_mouse_pressed() && input.cursor_in_viewport();
-
-        if !self.initialized || !active {
-            let camera = ctx.scene.camera();
-            self.sync_from_camera(camera);
-        }
-
-        if !self.initialized {
-            return;
-        }
-
-        if active {
-            let delta = input.mouse_delta();
-            self.yaw -= delta.x * self.look_sensitivity;
-            self.pitch -= delta.y * self.look_sensitivity;
-
-            let limit = FRAC_PI_2 - 0.01;
-            self.pitch = self.pitch.clamp(-limit, limit);
-        }
-
-        let forward = self.forward_vector();
-        let forward_flat = Vec3::new(forward.x, 0.0, forward.z).normalize_or_zero();
-        let right = forward_flat.cross(Vec3::Y).normalize_or_zero();
-
-        let camera = ctx.scene.camera_mut();
-
-        if active {
-            let mut movement = Vec3::ZERO;
-            if input.is_key_pressed(KeyCode::KeyW) {
-                movement += forward_flat;
-            }
-            if input.is_key_pressed(KeyCode::KeyS) {
-                movement -= forward_flat;
-            }
-            if input.is_key_pressed(KeyCode::KeyA) {
-                movement -= right;
-            }
-            if input.is_key_pressed(KeyCode::KeyD) {
-                movement += right;
-            }
-
-            if movement.length_squared() > 0.0 {
-                let distance = movement.normalize() * self.move_speed * ctx.dt as f32;
-                camera.eye += distance;
-                camera.target += distance;
-            }
-        }
-
-        camera.target = camera.eye + forward;
-        camera.up = Vec3::Y;
-    }
 }
