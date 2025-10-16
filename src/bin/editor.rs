@@ -1,5 +1,8 @@
 #![cfg(feature = "egui")]
 
+#[path = "editor/postprocess/mod.rs"]
+mod postprocess;
+
 use std::f32::consts::FRAC_PI_2;
 
 use egui::{Color32, Stroke, StrokeKind};
@@ -8,11 +11,15 @@ use glam::{Quat, Vec2, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
-use wgpu_cube::renderer::{cube_mesh, CustomRenderContext, Material, RenderRegion};
+use wgpu_cube::renderer::{
+    cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
+};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
+
+use postprocess::ViewportGrid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -24,6 +31,7 @@ struct EditorApplication {
     viewport_region: Option<RenderRegion>,
     viewport_rect: Option<egui::Rect>,
     camera_controller: EditorCameraController,
+    grid_postprocess: Option<ViewportGrid>,
 }
 
 impl EditorApplication {
@@ -33,6 +41,7 @@ impl EditorApplication {
             viewport_region: None,
             viewport_rect: None,
             camera_controller: EditorCameraController::default(),
+            grid_postprocess: None,
         }
     }
 
@@ -109,7 +118,16 @@ impl RenderApplication for EditorApplication {
 
     fn gpu_update(&mut self, _ctx: &mut GpuUpdateContext) {}
 
-    fn custom_render(&mut self, _ctx: &mut CustomRenderContext) {}
+    fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
+        let grid = self
+            .grid_postprocess
+            .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
+        grid.render(ctx);
+    }
+
+    fn custom_render_stage(&self) -> CustomRenderStage {
+        CustomRenderStage::AfterPostprocess
+    }
 
     fn ui(&mut self, ctx: &egui::Context, _default_ui: &mut DefaultUI) {
         self.viewport_region = None;
