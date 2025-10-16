@@ -41,7 +41,7 @@ egui_tiles = { version = "0.14", optional = true }
 
 [[bin]]
 name = "editor"
-path = "src/bin/editor.rs"
+path = "src/bin/editor/main.rs"
 required-features = ["egui"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
