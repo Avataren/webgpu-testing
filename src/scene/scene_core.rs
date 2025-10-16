@@ -263,12 +263,14 @@ impl Scene {
 
         self.update_world_transforms();
 
-        {
-            let mut scripting = std::mem::take(&mut self.scripting);
-            if let Err(err) = scripting.update_scripts(self.main_world_mut(), dt) {
+        let main_scene_index = self.main_scene.index();
+        if let Some(Some(main_node)) = self.nodes.get_mut(main_scene_index) {
+            let world = main_node.instance_mut().world_mut();
+            if let Err(err) = self.scripting.update_scripts(world, dt) {
                 error!("Rune scripting error: {err}");
             }
-            self.scripting = scripting;
+        } else {
+            error!("Rune scripting error: main scene node is missing");
         }
     }
 
