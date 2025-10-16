@@ -13,7 +13,7 @@ impl SlotAllocator {
     const BITS_PER_WORD: u32 = 64;
 
     pub fn new(capacity: u32) -> Self {
-        let words_needed = ((capacity + Self::BITS_PER_WORD - 1) / Self::BITS_PER_WORD) as usize;
+        let words_needed = capacity.div_ceil(Self::BITS_PER_WORD) as usize;
         Self {
             occupied: vec![0; words_needed],
             high_water: 0,
@@ -55,6 +55,7 @@ impl SlotAllocator {
     }
 
     #[inline]
+    #[allow(dead_code)]
     pub fn reclaim_batch(&mut self, slots: &[u32]) {
         for &slot in slots {
             self.reclaim(slot);
@@ -189,6 +190,7 @@ mod tests {
         allocator.reclaim(slot2);
 
         let slot4 = allocator.allocate().unwrap();
+        assert_eq!(slot1, 0);
         assert_eq!(slot4, slot2);
     }
     #[test]

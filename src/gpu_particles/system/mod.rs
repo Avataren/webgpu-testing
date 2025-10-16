@@ -10,7 +10,9 @@ pub use gpu_particle_system::{GpuParticleSystem, ParticleRenderMode};
 
 // Add this type alias for easy migration
 #[cfg(not(feature = "optimized-allocator"))]
+#[allow(dead_code)]
 pub(crate) type ActiveSlotAllocator = slot_allocator::ParticleSlotAllocator;
 
 #[cfg(feature = "optimized-allocator")]
+#[allow(dead_code)]
 pub(crate) type ActiveSlotAllocator = slot_allocator_v2::SlotAllocator;

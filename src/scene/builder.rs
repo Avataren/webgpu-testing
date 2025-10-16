@@ -56,6 +56,12 @@ impl<'w> EntityBuilder<'w> {
         self
     }
 
+    /// Attach a script component by name
+    pub fn with_script(mut self, script: impl Into<String>) -> Self {
+        self.builder.add(ScriptComponent::new(script));
+        self
+    }
+
     /// Add a visibility component
     pub fn visible(mut self, visible: bool) -> Self {
         self.builder.add(Visible(visible));

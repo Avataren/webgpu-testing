@@ -9,14 +9,15 @@ use egui_tiles::{Behavior, TileId, Tree, UiResponse};
 use glam::{Quat, Vec2, Vec3};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
-use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+    MaterialComponent, MeshComponent, Name, ScriptComponent, Transform, TransformComponent, Visible,
 };
+use wgpu_cube::RuneScriptingPlugin;
 
 use postprocess::ViewportGrid;
 
@@ -31,16 +32,42 @@ struct EditorApplication {
     viewport_rect: Option<egui::Rect>,
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
+    scripting_plugin: RuneScriptingPlugin,
 }
 
 impl EditorApplication {
     fn new() -> Self {
+        let scripting_plugin = match RuneScriptingPlugin::new() {
+            Ok(plugin) => {
+                if let Some(handle) = plugin.handle() {
+                    if let Err(err) = handle.load_script_from_source(
+                        "rune_example",
+                        include_str!("scripts/rune_example.rn"),
+                    ) {
+                        log::error!("Failed to load rune_example script: {err:?}");
+                    }
+                    if let Err(err) = handle.load_script_from_source(
+                        "rune_spinner",
+                        include_str!("scripts/rune_spinner.rn"),
+                    ) {
+                        log::error!("Failed to load rune_spinner script: {err:?}");
+                    }
+                }
+                plugin
+            }
+            Err(err) => {
+                log::error!("Failed to initialize Rune scripting: {err:?}");
+                RuneScriptingPlugin::disabled()
+            }
+        };
+
         Self {
             dock_tree: create_editor_layout(),
             viewport_region: None,
             viewport_rect: None,
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
+            scripting_plugin,
         }
     }
 
@@ -68,6 +95,13 @@ impl EditorApplication {
                 MeshComponent(mesh_handle),
                 MaterialComponent(Material::pbr()),
                 Visible(true),
+            ));
+
+            world.spawn((
+                Name::new("Rune Script Root"),
+                TransformComponent(Transform::default()),
+                Visible(true),
+                ScriptComponent::new("rune_example"),
             ));
 
             let light_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
@@ -109,6 +143,10 @@ impl RenderApplication for EditorApplication {
 
     fn setup(&mut self, ctx: &mut StartupContext) {
         self.ensure_default_scene(ctx);
+    }
+
+    fn configure(&self, builder: &mut AppBuilder) {
+        builder.add_plugin(self.scripting_plugin.clone());
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {

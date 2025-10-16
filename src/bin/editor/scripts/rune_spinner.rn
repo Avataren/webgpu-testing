@@ -1,0 +1,8 @@
+use engine;
+
+pub fn update(entity, dt) {
+    let _ = dt;
+    let time = engine::scene_time() as f32;
+    let height = 0.5 + (time * 1.5).sin() * 0.25;
+    engine::set_translation(entity, 0.0, height, 0.0);
+}

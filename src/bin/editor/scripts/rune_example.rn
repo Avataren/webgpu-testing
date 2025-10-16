@@ -1,0 +1,10 @@
+use engine;
+
+pub fn on_created(entity) {
+    engine::set_name(entity, "Rune Root");
+
+    let child = engine::spawn_entity();
+    engine::set_name(child, "Rune Spawned Cube");
+    engine::set_translation(child, 0.0, 0.5, 0.0);
+    engine::attach_script(child, "rune_spinner");
+}

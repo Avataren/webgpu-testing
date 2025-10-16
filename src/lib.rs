@@ -7,6 +7,7 @@ pub mod profiler;
 pub mod render_application;
 pub mod renderer;
 pub mod scene;
+pub mod scripting;
 pub mod settings;
 pub mod time;
 #[cfg(feature = "egui")]
@@ -25,6 +26,7 @@ pub use app::{
     App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,
     UpdateContext, UpdateSystem,
 };
+pub use scripting::{RuneScriptingHandle, RuneScriptingPlugin};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;

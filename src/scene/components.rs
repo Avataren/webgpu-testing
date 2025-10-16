@@ -119,6 +119,21 @@ impl Default for Visible {
     }
 }
 
+/// Script component that attaches a Rune script by name
+#[derive(Debug, Clone)]
+pub struct ScriptComponent {
+    pub script: String,
+}
+
+impl ScriptComponent {
+    /// Create a new script component referencing the given script name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            script: name.into(),
+        }
+    }
+}
+
 // ============================================================================
 // GPU-driven instance components
 // ============================================================================
