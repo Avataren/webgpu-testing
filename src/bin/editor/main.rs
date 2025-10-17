@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
-use glam::{Quat, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use log::error;
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
@@ -16,10 +16,7 @@ use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
-use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
-use wgpu_cube::scene::{
-    EntityBuilder, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
-};
+use wgpu_cube::scene::{EntityBuilder, MaterialComponent, MeshComponent, Name, Transform, Visible};
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 
 use postprocess::ViewportGrid;
@@ -193,24 +190,8 @@ impl EditorApplication {
             }
         }
 
-        let has_directional_light = ctx
-            .scene
-            .main_world()
-            .query::<&DirectionalLight>()
-            .iter()
-            .next()
-            .is_some();
-
-        if !has_directional_light {
-            let light_direction = Vec3::new(-0.6, -1.0, -0.4).normalize();
-            let light_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, light_direction);
-            let world = ctx.scene.main_world_mut();
-            world.spawn((
-                Name::new("Directional Light"),
-                TransformComponent(Transform::from_trs(Vec3::ZERO, light_rotation, Vec3::ONE)),
-                DirectionalLight::new(Vec3::new(1.0, 0.98, 0.92), 3.0),
-                CanCastShadow(true),
-            ));
+        if !ctx.scene.has_any_lights() {
+            ctx.scene.add_default_lighting();
         }
 
         let camera = ctx.scene.camera_mut();
@@ -267,6 +248,8 @@ impl RenderApplication for EditorApplication {
 
     fn configure(&self, builder: &mut AppBuilder) {
         builder.add_plugin(RuneScriptingPlugin::new());
+        builder.disable_default_textures();
+        builder.disable_default_lighting();        
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {

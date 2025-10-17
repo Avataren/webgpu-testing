@@ -7,7 +7,8 @@ use wgpu_cube::scene::SceneLoader;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const GLTF_PATH: &str = "web/assets/chessboard/ABeautifulGame.gltf";
+//const GLTF_PATH: &str = "web/assets/chessboard/ABeautifulGame.gltf";
+const GLTF_PATH: &str = "web/assets/sponza/Sponza.gltf";
 const CHESS_SCALE: f32 = 15.0;
 
 struct ExampleApp;
