@@ -927,4 +927,19 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
+
+    #[allow(unused_variables)]
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        #[cfg(feature = "egui")]
+        {
+            if let Some(egui) = &mut self.egui_context {
+                egui.handle_device_event(&event);
+            }
+        }
+    }
 }
