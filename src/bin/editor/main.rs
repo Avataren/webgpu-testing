@@ -33,6 +33,10 @@ struct EditorApplication {
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
     pending_imports: Vec<PathBuf>,
+    stats_window_visible: bool,
+    environment_window_visible: bool,
+    postprocess_window_visible: bool,
+    log_window_visible: bool,
 }
 
 impl EditorApplication {
@@ -44,6 +48,10 @@ impl EditorApplication {
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
             pending_imports: Vec::new(),
+            stats_window_visible: true,
+            environment_window_visible: false,
+            postprocess_window_visible: false,
+            log_window_visible: false,
         }
     }
 
@@ -227,6 +235,13 @@ impl EditorApplication {
                         ui.close();
                     }
                 });
+
+                ui.menu_button("Window", |ui| {
+                    ui.checkbox(&mut self.stats_window_visible, "Statistics");
+                    ui.checkbox(&mut self.postprocess_window_visible, "Post-processing");
+                    ui.checkbox(&mut self.environment_window_visible, "Environment");
+                    ui.checkbox(&mut self.log_window_visible, "Log");
+                });
             });
 
             ui.separator();
@@ -276,10 +291,23 @@ impl RenderApplication for EditorApplication {
         CustomRenderStage::AfterPostprocess
     }
 
-    fn ui(&mut self, ctx: &egui::Context, _default_ui: &mut DefaultUI) {
+    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         self.viewport_region = None;
         self.viewport_rect = None;
         self.show_menu_bar(ctx);
+
+        default_ui
+            .stats_window_mut()
+            .show(ctx, Some(&mut self.stats_window_visible));
+        default_ui
+            .postprocess_window_mut()
+            .show(ctx, Some(&mut self.postprocess_window_visible));
+        default_ui
+            .environment_window_mut()
+            .show(ctx, Some(&mut self.environment_window_visible));
+        default_ui
+            .log_window_mut()
+            .show(ctx, Some(&mut self.log_window_visible));
 
         let dock_tree = &mut self.dock_tree;
         let viewport_region = &mut self.viewport_region;

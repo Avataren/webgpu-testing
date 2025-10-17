@@ -152,6 +152,10 @@ impl DefaultUI {
     pub fn postprocess_window_mut(&mut self) -> &mut PostProcessWindow {
         &mut self.postprocess_window
     }
+
+    pub fn environment_window_mut(&mut self) -> &mut EnvironmentWindow {
+        &mut self.environment_window
+    }
 }
 
 /// Run an application that implements RenderApplication
