@@ -67,13 +67,10 @@ impl SceneHierarchySnapshot {
 
             let transform = entity_ref
                 .get::<&TransformComponent>()
-                .map(|component| component.0);
-            let mesh = entity_ref
-                .get::<&MeshComponent>()
-                .map(|component| *component);
-            let material = entity_ref
-                .get::<&MaterialComponent>()
-                .map(|component| *component);
+                .map(|component| component.0)
+                .ok();
+            let mesh = entity_ref.get::<&MeshComponent>().copied().ok();
+            let material = entity_ref.get::<&MaterialComponent>().copied().ok();
 
             nodes.insert(
                 entity,
