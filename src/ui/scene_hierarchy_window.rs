@@ -264,9 +264,19 @@ impl SceneHierarchyWindow {
         }
 
         for entity in snapshot.iter_nodes() {
-            if !visited.contains(&entity) {
-                self.draw_entity(ui, entity, &snapshot, &mut visited);
+            if visited.contains(&entity) {
+                continue;
             }
+
+            let Some(node) = snapshot.node(entity) else {
+                continue;
+            };
+
+            if self.is_hidden_by_collapsed_parent(node, &snapshot, ui) {
+                continue;
+            }
+
+            self.draw_entity(ui, entity, &snapshot, &mut visited);
         }
     }
 
@@ -302,7 +312,7 @@ impl SceneHierarchyWindow {
             return;
         }
 
-        let id = ui.make_persistent_id(("scene_hierarchy", entity));
+        let id = egui::Id::new(("scene_hierarchy", entity));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
         let selected = self.selected == Some(entity);
 
@@ -319,5 +329,28 @@ impl SceneHierarchyWindow {
                 self.draw_entity(ui, child, snapshot, visited);
             }
         });
+    }
+
+    fn is_hidden_by_collapsed_parent(
+        &self,
+        node: &SceneHierarchyNode,
+        snapshot: &SceneHierarchySnapshot,
+        ui: &egui::Ui,
+    ) -> bool {
+        let mut current = node.parent;
+
+        while let Some(parent_entity) = current {
+            let id = egui::Id::new(("scene_hierarchy", parent_entity));
+            let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
+            if !state.is_open() {
+                return true;
+            }
+
+            current = snapshot
+                .node(parent_entity)
+                .and_then(|parent_node| parent_node.parent);
+        }
+
+        false
     }
 }
