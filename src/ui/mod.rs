@@ -43,4 +43,7 @@ pub use environment_window::{
 pub use style::UiStyle;
 
 #[cfg(feature = "egui")]
-pub use scene_hierarchy_window::{SceneHierarchyHandle, SceneHierarchyState, SceneHierarchyWindow};
+pub use scene_hierarchy_window::{
+    SceneEntityComponentsSummary, SceneEntityInspectorData, SceneHierarchyHandle,
+    SceneHierarchyState, SceneHierarchyWindow,
+};

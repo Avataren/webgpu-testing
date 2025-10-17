@@ -1,5 +1,7 @@
 #[cfg(feature = "egui")]
-use crate::scene::{Children, Name, Parent, Scene};
+use crate::scene::{
+    Children, MaterialComponent, MeshComponent, Name, Parent, Scene, Transform, TransformComponent,
+};
 #[cfg(feature = "egui")]
 use crate::ui::egui;
 #[cfg(feature = "egui")]
@@ -25,6 +27,23 @@ struct SceneHierarchyNode {
 pub struct SceneHierarchySnapshot {
     roots: Vec<Entity>,
     nodes: BTreeMap<Entity, SceneHierarchyNode>,
+    components: BTreeMap<Entity, SceneEntityComponentsSummary>,
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Debug, Default)]
+pub struct SceneEntityComponentsSummary {
+    pub transform: Option<Transform>,
+    pub mesh: Option<MeshComponent>,
+    pub material: Option<MaterialComponent>,
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Debug)]
+pub struct SceneEntityInspectorData {
+    pub entity: Entity,
+    pub name: String,
+    pub components: SceneEntityComponentsSummary,
 }
 
 #[cfg(feature = "egui")]
@@ -32,6 +51,7 @@ impl SceneHierarchySnapshot {
     pub fn from_scene(scene: &Scene) -> Self {
         let world = scene.world();
         let mut nodes = BTreeMap::new();
+        let mut components = BTreeMap::new();
 
         for entity_ref in world.iter() {
             let entity = entity_ref.entity();
@@ -45,6 +65,13 @@ impl SceneHierarchySnapshot {
                 .map(|children| children.0.clone())
                 .unwrap_or_default();
 
+            let transform = entity_ref
+                .get::<&TransformComponent>()
+                .map(|component| component.0)
+                .ok();
+            let mesh = entity_ref.get::<&MeshComponent>().copied().ok();
+            let material = entity_ref.get::<&MaterialComponent>().copied().ok();
+
             nodes.insert(
                 entity,
                 SceneHierarchyNode {
@@ -52,6 +79,15 @@ impl SceneHierarchySnapshot {
                     name,
                     parent,
                     children,
+                },
+            );
+
+            components.insert(
+                entity,
+                SceneEntityComponentsSummary {
+                    transform,
+                    mesh,
+                    material,
                 },
             );
         }
@@ -79,7 +115,11 @@ impl SceneHierarchySnapshot {
             node_a.cmp(&node_b).then_with(|| a.cmp(b))
         });
 
-        Self { roots, nodes }
+        Self {
+            roots,
+            nodes,
+            components,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -96,6 +136,10 @@ impl SceneHierarchySnapshot {
 
     fn roots(&self) -> &[Entity] {
         &self.roots
+    }
+
+    fn entity_components(&self, entity: Entity) -> Option<&SceneEntityComponentsSummary> {
+        self.components.get(&entity)
     }
 }
 
@@ -165,6 +209,26 @@ impl SceneHierarchyWindow {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.panel_contents(ui);
+    }
+
+    pub fn selected_entity(&self) -> Option<Entity> {
+        self.selected
+    }
+
+    pub fn selected_entity_data(&self) -> Option<SceneEntityInspectorData> {
+        let entity = self.selected?;
+        let (_, snapshot) = self.snapshot()?;
+        let node = snapshot.node(entity)?;
+        let components = snapshot
+            .entity_components(entity)
+            .cloned()
+            .unwrap_or_default();
+
+        Some(SceneEntityInspectorData {
+            entity,
+            name: node.name.clone(),
+            components,
+        })
     }
 
     fn panel_contents(&mut self, ui: &mut egui::Ui) {
