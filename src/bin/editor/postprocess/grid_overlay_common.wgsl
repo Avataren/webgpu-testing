@@ -33,11 +33,95 @@ fn viewport_to_scene_uv(uv : vec2<f32>) -> vec2<f32> {
     return grid_uniform.viewport_offset + uv * grid_uniform.viewport_scale;
 }
 
+fn scene_to_viewport_uv(scene_uv : vec2<f32>) -> vec2<f32> {
+    let safe_scale = max(grid_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
+    return (scene_uv - grid_uniform.viewport_offset) / safe_scale;
+}
+
+fn scene_pixel_size() -> vec2<f32> {
+    let safe_resolution = max(grid_uniform.resolution, vec2<f32>(1.0, 1.0));
+    let safe_scale = max(grid_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
+    return safe_scale / safe_resolution;
+}
+
 fn reconstruct_world_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
     let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
     let clip = vec4<f32>(ndc, 1.0);
     let world = grid_uniform.view_proj_inv * clip;
     return world.xyz / world.w;
+}
+
+fn scene_occludes_grid(
+    scene_uv : vec2<f32>,
+    depth_center : f32,
+    grid_depth : f32,
+    dir : vec3<f32>,
+    grid_distance : f32,
+    camera_pos : vec3<f32>
+) -> bool {
+    if (depth_center >= 1.0) {
+        return false;
+    }
+
+    let viewport_uv = clamp(scene_to_viewport_uv(scene_uv), vec2<f32>(0.0), vec2<f32>(1.0));
+    let scene_pos = reconstruct_world_position(viewport_uv, depth_center);
+    let scene_vec = scene_pos - camera_pos;
+    let scene_distance = length(scene_vec);
+
+    let depth_bias = max(3e-4, (1.0 - abs(dir.y)) * 2e-3);
+    if (depth_center <= grid_depth + depth_bias) {
+        return true;
+    }
+
+    let distance_bias = max(1e-3, grid_distance * 5e-5);
+    if (scene_distance <= grid_distance + distance_bias) {
+        return true;
+    }
+
+    let height_bias = max(2e-3, grid_distance * 1e-4);
+    if (scene_pos.y >= -height_bias) {
+        return true;
+    }
+
+    return false;
+}
+
+fn grid_visibility(
+    scene_uv : vec2<f32>,
+    grid_depth : f32,
+    dir : vec3<f32>,
+    grid_distance : f32,
+    camera_pos : vec3<f32>
+) -> f32 {
+    // Sample the center pixel plus neighbors to avoid grid bleeding through thin geometry.
+    let pixel_step = scene_pixel_size();
+    let offsets = array<vec2<f32>, 9>(
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(-1.0, 0.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(0.0, -1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, -1.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, -1.0),
+    );
+
+    var visible_samples = 0.0;
+    var sample_count = 0.0;
+
+    for (var i : i32 = 0; i < 9; i = i + 1) {
+        let offset = offsets[i];
+        let sample_uv = scene_uv + offset * pixel_step;
+        let depth = fetch_depth(sample_uv);
+        sample_count = sample_count + 1.0;
+
+        if (!scene_occludes_grid(sample_uv, depth, grid_depth, dir, grid_distance, camera_pos)) {
+            visible_samples = visible_samples + 1.0;
+        }
+    }
+
+    return visible_samples / sample_count;
 }
 
 // Enhanced grid line with perspective-aware thickness
@@ -76,7 +160,9 @@ fn axis_line_with_glow(coord : f32, width : f32, glow_width : f32) -> vec2<f32> 
 
 fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
     let camera_pos = grid_uniform.camera_position.xyz;
-    let world_far = reconstruct_world_position(uv, 1.0);
+    let scene_uv = viewport_to_scene_uv(uv);
+    let viewport_uv = clamp(scene_to_viewport_uv(scene_uv), vec2<f32>(0.0), vec2<f32>(1.0));
+    let world_far = reconstruct_world_position(viewport_uv, 1.0);
     var ray = world_far - camera_pos;
     let ray_len_sq = dot(ray, ray);
     if (ray_len_sq < 1e-6) {
@@ -104,13 +190,14 @@ fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
-    let depth = fetch_depth(viewport_to_scene_uv(uv));
-    if (depth < 1.0 && depth + 1e-4 < grid_depth) {
+    let grid_distance = length(point - camera_pos);
+    let visibility = grid_visibility(scene_uv, grid_depth, dir, grid_distance, camera_pos);
+    if (visibility <= 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
     let grid_pos = point.xz;
-    let distance = length(point - camera_pos);
+    let distance = grid_distance;
     let camera_height = abs(camera_pos.y);
     
     // Enhanced fade with exponential falloff for better depth perception
@@ -210,11 +297,11 @@ fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
     total_alpha = max(total_alpha, axis_z_strength);
     
     // Apply overall environmental fade
-    let final_alpha = total_alpha * combined_fade;
+    let final_alpha = total_alpha * combined_fade * visibility;
     
     // Subtle depth darkening for better 3D perception
     let depth_darken = mix(1.0, 0.85, distance_factor);
-    grid_color *= depth_darken;
+    grid_color *= depth_darken * visibility;
     
     return vec4<f32>(grid_color, final_alpha);
 }
