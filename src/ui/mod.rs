@@ -23,6 +23,9 @@ mod environment_window;
 mod style; // Add this
 
 #[cfg(feature = "egui")]
+mod scene_hierarchy_window;
+
+#[cfg(feature = "egui")]
 pub use stats_window::{FrameSample, FrameStatsHandle, FrameStatsHistory, StatsWindow};
 
 #[cfg(feature = "egui")]
@@ -38,3 +41,6 @@ pub use environment_window::{
 
 #[cfg(feature = "egui")]
 pub use style::UiStyle;
+
+#[cfg(feature = "egui")]
+pub use scene_hierarchy_window::{SceneHierarchyHandle, SceneHierarchyState, SceneHierarchyWindow};

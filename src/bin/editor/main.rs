@@ -10,7 +10,7 @@ use egui::{viewport::CursorGrab, Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 use glam::{Vec2, Vec3};
 use log::error;
-use wgpu_cube::{run_application, DefaultUI, RenderApplication};
+use wgpu_cube::{run_application, DefaultUI, RenderApplication, SceneHierarchyWindow};
 
 use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{
@@ -312,6 +312,7 @@ impl RenderApplication for EditorApplication {
         let dock_tree = &mut self.dock_tree;
         let viewport_region = &mut self.viewport_region;
         let viewport_rect = &mut self.viewport_rect;
+        let scene_hierarchy_window = default_ui.scene_hierarchy_window_mut();
         let transparent_frame = egui::Frame::central_panel(&ctx.style()).fill(Color32::TRANSPARENT);
         egui::CentralPanel::default()
             .frame(transparent_frame)
@@ -319,6 +320,7 @@ impl RenderApplication for EditorApplication {
                 let mut behavior = EditorBehavior {
                     viewport_region,
                     viewport_rect,
+                    scene_hierarchy: scene_hierarchy_window,
                 };
                 dock_tree.ui(&mut behavior, ui);
             });
@@ -532,6 +534,7 @@ impl EditorCameraController {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EditorPane {
+    SceneHierarchy,
     Viewport,
     Inspector,
     Console,
@@ -540,6 +543,7 @@ enum EditorPane {
 struct EditorBehavior<'a> {
     viewport_region: &'a mut Option<RenderRegion>,
     viewport_rect: &'a mut Option<egui::Rect>,
+    scene_hierarchy: &'a mut SceneHierarchyWindow,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -550,6 +554,14 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
         pane: &mut EditorPane,
     ) -> UiResponse {
         match pane {
+            EditorPane::SceneHierarchy => {
+                ui.set_min_width(220.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        self.scene_hierarchy.ui(ui);
+                    });
+            }
             EditorPane::Viewport => show_viewport(ui, self.viewport_region, self.viewport_rect),
             EditorPane::Inspector => {
                 ui.heading("Inspector");
@@ -566,6 +578,7 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
 
     fn tab_title_for_pane(&mut self, pane: &EditorPane) -> egui::WidgetText {
         match pane {
+            EditorPane::SceneHierarchy => "Hierarchy".into(),
             EditorPane::Viewport => "Viewport".into(),
             EditorPane::Inspector => "Inspector".into(),
             EditorPane::Console => "Console".into(),
@@ -576,18 +589,21 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
 fn create_editor_layout() -> Tree<EditorPane> {
     let mut tiles = egui_tiles::Tiles::default();
 
+    let hierarchy = tiles.insert_pane(EditorPane::SceneHierarchy);
     let viewport = tiles.insert_pane(EditorPane::Viewport);
     let inspector = tiles.insert_pane(EditorPane::Inspector);
     let console = tiles.insert_pane(EditorPane::Console);
 
+    let hierarchy_tab = tiles.insert_tab_tile(vec![hierarchy]);
     let viewport_tab = tiles.insert_tab_tile(vec![viewport]);
     let inspector_tab = tiles.insert_tab_tile(vec![inspector]);
     let console_tab = tiles.insert_tab_tile(vec![console]);
 
-    let horizontal = tiles.insert_horizontal_tile(vec![viewport_tab, inspector_tab]);
+    let horizontal = tiles.insert_horizontal_tile(vec![hierarchy_tab, viewport_tab, inspector_tab]);
     if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(horizontal) {
-        linear.shares.set_share(viewport_tab, 0.9);
-        linear.shares.set_share(inspector_tab, 0.1);
+        linear.shares.set_share(hierarchy_tab, 0.22);
+        linear.shares.set_share(viewport_tab, 0.58);
+        linear.shares.set_share(inspector_tab, 0.2);
     }
 
     let root = tiles.insert_vertical_tile(vec![horizontal, console_tab]);

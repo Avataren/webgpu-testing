@@ -36,7 +36,7 @@ type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
 use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
-    PostProcessWindow,
+    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyState,
 };
 
 use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
@@ -151,6 +151,8 @@ impl AppBuilder {
         let scene = Scene::new();
         #[cfg(feature = "egui")]
         let environment_settings = EnvironmentWindow::handle_from_environment(scene.environment());
+        #[cfg(feature = "egui")]
+        let scene_hierarchy = SceneHierarchyState::handle();
         App {
             scene,
             batcher: RenderBatcher::new(),
@@ -175,6 +177,8 @@ impl AppBuilder {
             postprocess_effects: PostProcessWindow::handle(),
             #[cfg(feature = "egui")]
             environment_settings,
+            #[cfg(feature = "egui")]
+            scene_hierarchy,
             #[cfg(feature = "egui")]
             render_region_query: None,
             window: None,
@@ -228,6 +232,8 @@ pub struct App {
     postprocess_effects: PostProcessEffectsHandle,
     #[cfg(feature = "egui")]
     environment_settings: EnvironmentSettingsHandle,
+    #[cfg(feature = "egui")]
+    scene_hierarchy: SceneHierarchyHandle,
     scene: Scene,
     renderer: Option<Renderer>,
     custom_render_callback: Option<Box<CustomRenderCallback>>,
@@ -305,6 +311,11 @@ impl App {
     #[cfg(feature = "egui")]
     pub fn environment_settings_handle(&self) -> EnvironmentSettingsHandle {
         self.environment_settings.clone()
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn scene_hierarchy_handle(&self) -> SceneHierarchyHandle {
+        self.scene_hierarchy.clone()
     }
 
     #[cfg(feature = "egui")]
@@ -645,6 +656,13 @@ impl App {
             .map(|region| region.width() as f32 / region.height() as f32)
             .unwrap_or_else(|| renderer.aspect_ratio());
         renderer.set_camera(self.scene.camera(), aspect);
+
+        #[cfg(feature = "egui")]
+        {
+            if let Ok(mut hierarchy) = self.scene_hierarchy.lock() {
+                hierarchy.refresh_from_scene(&self.scene);
+            }
+        }
 
         #[cfg(feature = "egui")]
         let egui_output = {
