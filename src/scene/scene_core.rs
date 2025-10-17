@@ -1,4 +1,4 @@
-use super::animation::{AnimationClip, AnimationState};
+use super::animation::{AnimationClip, AnimationState, AnimationTarget};
 use super::assets::{
     build_tree_asset_node, serialize_world, SceneAsset, SceneTreeAsset, SceneTreeAssetNode,
     SerializedAnimationClip, SerializedTransform,
@@ -15,6 +15,7 @@ use crate::scripting::{PendingGltfImport, ScriptingState};
 use crate::time::Instant;
 use hecs::World;
 use log::{error, warn};
+use std::collections::HashMap;
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
@@ -349,12 +350,14 @@ impl Scene {
 
     pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, other: Scene) {
         if let Some(asset) = other.export_main_asset("MergedScene") {
-            let instance = asset.instantiate();
-            super::internal::composition::merge_world_as_child(
+            let mut instance = asset.instantiate();
+            let (animations, animation_states) = instance.take_animation_data();
+            let entity_map = super::internal::composition::merge_world_as_child(
                 self.main_world_mut(),
                 parent_entity,
                 instance.into_world(),
             );
+            self.attach_imported_animations(animations, animation_states, &entity_map);
         }
     }
 
@@ -363,6 +366,8 @@ impl Scene {
         if pending.is_empty() {
             return;
         }
+
+        let mut textures_updated = false;
 
         for PendingGltfImport {
             parent,
@@ -380,17 +385,77 @@ impl Scene {
 
             match SceneLoader::load_gltf_asset(&path, renderer, scale) {
                 Ok(mut bundle) => {
-                    bundle.register_resources(&mut self.assets);
-                    let asset = bundle.asset;
-                    let instance = asset.instantiate();
-                    super::internal::composition::merge_world_as_child(
+                    if bundle.register_resources(&mut self.assets) {
+                        textures_updated = true;
+                    }
+
+                    let mut instance = bundle.asset.instantiate();
+                    let (animations, animation_states) = instance.take_animation_data();
+                    let entity_map = super::internal::composition::merge_world_as_child(
                         self.main_world_mut(),
                         parent,
                         instance.into_world(),
                     );
+
+                    self.attach_imported_animations(animations, animation_states, &entity_map);
                 }
                 Err(err) => {
                     error!("Failed to import glTF {:?}: {err}", path);
+                }
+            }
+        }
+
+        if textures_updated {
+            renderer.update_texture_bind_group(&self.assets);
+        }
+    }
+
+    fn attach_imported_animations(
+        &mut self,
+        mut animations: Vec<AnimationClip>,
+        animation_states: Vec<AnimationState>,
+        entity_map: &HashMap<hecs::Entity, hecs::Entity>,
+    ) {
+        if animations.is_empty() && animation_states.is_empty() {
+            return;
+        }
+
+        for clip in &mut animations {
+            for channel in &mut clip.channels {
+                if let AnimationTarget::Transform { entity, .. } = &mut channel.target {
+                    if let Some(&mapped) = entity_map.get(entity) {
+                        *entity = mapped;
+                    } else {
+                        warn!(
+                            "Skipping animation channel targeting missing entity {:?}",
+                            entity
+                        );
+                    }
+                }
+            }
+        }
+
+        {
+            let main_instance = self.main_instance_mut();
+            let mut clip_indices = Vec::with_capacity(animations.len());
+
+            for clip in animations.into_iter() {
+                let index = main_instance.add_animation_clip(clip);
+                clip_indices.push(index);
+            }
+
+            for mut state in animation_states.into_iter() {
+                let Some(&new_index) = clip_indices.get(state.clip_index) else {
+                    warn!(
+                        "Skipping animation state referencing missing clip index {}",
+                        state.clip_index
+                    );
+                    continue;
+                };
+
+                state.clip_index = new_index;
+                if main_instance.push_animation_state(state).is_none() {
+                    warn!("Failed to attach animation state for clip {}", new_index);
                 }
             }
         }

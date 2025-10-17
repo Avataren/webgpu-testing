@@ -3,16 +3,17 @@ use crate::scene::components::{
     Parent, RotateAnimation, TransformComponent, Visible, WorldTransform,
 };
 use hecs::World;
+use std::collections::HashMap;
 
 pub(crate) fn merge_world_as_child(
     target_world: &mut World,
     parent_entity: hecs::Entity,
     source_world: World,
-) {
+) -> HashMap<hecs::Entity, hecs::Entity> {
     let entity_count = source_world.iter().count();
     log::info!("Merging scene with {entity_count} entities as child");
 
-    let mut entity_map = std::collections::HashMap::new();
+    let mut entity_map = HashMap::new();
     let entities_to_copy: Vec<_> = source_world
         .iter()
         .map(|entity_ref| entity_ref.entity())
@@ -119,4 +120,5 @@ pub(crate) fn merge_world_as_child(
     }
 
     drop(source_world);
+    entity_map
 }

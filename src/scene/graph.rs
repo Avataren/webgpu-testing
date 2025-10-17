@@ -160,6 +160,23 @@ impl SceneInstance {
         self.animation_states = animation_states;
     }
 
+    pub(crate) fn take_animation_data(&mut self) -> (Vec<AnimationClip>, Vec<AnimationState>) {
+        (
+            std::mem::take(&mut self.animations),
+            std::mem::take(&mut self.animation_states),
+        )
+    }
+
+    pub(crate) fn push_animation_state(&mut self, state: AnimationState) -> Option<usize> {
+        if state.clip_index >= self.animations.len() {
+            return None;
+        }
+
+        let index = self.animation_states.len();
+        self.animation_states.push(state);
+        Some(index)
+    }
+
     pub(crate) fn world(&self) -> &World {
         &self.world
     }
