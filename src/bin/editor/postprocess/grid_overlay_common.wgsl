@@ -105,7 +105,7 @@ fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
     }
     
     let depth = fetch_depth(viewport_to_scene_uv(uv));
-    if (depth < 1.0 && depth + 1e-4 < grid_depth) {
+    if (depth < 1.0 && grid_depth + 1e-4 >= depth) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
