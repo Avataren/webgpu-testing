@@ -249,7 +249,7 @@ impl RenderApplication for EditorApplication {
     fn configure(&self, builder: &mut AppBuilder) {
         builder.add_plugin(RuneScriptingPlugin::new());
         builder.disable_default_textures();
-        builder.disable_default_lighting();        
+        builder.disable_default_lighting();
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
@@ -284,13 +284,16 @@ impl RenderApplication for EditorApplication {
         let dock_tree = &mut self.dock_tree;
         let viewport_region = &mut self.viewport_region;
         let viewport_rect = &mut self.viewport_rect;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let mut behavior = EditorBehavior {
-                viewport_region,
-                viewport_rect,
-            };
-            dock_tree.ui(&mut behavior, ui);
-        });
+        let transparent_frame = egui::Frame::central_panel(&ctx.style()).fill(Color32::TRANSPARENT);
+        egui::CentralPanel::default()
+            .frame(transparent_frame)
+            .show(ctx, |ui| {
+                let mut behavior = EditorBehavior {
+                    viewport_region,
+                    viewport_rect,
+                };
+                dock_tree.ui(&mut behavior, ui);
+            });
 
         self.camera_controller.set_viewport_rect(self.viewport_rect);
         self.camera_controller.capture_input(ctx);
