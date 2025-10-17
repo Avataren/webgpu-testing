@@ -1,28 +1,29 @@
 #![cfg(feature = "egui")]
 
+mod camera;
+mod inspector;
+mod layout;
 mod postprocess;
+mod windows;
 
-use std::f32::consts::FRAC_PI_2;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use egui::{viewport::CursorGrab, Color32, Grid, Stroke, StrokeKind};
-use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
-use glam::{EulerRot, Vec2, Vec3};
+use egui_tiles::Tree;
+use glam::Vec3;
 use log::error;
-use wgpu_cube::{
-    run_application, DefaultUI, RenderApplication, SceneEntityComponentsSummary,
-    SceneEntityInspectorData, SceneHierarchyWindow,
-};
-
 use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
 use wgpu_cube::scene::{EntityBuilder, MaterialComponent, MeshComponent, Name, Transform, Visible};
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
+use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
+use camera::EditorCameraController;
+use layout::{create_editor_layout, EditorBehavior, EditorPane, ViewportState};
 use postprocess::ViewportGrid;
+use windows::WindowToggles;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     run_application(EditorApplication::new())?;
@@ -31,30 +32,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 struct EditorApplication {
     dock_tree: Tree<EditorPane>,
-    viewport_region: Option<RenderRegion>,
-    viewport_rect: Option<egui::Rect>,
+    viewport: ViewportState,
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
     pending_imports: Vec<PathBuf>,
-    stats_window_visible: bool,
-    environment_window_visible: bool,
-    postprocess_window_visible: bool,
-    log_window_visible: bool,
+    windows: WindowToggles,
 }
 
 impl EditorApplication {
     fn new() -> Self {
         Self {
             dock_tree: create_editor_layout(),
-            viewport_region: None,
-            viewport_rect: None,
+            viewport: ViewportState::default(),
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
             pending_imports: Vec::new(),
-            stats_window_visible: true,
-            environment_window_visible: false,
-            postprocess_window_visible: false,
-            log_window_visible: false,
+            windows: WindowToggles::new(),
         }
     }
 
@@ -240,10 +233,7 @@ impl EditorApplication {
                 });
 
                 ui.menu_button("Window", |ui| {
-                    ui.checkbox(&mut self.stats_window_visible, "Statistics");
-                    ui.checkbox(&mut self.postprocess_window_visible, "Post-processing");
-                    ui.checkbox(&mut self.environment_window_visible, "Environment");
-                    ui.checkbox(&mut self.log_window_visible, "Log");
+                    self.windows.window_menu(ui);
                 });
             });
 
@@ -295,40 +285,28 @@ impl RenderApplication for EditorApplication {
     }
 
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        self.viewport_region = None;
-        self.viewport_rect = None;
+        self.viewport.clear();
         self.show_menu_bar(ctx);
 
-        default_ui
-            .stats_window_mut()
-            .show(ctx, Some(&mut self.stats_window_visible));
-        default_ui
-            .postprocess_window_mut()
-            .show(ctx, Some(&mut self.postprocess_window_visible));
-        default_ui
-            .environment_window_mut()
-            .show(ctx, Some(&mut self.environment_window_visible));
-        default_ui
-            .log_window_mut()
-            .show(ctx, Some(&mut self.log_window_visible));
+        self.windows.show(ctx, default_ui);
 
         let dock_tree = &mut self.dock_tree;
-        let viewport_region = &mut self.viewport_region;
-        let viewport_rect = &mut self.viewport_rect;
+        let viewport = &mut self.viewport;
         let scene_hierarchy_window = default_ui.scene_hierarchy_window_mut();
-        let transparent_frame = egui::Frame::central_panel(&ctx.style()).fill(Color32::TRANSPARENT);
+        let transparent_frame =
+            egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
             .frame(transparent_frame)
             .show(ctx, |ui| {
                 let mut behavior = EditorBehavior {
-                    viewport_region,
-                    viewport_rect,
+                    viewport,
                     scene_hierarchy: scene_hierarchy_window,
                 };
                 dock_tree.ui(&mut behavior, ui);
             });
 
-        self.camera_controller.set_viewport_rect(self.viewport_rect);
+        self.camera_controller
+            .set_viewport_rect(self.viewport.rect());
         self.camera_controller.capture_input(ctx);
     }
 
@@ -337,445 +315,6 @@ impl RenderApplication for EditorApplication {
     }
 
     fn render_region(&self) -> Option<RenderRegion> {
-        self.viewport_region
+        self.viewport.region()
     }
-}
-
-struct EditorCameraController {
-    move_forward: bool,
-    move_back: bool,
-    move_left: bool,
-    move_right: bool,
-    boost: bool,
-    looking: bool,
-    viewport_rect: Option<egui::Rect>,
-    look_delta: Vec2,
-    base_speed: f32,
-    boost_multiplier: f32,
-    look_sensitivity: f32,
-}
-
-impl Default for EditorCameraController {
-    fn default() -> Self {
-        Self {
-            move_forward: false,
-            move_back: false,
-            move_left: false,
-            move_right: false,
-            boost: false,
-            looking: false,
-            viewport_rect: None,
-            look_delta: Vec2::ZERO,
-            base_speed: 5.0,
-            boost_multiplier: 3.0,
-            look_sensitivity: 0.0025,
-        }
-    }
-}
-
-impl EditorCameraController {
-    fn set_viewport_rect(&mut self, rect: Option<egui::Rect>) {
-        self.viewport_rect = rect;
-        if rect.is_none() {
-            self.reset_movement();
-            self.look_delta = Vec2::ZERO;
-        }
-    }
-
-    fn reset_movement(&mut self) {
-        self.move_forward = false;
-        self.move_back = false;
-        self.move_left = false;
-        self.move_right = false;
-        self.boost = false;
-    }
-
-    fn capture_input(&mut self, ctx: &egui::Context) {
-        let viewport_rect = self.viewport_rect;
-        let wants_keyboard = ctx.wants_keyboard_input();
-        let was_looking = self.looking;
-        self.look_delta = Vec2::ZERO;
-
-        ctx.input(|input| {
-            if wants_keyboard || viewport_rect.is_none() {
-                self.looking = false;
-                self.reset_movement();
-                return;
-            }
-
-            let rect = viewport_rect.unwrap();
-
-            if input.pointer.secondary_pressed() {
-                let press_pos = input
-                    .pointer
-                    .press_origin()
-                    .or_else(|| input.pointer.hover_pos());
-                self.looking = press_pos.is_some_and(|pos| rect.contains(pos));
-                if !self.looking {
-                    self.reset_movement();
-                }
-            } else if !input.pointer.secondary_down() {
-                self.looking = false;
-                self.reset_movement();
-            }
-
-            if !self.looking {
-                return;
-            }
-
-            self.move_forward = input.key_down(egui::Key::W);
-            self.move_back = input.key_down(egui::Key::S);
-            self.move_left = input.key_down(egui::Key::A);
-            self.move_right = input.key_down(egui::Key::D);
-            self.boost = input.modifiers.shift;
-
-            let motion = input
-                .pointer
-                .motion()
-                .unwrap_or_else(|| input.pointer.delta());
-            self.look_delta = Vec2::new(motion.x, motion.y);
-        });
-
-        self.sync_cursor_capture(ctx, was_looking);
-    }
-
-    fn sync_cursor_capture(&self, ctx: &egui::Context, was_looking: bool) {
-        if self.looking == was_looking {
-            return;
-        }
-
-        if self.looking {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(CursorGrab::Locked));
-        } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(CursorGrab::None));
-            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
-        }
-    }
-
-    fn update_camera(&mut self, ctx: &mut UpdateContext) {
-        let camera = ctx.scene.camera_mut();
-
-        let mut forward = camera.target - camera.eye;
-        if forward.length_squared() < f32::EPSILON {
-            forward = Vec3::NEG_Z;
-        }
-        forward = forward.normalize();
-
-        let mut up = camera.up;
-        if up.length_squared() < f32::EPSILON {
-            up = Vec3::Y;
-        }
-        up = up.normalize();
-
-        if self.looking && self.look_delta.length_squared() > 0.0 {
-            let delta = self.look_delta * self.look_sensitivity;
-            self.look_delta = Vec2::ZERO;
-
-            let mut yaw = forward.x.atan2(-forward.z);
-            let mut pitch = forward.y.clamp(-1.0, 1.0).asin();
-            yaw += delta.x;
-            let max_pitch = FRAC_PI_2 - 0.01;
-            pitch = (pitch - delta.y).clamp(-max_pitch, max_pitch);
-
-            let cos_pitch = pitch.cos();
-            let sin_pitch = pitch.sin();
-            let sin_yaw = yaw.sin();
-            let cos_yaw = yaw.cos();
-            forward = Vec3::new(cos_pitch * sin_yaw, sin_pitch, -cos_pitch * cos_yaw);
-
-            let mut right = forward.cross(Vec3::Y);
-            if right.length_squared() < 1e-6 {
-                right = Vec3::X;
-            }
-            right = right.normalize();
-            up = right.cross(forward).normalize();
-
-            camera.target = camera.eye + forward;
-            camera.up = up;
-        }
-
-        let dt = ctx.dt as f32;
-        if !self.looking || dt <= 0.0 {
-            return;
-        }
-
-        let mut right = forward.cross(up);
-        if right.length_squared() < 1e-6 {
-            right = Vec3::X;
-        }
-        right = right.normalize();
-
-        let mut movement = Vec3::ZERO;
-        if self.move_forward {
-            movement += forward;
-        }
-        if self.move_back {
-            movement -= forward;
-        }
-        if self.move_left {
-            movement -= right;
-        }
-        if self.move_right {
-            movement += right;
-        }
-
-        if movement.length_squared() < 1e-6 {
-            return;
-        }
-
-        movement = movement.normalize();
-        let mut speed = self.base_speed * dt;
-        if self.boost {
-            speed *= self.boost_multiplier;
-        }
-        let delta = movement * speed;
-        camera.eye += delta;
-        camera.target += delta;
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EditorPane {
-    SceneHierarchy,
-    Viewport,
-    Inspector,
-    Console,
-}
-
-struct EditorBehavior<'a> {
-    viewport_region: &'a mut Option<RenderRegion>,
-    viewport_rect: &'a mut Option<egui::Rect>,
-    scene_hierarchy: &'a mut SceneHierarchyWindow,
-}
-
-impl Behavior<EditorPane> for EditorBehavior<'_> {
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        _tile_id: TileId,
-        pane: &mut EditorPane,
-    ) -> UiResponse {
-        match pane {
-            EditorPane::SceneHierarchy => {
-                ui.set_min_width(220.0);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        self.scene_hierarchy.ui(ui);
-                    });
-            }
-            EditorPane::Viewport => show_viewport(ui, self.viewport_region, self.viewport_rect),
-            EditorPane::Inspector => {
-                ui.set_min_width(240.0);
-                ui.heading("Inspector");
-                ui.separator();
-
-                if let Some(selection) = self.scene_hierarchy.selected_entity_data() {
-                    show_entity_inspector(ui, &selection);
-                } else {
-                    ui.label("Select an entity to view its components.");
-                }
-            }
-            EditorPane::Console => {
-                ui.heading("Console");
-                ui.label("Engine logs will appear in this panel.");
-            }
-        }
-
-        UiResponse::None
-    }
-
-    fn tab_title_for_pane(&mut self, pane: &EditorPane) -> egui::WidgetText {
-        match pane {
-            EditorPane::SceneHierarchy => "Hierarchy".into(),
-            EditorPane::Viewport => "Viewport".into(),
-            EditorPane::Inspector => "Inspector".into(),
-            EditorPane::Console => "Console".into(),
-        }
-    }
-}
-
-fn show_entity_inspector(ui: &mut egui::Ui, data: &SceneEntityInspectorData) {
-    ui.label(format!("Name: {}", data.name));
-    ui.label(format!("Entity: {:?}", data.entity));
-    ui.add_space(8.0);
-
-    show_transform_section(ui, &data.components);
-    ui.add_space(6.0);
-    show_mesh_section(ui, &data.components);
-    ui.add_space(6.0);
-    show_material_section(ui, &data.components);
-}
-
-fn show_transform_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSummary) {
-    ui.collapsing("Transform", |ui| {
-        if let Some(transform) = components.transform {
-            Grid::new("transform_component_grid")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Translation");
-                    ui.monospace(format_vec3(transform.translation));
-                    ui.end_row();
-
-                    let (yaw, pitch, roll) = transform.rotation.to_euler(EulerRot::YXZ);
-                    ui.label("Rotation (deg)");
-                    ui.monospace(format!(
-                        "{:.2}, {:.2}, {:.2}",
-                        yaw.to_degrees(),
-                        pitch.to_degrees(),
-                        roll.to_degrees()
-                    ));
-                    ui.end_row();
-
-                    ui.label("Rotation (quat)");
-                    ui.monospace(format!(
-                        "{:.3}, {:.3}, {:.3}, {:.3}",
-                        transform.rotation.x,
-                        transform.rotation.y,
-                        transform.rotation.z,
-                        transform.rotation.w
-                    ));
-                    ui.end_row();
-
-                    ui.label("Scale");
-                    ui.monospace(format_vec3(transform.scale));
-                    ui.end_row();
-                });
-        } else {
-            ui.label("No Transform component on this entity.");
-        }
-    });
-}
-
-fn show_mesh_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSummary) {
-    ui.collapsing("Mesh", |ui| {
-        if let Some(mesh) = components.mesh {
-            ui.label(format!("Handle index: {}", mesh.0.index()));
-        } else {
-            ui.label("No Mesh component on this entity.");
-        }
-    });
-}
-
-fn show_material_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSummary) {
-    ui.collapsing("Material", |ui| {
-        if let Some(material_component) = components.material {
-            let material = material_component.0;
-            let color = material.base_color;
-            ui.label(format!(
-                "Base color RGBA: ({}, {}, {}, {})",
-                color[0], color[1], color[2], color[3]
-            ));
-            ui.label(format!(
-                "Metallic: {:.2}",
-                material.metallic_factor as f32 / 255.0
-            ));
-            ui.label(format!(
-                "Roughness: {:.2}",
-                material.roughness_factor as f32 / 255.0
-            ));
-            ui.label(format!(
-                "Emissive strength: {:.2}",
-                material.emissive_strength as f32 / 255.0
-            ));
-            ui.label(format!("Flags: 0x{:08X}", material.flags.bits()));
-            ui.label(format!(
-                "Base color texture: {}",
-                material.base_color_texture
-            ));
-            ui.label(format!(
-                "Metallic/Roughness texture: {}",
-                material.metallic_roughness_texture
-            ));
-            ui.label(format!("Normal texture: {}", material.normal_texture));
-            ui.label(format!("Emissive texture: {}", material.emissive_texture));
-            ui.label(format!("Occlusion texture: {}", material.occlusion_texture));
-        } else {
-            ui.label("No Material component on this entity.");
-        }
-    });
-}
-
-fn format_vec3(vec: Vec3) -> String {
-    format!("{:.3}, {:.3}, {:.3}", vec.x, vec.y, vec.z)
-}
-
-fn create_editor_layout() -> Tree<EditorPane> {
-    let mut tiles = egui_tiles::Tiles::default();
-
-    let hierarchy = tiles.insert_pane(EditorPane::SceneHierarchy);
-    let viewport = tiles.insert_pane(EditorPane::Viewport);
-    let inspector = tiles.insert_pane(EditorPane::Inspector);
-    let console = tiles.insert_pane(EditorPane::Console);
-
-    let hierarchy_tab = tiles.insert_tab_tile(vec![hierarchy]);
-    let viewport_tab = tiles.insert_tab_tile(vec![viewport]);
-    let inspector_tab = tiles.insert_tab_tile(vec![inspector]);
-    let console_tab = tiles.insert_tab_tile(vec![console]);
-
-    let horizontal = tiles.insert_horizontal_tile(vec![hierarchy_tab, viewport_tab, inspector_tab]);
-    if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(horizontal) {
-        linear.shares.set_share(hierarchy_tab, 0.22);
-        linear.shares.set_share(viewport_tab, 0.58);
-        linear.shares.set_share(inspector_tab, 0.2);
-    }
-
-    let root = tiles.insert_vertical_tile(vec![horizontal, console_tab]);
-    if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(root) {
-        linear.shares.set_share(horizontal, 0.8);
-        linear.shares.set_share(console_tab, 0.2);
-    }
-
-    Tree::new("editor_dock", root, tiles)
-}
-
-fn show_viewport(
-    ui: &mut egui::Ui,
-    region: &mut Option<RenderRegion>,
-    rect_out: &mut Option<egui::Rect>,
-) {
-    let desired = ui.available_size();
-    let desired = egui::vec2(desired.x.max(1.0), desired.y.max(1.0));
-    let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::click_and_drag());
-    *rect_out = Some(rect);
-
-    if rect.width() <= 1.0 || rect.height() <= 1.0 {
-        *region = None;
-        *rect_out = None;
-        return;
-    }
-
-    *region = compute_region(ui.ctx(), rect);
-
-    let painter = ui.painter_at(rect);
-    painter.rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(1.0, Color32::from_gray(60)),
-        StrokeKind::Outside,
-    );
-    painter.text(
-        rect.center_top() + egui::vec2(0.0, 8.0),
-        egui::Align2::CENTER_TOP,
-        "Viewport",
-        egui::TextStyle::Button.resolve(ui.style()),
-        Color32::from_gray(180),
-    );
-}
-
-fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {
-    let pixels_per_point = ctx.pixels_per_point();
-    let screen = ctx.viewport_rect();
-    let max_width = (screen.width() * pixels_per_point).round().max(0.0) as u32;
-    let max_height = (screen.height() * pixels_per_point).round().max(0.0) as u32;
-
-    let min_x = (rect.min.x * pixels_per_point).floor().max(0.0);
-    let min_y = (rect.min.y * pixels_per_point).floor().max(0.0);
-    let width = (rect.width() * pixels_per_point).round().max(0.0);
-    let height = (rect.height() * pixels_per_point).round().max(0.0);
-
-    let region = RenderRegion::new(min_x as u32, min_y as u32, width as u32, height as u32)?;
-    region.clamp(max_width, max_height)
 }
