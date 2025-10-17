@@ -2,7 +2,7 @@
 
 use egui_wgpu::ScreenDescriptor;
 use winit::event::WindowEvent;
-use winit::window::Window;
+use winit::window::{CursorGrabMode, Window};
 
 pub use egui;
 
@@ -96,6 +96,8 @@ impl EguiContext {
     }
 
     pub fn render(&mut self, target: &mut EguiRenderTarget<'_>, output: egui::FullOutput) {
+        self.handle_viewport_commands(target.window, &output.viewport_output);
+
         if target.surface_size[0] == 0 || target.surface_size[1] == 0 {
             return;
         }
@@ -165,5 +167,33 @@ impl EguiContext {
 
     pub fn context(&self) -> &egui::Context {
         &self.ctx
+    }
+
+    fn handle_viewport_commands(
+        &self,
+        window: &Window,
+        viewports: &egui::OrderedViewportIdMap<egui::ViewportOutput>,
+    ) {
+        if let Some(output) = viewports.get(&self.ctx.viewport_id()) {
+            for command in &output.commands {
+                match command {
+                    egui::ViewportCommand::CursorVisible(visible) => {
+                        window.set_cursor_visible(*visible);
+                    }
+                    egui::ViewportCommand::CursorGrab(grab) => {
+                        let mode = match grab {
+                            egui::viewport::CursorGrab::None => CursorGrabMode::None,
+                            egui::viewport::CursorGrab::Confined => CursorGrabMode::Confined,
+                            egui::viewport::CursorGrab::Locked => CursorGrabMode::Locked,
+                        };
+
+                        if let Err(err) = window.set_cursor_grab(mode) {
+                            log::warn!("Failed to apply cursor grab command {:?}: {}", grab, err);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
