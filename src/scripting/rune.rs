@@ -9,7 +9,7 @@ use std::sync::Arc;
 use glam::{EulerRot, Quat, Vec3};
 use hecs::{ComponentError, Entity, NoSuchEntity, World};
 use rune::alloc::Error as RuneAllocError;
-use rune::runtime::{RuntimeContext, Vm, VmResult};
+use rune::runtime::{try_result, RuntimeContext, Vm, VmResult};
 use rune::{Context, ContextError, Diagnostics, FromValue, Module, Source, Sources, Value};
 use thiserror::Error;
 
@@ -1036,7 +1036,7 @@ fn get_f64(handle: i64, key: String, default: f64) -> VmResult<f64> {
     with_active_state(move |map| {
         let entry_key = (handle, key);
         match map.get(&entry_key) {
-            Some(value) => f64::from_value(value.clone()),
+            Some(value) => try_result(f64::from_value(value.clone())),
             None => VmResult::Ok(default),
         }
     })
