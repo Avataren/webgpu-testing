@@ -1,7 +1,7 @@
 // egui_integration.rs — fixed for egui release-0.33.0 + wgpu 0.27 'static pass
 
 use egui_wgpu::ScreenDescriptor;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::{CursorGrabMode, Window};
 
 pub use egui;
@@ -13,6 +13,8 @@ pub struct EguiContext {
     state: egui_winit::State,
     pub renderer: egui_wgpu::Renderer,
     ui_callback: Option<EguiUiCallback>,
+    pointer_locked: bool,
+    pending_mouse_motion: egui::Vec2,
 }
 
 pub struct EguiRenderTarget<'a> {
@@ -64,6 +66,8 @@ impl EguiContext {
             state,
             renderer,
             ui_callback: None,
+            pointer_locked: false,
+            pending_mouse_motion: egui::Vec2::ZERO,
         }
     }
 
@@ -84,7 +88,13 @@ impl EguiContext {
     }
 
     pub fn begin_frame(&mut self, window: &Window) {
-        let raw_input = self.state.take_egui_input(window);
+        let mut raw_input = self.state.take_egui_input(window);
+        if self.pointer_locked && self.pending_mouse_motion != egui::Vec2::ZERO {
+            raw_input
+                .events
+                .push(egui::Event::MouseMoved(self.pending_mouse_motion));
+        }
+        self.pending_mouse_motion = egui::Vec2::ZERO;
         self.ctx.begin_pass(raw_input);
     }
 
@@ -170,7 +180,7 @@ impl EguiContext {
     }
 
     fn handle_viewport_commands(
-        &self,
+        &mut self,
         window: &Window,
         viewports: &egui::OrderedViewportIdMap<egui::ViewportOutput>,
     ) {
@@ -193,17 +203,39 @@ impl EguiContext {
                             egui::viewport::CursorGrab::Locked => CursorGrabMode::Locked,
                         };
 
-                        if let Err(err) = window.set_cursor_grab(mode) {
-                            log::warn!("Failed to apply cursor grab command {:?}: {}", grab, err);
+                        match window.set_cursor_grab(mode) {
+                            Ok(()) => {
+                                self.pointer_locked =
+                                    matches!(grab, egui::viewport::CursorGrab::Locked);
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to apply cursor grab command {:?}: {}",
+                                    grab,
+                                    err
+                                );
 
-                            if cursor_hidden_for_grab {
-                                window.set_cursor_visible(true);
-                                cursor_hidden_for_grab = false;
+                                self.pointer_locked = false;
+
+                                if cursor_hidden_for_grab {
+                                    window.set_cursor_visible(true);
+                                    cursor_hidden_for_grab = false;
+                                }
                             }
                         }
                     }
                     _ => {}
                 }
+            }
+        } else {
+            self.pointer_locked = false;
+        }
+    }
+
+    pub fn handle_device_event(&mut self, event: &DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            if self.pointer_locked {
+                self.pending_mouse_motion += egui::vec2(delta.0 as f32, delta.1 as f32);
             }
         }
     }
