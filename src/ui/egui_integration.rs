@@ -175,10 +175,16 @@ impl EguiContext {
         viewports: &egui::OrderedViewportIdMap<egui::ViewportOutput>,
     ) {
         if let Some(output) = viewports.get(&self.ctx.viewport_id()) {
+            // egui emits `CursorVisible(false)` immediately before requesting a pointer grab.
+            // If the grab fails (e.g. unsupported platform, unfocused window), make sure we
+            // re-enable the cursor so users are not left without a pointer.
+            let mut cursor_hidden_for_grab = false;
+
             for command in &output.commands {
                 match command {
                     egui::ViewportCommand::CursorVisible(visible) => {
                         window.set_cursor_visible(*visible);
+                        cursor_hidden_for_grab = !*visible;
                     }
                     egui::ViewportCommand::CursorGrab(grab) => {
                         let mode = match grab {
@@ -189,6 +195,11 @@ impl EguiContext {
 
                         if let Err(err) = window.set_cursor_grab(mode) {
                             log::warn!("Failed to apply cursor grab command {:?}: {}", grab, err);
+
+                            if cursor_hidden_for_grab {
+                                window.set_cursor_visible(true);
+                                cursor_hidden_for_grab = false;
+                            }
                         }
                     }
                     _ => {}
