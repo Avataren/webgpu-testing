@@ -27,5 +27,5 @@ pub use transform::Transform;
 // Re-export all components
 pub use components::{
     Children, GltfMaterial, GltfNode, MaterialComponent, MeshComponent, Name, OrbitAnimation,
-    Parent, RotateAnimation, TransformComponent, Visible,
+    Parent, RotateAnimation, SelectedInEditor, TransformComponent, Visible,
 };

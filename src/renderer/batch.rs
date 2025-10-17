@@ -38,6 +38,19 @@ impl RenderPass {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CullMode {
+    Back,
+    Front,
+    None,
+}
+
+impl Default for CullMode {
+    fn default() -> Self {
+        Self::Back
+    }
+}
+
 /// A single renderable object instance
 pub struct RenderObject {
     pub mesh: Handle<Mesh>,
@@ -47,6 +60,7 @@ pub struct RenderObject {
     pub force_overlay: bool,
     pub instance_source: InstanceSource,
     pub gpu_index: Option<u32>,
+    pub cull_mode: CullMode,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +90,7 @@ pub struct Batch<'a> {
     pub instances: &'a [InstanceData],
     pub materials: &'a [Material],
     pub use_nearest_filtering: bool,
+    pub cull_mode: CullMode,
 }
 
 /// Batching key - only splits by what ACTUALLY requires different draw calls
@@ -86,6 +101,7 @@ struct BatchKey {
     depth_state: DepthState,
     source: InstanceSource,
     use_nearest_filtering: bool,
+    cull_mode: CullMode,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -121,6 +137,7 @@ impl RenderBatcher {
             depth_state: obj.depth_state,
             source: obj.instance_source,
             use_nearest_filtering: obj.material.uses_nearest_filtering(),
+            cull_mode: obj.cull_mode,
         };
 
         let material_index = *self.material_lookup.entry(obj.material).or_insert_with(|| {
@@ -154,6 +171,7 @@ impl RenderBatcher {
             instances: instances.as_slice(),
             materials: self.materials.as_slice(),
             use_nearest_filtering: key.use_nearest_filtering,
+            cull_mode: key.cull_mode,
         })
     }
 
@@ -167,6 +185,7 @@ impl RenderBatcher {
                     instances: instances.as_slice(),
                     materials: self.materials.as_slice(),
                     use_nearest_filtering: key.use_nearest_filtering,
+                    cull_mode: key.cull_mode,
                 })
             } else {
                 None

@@ -545,7 +545,20 @@ impl Renderer {
 
         // Overlay pass (your overlays draw after UI if you keep it here;
         // if you want UI on top of overlays, move this block above ui_hook).
-        if !prepared_batches.overlay().is_empty() {
+        let overlay_batches = prepared_batches.overlay();
+        if !overlay_batches.is_empty() {
+            let overlay_needs_depth = overlay_batches
+                .iter()
+                .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
+            let depth_attachment = overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            });
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OverlayPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -557,7 +570,7 @@ impl Renderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
@@ -569,7 +582,7 @@ impl Renderer {
             frame_stats.overlay_draw_calls += self.record_batches(
                 &mut rpass,
                 assets,
-                prepared_batches.overlay(),
+                overlay_batches,
                 prepared_batches.materials(),
                 self.context.config.format,
                 1,
@@ -700,6 +713,7 @@ impl Renderer {
             color_format,
             color_sample_count,
             batch.sampler_filtering,
+            batch.cull_mode,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);
         rpass.set_pipeline(pipeline);

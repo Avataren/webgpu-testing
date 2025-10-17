@@ -11,12 +11,15 @@ use std::path::{Path, PathBuf};
 
 use egui_tiles::Tree;
 use glam::Vec3;
-use log::error;
+use hecs::Entity;
+use log::{error, warn};
 use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
-use wgpu_cube::scene::{EntityBuilder, MaterialComponent, MeshComponent, Name, Transform, Visible};
+use wgpu_cube::scene::{
+    EntityBuilder, MaterialComponent, MeshComponent, Name, SelectedInEditor, Transform, Visible,
+};
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
@@ -37,6 +40,8 @@ struct EditorApplication {
     grid_postprocess: Option<ViewportGrid>,
     pending_imports: Vec<PathBuf>,
     windows: WindowToggles,
+    selected_entity: Option<Entity>,
+    highlighted_entity: Option<Entity>,
 }
 
 impl EditorApplication {
@@ -48,6 +53,8 @@ impl EditorApplication {
             grid_postprocess: None,
             pending_imports: Vec::new(),
             windows: WindowToggles::new(),
+            selected_entity: None,
+            highlighted_entity: None,
         }
     }
 
@@ -114,6 +121,55 @@ impl EditorApplication {
                 .with_script(script_source);
             builder.spawn();
         }
+    }
+
+    fn sync_selection_component(&mut self, ctx: &mut UpdateContext) {
+        if self.selected_entity == self.highlighted_entity {
+            if let Some(entity) = self.selected_entity {
+                let missing_marker = ctx
+                    .scene
+                    .main_world()
+                    .get::<&SelectedInEditor>(entity)
+                    .is_err();
+
+                if missing_marker {
+                    if let Err(err) = ctx
+                        .scene
+                        .main_world_mut()
+                        .insert_one(entity, SelectedInEditor)
+                    {
+                        warn!(
+                            "failed to reapply editor selection marker to {:?}: {err}",
+                            entity
+                        );
+                        self.selected_entity = None;
+                        self.highlighted_entity = None;
+                    }
+                }
+            }
+            return;
+        }
+
+        let mut new_highlight = None;
+        {
+            let world = ctx.scene.main_world_mut();
+
+            if let Some(previous) = self.highlighted_entity.take() {
+                let _ = world.remove_one::<SelectedInEditor>(previous);
+            }
+
+            if let Some(entity) = self.selected_entity {
+                match world.insert_one(entity, SelectedInEditor) {
+                    Ok(()) => new_highlight = Some(entity),
+                    Err(err) => {
+                        warn!("failed to mark entity {:?} as selected: {err}", entity);
+                        self.selected_entity = None;
+                    }
+                }
+            }
+        }
+
+        self.highlighted_entity = new_highlight;
     }
 
     fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
@@ -267,6 +323,7 @@ impl RenderApplication for EditorApplication {
     fn update(&mut self, ctx: &mut UpdateContext) {
         self.camera_controller.update_camera(ctx);
         self.process_pending_imports(ctx);
+        self.sync_selection_component(ctx);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
@@ -304,6 +361,8 @@ impl RenderApplication for EditorApplication {
                 };
                 dock_tree.ui(&mut behavior, ui);
             });
+
+        self.selected_entity = scene_hierarchy_window.selected_entity();
 
         self.camera_controller
             .set_viewport_rect(self.viewport.rect());

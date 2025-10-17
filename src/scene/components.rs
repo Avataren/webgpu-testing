@@ -119,6 +119,10 @@ impl Default for Visible {
     }
 }
 
+/// Marker component that indicates an entity is currently selected in the editor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SelectedInEditor;
+
 // ============================================================================
 // GPU-driven instance components
 // ============================================================================

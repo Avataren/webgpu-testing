@@ -149,10 +149,15 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    /// Disable backface culling
-    pub fn with_no_culling(mut self) -> Self {
-        self.primitive.cull_mode = None;
+    /// Set the primitive culling mode explicitly
+    pub fn with_cull_mode(mut self, mode: Option<wgpu::Face>) -> Self {
+        self.primitive.cull_mode = mode;
         self
+    }
+
+    /// Disable backface culling
+    pub fn with_no_culling(self) -> Self {
+        self.with_cull_mode(None)
     }
 
     /// Set primitive topology

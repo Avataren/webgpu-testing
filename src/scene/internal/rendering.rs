@@ -1,9 +1,13 @@
 use super::lights::safe_normalize;
 use crate::asset::{Handle, Mesh};
-use crate::renderer::{batch::InstanceSource, Material, RenderObject, Renderer};
+use crate::renderer::{
+    batch::{CullMode, InstanceSource},
+    Material, RenderObject, Renderer,
+};
 use crate::scene::components::{
     Billboard, BillboardOrientation, BillboardSpace, DepthState, GpuParticleInstance,
-    MaterialComponent, MeshComponent, Name, TransformComponent, Visible, WorldTransform,
+    MaterialComponent, MeshComponent, Name, SelectedInEditor, TransformComponent, Visible,
+    WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
@@ -32,7 +36,7 @@ pub(crate) fn build_render_objects(world: &World, camera: CameraVectors) -> Vec<
 
     render_entities
         .into_par_iter()
-        .filter_map(|entity| prepare_render_object(camera, entity))
+        .flat_map_iter(|entity| prepare_render_objects(camera, entity).into_iter())
         .collect()
 }
 
@@ -46,6 +50,7 @@ struct RenderEntity {
     billboard: Option<Billboard>,
     depth_state: Option<DepthState>,
     gpu_instance: Option<GpuParticleInstance>,
+    selected: bool,
 }
 
 fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
@@ -60,6 +65,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
             Option<&Billboard>,
             Option<&DepthState>,
             Option<&GpuParticleInstance>,
+            Option<&SelectedInEditor>,
         )>()
         .iter()
         .map(
@@ -75,6 +81,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                     billboard,
                     depth_state,
                     gpu_instance,
+                    selected_marker,
                 ),
             )| RenderEntity {
                 mesh: mesh.0,
@@ -86,14 +93,15 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                 billboard: billboard.copied(),
                 depth_state: depth_state.copied(),
                 gpu_instance: gpu_instance.copied(),
+                selected: selected_marker.is_some(),
             },
         )
         .collect()
 }
 
-fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<RenderObject> {
+fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<RenderObject> {
     if !entity.visible {
-        return None;
+        return Vec::new();
     }
 
     let mut transform = select_render_transform(&entity);
@@ -126,7 +134,15 @@ fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<
     let depth_state = entity.depth_state.unwrap_or_default();
     let force_overlay = billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
 
-    Some(RenderObject {
+    let mut objects = Vec::with_capacity(
+        if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
+            2
+        } else {
+            1
+        },
+    );
+
+    objects.push(RenderObject {
         mesh: entity.mesh,
         material,
         transform,
@@ -134,7 +150,29 @@ fn prepare_render_object(camera: CameraVectors, entity: RenderEntity) -> Option<
         force_overlay,
         instance_source,
         gpu_index,
-    })
+        cull_mode: CullMode::Back,
+    });
+
+    if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
+        let mut outline_transform = transform;
+        outline_transform.scale *= Vec3::splat(1.03);
+
+        let outline_material = Material::new([255, 69, 0, 255]).with_unlit();
+        let outline_depth = DepthState::new(true, false);
+
+        objects.push(RenderObject {
+            mesh: entity.mesh,
+            material: outline_material,
+            transform: outline_transform,
+            depth_state: outline_depth,
+            force_overlay: true,
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::Front,
+        });
+    }
+
+    objects
 }
 
 fn select_render_transform(entity: &RenderEntity) -> Transform {

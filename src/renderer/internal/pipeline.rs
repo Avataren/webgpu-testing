@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 
 use crate::asset::Assets;
+use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{
@@ -22,6 +23,7 @@ pub(crate) struct PipelineKey {
     color_format: wgpu::TextureFormat,
     sample_count: u32,
     sampler_filtering: SamplerFilterMode,
+    cull_mode: CullMode,
 }
 
 impl PipelineKey {
@@ -32,6 +34,7 @@ impl PipelineKey {
         color_format: wgpu::TextureFormat,
         sample_count: u32,
         sampler_filtering: SamplerFilterMode,
+        cull_mode: CullMode,
     ) -> Self {
         Self {
             depth_test,
@@ -40,6 +43,7 @@ impl PipelineKey {
             color_format,
             sample_count,
             sampler_filtering,
+            cull_mode,
         }
     }
 }
@@ -282,25 +286,29 @@ impl RenderPipeline {
                 for &depth_test in &[false, true] {
                     for &depth_write in &[false, true] {
                         for &alpha_blend in &[false, true] {
-                            let key = PipelineKey {
-                                depth_test,
-                                depth_write,
-                                alpha_blend,
-                                color_format,
-                                sample_count: samples,
-                                sampler_filtering: filtering,
-                            };
-                            let pipeline = Self::create_pipeline(
-                                context,
-                                &pipeline_layout,
-                                shader_module,
-                                depth_test,
-                                depth_write,
-                                alpha_blend,
-                                color_format,
-                                samples,
-                            );
-                            pipelines.insert(key, pipeline);
+                            for &cull_mode in &[CullMode::Back, CullMode::Front, CullMode::None] {
+                                let key = PipelineKey::new(
+                                    depth_test,
+                                    depth_write,
+                                    alpha_blend,
+                                    color_format,
+                                    samples,
+                                    filtering,
+                                    cull_mode,
+                                );
+                                let pipeline = Self::create_pipeline(
+                                    context,
+                                    &pipeline_layout,
+                                    shader_module,
+                                    depth_test,
+                                    depth_write,
+                                    alpha_blend,
+                                    color_format,
+                                    samples,
+                                    cull_mode,
+                                );
+                                pipelines.insert(key, pipeline);
+                            }
                         }
                     }
                 }
@@ -340,6 +348,7 @@ impl RenderPipeline {
         alpha_blend: bool,
         color_format: wgpu::TextureFormat,
         sample_count: u32,
+        cull_mode: CullMode,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
             wgpu::CompareFunction::LessEqual
@@ -358,6 +367,12 @@ impl RenderPipeline {
             .with_vertex_buffer(Vertex::layout())
             .with_color_target(color_format, blend_state)
             .with_multisample(sample_count);
+
+        builder = match cull_mode {
+            CullMode::Back => builder.with_cull_mode(Some(wgpu::Face::Back)),
+            CullMode::Front => builder.with_cull_mode(Some(wgpu::Face::Front)),
+            CullMode::None => builder.with_cull_mode(None),
+        };
 
         if depth_test || depth_write {
             builder = builder.with_depth_stencil(context.depth.format, depth_write, depth_compare);

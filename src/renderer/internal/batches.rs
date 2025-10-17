@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, Mesh};
-use crate::renderer::batch::{InstanceData, InstanceSource, RenderBatcher, RenderPass};
+use crate::renderer::batch::{CullMode, InstanceData, InstanceSource, RenderBatcher, RenderPass};
 use crate::renderer::material::Material;
 use crate::renderer::shader_builder::SamplerFilterMode;
 use crate::scene::components::DepthState;
@@ -16,6 +16,7 @@ pub(crate) struct OrderedBatch {
     pub alpha_blend: bool,
     pub first_instance: u32,
     pub sampler_filtering: SamplerFilterMode,
+    pub cull_mode: CullMode,
 }
 
 pub(crate) struct PreparedBatches {
@@ -71,6 +72,7 @@ impl PreparedBatches {
                 } else {
                     SamplerFilterMode::Linear
                 },
+                cull_mode: batch.cull_mode,
             };
 
             if ordered
@@ -214,7 +216,7 @@ fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
 mod tests {
     use super::*;
     use crate::asset::Handle;
-    use crate::renderer::batch::{InstanceSource, RenderObject};
+    use crate::renderer::batch::{CullMode, InstanceSource, RenderObject};
     use crate::renderer::material::Material;
     use crate::scene::components::DepthState;
     use crate::scene::transform::Transform;
@@ -232,6 +234,7 @@ mod tests {
             force_overlay: false,
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
+            cull_mode: CullMode::Back,
         });
 
         batcher.clear();
