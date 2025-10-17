@@ -7,7 +7,8 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
-    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, StatsWindow, UiStyle,
+    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, SceneHierarchyHandle,
+    SceneHierarchyWindow, StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
@@ -72,10 +73,12 @@ pub struct DefaultUI {
     log_window: LogWindow,
     postprocess_window: PostProcessWindow,
     environment_window: EnvironmentWindow,
+    scene_hierarchy_window: SceneHierarchyWindow,
     stats_open: bool,
     log_open: bool,
     postprocess_open: bool,
     environment_open: bool,
+    scene_hierarchy_open: bool,
 }
 
 #[cfg(feature = "egui")]
@@ -85,22 +88,27 @@ impl DefaultUI {
         log_handle: LogBufferHandle,
         post_handle: PostProcessEffectsHandle,
         env_handle: EnvironmentSettingsHandle,
+        hierarchy_handle: SceneHierarchyHandle,
     ) -> Self {
         Self {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
             postprocess_window: PostProcessWindow::new(post_handle),
             environment_window: EnvironmentWindow::new(env_handle),
+            scene_hierarchy_window: SceneHierarchyWindow::new(hierarchy_handle),
             stats_open: true,
             log_open: false,
             postprocess_open: false,
             environment_open: false,
+            scene_hierarchy_open: true,
         }
     }
 
     pub fn show(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
 
+        self.scene_hierarchy_window
+            .show(ctx, Some(&mut self.scene_hierarchy_open));
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.environment_window
             .show(ctx, Some(&mut self.environment_open));
@@ -123,6 +131,7 @@ impl DefaultUI {
                     ui.checkbox(&mut self.stats_open, "Statistics");
                     ui.checkbox(&mut self.environment_open, "Environment");
                     ui.checkbox(&mut self.postprocess_open, "Post-processing");
+                    ui.checkbox(&mut self.scene_hierarchy_open, "Scene Hierarchy");
                     ui.checkbox(&mut self.log_open, "Log");
                 });
             });
@@ -155,6 +164,10 @@ impl DefaultUI {
 
     pub fn environment_window_mut(&mut self) -> &mut EnvironmentWindow {
         &mut self.environment_window
+    }
+
+    pub fn scene_hierarchy_window_mut(&mut self) -> &mut SceneHierarchyWindow {
+        &mut self.scene_hierarchy_window
     }
 }
 
@@ -225,10 +238,16 @@ where
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
         let env_handle = app.environment_settings_handle();
+        let hierarchy_handle = app.scene_hierarchy_handle();
 
         if show_default {
-            let mut default_ui =
-                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
+            let mut default_ui = DefaultUI::new(
+                stats_handle,
+                log_handle,
+                post_handle,
+                env_handle.clone(),
+                hierarchy_handle.clone(),
+            );
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -237,8 +256,13 @@ where
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         } else {
-            let mut default_ui =
-                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
+            let mut default_ui = DefaultUI::new(
+                stats_handle,
+                log_handle,
+                post_handle,
+                env_handle.clone(),
+                hierarchy_handle,
+            );
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -318,10 +342,16 @@ where
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
         let env_handle = app.environment_settings_handle();
+        let hierarchy_handle = app.scene_hierarchy_handle();
 
         if show_default {
-            let mut default_ui =
-                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
+            let mut default_ui = DefaultUI::new(
+                stats_handle,
+                log_handle,
+                post_handle,
+                env_handle.clone(),
+                hierarchy_handle.clone(),
+            );
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
@@ -329,8 +359,13 @@ where
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         } else {
-            let mut default_ui =
-                DefaultUI::new(stats_handle, log_handle, post_handle, env_handle.clone());
+            let mut default_ui = DefaultUI::new(
+                stats_handle,
+                log_handle,
+                post_handle,
+                env_handle.clone(),
+                hierarchy_handle,
+            );
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
