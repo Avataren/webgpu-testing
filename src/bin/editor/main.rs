@@ -6,7 +6,7 @@ use std::f32::consts::FRAC_PI_2;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use egui::{Color32, Stroke, StrokeKind};
+use egui::{viewport::CursorGrab, Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 use glam::{Vec2, Vec3};
 use log::error;
@@ -372,7 +372,6 @@ impl EditorCameraController {
     fn set_viewport_rect(&mut self, rect: Option<egui::Rect>) {
         self.viewport_rect = rect;
         if rect.is_none() {
-            self.looking = false;
             self.reset_movement();
             self.look_delta = Vec2::ZERO;
         }
@@ -389,6 +388,7 @@ impl EditorCameraController {
     fn capture_input(&mut self, ctx: &egui::Context) {
         let viewport_rect = self.viewport_rect;
         let wants_keyboard = ctx.wants_keyboard_input();
+        let was_looking = self.looking;
         self.look_delta = Vec2::ZERO;
 
         ctx.input(|input| {
@@ -430,6 +430,22 @@ impl EditorCameraController {
                 .unwrap_or_else(|| input.pointer.delta());
             self.look_delta = Vec2::new(motion.x, motion.y);
         });
+
+        self.sync_cursor_capture(ctx, was_looking);
+    }
+
+    fn sync_cursor_capture(&self, ctx: &egui::Context, was_looking: bool) {
+        if self.looking == was_looking {
+            return;
+        }
+
+        if self.looking {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(CursorGrab::Locked));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(CursorGrab::None));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+        }
     }
 
     fn update_camera(&mut self, ctx: &mut UpdateContext) {
