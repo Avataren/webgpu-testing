@@ -89,10 +89,23 @@ impl EguiContext {
 
     pub fn begin_frame(&mut self, window: &Window) {
         let mut raw_input = self.state.take_egui_input(window);
-        if self.pointer_locked && self.pending_mouse_motion != egui::Vec2::ZERO {
+        if self.pointer_locked {
+            // When the cursor is locked we only want to feed relative motion into egui.
+            // `egui_winit` still receives `WindowEvent::CursorMoved` events which carry
+            // the last absolute cursor position before the grab. If we forward those
+            // alongside the raw `MouseMoved` deltas we inject below, egui ends up
+            // producing inconsistent pointer deltas which show up as jerky camera
+            // motion.  Drop the absolute pointer updates while locked so we rely solely
+            // on the accumulated device motion.
             raw_input
                 .events
-                .push(egui::Event::MouseMoved(self.pending_mouse_motion));
+                .retain(|event| !matches!(event, egui::Event::PointerMoved(_)));
+
+            if self.pending_mouse_motion != egui::Vec2::ZERO {
+                raw_input
+                    .events
+                    .push(egui::Event::MouseMoved(self.pending_mouse_motion));
+            }
         }
         self.pending_mouse_motion = egui::Vec2::ZERO;
         self.ctx.begin_pass(raw_input);
