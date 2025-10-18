@@ -216,11 +216,11 @@ fn shade_fragment(in: VsOut) -> FragmentOut {
     // Tone mapping
     color = color / (color + vec3<f32>(1.0));
 
-    FragmentOut(
+    return FragmentOut(
         vec4<f32>(color, base_color.a),
         vec4<f32>(normalize(N), 1.0),
         vec4<f32>(in.world_pos, 1.0),
-    )
+    );
 }
 
 @fragment

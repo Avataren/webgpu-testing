@@ -91,11 +91,11 @@ fn sample_background(in: VsOut) -> BackgroundOut {
         * environment_intensity();
 
     let mapped = color / (color + vec3<f32>(1.0));
-    BackgroundOut(
+    return BackgroundOut(
         vec4<f32>(mapped, 1.0),
         vec4<f32>(0.0, 0.0, 0.0, 0.0),
         vec4<f32>(0.0, 0.0, 0.0, 0.0),
-    )
+    );
 }
 
 @fragment
