@@ -797,6 +797,8 @@ impl Renderer {
         use_gbuffer: bool,
     ) -> Option<&'a Mesh> {
         let mesh = mesh_for_batch(assets, batch)?;
+        let wants_wireframe = matches!(batch.pass, RenderPass::Gizmo);
+        let wireframe = wants_wireframe && self.context.supports_wireframe;
         let pipeline_key = PipelineKey::new(
             batch.depth_state.depth_test,
             batch.depth_state.depth_write,
@@ -806,6 +808,7 @@ impl Renderer {
             batch.sampler_filtering,
             batch.cull_mode,
             use_gbuffer,
+            wireframe,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);
         rpass.set_pipeline(pipeline);

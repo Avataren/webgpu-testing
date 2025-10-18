@@ -95,6 +95,68 @@ pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
+pub fn cylinder_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
+    let segments = segments.max(3);
+    let tangent = [1.0, 0.0, 0.0, 1.0];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Generate side vertices (duplicated seam for UV continuity).
+    for i in 0..=segments {
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let x = theta.cos();
+        let y = theta.sin();
+        let normal = [x, y, 0.0];
+        let u = i as f32 / segments as f32;
+
+        vertices.push(v([x, y, -0.5], normal, [u, 1.0], tangent));
+        vertices.push(v([x, y, 0.5], normal, [u, 0.0], tangent));
+    }
+
+    for i in 0..segments {
+        let base = i * 2;
+        let next = base + 2;
+
+        indices.push(base);
+        indices.push(next);
+        indices.push(base + 1);
+
+        indices.push(base + 1);
+        indices.push(next);
+        indices.push(next + 1);
+    }
+
+    let bottom_center_index = vertices.len() as u32;
+    vertices.push(v([0.0, 0.0, -0.5], [0.0, 0.0, -1.0], [0.5, 0.5], tangent));
+
+    let top_center_index = vertices.len() as u32;
+    vertices.push(v([0.0, 0.0, 0.5], [0.0, 0.0, 1.0], [0.5, 0.5], tangent));
+
+    // Bottom cap
+    let base_ring_start = 0u32;
+    for i in 0..segments {
+        let current = base_ring_start + (i * 2);
+        let next = base_ring_start + (((i + 1) % segments) * 2);
+
+        indices.push(bottom_center_index);
+        indices.push(current);
+        indices.push(next);
+    }
+
+    // Top cap
+    let top_ring_start = 1u32;
+    for i in 0..segments {
+        let current = top_ring_start + (i * 2);
+        let next = top_ring_start + (((i + 1) % segments) * 2);
+
+        indices.push(top_center_index);
+        indices.push(next);
+        indices.push(current);
+    }
+
+    (vertices, indices)
+}
+
 pub fn quad_mesh() -> (Vec<Vertex>, Vec<u32>) {
     let verts = vec![
         v(

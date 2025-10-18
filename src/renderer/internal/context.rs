@@ -23,6 +23,7 @@ pub(crate) struct RenderContext {
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) scene_texture_format: wgpu::TextureFormat,
     pub(crate) supports_bindless_textures: bool,
+    pub(crate) supports_wireframe: bool,
     pub(crate) sample_count: u32,
     // GPU resources (drop before device/queue)
     pub(crate) depth: Depth,
@@ -142,6 +143,15 @@ impl RenderContext {
             false
         };
 
+        let supports_wireframe = if adapter_features.contains(wgpu::Features::POLYGON_MODE_LINE) {
+            required_features |= wgpu::Features::POLYGON_MODE_LINE;
+            log::info!("Wireframe rendering enabled");
+            true
+        } else {
+            log::warn!("Wireframe rendering not supported on this adapter");
+            false
+        };
+
         if adapter_features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
             required_features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
         }
@@ -243,6 +253,7 @@ impl RenderContext {
             size,
             depth,
             supports_bindless_textures,
+            supports_wireframe,
             sample_count,
         }
     }

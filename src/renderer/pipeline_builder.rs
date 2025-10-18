@@ -160,6 +160,12 @@ impl<'a> PipelineBuilder<'a> {
         self.with_cull_mode(None)
     }
 
+    /// Set the polygon mode (default: Fill)
+    pub fn with_polygon_mode(mut self, mode: wgpu::PolygonMode) -> Self {
+        self.primitive.polygon_mode = mode;
+        self
+    }
+
     /// Set primitive topology
     pub fn with_topology(mut self, topology: wgpu::PrimitiveTopology) -> Self {
         self.primitive.topology = topology;

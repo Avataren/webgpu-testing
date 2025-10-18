@@ -26,6 +26,7 @@ pub(crate) struct PipelineKey {
     sampler_filtering: SamplerFilterMode,
     cull_mode: CullMode,
     gbuffer: bool,
+    wireframe: bool,
 }
 
 impl PipelineKey {
@@ -39,6 +40,7 @@ impl PipelineKey {
         sampler_filtering: SamplerFilterMode,
         cull_mode: CullMode,
         gbuffer: bool,
+        wireframe: bool,
     ) -> Self {
         Self {
             depth_test,
@@ -49,6 +51,7 @@ impl PipelineKey {
             sampler_filtering,
             cull_mode,
             gbuffer,
+            wireframe,
         }
     }
 }
@@ -293,6 +296,12 @@ impl RenderPipeline {
             (scene_format, sample_count, false),
             (context.config.format, 1, false),
         ];
+        let wireframe_options: Vec<bool> = if context.supports_wireframe {
+            vec![false, true]
+        } else {
+            vec![false]
+        };
+
         for (filtering, shader_module) in &shader_modules {
             let filtering = *filtering;
             for &(color_format, samples, gbuffer) in &color_targets {
@@ -300,29 +309,33 @@ impl RenderPipeline {
                     for &depth_write in &[false, true] {
                         for &alpha_blend in &[false, true] {
                             for &cull_mode in &[CullMode::Back, CullMode::Front, CullMode::None] {
-                                let key = PipelineKey::new(
-                                    depth_test,
-                                    depth_write,
-                                    alpha_blend,
-                                    color_format,
-                                    samples,
-                                    filtering,
-                                    cull_mode,
-                                    gbuffer,
-                                );
-                                let pipeline = Self::create_pipeline(
-                                    context,
-                                    &pipeline_layout,
-                                    shader_module,
-                                    depth_test,
-                                    depth_write,
-                                    alpha_blend,
-                                    color_format,
-                                    samples,
-                                    cull_mode,
-                                    gbuffer,
-                                );
-                                pipelines.insert(key, pipeline);
+                                for &wireframe in &wireframe_options {
+                                    let key = PipelineKey::new(
+                                        depth_test,
+                                        depth_write,
+                                        alpha_blend,
+                                        color_format,
+                                        samples,
+                                        filtering,
+                                        cull_mode,
+                                        gbuffer,
+                                        wireframe,
+                                    );
+                                    let pipeline = Self::create_pipeline(
+                                        context,
+                                        &pipeline_layout,
+                                        shader_module,
+                                        depth_test,
+                                        depth_write,
+                                        alpha_blend,
+                                        color_format,
+                                        samples,
+                                        cull_mode,
+                                        gbuffer,
+                                        wireframe,
+                                    );
+                                    pipelines.insert(key, pipeline);
+                                }
                             }
                         }
                     }
@@ -365,6 +378,7 @@ impl RenderPipeline {
         sample_count: u32,
         cull_mode: CullMode,
         gbuffer: bool,
+        wireframe: bool,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
             wgpu::CompareFunction::LessEqual
@@ -400,6 +414,10 @@ impl RenderPipeline {
             CullMode::Front => builder.with_cull_mode(Some(wgpu::Face::Front)),
             CullMode::None => builder.with_cull_mode(None),
         };
+
+        if wireframe {
+            builder = builder.with_polygon_mode(wgpu::PolygonMode::Line);
+        }
 
         if depth_test || depth_write {
             builder = builder.with_depth_stencil(context.depth.format, depth_write, depth_compare);

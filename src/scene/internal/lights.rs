@@ -280,24 +280,54 @@ pub(crate) fn add_default_lighting(world: &mut World) -> usize {
 
     let mut created = 0usize;
 
-    let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
-    let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);
+    let directional_direction = Vec3::new(0.35, -1.0, -0.85).normalize();
+    let directional_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, directional_direction);
+    let directional_position = Vec3::new(0.0, 6.0, 0.0);
 
     world.spawn((
-        crate::scene::components::Name::new("Default Sky Light"),
-        TransformComponent(Transform::from_trs(Vec3::ZERO, sun1_rotation, Vec3::ONE)),
-        DirectionalLight::new(Vec3::new(0.49, 0.95, 0.85), 2.5),
+        crate::scene::components::Name::new("Default Directional Light"),
+        TransformComponent(Transform::from_trs(
+            directional_position,
+            directional_rotation,
+            Vec3::ONE,
+        )),
+        DirectionalLight::new(Vec3::new(0.8, 0.9, 1.0), 2.75),
         CanCastShadow(true),
     ));
     created += 1;
 
-    let sun2_direction = Vec3::new(-1.4, -1.0, 1.25).normalize();
-    let sun2_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun2_direction);
+    let point_position = Vec3::new(3.5, 3.0, 2.5);
+    world.spawn((
+        crate::scene::components::Name::new("Default Point Light"),
+        TransformComponent(Transform::from_trs(
+            point_position,
+            Quat::IDENTITY,
+            Vec3::ONE,
+        )),
+        PointLight {
+            color: Vec3::new(1.0, 0.96, 0.85),
+            intensity: 420.0,
+            range: 14.0,
+        },
+        CanCastShadow(true),
+    ));
+    created += 1;
+
+    let spot_position = Vec3::new(-4.0, 5.0, -3.0);
+    let spot_target = Vec3::new(0.0, 1.0, 0.0);
+    let spot_direction = (spot_target - spot_position).normalize();
+    let spot_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, spot_direction);
 
     world.spawn((
-        crate::scene::components::Name::new("Default Sky Light"),
-        TransformComponent(Transform::from_trs(Vec3::ZERO, sun2_rotation, Vec3::ONE)),
-        DirectionalLight::new(Vec3::new(0.9, 0.95, 0.5), 2.5),
+        crate::scene::components::Name::new("Default Spot Light"),
+        TransformComponent(Transform::from_trs(spot_position, spot_rotation, Vec3::ONE)),
+        SpotLight {
+            color: Vec3::new(0.8, 0.9, 1.0),
+            intensity: 18.0,
+            inner_angle: 0.35,
+            outer_angle: 0.6,
+            range: 22.0,
+        },
         CanCastShadow(true),
     ));
     created += 1;

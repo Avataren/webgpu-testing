@@ -472,10 +472,15 @@ impl Scene {
         renderer: &mut Renderer,
         batcher: &mut RenderBatcher,
         custom_render: &mut Option<CustomRenderRequest<'_>>,
+        gizmos_enabled: bool,
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         batcher.clear();
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);
-        let gizmo_resources = self.ensure_gizmo_resources(renderer);
+        let gizmo_resources = if gizmos_enabled {
+            Some(self.ensure_gizmo_resources(renderer))
+        } else {
+            None
+        };
 
         for node in self.nodes_iter() {
             let world = node.instance().world();
@@ -486,10 +491,12 @@ impl Scene {
                 batcher.add(object);
             }
 
-            for gizmo in
-                gizmos::build_light_gizmos(world, camera_vectors, world_transform, gizmo_resources)
-            {
-                batcher.add(gizmo);
+            if let Some(resources) = gizmo_resources {
+                for gizmo in
+                    gizmos::build_light_gizmos(world, camera_vectors, world_transform, resources)
+                {
+                    batcher.add(gizmo);
+                }
             }
         }
 
@@ -1153,7 +1160,7 @@ mod tests {
     fn snapshot_restores_default_lighting() {
         let mut scene = Scene::new();
         assert!(!scene.has_any_lights());
-        assert!(scene.add_default_lighting() > 0);
+        assert_eq!(scene.add_default_lighting(), 3);
         assert!(scene.has_any_lights());
 
         let tree = scene.export_tree_asset("SnapshotTest");

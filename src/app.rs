@@ -224,6 +224,8 @@ impl AppBuilder {
             settings: self.settings,
             runtime_mode: RuntimeMode::Editor,
             runtime_state: RuntimeStateHandle::new(),
+            gizmos_enabled: true,
+            editor_gizmos_enabled: true,
             editor_snapshot: None,
             #[cfg(target_arch = "wasm32")]
             pending_renderer: None,
@@ -297,6 +299,8 @@ pub struct App {
     scene: Scene,
     runtime_mode: RuntimeMode,
     runtime_state: RuntimeStateHandle,
+    gizmos_enabled: bool,
+    editor_gizmos_enabled: bool,
     editor_snapshot: Option<SceneSnapshot>,
     renderer: Option<Renderer>,
     custom_render_callback: Option<Box<CustomRenderCallback>>,
@@ -441,6 +445,7 @@ impl App {
         self.scene.set_animation_playback(true);
         self.scene.set_time(0.0);
         self.scene.init_timer();
+        self.gizmos_enabled = false;
         self.runtime_mode = RuntimeMode::Playing;
     }
 
@@ -471,6 +476,7 @@ impl App {
             }
         }
 
+        self.gizmos_enabled = self.editor_gizmos_enabled;
         self.runtime_mode = RuntimeMode::Editor;
     }
 
@@ -841,9 +847,12 @@ impl App {
             renderer.set_render_region(render_region);
         }
 
-        let render_frame =
-            self.scene
-                .render(renderer, &mut self.batcher, &mut custom_render_request)?;
+        let render_frame = self.scene.render(
+            renderer,
+            &mut self.batcher,
+            &mut custom_render_request,
+            self.gizmos_enabled,
+        )?;
 
         #[cfg(feature = "egui")]
         {
@@ -1079,6 +1088,15 @@ impl ApplicationHandler for App {
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => {
                     event_loop.exit();
+                }
+                Key::Character(c) if c.as_str().eq_ignore_ascii_case("g") => {
+                    if self.runtime_mode == RuntimeMode::Editor {
+                        self.editor_gizmos_enabled = !self.editor_gizmos_enabled;
+                    }
+                    self.gizmos_enabled = match self.runtime_mode {
+                        RuntimeMode::Editor => self.editor_gizmos_enabled,
+                        RuntimeMode::Playing => false,
+                    };
                 }
                 Key::Character(c) if c.as_str() == "h" => {
                     self.debug_print_hierarchy();

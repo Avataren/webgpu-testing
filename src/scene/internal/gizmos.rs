@@ -2,7 +2,7 @@ use super::lights::{resolve_light_transform, safe_normalize};
 use super::rendering::{apply_billboard_transform, CameraVectors};
 use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
-use crate::renderer::primitives::{cone_mesh, cube_mesh, quad_mesh, sphere_mesh};
+use crate::renderer::primitives::{cone_mesh, cylinder_mesh, quad_mesh, sphere_mesh};
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{
     Billboard, BillboardOrientation, DepthState, DirectionalLight, PointLight, SpotLight,
@@ -17,7 +17,7 @@ pub(crate) struct GizmoResources {
     pub quad: Handle<Mesh>,
     pub sphere: Handle<Mesh>,
     pub cone: Handle<Mesh>,
-    pub cube: Handle<Mesh>,
+    pub cylinder: Handle<Mesh>,
 }
 
 const POINT_SPRITE_COLOR: [u8; 4] = [255, 226, 120, 255];
@@ -26,36 +26,33 @@ const DIRECTIONAL_SPRITE_COLOR: [u8; 4] = [140, 180, 255, 255];
 const POINT_VOLUME_COLOR: [u8; 4] = [255, 226, 120, 72];
 const SPOT_VOLUME_COLOR: [u8; 4] = [120, 220, 255, 72];
 const DIRECTIONAL_SHAFT_COLOR: [u8; 4] = [140, 180, 255, 160];
-const DIRECTIONAL_HEAD_COLOR: [u8; 4] = [140, 180, 255, 200];
 
 const BILLBOARD_SCALE: f32 = 0.65;
 const DIRECTIONAL_SHAFT_LENGTH: f32 = 2.25;
-const DIRECTIONAL_SHAFT_THICKNESS: f32 = 0.08;
-const DIRECTIONAL_HEAD_LENGTH: f32 = 0.45;
-const DIRECTIONAL_HEAD_RADIUS: f32 = 0.28;
+const DIRECTIONAL_SHAFT_RADIUS: f32 = 0.12;
 
 pub(crate) fn create_resources(renderer: &Renderer, assets: &mut Assets) -> GizmoResources {
     let (quad_vertices, quad_indices) = quad_mesh();
     let quad_mesh = renderer.create_mesh(&quad_vertices, &quad_indices);
     let quad = assets.meshes.insert(quad_mesh);
 
-    let (sphere_vertices, sphere_indices) = sphere_mesh(16, 16);
+    let (sphere_vertices, sphere_indices) = sphere_mesh(12, 8);
     let sphere_mesh = renderer.create_mesh(&sphere_vertices, &sphere_indices);
     let sphere = assets.meshes.insert(sphere_mesh);
 
-    let (cone_vertices, cone_indices) = cone_mesh(24);
+    let (cone_vertices, cone_indices) = cone_mesh(16);
     let cone_mesh = renderer.create_mesh(&cone_vertices, &cone_indices);
     let cone = assets.meshes.insert(cone_mesh);
 
-    let (cube_vertices, cube_indices) = cube_mesh();
-    let cube_mesh = renderer.create_mesh(&cube_vertices, &cube_indices);
-    let cube = assets.meshes.insert(cube_mesh);
+    let (cylinder_vertices, cylinder_indices) = cylinder_mesh(16);
+    let cylinder_mesh = renderer.create_mesh(&cylinder_vertices, &cylinder_indices);
+    let cylinder = assets.meshes.insert(cylinder_mesh);
 
     GizmoResources {
         quad,
         sphere,
         cone,
-        cube,
+        cylinder,
     }
 }
 
@@ -131,7 +128,7 @@ fn build_point_light_gizmos(
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
-            cull_mode: CullMode::Front,
+            cull_mode: CullMode::None,
         });
     }
 }
@@ -197,7 +194,7 @@ fn build_spot_light_gizmos(
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
-            cull_mode: CullMode::Front,
+            cull_mode: CullMode::None,
         });
     }
 }
@@ -246,14 +243,14 @@ fn build_directional_light_gizmos(
         let shaft_rotation = align_vector(Vec3::Z, direction);
         let shaft_translation = position + direction * (DIRECTIONAL_SHAFT_LENGTH * 0.5);
         output.push(RenderObject {
-            mesh: resources.cube,
+            mesh: resources.cylinder,
             material: volume_material(DIRECTIONAL_SHAFT_COLOR),
             transform: Transform::from_trs(
                 shaft_translation,
                 shaft_rotation,
                 Vec3::new(
-                    DIRECTIONAL_SHAFT_THICKNESS,
-                    DIRECTIONAL_SHAFT_THICKNESS,
+                    DIRECTIONAL_SHAFT_RADIUS,
+                    DIRECTIONAL_SHAFT_RADIUS,
                     DIRECTIONAL_SHAFT_LENGTH,
                 ),
             ),
@@ -262,29 +259,7 @@ fn build_directional_light_gizmos(
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
-            cull_mode: CullMode::Back,
-        });
-
-        let head_rotation = align_vector(Vec3::NEG_Z, direction);
-        let head_apex = position + direction * (DIRECTIONAL_SHAFT_LENGTH + DIRECTIONAL_HEAD_LENGTH);
-        output.push(RenderObject {
-            mesh: resources.cone,
-            material: volume_material(DIRECTIONAL_HEAD_COLOR),
-            transform: Transform::from_trs(
-                head_apex,
-                head_rotation,
-                Vec3::new(
-                    DIRECTIONAL_HEAD_RADIUS,
-                    DIRECTIONAL_HEAD_RADIUS,
-                    DIRECTIONAL_HEAD_LENGTH,
-                ),
-            ),
-            depth_state: DepthState::new(false, false),
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::Back,
+            cull_mode: CullMode::None,
         });
     }
 }
