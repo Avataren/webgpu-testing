@@ -22,7 +22,7 @@ struct RgbaTextureSource<'a> {
     label: Option<&'a str>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,

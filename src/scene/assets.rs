@@ -11,9 +11,11 @@ use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
+use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SerializedAnimationOutput {
@@ -271,6 +273,10 @@ impl SceneAsset {
                 builder.add(GltfMaterial(gltf_mat));
             }
 
+            if let Some(script) = &entity.script {
+                builder.add(script.clone().into_component());
+            }
+
             let entity_id = instance.world_mut().spawn(builder.build());
             entity_map.push(entity_id);
         }
@@ -456,6 +462,60 @@ pub struct SceneAssetEntity {
     pub children: Vec<usize>,
     pub gltf_node: Option<usize>,
     pub gltf_material: Option<usize>,
+    #[serde(default)]
+    pub script: Option<SerializedRuneScript>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SerializedRuneScriptSource {
+    Inline { name: String, source: String },
+    File { path: PathBuf },
+}
+
+impl From<&RuneScriptSource> for SerializedRuneScriptSource {
+    fn from(source: &RuneScriptSource) -> Self {
+        match source {
+            RuneScriptSource::Inline { name, source } => Self::Inline {
+                name: name.to_string(),
+                source: source.to_string(),
+            },
+            RuneScriptSource::File { path } => Self::File { path: path.clone() },
+        }
+    }
+}
+
+impl From<SerializedRuneScriptSource> for RuneScriptSource {
+    fn from(serialized: SerializedRuneScriptSource) -> Self {
+        match serialized {
+            SerializedRuneScriptSource::Inline { name, source } => {
+                RuneScriptSource::inline(name, source)
+            }
+            SerializedRuneScriptSource::File { path } => RuneScriptSource::file(path),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedRuneScript {
+    pub source: SerializedRuneScriptSource,
+    pub created_called: bool,
+}
+
+impl From<&RuneScriptComponent> for SerializedRuneScript {
+    fn from(component: &RuneScriptComponent) -> Self {
+        Self {
+            source: SerializedRuneScriptSource::from(component.source()),
+            created_called: component.created_called(),
+        }
+    }
+}
+
+impl SerializedRuneScript {
+    fn into_component(self) -> RuneScriptComponent {
+        let mut component = RuneScriptComponent::new(self.source.into());
+        component.set_created_called(self.created_called);
+        component
+    }
 }
 
 impl SceneAssetEntity {
@@ -508,6 +568,10 @@ impl SceneAssetEntity {
 
         let gltf_node = world.get::<&GltfNode>(entity).ok().map(|node| node.0);
         let gltf_material = world.get::<&GltfMaterial>(entity).ok().map(|mat| mat.0);
+        let script = world
+            .get::<&RuneScriptComponent>(entity)
+            .ok()
+            .map(|component| SerializedRuneScript::from(&*component));
 
         Self {
             name,
@@ -520,6 +584,7 @@ impl SceneAssetEntity {
             children,
             gltf_node,
             gltf_material,
+            script,
         }
     }
 }
@@ -535,6 +600,7 @@ pub struct SceneAssetEntityBuilder {
     children: Vec<usize>,
     gltf_node: Option<usize>,
     gltf_material: Option<usize>,
+    script: Option<SerializedRuneScript>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -550,6 +616,7 @@ impl SceneAssetEntityBuilder {
             children: Vec::new(),
             gltf_node: None,
             gltf_material: None,
+            script: None,
         }
     }
 
@@ -601,6 +668,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_script(mut self, script: SerializedRuneScript) -> Self {
+        self.script = Some(script);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -613,6 +685,7 @@ impl SceneAssetEntityBuilder {
             children: self.children,
             gltf_node: self.gltf_node,
             gltf_material: self.gltf_material,
+            script: self.script,
         }
     }
 }

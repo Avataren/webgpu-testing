@@ -1,5 +1,6 @@
 use super::Handle;
 
+#[derive(Default)]
 pub struct AssetCache<T> {
     items: Vec<T>,
 }
@@ -36,8 +37,10 @@ impl<T> AssetCache<T> {
     }
 }
 
-impl<T> Default for AssetCache<T> {
-    fn default() -> Self {
-        Self::new()
+impl<T: Clone> Clone for AssetCache<T> {
+    fn clone(&self) -> Self {
+        Self {
+            items: self.items.clone(),
+        }
     }
 }

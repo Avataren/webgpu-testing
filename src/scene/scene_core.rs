@@ -16,6 +16,54 @@ use crate::time::Instant;
 use hecs::World;
 use log::{error, warn};
 use std::collections::HashMap;
+
+#[derive(Clone)]
+pub(crate) struct SceneSnapshot {
+    assets: Assets,
+    environment: Environment,
+    camera: Camera,
+    time: f64,
+    tree: SceneTreeAsset,
+    main_scene_path: Vec<usize>,
+}
+
+impl SceneSnapshot {
+    pub(crate) fn capture(scene: &Scene) -> Self {
+        let assets = scene.assets.clone();
+        let environment = scene.environment().clone();
+        let camera = *scene.camera();
+        let time = scene.time();
+        let tree = scene.export_tree_asset("SceneSnapshot");
+        let main_scene_path = scene.path_from_root(scene.main_scene());
+
+        Self {
+            assets,
+            environment,
+            camera,
+            time,
+            tree,
+            main_scene_path,
+        }
+    }
+
+    pub(crate) fn into_scene(self) -> Scene {
+        let mut scene = Scene::new();
+        scene.replace_assets(self.assets);
+        scene.set_environment(self.environment);
+        scene.set_camera(self.camera);
+        scene.set_time(self.time);
+
+        let _ = scene.instantiate_tree_asset(&self.tree, None);
+
+        if let Some(main) = scene.node_from_path(&self.main_scene_path) {
+            scene.set_main_scene(main);
+        }
+
+        scene.propagate_transforms();
+
+        scene
+    }
+}
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
@@ -155,6 +203,10 @@ impl Scene {
         self.time
     }
 
+    pub(crate) fn set_time(&mut self, time: f64) {
+        self.time = time;
+    }
+
     pub fn last_frame(&self) -> Instant {
         self.last_frame
             .expect("Scene timer not initialized - call init_timer() first")
@@ -190,6 +242,10 @@ impl Scene {
 
     pub fn set_environment(&mut self, environment: Environment) {
         self.environment = environment;
+    }
+
+    pub(crate) fn replace_assets(&mut self, assets: Assets) {
+        self.assets = assets;
     }
 
     pub fn node_animations(&self, node: SceneNodeId) -> &[AnimationClip] {
@@ -274,6 +330,42 @@ impl Scene {
         } else {
             error!("Rune scripting error: main scene node is missing");
         }
+    }
+
+    pub(crate) fn path_from_root(&self, mut node: SceneNodeId) -> Vec<usize> {
+        let mut path = Vec::new();
+        while let Some(parent) = self.node_parent(node) {
+            let parent_node = self.node(parent);
+            if let Some(index) = parent_node
+                .children()
+                .iter()
+                .position(|&child| child == node)
+            {
+                path.push(index);
+            } else {
+                break;
+            }
+
+            node = parent;
+
+            if parent == self.root {
+                break;
+            }
+        }
+
+        path.reverse();
+        path
+    }
+
+    pub(crate) fn node_from_path(&self, path: &[usize]) -> Option<SceneNodeId> {
+        let mut current = self.root;
+        for &index in path {
+            let children = self.node(current).children();
+            let next = *children.get(index)?;
+            current = next;
+        }
+
+        Some(current)
     }
 
     fn update_world_transforms(&mut self) {

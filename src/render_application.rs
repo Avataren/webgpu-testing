@@ -1,6 +1,8 @@
 // src/render_application.rs
 // Complete fix to make custom_render work
 
+#[cfg(feature = "egui")]
+use crate::app::RuntimeStateHandle;
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
 
 use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
@@ -57,6 +59,11 @@ pub trait RenderApplication: Sized + 'static {
     #[cfg(feature = "egui")]
     fn show_default_ui(&self) -> bool {
         true
+    }
+
+    #[cfg(feature = "egui")]
+    fn install_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
+        let _ = handle;
     }
 
     /// Return the UI style to use. Override this to customize appearance.
@@ -205,6 +212,14 @@ where
 
     let mut app = builder.build();
 
+    #[cfg(feature = "egui")]
+    {
+        let runtime_handle = app.runtime_state_handle();
+        app_rc
+            .borrow_mut()
+            .install_runtime_state_handle(runtime_handle.clone());
+    }
+
     // Install custom render callback
     {
         let stage = app_rc.borrow().custom_render_stage();
@@ -309,6 +324,14 @@ where
 
     #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
     let mut app = builder.build();
+
+    #[cfg(feature = "egui")]
+    {
+        let runtime_handle = app.runtime_state_handle();
+        app_rc
+            .borrow_mut()
+            .install_runtime_state_handle(runtime_handle.clone());
+    }
 
     // Install custom render callback
     {

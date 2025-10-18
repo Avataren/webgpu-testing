@@ -22,6 +22,7 @@ pub use camera::Camera;
 pub use graph::SceneNodeId;
 pub use loader::SceneLoader;
 pub use scene_core::Scene;
+pub(crate) use scene_core::SceneSnapshot;
 pub use transform::Transform;
 
 // Re-export all components

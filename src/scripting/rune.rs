@@ -192,6 +192,7 @@ impl RuneScriptingRuntime {
 }
 
 /// Component that attaches a Rune script to an entity.
+#[derive(Clone)]
 pub struct RuneScriptComponent {
     source: RuneScriptSource,
     created_called: bool,
@@ -223,12 +224,16 @@ impl RuneScriptComponent {
         &self.source
     }
 
-    fn mark_created(&mut self) {
+    pub fn mark_created(&mut self) {
         self.created_called = true;
     }
 
-    fn created_called(&self) -> bool {
+    pub fn created_called(&self) -> bool {
         self.created_called
+    }
+
+    pub fn set_created_called(&mut self, called: bool) {
+        self.created_called = called;
     }
 }
 
