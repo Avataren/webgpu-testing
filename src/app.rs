@@ -438,6 +438,7 @@ impl App {
         let snapshot = SceneSnapshot::capture(&self.scene);
         self.editor_snapshot = Some(snapshot);
         self.scene.reset_script_runtime();
+        self.scene.set_animation_playback(true);
         self.scene.set_time(0.0);
         self.scene.init_timer();
         self.runtime_mode = RuntimeMode::Playing;
@@ -452,6 +453,8 @@ impl App {
             self.scene = snapshot.into_scene();
             self.scene.init_timer();
             self.scene.reset_script_runtime();
+            self.scene.set_animation_playback(false);
+            self.scene.update(0.0);
             if !self.scene.has_any_lights() {
                 self.scene.add_default_lighting();
             }
@@ -632,6 +635,7 @@ impl App {
         }
 
         log::info!("Running initial transform propagation...");
+        self.scene.set_animation_playback(false);
         self.scene.update(0.0);
         log::info!("Initial propagation complete");
 

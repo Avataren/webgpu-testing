@@ -163,6 +163,11 @@ impl EditorApplication {
                 .with_script(script_source);
             builder.spawn();
         }
+
+        if matches!(ctx.runtime, RuntimeMode::Editor) {
+            ctx.scene.set_animation_playback(false);
+            ctx.scene.update(0.0);
+        }
     }
 
     fn sync_selection_component(&mut self, ctx: &mut UpdateContext) {

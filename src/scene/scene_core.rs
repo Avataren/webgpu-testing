@@ -241,6 +241,18 @@ impl Scene {
         self.scripting_mut().reset_runtime();
     }
 
+    pub fn set_animation_playback(&mut self, playing: bool) {
+        for node in self.nodes_iter_mut() {
+            let states = node.instance_mut().animation_states_mut();
+            for state in states {
+                state.playing = playing;
+                if !playing {
+                    state.time = 0.0;
+                }
+            }
+        }
+    }
+
     pub fn time(&self) -> f64 {
         self.time
     }
@@ -1090,6 +1102,23 @@ mod tests {
         }
 
         assert!(rotated_again, "script did not rerun after reset");
+    }
+
+    #[test]
+    fn set_animation_playback_toggles_states() {
+        let mut scene = Scene::new();
+        let clip_index = scene.add_animation_clip(AnimationClip::new("TestClip"));
+        let state_index = scene.play_animation(clip_index, true).expect("state");
+        assert_eq!(state_index, 0);
+        assert!(scene.animation_states()[state_index].playing);
+
+        scene.set_animation_playback(false);
+        let states = scene.animation_states();
+        assert!(!states[state_index].playing);
+        assert_eq!(states[state_index].time, 0.0);
+
+        scene.set_animation_playback(true);
+        assert!(scene.animation_states()[state_index].playing);
     }
 
     #[test]

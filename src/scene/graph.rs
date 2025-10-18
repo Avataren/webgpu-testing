@@ -151,6 +151,10 @@ impl SceneInstance {
         &self.animation_states
     }
 
+    pub(crate) fn animation_states_mut(&mut self) -> &mut [AnimationState] {
+        &mut self.animation_states
+    }
+
     pub(crate) fn set_animation_data(
         &mut self,
         animations: Vec<AnimationClip>,

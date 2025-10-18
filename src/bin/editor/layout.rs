@@ -168,7 +168,7 @@ fn show_viewport(
 
     if !active {
         viewport.clear();
-        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(16));
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
     }
 
     painter.rect_stroke(
