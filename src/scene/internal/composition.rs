@@ -1,6 +1,6 @@
 use crate::scene::components::{
-    Children, GltfMaterial, GltfNode, MaterialComponent, MeshComponent, Name, OrbitAnimation,
-    Parent, RotateAnimation, TransformComponent, Visible, WorldTransform,
+    Children, GltfMaterial, GltfNode, MaterialComponent, MeshBounds, MeshComponent, Name,
+    OrbitAnimation, Parent, RotateAnimation, TransformComponent, Visible, WorldTransform,
 };
 use hecs::World;
 use std::collections::HashMap;
@@ -30,6 +30,9 @@ pub(crate) fn merge_world_as_child(
         }
         if let Ok(mesh) = source_world.get::<&MeshComponent>(old_entity) {
             builder.add(*mesh);
+        }
+        if let Ok(bounds) = source_world.get::<&MeshBounds>(old_entity) {
+            builder.add(*bounds);
         }
         if let Ok(material) = source_world.get::<&MaterialComponent>(old_entity) {
             builder.add(*material);

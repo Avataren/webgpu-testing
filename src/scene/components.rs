@@ -3,7 +3,7 @@
 
 use crate::asset::Handle;
 use crate::asset::Mesh;
-use crate::renderer::Material;
+use crate::renderer::{Material, Vertex};
 use crate::scene::Transform;
 use glam::Vec3;
 
@@ -104,6 +104,36 @@ pub struct WorldTransform(pub Transform);
 /// Mesh component
 #[derive(Debug, Clone, Copy)]
 pub struct MeshComponent(pub Handle<Mesh>);
+
+/// Axis-aligned bounding box for a mesh in local space.
+#[derive(Debug, Clone, Copy)]
+pub struct MeshBounds {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl MeshBounds {
+    pub fn new(min: Vec3, max: Vec3) -> Self {
+        Self { min, max }
+    }
+
+    pub fn from_vertices(vertices: &[Vertex]) -> Option<Self> {
+        if vertices.is_empty() {
+            return None;
+        }
+
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+
+        for vertex in vertices {
+            let pos = Vec3::from_array(vertex.pos);
+            min = min.min(pos);
+            max = max.max(pos);
+        }
+
+        Some(Self { min, max })
+    }
+}
 
 /// Material component
 #[derive(Debug, Clone, Copy)]

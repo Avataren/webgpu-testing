@@ -44,6 +44,10 @@ impl EditorCameraController {
         }
     }
 
+    pub fn is_looking(&self) -> bool {
+        self.looking
+    }
+
     pub fn capture_input(&mut self, ctx: &egui::Context) {
         let viewport_rect = self.viewport_rect;
         let wants_keyboard = ctx.wants_keyboard_input();

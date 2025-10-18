@@ -3,7 +3,7 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    Children, GltfMaterial, GltfNode, MaterialComponent, MeshComponent, Name, Parent,
+    Children, GltfMaterial, GltfNode, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
     TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
@@ -255,6 +255,10 @@ impl SceneAsset {
                 builder.add(MeshComponent(Handle::new(mesh)));
             }
 
+            if let Some(bounds) = entity.mesh_bounds {
+                builder.add(MeshBounds::from(bounds));
+            }
+
             if let Some(material) = &entity.material {
                 builder.add(MaterialComponent(material.clone().into()));
             }
@@ -445,6 +449,8 @@ pub struct SceneAssetEntity {
     pub transform: SerializedTransform,
     pub visible: bool,
     pub mesh_handle: Option<usize>,
+    #[serde(default)]
+    pub mesh_bounds: Option<SerializedMeshBounds>,
     pub material: Option<SerializedMaterial>,
     pub parent: Option<usize>,
     pub children: Vec<usize>,
@@ -474,6 +480,10 @@ impl SceneAssetEntity {
             .get::<&MeshComponent>(entity)
             .ok()
             .map(|m| m.0.index());
+        let mesh_bounds = world
+            .get::<&MeshBounds>(entity)
+            .ok()
+            .map(|bounds| SerializedMeshBounds::from(*bounds));
         let material = world
             .get::<&MaterialComponent>(entity)
             .ok()
@@ -504,6 +514,7 @@ impl SceneAssetEntity {
             transform,
             visible,
             mesh_handle,
+            mesh_bounds,
             material,
             parent,
             children,
@@ -518,6 +529,7 @@ pub struct SceneAssetEntityBuilder {
     transform: SerializedTransform,
     visible: bool,
     mesh_handle: Option<usize>,
+    mesh_bounds: Option<SerializedMeshBounds>,
     material: Option<SerializedMaterial>,
     parent: Option<usize>,
     children: Vec<usize>,
@@ -532,6 +544,7 @@ impl SceneAssetEntityBuilder {
             transform,
             visible: true,
             mesh_handle: None,
+            mesh_bounds: None,
             material: None,
             parent: None,
             children: Vec::new(),
@@ -552,6 +565,11 @@ impl SceneAssetEntityBuilder {
 
     pub fn with_mesh_handle(mut self, handle: usize) -> Self {
         self.mesh_handle = Some(handle);
+        self
+    }
+
+    pub fn with_mesh_bounds(mut self, bounds: SerializedMeshBounds) -> Self {
+        self.mesh_bounds = Some(bounds);
         self
     }
 
@@ -589,12 +607,37 @@ impl SceneAssetEntityBuilder {
             transform: self.transform,
             visible: self.visible,
             mesh_handle: self.mesh_handle,
+            mesh_bounds: self.mesh_bounds,
             material: self.material,
             parent: self.parent,
             children: self.children,
             gltf_node: self.gltf_node,
             gltf_material: self.gltf_material,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SerializedMeshBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl From<MeshBounds> for SerializedMeshBounds {
+    fn from(bounds: MeshBounds) -> Self {
+        Self {
+            min: bounds.min.to_array(),
+            max: bounds.max.to_array(),
+        }
+    }
+}
+
+impl From<SerializedMeshBounds> for MeshBounds {
+    fn from(serialized: SerializedMeshBounds) -> Self {
+        MeshBounds::new(
+            glam::Vec3::from_array(serialized.min),
+            glam::Vec3::from_array(serialized.max),
+        )
     }
 }
 

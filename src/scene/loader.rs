@@ -26,6 +26,13 @@ struct MaterialPointerTarget {
     property: MaterialProperty,
 }
 
+#[derive(Clone, Copy)]
+struct PrimitiveMesh {
+    handle: Handle<Mesh>,
+    material_index: Option<usize>,
+    bounds: MeshBounds,
+}
+
 type GltfImport = (
     gltf::Document,
     Vec<gltf::buffer::Data>,
@@ -99,7 +106,7 @@ impl SceneLoader {
     fn load_node(
         node: &gltf::Node,
         parent: Option<hecs::Entity>,
-        mesh_handles: &[Vec<(Handle<Mesh>, Option<usize>)>],
+        mesh_handles: &[Vec<PrimitiveMesh>],
         materials: &[Material],
         world: &mut hecs::World,
         scale_multiplier: f32,
@@ -153,7 +160,7 @@ impl SceneLoader {
         // Handle mesh primitives
         // The first primitive is added to this entity
         // Additional primitives become child entities
-        let mut extra_primitives: Vec<(Handle<Mesh>, Option<usize>)> = Vec::new();
+        let mut extra_primitives: Vec<PrimitiveMesh> = Vec::new();
 
         if let Some(gltf_mesh) = node.mesh() {
             log::debug!(
@@ -164,16 +171,17 @@ impl SceneLoader {
             if let Some(primitives) = mesh_handles.get(gltf_mesh.index()) {
                 if !primitives.is_empty() {
                     // Add first primitive to this entity
-                    let (mesh_handle, material_index) = primitives[0];
-                    entity_builder.add(MeshComponent(mesh_handle));
+                    let primitive = primitives[0];
+                    entity_builder.add(MeshComponent(primitive.handle));
+                    entity_builder.add(primitive.bounds);
 
-                    let material = if let Some(mat_idx) = material_index {
+                    let material = if let Some(mat_idx) = primitive.material_index {
                         materials.get(mat_idx).copied().unwrap_or(Material::pbr())
                     } else {
                         Material::pbr()
                     };
                     entity_builder.add(MaterialComponent(material));
-                    if let Some(mat_idx) = material_index {
+                    if let Some(mat_idx) = primitive.material_index {
                         entity_builder.add(GltfMaterial(mat_idx));
                     }
 
@@ -201,8 +209,7 @@ impl SceneLoader {
         let mut children = Vec::new();
 
         // Spawn extra mesh primitives as child entities
-        for (primitive_index, (mesh_handle, material_index)) in
-            extra_primitives.into_iter().enumerate()
+        for (primitive_index, primitive) in extra_primitives.into_iter().enumerate()
         {
             let primitive_name = format!("{}_Primitive_{}", node_name, primitive_index + 1);
             log::debug!("  Creating extra primitive: {}", primitive_name);
@@ -214,15 +221,16 @@ impl SceneLoader {
             primitive_builder.add(TransformComponent(Transform::IDENTITY));
             primitive_builder.add(Visible(true));
             primitive_builder.add(Parent(entity));
-            primitive_builder.add(MeshComponent(mesh_handle));
+            primitive_builder.add(MeshComponent(primitive.handle));
+            primitive_builder.add(primitive.bounds);
 
-            let material = if let Some(mat_idx) = material_index {
+            let material = if let Some(mat_idx) = primitive.material_index {
                 materials.get(mat_idx).copied().unwrap_or(Material::pbr())
             } else {
                 Material::pbr()
             };
             primitive_builder.add(MaterialComponent(material));
-            if let Some(mat_idx) = material_index {
+            if let Some(mat_idx) = primitive.material_index {
                 primitive_builder.add(GltfMaterial(mat_idx));
             }
 
@@ -301,10 +309,9 @@ impl SceneLoader {
         // Load all meshes (each mesh can have multiple primitives)
         log::info!("Loading meshes...");
         let mesh_count = document.meshes().len();
-        let mut mesh_handles: Vec<Vec<(Handle<Mesh>, Option<usize>)>> =
-            vec![Vec::new(); mesh_count];
+        let mut mesh_handles: Vec<Vec<PrimitiveMesh>> = vec![Vec::new(); mesh_count];
 
-        let mut mesh_cache: HashMap<Vec<u8>, Handle<Mesh>> = HashMap::new();
+        let mut mesh_cache: HashMap<Vec<u8>, (Handle<Mesh>, MeshBounds)> = HashMap::new();
 
         for gltf_mesh in document.meshes() {
             let mesh_index = gltf_mesh.index();
@@ -321,7 +328,7 @@ impl SceneLoader {
             let primitives = &mut mesh_handles[mesh_index];
 
             for primitive in gltf_mesh.primitives() {
-                let handle = Self::load_primitive(
+                let (handle, bounds) = Self::load_primitive(
                     &primitive,
                     &buffers,
                     scene,
@@ -329,7 +336,11 @@ impl SceneLoader {
                     scale,
                     &mut mesh_cache,
                 )?;
-                primitives.push((handle, primitive.material().index()));
+                primitives.push(PrimitiveMesh {
+                    handle,
+                    material_index: primitive.material().index(),
+                    bounds,
+                });
             }
         }
         log::info!("Loaded {} meshes", mesh_count);
@@ -1195,8 +1206,8 @@ impl SceneLoader {
         scene: &mut Scene,
         renderer: &mut Renderer,
         scale_multiplier: f32,
-        mesh_cache: &mut HashMap<Vec<u8>, Handle<Mesh>>,
-    ) -> Result<Handle<Mesh>, String> {
+        mesh_cache: &mut HashMap<Vec<u8>, (Handle<Mesh>, MeshBounds)>,
+    ) -> Result<(Handle<Mesh>, MeshBounds), String> {
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
         // Read vertex data
@@ -1260,6 +1271,9 @@ impl SceneLoader {
             })
             .collect::<Vec<_>>();
 
+        let bounds = MeshBounds::from_vertices(&vertices)
+            .ok_or_else(|| "Primitive has no vertex positions".to_string())?;
+
         let mut signature = Vec::with_capacity(
             vertices.len() * std::mem::size_of::<Vertex>()
                 + indices.len() * std::mem::size_of::<u32>(),
@@ -1274,9 +1288,9 @@ impl SceneLoader {
         // Create mesh and store in assets
         let mesh = renderer.create_mesh(&vertices, &indices);
         let handle = scene.assets.meshes.insert(mesh);
-        mesh_cache.insert(signature, handle);
+        mesh_cache.insert(signature, (handle, bounds));
 
-        Ok(handle)
+        Ok((handle, bounds))
     }
 }
 

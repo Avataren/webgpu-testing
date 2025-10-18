@@ -234,6 +234,10 @@ impl SceneHierarchyWindow {
         })
     }
 
+    pub fn set_selected_entity(&mut self, entity: Option<Entity>) {
+        self.selected = entity;
+    }
+
     fn panel_contents(&mut self, ui: &mut egui::Ui) {
         let Some((revision, snapshot)) = self.snapshot() else {
             ui.label("Scene hierarchy unavailable.");
