@@ -4,6 +4,10 @@ var depth_texture : texture_depth_2d;
 var noise_texture : texture_2d<f32>;
 @group(1) @binding(2)
 var noise_sampler : sampler;
+@group(1) @binding(3)
+var normal_texture : texture_2d<f32>;
+@group(1) @binding(4)
+var world_position_texture : texture_2d<f32>;
 
 fn fetch_depth(uv : vec2<f32>) -> f32 {
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
@@ -16,56 +20,30 @@ fn fetch_depth(uv : vec2<f32>) -> f32 {
     return textureLoad(depth_texture, coord, 0);
 }
 
-fn view_normal(uv : vec2<f32>, view_pos : vec3<f32>) -> vec3<f32> {
-    let texel_viewport = viewport_texel_size();
-    let texel_scene = scene_texel_size();
-    let scene_uv = viewport_to_scene_uv(uv);
+fn fetch_normal(scene_uv : vec2<f32>) -> vec3<f32> {
+    let tex_size = vec2<f32>(textureDimensions(normal_texture, 0));
+    if (tex_size.x <= 0.0 || tex_size.y <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
+    let clamped_uv = clamp(scene_uv, vec2<f32>(0.0), max_uv);
+    let coord = vec2<i32>(clamped_uv * tex_size);
+    let sample = textureLoad(normal_texture, coord, 0).xyz;
+    if (dot(sample, sample) < 1e-6) {
+        return vec3<f32>(0.0, 0.0, 1.0);
+    }
+    return normalize(sample);
+}
 
-    let depth_left = fetch_depth(scene_uv - vec2<f32>(texel_scene.x, 0.0));
-    let depth_right = fetch_depth(scene_uv + vec2<f32>(texel_scene.x, 0.0));
-    let depth_down = fetch_depth(scene_uv - vec2<f32>(0.0, texel_scene.y));
-    let depth_up = fetch_depth(scene_uv + vec2<f32>(0.0, texel_scene.y));
-
-    var pos_left = view_pos;
-    if (depth_left < 1.0) {
-        pos_left = reconstruct_view_position(uv - vec2<f32>(texel_viewport.x, 0.0), depth_left);
+fn fetch_world_position(scene_uv : vec2<f32>) -> vec3<f32> {
+    let tex_size = vec2<f32>(textureDimensions(world_position_texture, 0));
+    if (tex_size.x <= 0.0 || tex_size.y <= 0.0) {
+        return vec3<f32>(0.0, 0.0, 0.0);
     }
-
-    var pos_right = view_pos;
-    if (depth_right < 1.0) {
-        pos_right = reconstruct_view_position(uv + vec2<f32>(texel_viewport.x, 0.0), depth_right);
-    }
-
-    var pos_down = view_pos;
-    if (depth_down < 1.0) {
-        pos_down = reconstruct_view_position(uv - vec2<f32>(0.0, texel_viewport.y), depth_down);
-    }
-
-    var pos_up = view_pos;
-    if (depth_up < 1.0) {
-        pos_up = reconstruct_view_position(uv + vec2<f32>(0.0, texel_viewport.y), depth_up);
-    }
-
-    var dx = pos_right - pos_left;
-    var dy = pos_up - pos_down;
-    let eps = 1e-5;
-    if (dot(dx, dx) < eps) {
-        dx = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    if (dot(dy, dy) < eps) {
-        dy = vec3<f32>(0.0, 1.0, 0.0);
-    }
-
-    var normal = normalize(cross(dx, dy));
-    var view_dir = -view_pos;
-    if (dot(view_dir, view_dir) < 1e-6) {
-        view_dir = vec3<f32>(0.0, 0.0, 1.0);
-    }
-    view_dir = normalize(view_dir);
-    if (dot(normal, view_dir) <= 0.0) {
-        normal = -normal;
-    }
-    return normal;
+    let max_uv = (tex_size - vec2<f32>(1.0)) / tex_size;
+    let clamped_uv = clamp(scene_uv, vec2<f32>(0.0), max_uv);
+    let coord = vec2<i32>(clamped_uv * tex_size);
+    return textureLoad(world_position_texture, coord, 0).xyz;
 }
 
 fn ssao_kernel() -> array<vec3<f32>, 32> {
@@ -123,13 +101,18 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
-    let view_pos = reconstruct_view_position(viewport_uv, depth);
-    let normal = view_normal(viewport_uv, view_pos);
+    let world_pos = fetch_world_position(scene_uv);
+    let view_pos = world_to_view_position(world_pos);
+    var normal = world_to_view_direction(fetch_normal(scene_uv));
+    if (dot(normal, normal) < 1e-4) {
+        normal = vec3<f32>(0.0, 0.0, 1.0);
+    }
+    normal = normalize(normal);
     var tangent = vec3<f32>(noise_sample.xy, 0.0);
     if (dot(tangent, tangent) < 1e-4) {
         tangent = vec3<f32>(1.0, 0.0, 0.0);
     }
-    tangent = normalize(tangent);
+    tangent = normalize(tangent - normal * dot(normal, tangent));
     let bitangent = normalize(cross(normal, tangent));
     let tbn = mat3x3<f32>(tangent, bitangent, normal);
 
@@ -144,18 +127,23 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
         let sample_pos = view_pos + normal * bias + rotated * radius;
 
         let sample_clip = post_uniform.proj * vec4<f32>(sample_pos, 1.0);
+        if (sample_clip.w <= 0.0) {
+            continue;
+        }
         let offset_ndc = sample_clip.xyz / sample_clip.w;
         // Convert NDC to UV (origin top-left)
         let offset_uv = vec2<f32>(offset_ndc.x * 0.5 + 0.5, 0.5 - offset_ndc.y * 0.5);
         if (offset_ndc.z >= 1.0) {
             continue;
         }
-        let sample_depth = fetch_depth(viewport_to_scene_uv(offset_uv));
+        let sample_scene_uv = viewport_to_scene_uv(offset_uv);
+        let sample_depth = fetch_depth(sample_scene_uv);
         if (sample_depth >= 1.0) {
             continue;
         }
 
-        let sample_view_pos = reconstruct_view_position(offset_uv, sample_depth);
+        let sample_world_pos = fetch_world_position(sample_scene_uv);
+        let sample_view_pos = world_to_view_position(sample_world_pos);
         let range_check = smoothstep(
             0.0,
             1.0,

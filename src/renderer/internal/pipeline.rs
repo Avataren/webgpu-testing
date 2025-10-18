@@ -5,6 +5,7 @@ use crate::asset::Assets;
 use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
+use crate::renderer::postprocess::{GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT};
 use crate::renderer::{
     Material, PipelineBuilder, SamplerFilterMode, ShaderBuilder, Vertex, MAX_TEXTURES,
 };
@@ -269,6 +270,8 @@ impl RenderPipeline {
             PipelineBuilder::new(&context.device, &background_layout, &background_shader)
                 .with_label("EnvironmentBackgroundPipeline")
                 .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE))
                 .with_depth_stencil(
                     context.depth.format,
                     false, // depth_write
@@ -367,6 +370,12 @@ impl RenderPipeline {
             .with_vertex_buffer(Vertex::layout())
             .with_color_target(color_format, blend_state)
             .with_multisample(sample_count);
+
+        if color_format == context.scene_texture_format() {
+            builder = builder
+                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
+        }
 
         builder = match cull_mode {
             CullMode::Back => builder.with_cull_mode(Some(wgpu::Face::Back)),

@@ -38,6 +38,20 @@ fn scene_texel_size() -> vec2<f32> {
     return post_uniform.viewport_scale * viewport_texel_size();
 }
 
+fn world_to_view_matrix() -> mat4x4<f32> {
+    return post_uniform.proj_inv * post_uniform.view_proj;
+}
+
+fn world_to_view_position(world_pos : vec3<f32>) -> vec3<f32> {
+    let view = world_to_view_matrix() * vec4<f32>(world_pos, 1.0);
+    return view.xyz / max(view.w, 1e-5);
+}
+
+fn world_to_view_direction(world_dir : vec3<f32>) -> vec3<f32> {
+    let dir = world_to_view_matrix() * vec4<f32>(world_dir, 0.0);
+    return normalize(dir.xyz);
+}
+
 fn linearize_depth(depth: f32) -> f32 {
     let near = post_uniform.near_far.x;
     let far = post_uniform.near_far.y;

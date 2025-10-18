@@ -65,10 +65,20 @@ fn environment_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(wrapped_u, clamped_v);
 }
 
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) normals: vec4<f32>,
+    @location(2) world_position: vec4<f32>,
+};
+
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VsOut) -> FragmentOutput {
     if (!environment_enabled()) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return FragmentOutput(
+            vec4<f32>(0.0, 0.0, 0.0, 1.0),
+            vec4<f32>(0.0, 0.0, 0.0, 0.0),
+            vec4<f32>(0.0, 0.0, 0.0, 1.0),
+        );
     }
 
     let inv_view_proj = globals.inverse_view_proj;
@@ -82,5 +92,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         * environment_intensity();
 
     let mapped = color / (color + vec3<f32>(1.0));
-    return vec4<f32>(mapped, 1.0);
+    FragmentOutput(
+        vec4<f32>(mapped, 1.0),
+        vec4<f32>(0.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    )
 }

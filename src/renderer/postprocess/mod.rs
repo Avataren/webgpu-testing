@@ -6,6 +6,20 @@ use glam::{Mat4, Vec2, Vec3};
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const BLOOM_MIP_COUNT: usize = 5;
 const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const GBUFFER_POSITION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+#[derive(Clone, Copy, Debug)]
+pub struct AttachmentViews<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub resolve: Option<&'a wgpu::TextureView>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GBufferViews<'a> {
+    pub normals: AttachmentViews<'a>,
+    pub world_position: AttachmentViews<'a>,
+}
 const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as usize] = [
     -0.6401949,
     -0.76821256,
@@ -155,6 +169,10 @@ pub struct PostProcess {
     scene_source: TextureBundle,
     scene: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
+    gbuffer_normals: TextureBundle,
+    gbuffer_world_position: TextureBundle,
+    gbuffer_normals_msaa: Option<MsaaTarget>,
+    gbuffer_world_position_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     bloom_down_chain: Vec<BloomMip>,
@@ -246,8 +264,14 @@ impl PostProcess {
             ..Default::default()
         });
 
-        let (scene_source, scene, scene_msaa) =
-            Self::create_scene_targets(device, &size, scene_format, sample_count);
+        let targets = Self::create_scene_targets(device, &size, scene_format, sample_count);
+        let scene_source = targets.scene_source;
+        let scene = targets.scene;
+        let scene_msaa = targets.scene_msaa;
+        let gbuffer_normals = targets.gbuffer_normals;
+        let gbuffer_normals_msaa = targets.gbuffer_normals_msaa;
+        let gbuffer_world_position = targets.gbuffer_world_position;
+        let gbuffer_world_position_msaa = targets.gbuffer_world_position_msaa;
         let ssao = TextureBundle::ssao(device, &size);
         let ssao_ping = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
@@ -301,8 +325,12 @@ impl PostProcess {
             .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
             .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
             .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
-            .with_module(include_str!("../../shader/postprocess/bloom_prefilter.wgsl"))
-            .with_module(include_str!("../../shader/postprocess/bloom_downsample.wgsl"))
+            .with_module(include_str!(
+                "../../shader/postprocess/bloom_prefilter.wgsl"
+            ))
+            .with_module(include_str!(
+                "../../shader/postprocess/bloom_downsample.wgsl"
+            ))
             .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
             .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
             .build_modules_only();
@@ -430,6 +458,26 @@ impl PostProcess {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -711,6 +759,10 @@ impl PostProcess {
             scene_source,
             scene,
             scene_msaa,
+            gbuffer_normals,
+            gbuffer_world_position,
+            gbuffer_normals_msaa,
+            gbuffer_world_position_msaa,
             ssao,
             ssao_ping,
             bloom_down_chain,
@@ -799,11 +851,15 @@ impl PostProcess {
             height,
             depth_or_array_layers: 1,
         };
-        let (scene_source, scene, scene_msaa) =
+        let targets =
             Self::create_scene_targets(device, &self.size, self.scene_format, self.sample_count);
-        self.scene_source = scene_source;
-        self.scene = scene;
-        self.scene_msaa = scene_msaa;
+        self.scene_source = targets.scene_source;
+        self.scene = targets.scene;
+        self.scene_msaa = targets.scene_msaa;
+        self.gbuffer_normals = targets.gbuffer_normals;
+        self.gbuffer_world_position = targets.gbuffer_world_position;
+        self.gbuffer_normals_msaa = targets.gbuffer_normals_msaa;
+        self.gbuffer_world_position_msaa = targets.gbuffer_world_position_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
         self.ssao_ping = TextureBundle::ssao(device, &self.size);
         self.resolved_depth = if self.sample_count > 1 {
@@ -859,10 +915,45 @@ impl PostProcess {
         self.upload_uniform(queue);
     }
 
-    pub fn scene_color_views(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
+    pub fn scene_color_views(&self) -> AttachmentViews<'_> {
         match self.scene_msaa.as_ref() {
-            Some(msaa) => (&msaa.view, Some(&self.scene_source.view)),
-            None => (&self.scene_source.view, None),
+            Some(msaa) => AttachmentViews {
+                view: &msaa.view,
+                resolve: Some(&self.scene_source.view),
+            },
+            None => AttachmentViews {
+                view: &self.scene_source.view,
+                resolve: None,
+            },
+        }
+    }
+
+    pub fn gbuffer_views(&self) -> GBufferViews<'_> {
+        let normals = match self.gbuffer_normals_msaa.as_ref() {
+            Some(msaa) => AttachmentViews {
+                view: &msaa.view,
+                resolve: Some(&self.gbuffer_normals.view),
+            },
+            None => AttachmentViews {
+                view: &self.gbuffer_normals.view,
+                resolve: None,
+            },
+        };
+
+        let world_position = match self.gbuffer_world_position_msaa.as_ref() {
+            Some(msaa) => AttachmentViews {
+                view: &msaa.view,
+                resolve: Some(&self.gbuffer_world_position.view),
+            },
+            None => AttachmentViews {
+                view: &self.gbuffer_world_position.view,
+                resolve: None,
+            },
+        };
+
+        GBufferViews {
+            normals,
+            world_position,
         }
     }
 
@@ -1321,6 +1412,16 @@ impl PostProcess {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&self.gbuffer_normals.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &self.gbuffer_world_position.view,
+                        ),
+                    },
                 ],
             }));
         } else {
@@ -1340,6 +1441,16 @@ impl PostProcess {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&self.gbuffer_normals.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(
+                            &self.gbuffer_world_position.view,
+                        ),
                     },
                 ],
             }));
@@ -1547,10 +1658,19 @@ impl PostProcess {
         size: &wgpu::Extent3d,
         format: wgpu::TextureFormat,
         sample_count: u32,
-    ) -> (TextureBundle, TextureBundle, Option<MsaaTarget>) {
-        let source = TextureBundle::color(device, size, format, "SceneColorSource");
-        let target = TextureBundle::color(device, size, format, "SceneColor");
-        let msaa = if sample_count > 1 {
+    ) -> SceneTargets {
+        let scene_source = TextureBundle::color(device, size, format, "SceneColorSource");
+        let scene = TextureBundle::color(device, size, format, "SceneColor");
+        let gbuffer_normals =
+            TextureBundle::color(device, size, GBUFFER_NORMAL_FORMAT, "SceneGBufferNormals");
+        let gbuffer_world_position = TextureBundle::color(
+            device,
+            size,
+            GBUFFER_POSITION_FORMAT,
+            "SceneGBufferWorldPosition",
+        );
+
+        let scene_msaa = if sample_count > 1 {
             Some(MsaaTarget::new(
                 device,
                 size,
@@ -1562,8 +1682,50 @@ impl PostProcess {
             None
         };
 
-        (source, target, msaa)
+        let gbuffer_normals_msaa = if sample_count > 1 {
+            Some(MsaaTarget::new(
+                device,
+                size,
+                GBUFFER_NORMAL_FORMAT,
+                sample_count,
+                "SceneGBufferNormalsMsaa",
+            ))
+        } else {
+            None
+        };
+
+        let gbuffer_world_position_msaa = if sample_count > 1 {
+            Some(MsaaTarget::new(
+                device,
+                size,
+                GBUFFER_POSITION_FORMAT,
+                sample_count,
+                "SceneGBufferWorldMsaa",
+            ))
+        } else {
+            None
+        };
+
+        SceneTargets {
+            scene_source,
+            scene,
+            scene_msaa,
+            gbuffer_normals,
+            gbuffer_world_position,
+            gbuffer_normals_msaa,
+            gbuffer_world_position_msaa,
+        }
     }
+}
+
+struct SceneTargets {
+    scene_source: TextureBundle,
+    scene: TextureBundle,
+    scene_msaa: Option<MsaaTarget>,
+    gbuffer_normals: TextureBundle,
+    gbuffer_world_position: TextureBundle,
+    gbuffer_normals_msaa: Option<MsaaTarget>,
+    gbuffer_world_position_msaa: Option<MsaaTarget>,
 }
 
 // align(16) keeps the uniform buffer size matching WGSL std140 padding rules.

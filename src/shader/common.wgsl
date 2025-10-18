@@ -126,8 +126,14 @@ fn vs_main(in: VsIn) -> VsOut {
 // Fragment Shader
 // ============================================================================
 
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) normals: vec4<f32>,
+    @location(2) world_position: vec4<f32>,
+};
+
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VsOut) -> FragmentOutput {
     // ALWAYS sample all textures (uniform control flow)
     let material_flags = in.material_flags;
     let base_color_sample = sample_base_color_texture(
@@ -211,5 +217,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Tone mapping
     color = color / (color + vec3<f32>(1.0));
     
-    return vec4<f32>(color, base_color.a);
+    FragmentOutput(
+        vec4<f32>(color, base_color.a),
+        vec4<f32>(normalize(N), 0.0),
+        vec4<f32>(in.world_pos, 1.0),
+    )
 }

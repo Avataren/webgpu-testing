@@ -365,10 +365,6 @@ impl Renderer {
             }
         }
 
-        let (scene_view, resolve_target) = {
-            let (view, resolve) = self.postprocess.scene_color_views();
-            (view.clone(), resolve.cloned())
-        };
         let depth_view = self.context.depth.view.clone();
         let surface_width = self.context.config.width;
         let surface_height = self.context.config.height;
@@ -378,6 +374,15 @@ impl Renderer {
 
         self.postprocess
             .update_viewport(&self.context.queue, render_region);
+
+        let scene_attachment = self.postprocess.scene_color_views();
+        let scene_view = scene_attachment.view.clone();
+        let resolve_target = scene_attachment.resolve.cloned();
+        let gbuffer_views = self.postprocess.gbuffer_views();
+        let normal_view = gbuffer_views.normals.view.clone();
+        let normal_resolve = gbuffer_views.normals.resolve.cloned();
+        let world_view = gbuffer_views.world_position.view.clone();
+        let world_resolve = gbuffer_views.world_position.resolve.cloned();
 
         // Depth-only prepass
         {
@@ -427,15 +432,35 @@ impl Renderer {
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &scene_view,
-                    depth_slice: None,
-                    resolve_target: resolve_target.as_ref(),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(environment.clear_color()),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &scene_view,
+                        depth_slice: None,
+                        resolve_target: resolve_target.as_ref(),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(environment.clear_color()),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &normal_view,
+                        depth_slice: None,
+                        resolve_target: normal_resolve.as_ref(),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &world_view,
+                        depth_slice: None,
+                        resolve_target: world_resolve.as_ref(),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -550,14 +575,15 @@ impl Renderer {
             let overlay_needs_depth = overlay_batches
                 .iter()
                 .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
-            let depth_attachment = overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            });
+            let depth_attachment =
+                overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                });
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OverlayPass"),
