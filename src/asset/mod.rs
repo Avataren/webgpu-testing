@@ -8,6 +8,7 @@ pub use mesh::Mesh;
 
 use crate::renderer::Texture;
 
+#[derive(Clone)]
 pub struct Assets {
     pub meshes: AssetCache<Mesh>,
     pub textures: AssetCache<Texture>,

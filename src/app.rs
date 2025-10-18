@@ -9,6 +9,7 @@ use winit::{
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
 
@@ -39,7 +40,9 @@ use crate::ui::{
     PostProcessWindow, SceneHierarchyHandle, SceneHierarchyState,
 };
 
-use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
+use crate::scene::{
+    Children, MeshComponent, Name, Parent, Scene, SceneSnapshot, TransformComponent,
+};
 use crate::time::Instant;
 
 const DEFAULT_HDR_ENVIRONMENT: &str = "web/assets/hdr/kloppenheim_06_puresky_4k.hdr";
@@ -53,12 +56,66 @@ pub struct StartupContext<'a> {
 pub struct UpdateContext<'a> {
     pub scene: &'a mut Scene,
     pub dt: f64,
+    pub runtime: RuntimeMode,
 }
 
 pub struct GpuUpdateContext<'a> {
     pub scene: &'a mut Scene,
     pub renderer: &'a mut Renderer,
     pub dt: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeMode {
+    Editor,
+    Playing,
+}
+
+#[derive(Clone)]
+pub struct RuntimeStateHandle {
+    inner: std::sync::Arc<Mutex<RuntimeState>>,
+}
+
+struct RuntimeState {
+    desired_mode: RuntimeMode,
+    active_mode: RuntimeMode,
+}
+
+impl RuntimeStateHandle {
+    pub fn new() -> Self {
+        Self {
+            inner: std::sync::Arc::new(Mutex::new(RuntimeState {
+                desired_mode: RuntimeMode::Editor,
+                active_mode: RuntimeMode::Editor,
+            })),
+        }
+    }
+
+    pub fn request_mode(&self, mode: RuntimeMode) {
+        if let Ok(mut state) = self.inner.lock() {
+            state.desired_mode = mode;
+        }
+    }
+
+    pub fn desired_mode(&self) -> RuntimeMode {
+        self.inner
+            .lock()
+            .map(|state| state.desired_mode)
+            .unwrap_or(RuntimeMode::Editor)
+    }
+
+    pub fn active_mode(&self) -> RuntimeMode {
+        self.inner
+            .lock()
+            .map(|state| state.active_mode)
+            .unwrap_or(RuntimeMode::Editor)
+    }
+}
+
+impl Default for RuntimeStateHandle {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub type StartupSystem = Box<dyn for<'a> FnMut(&mut StartupContext<'a>) + 'static>;
@@ -165,6 +222,9 @@ impl AppBuilder {
             frame_counter: 0,
             skip_rendering_until_frame: self.skip_initial_frames,
             settings: self.settings,
+            runtime_mode: RuntimeMode::Editor,
+            runtime_state: RuntimeStateHandle::new(),
+            editor_snapshot: None,
             #[cfg(target_arch = "wasm32")]
             pending_renderer: None,
             #[cfg(feature = "egui")]
@@ -235,6 +295,9 @@ pub struct App {
     #[cfg(feature = "egui")]
     scene_hierarchy: SceneHierarchyHandle,
     scene: Scene,
+    runtime_mode: RuntimeMode,
+    runtime_state: RuntimeStateHandle,
+    editor_snapshot: Option<SceneSnapshot>,
     renderer: Option<Renderer>,
     custom_render_callback: Option<Box<CustomRenderCallback>>,
     custom_render_stage: CustomRenderStage,
@@ -318,6 +381,10 @@ impl App {
         self.scene_hierarchy.clone()
     }
 
+    pub fn runtime_state_handle(&self) -> RuntimeStateHandle {
+        self.runtime_state.clone()
+    }
+
     #[cfg(feature = "egui")]
     fn apply_postprocess_effects(handle: &PostProcessEffectsHandle, renderer: &mut Renderer) {
         if let Ok(effects) = handle.lock() {
@@ -334,6 +401,74 @@ impl App {
             }
             *controls = EnvironmentSettingsControls::from_environment(scene.environment());
         }
+    }
+
+    fn sync_runtime_state(&mut self) {
+        let desired_mode = {
+            let mut state = match self.runtime_state.inner.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+
+            if state.desired_mode == self.runtime_mode {
+                if state.active_mode != self.runtime_mode {
+                    state.active_mode = self.runtime_mode;
+                }
+                return;
+            }
+
+            state.desired_mode
+        };
+
+        match desired_mode {
+            RuntimeMode::Editor => self.stop_playback(),
+            RuntimeMode::Playing => self.start_playback(),
+        }
+
+        if let Ok(mut state) = self.runtime_state.inner.lock() {
+            state.active_mode = self.runtime_mode;
+        }
+    }
+
+    fn start_playback(&mut self) {
+        if self.runtime_mode == RuntimeMode::Playing {
+            return;
+        }
+
+        let snapshot = SceneSnapshot::capture(&self.scene);
+        self.editor_snapshot = Some(snapshot);
+        self.scene.reset_script_runtime();
+        self.scene.set_time(0.0);
+        self.scene.init_timer();
+        self.runtime_mode = RuntimeMode::Playing;
+    }
+
+    fn stop_playback(&mut self) {
+        if self.runtime_mode == RuntimeMode::Editor {
+            return;
+        }
+
+        if let Some(snapshot) = self.editor_snapshot.take() {
+            self.scene = snapshot.into_scene();
+            self.scene.init_timer();
+            self.scene.reset_script_runtime();
+            if !self.scene.has_any_lights() {
+                self.scene.add_default_lighting();
+            }
+
+            #[cfg(feature = "egui")]
+            {
+                EnvironmentWindow::sync_handle(
+                    &self.environment_settings,
+                    self.scene.environment(),
+                );
+                if let Ok(mut hierarchy) = self.scene_hierarchy.lock() {
+                    hierarchy.refresh_from_scene(&self.scene);
+                }
+            }
+        }
+
+        self.runtime_mode = RuntimeMode::Editor;
     }
 
     fn begin_frame(&mut self) -> FrameStep {
@@ -577,12 +712,15 @@ impl App {
     }
 
     fn run_update_stage(&mut self, dt: f64) {
-        self.scene.update(dt);
+        if self.runtime_mode == RuntimeMode::Playing {
+            self.scene.update(dt);
+        }
 
         for system in &mut self.update_systems {
             let mut ctx = UpdateContext {
                 scene: &mut self.scene,
                 dt,
+                runtime: self.runtime_mode,
             };
             (system)(&mut ctx);
         }
@@ -896,6 +1034,8 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 #[cfg(target_arch = "wasm32")]
                 self.try_finish_async_initialization();
+
+                self.sync_runtime_state();
 
                 let frame = self.begin_frame();
 

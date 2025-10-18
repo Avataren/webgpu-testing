@@ -69,7 +69,7 @@ struct BackgroundOut {
     @location(0) color: vec4<f32>,
     @location(1) normal: vec4<f32>,
     @location(2) world_pos: vec4<f32>,
-}
+};
 
 fn sample_background(in: VsOut) -> BackgroundOut {
     if (!environment_enabled()) {

@@ -11,11 +11,82 @@ use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
-use crate::scripting::{PendingGltfImport, ScriptingState};
+use crate::scripting::{PendingGltfImport, RuneScriptComponent, RuneScriptSource, ScriptingState};
 use crate::time::Instant;
 use hecs::World;
 use log::{error, warn};
 use std::collections::HashMap;
+
+#[derive(Clone)]
+pub(crate) struct SceneSnapshot {
+    assets: Assets,
+    environment: Environment,
+    camera: Camera,
+    time: f64,
+    tree: SceneTreeAsset,
+    main_scene_path: Vec<usize>,
+}
+
+impl SceneSnapshot {
+    pub(crate) fn capture(scene: &Scene) -> Self {
+        let assets = scene.assets.clone();
+        let environment = scene.environment().clone();
+        let camera = *scene.camera();
+        let time = scene.time();
+        let tree = scene.export_tree_asset("SceneSnapshot");
+        let main_scene_path = scene.path_from_root(scene.main_scene());
+
+        Self {
+            assets,
+            environment,
+            camera,
+            time,
+            tree,
+            main_scene_path,
+        }
+    }
+
+    pub(crate) fn into_scene(self) -> Scene {
+        let mut scene = Scene::new();
+        scene.replace_assets(self.assets);
+        scene.set_environment(self.environment);
+        scene.set_camera(self.camera);
+        scene.set_time(self.time);
+
+        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
+
+        let main_scene = if self.main_scene_path.is_empty() {
+            Some(tree_root)
+        } else {
+            let mut current = tree_root;
+            let mut found = true;
+            for &index in &self.main_scene_path {
+                let children = scene.node(current).children();
+                match children.get(index).copied() {
+                    Some(child) => current = child,
+                    None => {
+                        found = false;
+                        break;
+                    }
+                }
+            }
+
+            if found {
+                Some(current)
+            } else {
+                scene.node_from_path(&self.main_scene_path)
+            }
+        };
+
+        if let Some(main) = main_scene {
+            scene.set_main_scene(main);
+        }
+
+        scene.propagate_transforms();
+
+        scene
+    }
+}
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
@@ -151,8 +222,31 @@ impl Scene {
         self.last_frame = Some(Instant::now());
     }
 
+    pub fn reset_script_runtime(&mut self) {
+        {
+            let world = self.main_world_mut();
+            let mut query = world.query::<&mut RuneScriptComponent>();
+            for (_, component) in query.iter() {
+                let source = component.source();
+                if matches!(
+                    source,
+                    RuneScriptSource::Inline { name, .. } if name.as_ref() == "editor_startup.rn"
+                ) {
+                    continue;
+                }
+                component.set_created_called(false);
+            }
+        }
+
+        self.scripting_mut().reset_runtime();
+    }
+
     pub fn time(&self) -> f64 {
         self.time
+    }
+
+    pub(crate) fn set_time(&mut self, time: f64) {
+        self.time = time;
     }
 
     pub fn last_frame(&self) -> Instant {
@@ -190,6 +284,10 @@ impl Scene {
 
     pub fn set_environment(&mut self, environment: Environment) {
         self.environment = environment;
+    }
+
+    pub(crate) fn replace_assets(&mut self, assets: Assets) {
+        self.assets = assets;
     }
 
     pub fn node_animations(&self, node: SceneNodeId) -> &[AnimationClip] {
@@ -274,6 +372,42 @@ impl Scene {
         } else {
             error!("Rune scripting error: main scene node is missing");
         }
+    }
+
+    pub(crate) fn path_from_root(&self, mut node: SceneNodeId) -> Vec<usize> {
+        let mut path = Vec::new();
+        while let Some(parent) = self.node_parent(node) {
+            let parent_node = self.node(parent);
+            if let Some(index) = parent_node
+                .children()
+                .iter()
+                .position(|&child| child == node)
+            {
+                path.push(index);
+            } else {
+                break;
+            }
+
+            node = parent;
+
+            if parent == self.root {
+                break;
+            }
+        }
+
+        path.reverse();
+        path
+    }
+
+    pub(crate) fn node_from_path(&self, path: &[usize]) -> Option<SceneNodeId> {
+        let mut current = self.root;
+        for &index in path {
+            let children = self.node(current).children();
+            let next = *children.get(index)?;
+            current = next;
+        }
+
+        Some(current)
     }
 
     fn update_world_transforms(&mut self) {
@@ -675,9 +809,13 @@ mod tests {
         AnimationChannel, AnimationInterpolation, AnimationOutput, AnimationSampler,
         AnimationTarget, MaterialProperty, TransformProperty,
     };
-    use super::super::components::{Children, Name, Parent, TransformComponent, Visible};
+    use super::super::builder::EntityBuilder;
+    use super::super::components::{
+        Children, DirectionalLight, Name, Parent, TransformComponent, Visible,
+    };
     use super::*;
-    use glam::Vec3;
+    use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+    use glam::{Quat, Vec3};
 
     #[test]
     fn serialized_transform_roundtrip() {
@@ -873,5 +1011,146 @@ mod tests {
         let instantiated_root = other.instantiate_tree_asset(&restored, None);
         assert_eq!(other.node_children(other.root_id()), &[instantiated_root]);
         assert_eq!(other.node_children(instantiated_root).len(), 1);
+    }
+
+    #[test]
+    fn reset_script_runtime_allows_rerun() {
+        let mut scene = Scene::new();
+
+        let script = RuneScriptSource::inline(
+            "scene_core_restart_test",
+            r#"
+                struct CubeState { angle }
+
+                pub fn on_created(self_entity) {
+                    set_state(self_entity, "cube_state", CubeState { angle: 0.0 });
+                }
+
+                pub fn update(self_entity, dt) {
+                    let state = get_state(self_entity, "cube_state", CubeState { angle: 0.0 });
+                    let angle = state.angle + dt * 1.5;
+                    set_rotation(self_entity, angle, 0.0, 0.0);
+                    set_state(self_entity, "cube_state", CubeState { angle });
+                }
+            "#,
+        );
+
+        {
+            let world = scene.main_world_mut();
+            EntityBuilder::new(world)
+                .with_name("Runtime Cube")
+                .with_transform(Transform::default())
+                .with_script(script.clone())
+                .spawn();
+        }
+
+        scene.update(0.016);
+        {
+            let world = scene.main_world();
+            let mut query = world.query::<&TransformComponent>();
+            assert!(
+                query
+                    .iter()
+                    .any(|(_, transform)| transform.0.rotation != Quat::IDENTITY),
+                "script did not run before reset"
+            );
+        }
+
+        {
+            let world = scene.main_world_mut();
+            let mut query = world.query::<&mut TransformComponent>();
+            for (_, transform) in query.iter() {
+                transform.0.rotation = Quat::IDENTITY;
+            }
+        }
+
+        scene.reset_script_runtime();
+        scene.set_time(0.0);
+        scene.update(0.0);
+        scene.update(0.016);
+
+        {
+            let world = scene.main_world();
+            let mut query = world.query::<&RuneScriptComponent>();
+            for (_, component) in query.iter() {
+                assert!(component.created_called(), "on_created was not re-run");
+            }
+        }
+
+        let mut rotated_again = false;
+        {
+            let world = scene.main_world();
+            let mut query = world.query::<&TransformComponent>();
+            for (_, transform) in query.iter() {
+                if transform.0.rotation != Quat::IDENTITY {
+                    rotated_again = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(rotated_again, "script did not rerun after reset");
+    }
+
+    #[test]
+    fn snapshot_restores_default_lighting() {
+        let mut scene = Scene::new();
+        assert!(!scene.has_any_lights());
+        assert!(scene.add_default_lighting() > 0);
+        assert!(scene.has_any_lights());
+
+        let tree = scene.export_tree_asset("SnapshotTest");
+        let root_asset = tree
+            .root
+            .asset
+            .as_ref()
+            .expect("root asset missing in export");
+        assert!(
+            root_asset
+                .entities
+                .iter()
+                .any(|entity| entity.directional_light.is_some()),
+            "exported asset missing directional light"
+        );
+
+        let instance = root_asset.instantiate();
+        let instanced_directional = instance.world().query::<&DirectionalLight>().iter().count();
+        assert!(
+            instanced_directional > 0,
+            "instantiating asset did not produce directional lights"
+        );
+
+        let mut direct_scene = Scene::new();
+        let node_id = direct_scene.instantiate_asset(&root_asset, None);
+        direct_scene.set_main_scene(node_id);
+        let direct_count = direct_scene
+            .main_world()
+            .query::<&DirectionalLight>()
+            .iter()
+            .count();
+        assert!(
+            direct_count > 0,
+            "instantiating asset into scene lost lights"
+        );
+
+        let snapshot = SceneSnapshot::capture(&scene);
+        let scene = snapshot.into_scene();
+        let restored_main_asset = scene
+            .export_main_asset("RestoredMain")
+            .expect("restored main asset missing");
+        assert!(
+            restored_main_asset
+                .entities
+                .iter()
+                .any(|entity| entity.directional_light.is_some()),
+            "restored asset missing directional lights"
+        );
+        let directional_count = scene
+            .main_world()
+            .query::<&DirectionalLight>()
+            .iter()
+            .count();
+        assert!(directional_count > 0, "no directional lights after restore");
+        assert!(scene.has_any_lights());
     }
 }

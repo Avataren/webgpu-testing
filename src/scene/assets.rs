@@ -3,17 +3,19 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    Children, GltfMaterial, GltfNode, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
-    TransformComponent, Visible,
+    CanCastShadow, Children, DirectionalLight, GltfMaterial, GltfNode, MaterialComponent,
+    MeshBounds, MeshComponent, Name, Parent, PointLight, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
+use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SerializedAnimationOutput {
@@ -271,6 +273,26 @@ impl SceneAsset {
                 builder.add(GltfMaterial(gltf_mat));
             }
 
+            if let Some(script) = &entity.script {
+                builder.add(script.clone().into_component());
+            }
+
+            if let Some(light) = entity.directional_light {
+                builder.add(DirectionalLight::from(light));
+            }
+
+            if let Some(light) = entity.point_light {
+                builder.add(PointLight::from(light));
+            }
+
+            if let Some(light) = entity.spot_light {
+                builder.add(SpotLight::from(light));
+            }
+
+            if let Some(casts_shadow) = entity.casts_shadow {
+                builder.add(CanCastShadow(casts_shadow));
+            }
+
             let entity_id = instance.world_mut().spawn(builder.build());
             entity_map.push(entity_id);
         }
@@ -456,6 +478,68 @@ pub struct SceneAssetEntity {
     pub children: Vec<usize>,
     pub gltf_node: Option<usize>,
     pub gltf_material: Option<usize>,
+    #[serde(default)]
+    pub script: Option<SerializedRuneScript>,
+    #[serde(default)]
+    pub directional_light: Option<SerializedDirectionalLight>,
+    #[serde(default)]
+    pub point_light: Option<SerializedPointLight>,
+    #[serde(default)]
+    pub spot_light: Option<SerializedSpotLight>,
+    #[serde(default)]
+    pub casts_shadow: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SerializedRuneScriptSource {
+    Inline { name: String, source: String },
+    File { path: PathBuf },
+}
+
+impl From<&RuneScriptSource> for SerializedRuneScriptSource {
+    fn from(source: &RuneScriptSource) -> Self {
+        match source {
+            RuneScriptSource::Inline { name, source } => Self::Inline {
+                name: name.to_string(),
+                source: source.to_string(),
+            },
+            RuneScriptSource::File { path } => Self::File { path: path.clone() },
+        }
+    }
+}
+
+impl From<SerializedRuneScriptSource> for RuneScriptSource {
+    fn from(serialized: SerializedRuneScriptSource) -> Self {
+        match serialized {
+            SerializedRuneScriptSource::Inline { name, source } => {
+                RuneScriptSource::inline(name, source)
+            }
+            SerializedRuneScriptSource::File { path } => RuneScriptSource::file(path),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedRuneScript {
+    pub source: SerializedRuneScriptSource,
+    pub created_called: bool,
+}
+
+impl From<&RuneScriptComponent> for SerializedRuneScript {
+    fn from(component: &RuneScriptComponent) -> Self {
+        Self {
+            source: SerializedRuneScriptSource::from(component.source()),
+            created_called: component.created_called(),
+        }
+    }
+}
+
+impl SerializedRuneScript {
+    fn into_component(self) -> RuneScriptComponent {
+        let mut component = RuneScriptComponent::new(self.source.into());
+        component.set_created_called(self.created_called);
+        component
+    }
 }
 
 impl SceneAssetEntity {
@@ -508,6 +592,27 @@ impl SceneAssetEntity {
 
         let gltf_node = world.get::<&GltfNode>(entity).ok().map(|node| node.0);
         let gltf_material = world.get::<&GltfMaterial>(entity).ok().map(|mat| mat.0);
+        let script = world
+            .get::<&RuneScriptComponent>(entity)
+            .ok()
+            .map(|component| SerializedRuneScript::from(&*component));
+
+        let directional_light = world
+            .get::<&DirectionalLight>(entity)
+            .ok()
+            .map(|light| SerializedDirectionalLight::from(*light));
+
+        let point_light = world
+            .get::<&PointLight>(entity)
+            .ok()
+            .map(|light| SerializedPointLight::from(*light));
+
+        let spot_light = world
+            .get::<&SpotLight>(entity)
+            .ok()
+            .map(|light| SerializedSpotLight::from(*light));
+
+        let casts_shadow = world.get::<&CanCastShadow>(entity).ok().map(|flag| flag.0);
 
         Self {
             name,
@@ -520,6 +625,11 @@ impl SceneAssetEntity {
             children,
             gltf_node,
             gltf_material,
+            script,
+            directional_light,
+            point_light,
+            spot_light,
+            casts_shadow,
         }
     }
 }
@@ -535,6 +645,11 @@ pub struct SceneAssetEntityBuilder {
     children: Vec<usize>,
     gltf_node: Option<usize>,
     gltf_material: Option<usize>,
+    script: Option<SerializedRuneScript>,
+    directional_light: Option<SerializedDirectionalLight>,
+    point_light: Option<SerializedPointLight>,
+    spot_light: Option<SerializedSpotLight>,
+    casts_shadow: Option<bool>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -550,6 +665,11 @@ impl SceneAssetEntityBuilder {
             children: Vec::new(),
             gltf_node: None,
             gltf_material: None,
+            script: None,
+            directional_light: None,
+            point_light: None,
+            spot_light: None,
+            casts_shadow: None,
         }
     }
 
@@ -601,6 +721,31 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_script(mut self, script: SerializedRuneScript) -> Self {
+        self.script = Some(script);
+        self
+    }
+
+    pub fn with_directional_light(mut self, light: SerializedDirectionalLight) -> Self {
+        self.directional_light = Some(light);
+        self
+    }
+
+    pub fn with_point_light(mut self, light: SerializedPointLight) -> Self {
+        self.point_light = Some(light);
+        self
+    }
+
+    pub fn with_spot_light(mut self, light: SerializedSpotLight) -> Self {
+        self.spot_light = Some(light);
+        self
+    }
+
+    pub fn with_shadow_flag(mut self, casts_shadow: bool) -> Self {
+        self.casts_shadow = Some(casts_shadow);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -613,6 +758,11 @@ impl SceneAssetEntityBuilder {
             children: self.children,
             gltf_node: self.gltf_node,
             gltf_material: self.gltf_material,
+            script: self.script,
+            directional_light: self.directional_light,
+            point_light: self.point_light,
+            spot_light: self.spot_light,
+            casts_shadow: self.casts_shadow,
         }
     }
 }
@@ -638,6 +788,94 @@ impl From<SerializedMeshBounds> for MeshBounds {
             glam::Vec3::from_array(serialized.min),
             glam::Vec3::from_array(serialized.max),
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SerializedDirectionalLight {
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub shadow_size: f32,
+}
+
+impl From<DirectionalLight> for SerializedDirectionalLight {
+    fn from(light: DirectionalLight) -> Self {
+        Self {
+            color: light.color.to_array(),
+            intensity: light.intensity,
+            shadow_size: light.shadow_size,
+        }
+    }
+}
+
+impl From<SerializedDirectionalLight> for DirectionalLight {
+    fn from(serialized: SerializedDirectionalLight) -> Self {
+        let mut light = DirectionalLight::new(
+            glam::Vec3::from_array(serialized.color),
+            serialized.intensity,
+        );
+        light.shadow_size = serialized.shadow_size;
+        light
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SerializedPointLight {
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub range: f32,
+}
+
+impl From<PointLight> for SerializedPointLight {
+    fn from(light: PointLight) -> Self {
+        Self {
+            color: light.color.to_array(),
+            intensity: light.intensity,
+            range: light.range,
+        }
+    }
+}
+
+impl From<SerializedPointLight> for PointLight {
+    fn from(serialized: SerializedPointLight) -> Self {
+        PointLight {
+            color: glam::Vec3::from_array(serialized.color),
+            intensity: serialized.intensity,
+            range: serialized.range,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SerializedSpotLight {
+    pub color: [f32; 3],
+    pub intensity: f32,
+    pub inner_angle: f32,
+    pub outer_angle: f32,
+    pub range: f32,
+}
+
+impl From<SpotLight> for SerializedSpotLight {
+    fn from(light: SpotLight) -> Self {
+        Self {
+            color: light.color.to_array(),
+            intensity: light.intensity,
+            inner_angle: light.inner_angle,
+            outer_angle: light.outer_angle,
+            range: light.range,
+        }
+    }
+}
+
+impl From<SerializedSpotLight> for SpotLight {
+    fn from(serialized: SerializedSpotLight) -> Self {
+        SpotLight {
+            color: glam::Vec3::from_array(serialized.color),
+            intensity: serialized.intensity,
+            inner_angle: serialized.inner_angle,
+            outer_angle: serialized.outer_angle,
+            range: serialized.range,
+        }
     }
 }
 

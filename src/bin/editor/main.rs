@@ -9,11 +9,13 @@ mod windows;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use egui_tiles::Tree;
+use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3, Vec4};
 use hecs::Entity;
 use log::{error, warn};
-use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::app::{
+    AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
+};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
@@ -36,7 +38,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 struct EditorApplication {
     dock_tree: Tree<EditorPane>,
-    viewport: ViewportState,
+    scene_viewport: ViewportState,
+    game_viewport: ViewportState,
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
     pending_imports: Vec<PathBuf>,
@@ -45,6 +48,8 @@ struct EditorApplication {
     highlighted_entity: Option<Entity>,
     pending_pick: Option<ViewportPick>,
     selection_override: Option<Option<Entity>>,
+    runtime_state: RuntimeStateHandle,
+    last_runtime_mode: RuntimeMode,
 }
 
 struct ViewportPick {
@@ -55,7 +60,8 @@ impl EditorApplication {
     fn new() -> Self {
         Self {
             dock_tree: create_editor_layout(),
-            viewport: ViewportState::default(),
+            scene_viewport: ViewportState::default(),
+            game_viewport: ViewportState::default(),
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
             pending_imports: Vec::new(),
@@ -64,6 +70,33 @@ impl EditorApplication {
             highlighted_entity: None,
             pending_pick: None,
             selection_override: None,
+            runtime_state: RuntimeStateHandle::new(),
+            last_runtime_mode: RuntimeMode::Editor,
+        }
+    }
+
+    fn set_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
+        self.runtime_state = handle;
+    }
+
+    fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {
+        self.dock_tree
+            .tiles
+            .iter()
+            .find_map(|(id, tile)| match tile {
+                Tile::Pane(current) if *current == pane => Some(*id),
+                _ => None,
+            })
+    }
+
+    fn ensure_viewport_tab_for_mode(&mut self, mode: RuntimeMode) {
+        let target = match mode {
+            RuntimeMode::Editor => EditorPane::SceneViewport,
+            RuntimeMode::Playing => EditorPane::GameViewport,
+        };
+
+        if let Some(tile_id) = self.find_pane_tile(target) {
+            let _ = self.dock_tree.make_active(|id, _| id == tile_id);
         }
     }
 
@@ -182,11 +215,16 @@ impl EditorApplication {
     }
 
     fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
+        if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
+            self.pending_pick = None;
+            return;
+        }
+
         if self.camera_controller.is_looking() {
             return;
         }
 
-        let Some(rect) = self.viewport.rect() else {
+        let Some(rect) = self.scene_viewport.rect() else {
             return;
         };
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
@@ -218,11 +256,16 @@ impl EditorApplication {
     }
 
     fn process_viewport_pick(&mut self, ctx: &mut UpdateContext) {
+        if !matches!(ctx.runtime, RuntimeMode::Editor) {
+            self.pending_pick = None;
+            return;
+        };
+
         let Some(request) = self.pending_pick.take() else {
             return;
         };
 
-        let Some(region) = self.viewport.region() else {
+        let Some(region) = self.scene_viewport.region() else {
             self.selected_entity = None;
             self.selection_override = Some(None);
             return;
@@ -513,9 +556,37 @@ impl EditorApplication {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Toolbar").strong());
                 ui.separator();
-                ui.add_enabled(false, egui::Button::new("Play"));
+                let desired = self.runtime_state.desired_mode();
+                let active = self.runtime_state.active_mode();
+                let requesting_play = matches!(desired, RuntimeMode::Playing);
+                let active_play = matches!(active, RuntimeMode::Playing);
+
+                if ui
+                    .add_enabled(!requesting_play, egui::Button::new("▶ Play"))
+                    .clicked()
+                {
+                    self.runtime_state.request_mode(RuntimeMode::Playing);
+                }
+
                 ui.add_enabled(false, egui::Button::new("Pause"));
-                ui.add_enabled(false, egui::Button::new("Stop"));
+
+                if ui
+                    .add_enabled(requesting_play || active_play, egui::Button::new("⏹ Stop"))
+                    .clicked()
+                {
+                    self.runtime_state.request_mode(RuntimeMode::Editor);
+                }
+
+                ui.separator();
+
+                let (status_text, status_color) = match (active_play, requesting_play) {
+                    (true, true) => ("Play Mode", egui::Color32::from_rgb(120, 200, 120)),
+                    (true, false) => ("Stopping...", egui::Color32::from_rgb(220, 190, 0)),
+                    (false, true) => ("Starting...", egui::Color32::from_rgb(220, 190, 0)),
+                    (false, false) => ("Editor Mode", egui::Color32::from_gray(180)),
+                };
+
+                ui.label(egui::RichText::new(status_text).color(status_color));
             });
         });
     }
@@ -524,6 +595,10 @@ impl EditorApplication {
 impl RenderApplication for EditorApplication {
     fn name(&self) -> &str {
         "Engine Editor"
+    }
+
+    fn install_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
+        self.set_runtime_state_handle(handle);
     }
 
     fn configure(&self, builder: &mut AppBuilder) {
@@ -537,7 +612,9 @@ impl RenderApplication for EditorApplication {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        self.camera_controller.update_camera(ctx);
+        if matches!(ctx.runtime, RuntimeMode::Editor) {
+            self.camera_controller.update_camera(ctx);
+        }
         self.process_pending_imports(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
@@ -548,10 +625,12 @@ impl RenderApplication for EditorApplication {
     }
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
-        let grid = self
-            .grid_postprocess
-            .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
-        grid.render(ctx);
+        if matches!(self.runtime_state.active_mode(), RuntimeMode::Editor) {
+            let grid = self
+                .grid_postprocess
+                .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
+            grid.render(ctx);
+        }
     }
 
     fn custom_render_stage(&self) -> CustomRenderStage {
@@ -559,35 +638,55 @@ impl RenderApplication for EditorApplication {
     }
 
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        self.viewport.clear();
+        self.scene_viewport.clear();
+        self.game_viewport.clear();
         self.show_menu_bar(ctx);
 
         self.windows.show(ctx, default_ui);
 
+        let runtime_mode = self.runtime_state.active_mode();
+        if runtime_mode != self.last_runtime_mode {
+            self.last_runtime_mode = runtime_mode;
+            self.ensure_viewport_tab_for_mode(runtime_mode);
+        }
+
         let dock_tree = &mut self.dock_tree;
-        let viewport = &mut self.viewport;
+        let scene_viewport = &mut self.scene_viewport;
+        let game_viewport = &mut self.game_viewport;
         let scene_hierarchy_window = default_ui.scene_hierarchy_window_mut();
         if let Some(selection) = self.selection_override.take() {
             scene_hierarchy_window.set_selected_entity(selection);
         }
+        let is_playing = matches!(runtime_mode, RuntimeMode::Playing);
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
             .frame(transparent_frame)
             .show(ctx, |ui| {
                 let mut behavior = EditorBehavior {
-                    viewport,
+                    scene_viewport,
+                    game_viewport,
                     scene_hierarchy: scene_hierarchy_window,
+                    is_playing,
                 };
                 dock_tree.ui(&mut behavior, ui);
             });
 
         self.selected_entity = scene_hierarchy_window.selected_entity();
 
-        self.camera_controller
-            .set_viewport_rect(self.viewport.rect());
+        if is_playing {
+            self.camera_controller.set_viewport_rect(None);
+        } else {
+            self.camera_controller
+                .set_viewport_rect(self.scene_viewport.rect());
+        }
+
         self.camera_controller.capture_input(ctx);
-        self.capture_viewport_pick_input(ctx);
+        if !is_playing {
+            self.capture_viewport_pick_input(ctx);
+        } else {
+            self.pending_pick = None;
+        }
     }
 
     fn show_default_ui(&self) -> bool {
@@ -595,6 +694,10 @@ impl RenderApplication for EditorApplication {
     }
 
     fn render_region(&self) -> Option<RenderRegion> {
-        self.viewport.region()
+        if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
+            self.game_viewport.region()
+        } else {
+            self.scene_viewport.region()
+        }
     }
 }

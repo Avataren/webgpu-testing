@@ -9,7 +9,8 @@ use crate::inspector::show_entity_inspector;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EditorPane {
     SceneHierarchy,
-    Viewport,
+    SceneViewport,
+    GameViewport,
     Inspector,
     Console,
 }
@@ -41,8 +42,10 @@ impl ViewportState {
 }
 
 pub struct EditorBehavior<'a> {
-    pub viewport: &'a mut ViewportState,
+    pub scene_viewport: &'a mut ViewportState,
+    pub game_viewport: &'a mut ViewportState,
     pub scene_hierarchy: &'a mut SceneHierarchyWindow,
+    pub is_playing: bool,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -61,7 +64,23 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                         self.scene_hierarchy.ui(ui);
                     });
             }
-            EditorPane::Viewport => show_viewport(ui, self.viewport),
+            EditorPane::SceneViewport => {
+                show_viewport(ui, self.scene_viewport, "Scene View", true, None);
+            }
+            EditorPane::GameViewport => {
+                let placeholder = if self.is_playing {
+                    None
+                } else {
+                    Some("Press Play to run the scene")
+                };
+                show_viewport(
+                    ui,
+                    self.game_viewport,
+                    "Game View",
+                    self.is_playing,
+                    placeholder,
+                );
+            }
             EditorPane::Inspector => {
                 ui.set_min_width(240.0);
                 ui.heading("Inspector");
@@ -85,7 +104,14 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
     fn tab_title_for_pane(&mut self, pane: &EditorPane) -> egui::WidgetText {
         match pane {
             EditorPane::SceneHierarchy => "Hierarchy".into(),
-            EditorPane::Viewport => "Viewport".into(),
+            EditorPane::SceneViewport => "Scene".into(),
+            EditorPane::GameViewport => {
+                if self.is_playing {
+                    "Game ▶".into()
+                } else {
+                    "Game".into()
+                }
+            }
             EditorPane::Inspector => "Inspector".into(),
             EditorPane::Console => "Console".into(),
         }
@@ -96,12 +122,13 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
     let mut tiles = egui_tiles::Tiles::default();
 
     let hierarchy = tiles.insert_pane(EditorPane::SceneHierarchy);
-    let viewport = tiles.insert_pane(EditorPane::Viewport);
+    let scene_view = tiles.insert_pane(EditorPane::SceneViewport);
+    let game_view = tiles.insert_pane(EditorPane::GameViewport);
     let inspector = tiles.insert_pane(EditorPane::Inspector);
     let console = tiles.insert_pane(EditorPane::Console);
 
     let hierarchy_tab = tiles.insert_tab_tile(vec![hierarchy]);
-    let viewport_tab = tiles.insert_tab_tile(vec![viewport]);
+    let viewport_tab = tiles.insert_tab_tile(vec![scene_view, game_view]);
     let inspector_tab = tiles.insert_tab_tile(vec![inspector]);
     let console_tab = tiles.insert_tab_tile(vec![console]);
 
@@ -121,7 +148,13 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
     Tree::new("editor_dock", root, tiles)
 }
 
-fn show_viewport(ui: &mut egui::Ui, viewport: &mut ViewportState) {
+fn show_viewport(
+    ui: &mut egui::Ui,
+    viewport: &mut ViewportState,
+    label: &str,
+    active: bool,
+    placeholder: Option<&str>,
+) {
     let desired = ui.available_size();
     let desired = egui::vec2(desired.x.max(1.0), desired.y.max(1.0));
     let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::click_and_drag());
@@ -131,14 +164,13 @@ fn show_viewport(ui: &mut egui::Ui, viewport: &mut ViewportState) {
         return;
     }
 
-    let Some(region) = compute_region(ui.ctx(), rect) else {
-        viewport.clear();
-        return;
-    };
-
-    viewport.set(rect, region);
-
     let painter = ui.painter_at(rect);
+
+    if !active {
+        viewport.clear();
+        painter.rect_filled(rect, 0.0, Color32::from_black_alpha(16));
+    }
+
     painter.rect_stroke(
         rect,
         0.0,
@@ -148,10 +180,30 @@ fn show_viewport(ui: &mut egui::Ui, viewport: &mut ViewportState) {
     painter.text(
         rect.center_top() + egui::vec2(0.0, 8.0),
         egui::Align2::CENTER_TOP,
-        "Viewport",
+        label,
         egui::TextStyle::Button.resolve(ui.style()),
         Color32::from_gray(180),
     );
+
+    if !active {
+        if let Some(text) = placeholder {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::TextStyle::Body.resolve(ui.style()),
+                Color32::from_gray(140),
+            );
+        }
+        return;
+    }
+
+    let Some(region) = compute_region(ui.ctx(), rect) else {
+        viewport.clear();
+        return;
+    };
+
+    viewport.set(rect, region);
 }
 
 fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {
