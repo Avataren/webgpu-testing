@@ -294,8 +294,18 @@ impl PostProcess {
         let noise_texture = Self::create_noise_texture(device, queue);
         let noise_view = noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let postprocess_source =
-            ShaderBuilder::new().build(include_str!("../../shader/postprocess.wgsl"));
+        let postprocess_source = ShaderBuilder::new()
+            .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/common.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/color_grading.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/bloom_prefilter.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/bloom_downsample.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
+            .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
+            .build_modules_only();
 
         let postprocess_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PostProcessShader"),
