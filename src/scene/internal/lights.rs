@@ -306,8 +306,8 @@ pub(crate) fn add_default_lighting(world: &mut World) -> usize {
         )),
         PointLight {
             color: Vec3::new(1.0, 0.96, 0.85),
-            intensity: 420.0,
-            range: 14.0,
+            intensity: 100.0,
+            range: 5.0,
         },
         CanCastShadow(true),
     ));
@@ -323,10 +323,10 @@ pub(crate) fn add_default_lighting(world: &mut World) -> usize {
         TransformComponent(Transform::from_trs(spot_position, spot_rotation, Vec3::ONE)),
         SpotLight {
             color: Vec3::new(0.8, 0.9, 1.0),
-            intensity: 18.0,
+            intensity: 10.0,
             inner_angle: 0.35,
             outer_angle: 0.6,
-            range: 22.0,
+            range: 10.0,
         },
         CanCastShadow(true),
     ));
