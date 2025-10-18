@@ -209,8 +209,7 @@ impl SceneLoader {
         let mut children = Vec::new();
 
         // Spawn extra mesh primitives as child entities
-        for (primitive_index, primitive) in extra_primitives.into_iter().enumerate()
-        {
+        for (primitive_index, primitive) in extra_primitives.into_iter().enumerate() {
             let primitive_name = format!("{}_Primitive_{}", node_name, primitive_index + 1);
             log::debug!("  Creating extra primitive: {}", primitive_name);
 
