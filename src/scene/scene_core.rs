@@ -4,7 +4,7 @@ use super::assets::{
     SerializedAnimationClip, SerializedTransform,
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
-use super::internal::{lights, rendering};
+use super::internal::{gizmos, lights, rendering};
 use super::loader::SceneLoader;
 use crate::asset::Assets;
 use crate::environment::Environment;
@@ -25,6 +25,7 @@ pub(crate) struct SceneSnapshot {
     time: f64,
     tree: SceneTreeAsset,
     main_scene_path: Vec<usize>,
+    gizmo_resources: Option<gizmos::GizmoResources>,
 }
 
 impl SceneSnapshot {
@@ -35,6 +36,7 @@ impl SceneSnapshot {
         let time = scene.time();
         let tree = scene.export_tree_asset("SceneSnapshot");
         let main_scene_path = scene.path_from_root(scene.main_scene());
+        let gizmo_resources = scene.gizmo_resources();
 
         Self {
             assets,
@@ -43,6 +45,7 @@ impl SceneSnapshot {
             time,
             tree,
             main_scene_path,
+            gizmo_resources,
         }
     }
 
@@ -84,6 +87,8 @@ impl SceneSnapshot {
 
         scene.propagate_transforms();
 
+        scene.gizmo_resources = self.gizmo_resources;
+
         scene
     }
 }
@@ -98,6 +103,7 @@ pub struct Scene {
     root: SceneNodeId,
     main_scene: SceneNodeId,
     scripting: ScriptingState,
+    gizmo_resources: Option<gizmos::GizmoResources>,
 }
 
 impl Scene {
@@ -118,6 +124,7 @@ impl Scene {
             root: root_id,
             main_scene: root_id,
             scripting: ScriptingState::default(),
+            gizmo_resources: None,
         }
     }
 
@@ -300,6 +307,7 @@ impl Scene {
 
     pub(crate) fn replace_assets(&mut self, assets: Assets) {
         self.assets = assets;
+        self.gizmo_resources = None;
     }
 
     pub fn node_animations(&self, node: SceneNodeId) -> &[AnimationClip] {
@@ -339,6 +347,19 @@ impl Scene {
 
     pub fn main_world_mut(&mut self) -> &mut World {
         self.main_instance_mut().world_mut()
+    }
+
+    pub(crate) fn gizmo_resources(&self) -> Option<gizmos::GizmoResources> {
+        self.gizmo_resources
+    }
+
+    fn ensure_gizmo_resources(&mut self, renderer: &Renderer) -> gizmos::GizmoResources {
+        if self.gizmo_resources.is_none() {
+            let resources = gizmos::create_resources(renderer, &mut self.assets);
+            self.gizmo_resources = Some(resources);
+        }
+        self.gizmo_resources
+            .expect("gizmo resources must be initialized")
     }
 
     pub fn world(&self) -> &World {
@@ -454,6 +475,7 @@ impl Scene {
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         batcher.clear();
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);
+        let gizmo_resources = self.ensure_gizmo_resources(renderer);
 
         for node in self.nodes_iter() {
             let world = node.instance().world();
@@ -462,6 +484,12 @@ impl Scene {
             for mut object in rendering::build_render_objects(world, camera_vectors).into_iter() {
                 object.transform = world_transform.mul_transform(&object.transform);
                 batcher.add(object);
+            }
+
+            for gizmo in
+                gizmos::build_light_gizmos(world, camera_vectors, world_transform, gizmo_resources)
+            {
+                batcher.add(gizmo);
             }
         }
 
@@ -1150,7 +1178,7 @@ mod tests {
         );
 
         let mut direct_scene = Scene::new();
-        let node_id = direct_scene.instantiate_asset(&root_asset, None);
+        let node_id = direct_scene.instantiate_asset(root_asset, None);
         direct_scene.set_main_scene(node_id);
         let direct_count = direct_scene
             .main_world()

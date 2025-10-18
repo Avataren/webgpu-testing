@@ -24,6 +24,7 @@ pub(crate) struct PreparedBatches {
     pub opaque_range: Range<usize>,
     pub transparent_range: Range<usize>,
     pub overlay_range: Range<usize>,
+    pub gizmo_range: Range<usize>,
     pub materials: Vec<Material>,
 }
 
@@ -32,6 +33,7 @@ impl PreparedBatches {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
+        let mut gizmos = Vec::new();
         let materials = batcher.materials();
 
         for batch in batcher.iter() {
@@ -89,16 +91,20 @@ impl PreparedBatches {
                 RenderPass::Opaque => opaque.push(ordered),
                 RenderPass::Transparent => transparent.push(ordered),
                 RenderPass::Overlay => overlay.push(ordered),
+                RenderPass::Gizmo => gizmos.push(ordered),
             }
         }
 
         sort_batches_back_to_front(&mut transparent, camera_pos);
         sort_batches_back_to_front(&mut overlay, camera_pos);
+        sort_batches_back_to_front(&mut gizmos, camera_pos);
 
-        let mut batches = Vec::with_capacity(opaque.len() + transparent.len() + overlay.len());
+        let mut batches =
+            Vec::with_capacity(opaque.len() + transparent.len() + overlay.len() + gizmos.len());
         let opaque_range = append_batches(&mut batches, opaque);
         let transparent_range = append_batches(&mut batches, transparent);
         let overlay_range = append_batches(&mut batches, overlay);
+        let gizmo_range = append_batches(&mut batches, gizmos);
 
         let mut offset = 0u32;
         for batch in &mut batches {
@@ -134,6 +140,7 @@ impl PreparedBatches {
             opaque_range,
             transparent_range,
             overlay_range,
+            gizmo_range,
             materials: materials.to_vec(),
         }
     }
@@ -157,6 +164,10 @@ impl PreparedBatches {
 
     pub(crate) fn overlay(&self) -> &[OrderedBatch] {
         &self.batches[self.overlay_range.clone()]
+    }
+
+    pub(crate) fn gizmos(&self) -> &[OrderedBatch] {
+        &self.batches[self.gizmo_range.clone()]
     }
 
     pub(crate) fn materials(&self) -> &[Material] {
@@ -232,6 +243,7 @@ mod tests {
             transform: Transform::IDENTITY,
             depth_state: DepthState::default(),
             force_overlay: false,
+            render_pass: None,
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,

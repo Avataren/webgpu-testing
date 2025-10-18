@@ -511,7 +511,10 @@ impl ShadowResources {
         pass.set_bind_group(1, &objects.bind_group, &[]);
 
         for batch in batches {
-            if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
+            if matches!(
+                batch.pass,
+                RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo
+            ) {
                 continue;
             }
             let Some(mesh) = assets.meshes.get(batch.mesh) else {

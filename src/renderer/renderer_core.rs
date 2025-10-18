@@ -42,6 +42,7 @@ pub struct RendererStats {
     pub opaque_draw_calls: u32,
     pub transparent_draw_calls: u32,
     pub overlay_draw_calls: u32,
+    pub gizmo_draw_calls: u32,
     pub shadow_draw_calls: u32,
 }
 
@@ -51,6 +52,7 @@ impl RendererStats {
             + self.opaque_draw_calls
             + self.transparent_draw_calls
             + self.overlay_draw_calls
+            + self.gizmo_draw_calls
             + self.shadow_draw_calls
     }
 }
@@ -631,6 +633,40 @@ impl Renderer {
             );
         }
 
+        // Editor gizmos render pass (after overlays to guarantee visibility).
+        let gizmo_batches = prepared_batches.gizmos();
+        if !gizmo_batches.is_empty() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("GizmoPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut rpass);
+            }
+
+            frame_stats.gizmo_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                gizmo_batches,
+                prepared_batches.materials(),
+                self.context.config.format,
+                1,
+                false,
+            );
+        }
+
         // --- EGUI (optional) ---
         #[cfg(feature = "egui")]
         if let Some(hook) = self.ui_hook.take() {
@@ -903,7 +939,10 @@ fn estimate_shadow_draw_calls(
 }
 
 fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) -> u32 {
-    if matches!(batch.pass, RenderPass::Transparent | RenderPass::Overlay) {
+    if matches!(
+        batch.pass,
+        RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo
+    ) {
         return 0;
     }
 

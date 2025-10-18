@@ -1,4 +1,5 @@
 use super::vertex::{v, Vertex};
+use glam::Vec3;
 use std::f32::consts::PI;
 
 pub fn sphere_mesh(segments: u32, rings: u32) -> (Vec<Vertex>, Vec<u32>) {
@@ -45,6 +46,50 @@ pub fn sphere_mesh(segments: u32, rings: u32) -> (Vec<Vertex>, Vec<u32>) {
             indices.push(next + 1);
             indices.push(next);
         }
+    }
+
+    (vertices, indices)
+}
+
+pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
+    let segments = segments.max(3);
+    let mut vertices = Vec::with_capacity((segments + 2) as usize);
+    let mut indices = Vec::with_capacity((segments * 6) as usize);
+    let tangent = [1.0, 0.0, 0.0, 1.0];
+
+    // Apex at origin pointing toward -Z.
+    vertices.push(v([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.5, 1.0], tangent));
+
+    for i in 0..=segments {
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let x = theta.cos();
+        let y = theta.sin();
+        let pos = [x, y, -1.0];
+
+        // Approximate normal by blending base direction with apex axis.
+        let normal = Vec3::new(x, y, 1.0).normalize();
+        let uv = [i as f32 / segments as f32, 0.0];
+
+        vertices.push(v(pos, normal.to_array(), uv, tangent));
+    }
+
+    let base_center = vertices.len() as u32;
+    vertices.push(v([0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.5, 0.5], tangent));
+
+    for i in 1..=segments {
+        let next = if i == segments { 1 } else { i + 1 };
+        // Side triangles (apex -> current -> next)
+        indices.push(0);
+        indices.push(i);
+        indices.push(next);
+    }
+
+    for i in 1..=segments {
+        let next = if i == segments { 1 } else { i + 1 };
+        // Base cap (center -> next -> current)
+        indices.push(base_center);
+        indices.push(next);
+        indices.push(i);
     }
 
     (vertices, indices)

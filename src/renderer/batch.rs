@@ -12,6 +12,7 @@ pub enum RenderPass {
     Opaque,      // Normal opaque geometry
     Transparent, // Alpha blended (needs sorting)
     Overlay,     // Draw last, typically with depth disabled
+    Gizmo,       // Editor gizmos and debug helpers
 }
 
 impl RenderPass {
@@ -19,18 +20,18 @@ impl RenderPass {
     /// front relative to the camera.  Transparent and overlay elements need
     /// back-to-front ordering so blending behaves as expected.
     pub fn requires_back_to_front_sort(self) -> bool {
-        matches!(self, Self::Transparent | Self::Overlay)
+        matches!(self, Self::Transparent | Self::Overlay | Self::Gizmo)
     }
 
     /// Returns true when the pass intrinsically requires alpha blending.
     pub fn uses_alpha_blending(self) -> bool {
-        matches!(self, Self::Transparent | Self::Overlay)
+        matches!(self, Self::Transparent | Self::Overlay | Self::Gizmo)
     }
 
     /// Sample count for the color attachment used by this pass.  Overlay
     /// passes are resolved directly into the swap chain, so MSAA is not used.
     pub fn color_sample_count(self, msaa_samples: u32) -> u32 {
-        if matches!(self, Self::Overlay) {
+        if matches!(self, Self::Overlay | Self::Gizmo) {
             1
         } else {
             msaa_samples
@@ -58,6 +59,7 @@ pub struct RenderObject {
     pub transform: Transform, // Changed from Mat4
     pub depth_state: DepthState,
     pub force_overlay: bool,
+    pub render_pass: Option<RenderPass>,
     pub instance_source: InstanceSource,
     pub gpu_index: Option<u32>,
     pub cull_mode: CullMode,
@@ -123,13 +125,15 @@ impl RenderBatcher {
     /// Add an object to be rendered
     pub fn add(&mut self, obj: RenderObject) {
         // Determine which pass this object belongs to
-        let pass = if obj.force_overlay {
-            RenderPass::Overlay
-        } else if obj.material.requires_separate_pass() {
-            RenderPass::Transparent
-        } else {
-            RenderPass::Opaque
-        };
+        let pass = obj.render_pass.unwrap_or_else(|| {
+            if obj.force_overlay {
+                RenderPass::Overlay
+            } else if obj.material.requires_separate_pass() {
+                RenderPass::Transparent
+            } else {
+                RenderPass::Opaque
+            }
+        });
 
         let key = BatchKey {
             mesh: obj.mesh,
