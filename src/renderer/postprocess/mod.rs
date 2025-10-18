@@ -6,6 +6,8 @@ use glam::{Mat4, Vec2, Vec3};
 const NOISE_TEXTURE_SIZE: u32 = 4;
 const BLOOM_MIP_COUNT: usize = 5;
 const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const GBUFFER_POSITION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as usize] = [
     -0.6401949,
     -0.76821256,
@@ -146,6 +148,8 @@ pub struct PostProcessCamera {
     pub proj: Mat4,
     pub view_proj: Mat4,
     pub view_proj_inv: Mat4,
+    pub view: Mat4,
+    pub view_inv: Mat4,
     pub position: Vec3,
     pub near: f32,
     pub far: f32,
@@ -155,6 +159,10 @@ pub struct PostProcess {
     scene_source: TextureBundle,
     scene: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
+    normal_source: TextureBundle,
+    normal_msaa: Option<MsaaTarget>,
+    position_source: TextureBundle,
+    position_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     bloom_down_chain: Vec<BloomMip>,
@@ -198,6 +206,8 @@ pub struct PostProcess {
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
     last_proj: Mat4,
+    last_view: Mat4,
+    last_view_inv: Mat4,
     last_view_proj: Mat4,
     last_view_proj_inv: Mat4,
     last_camera_position: Vec3,
@@ -208,6 +218,11 @@ pub struct PostProcess {
     viewport_scale: Vec2,
     sample_count: u32,
     color_grading: ColorGrading,
+}
+
+pub struct GBufferViews<'a> {
+    pub normal: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
+    pub position: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
 }
 
 impl PostProcess {
@@ -248,6 +263,20 @@ impl PostProcess {
 
         let (scene_source, scene, scene_msaa) =
             Self::create_scene_targets(device, &size, scene_format, sample_count);
+        let (normal_source, normal_msaa) = Self::create_gbuffer_target(
+            device,
+            &size,
+            GBUFFER_NORMAL_FORMAT,
+            sample_count,
+            "SceneNormal",
+        );
+        let (position_source, position_msaa) = Self::create_gbuffer_target(
+            device,
+            &size,
+            GBUFFER_POSITION_FORMAT,
+            sample_count,
+            "ScenePosition",
+        );
         let ssao = TextureBundle::ssao(device, &size);
         let ssao_ping = TextureBundle::ssao(device, &size);
         let (bloom_down_chain, bloom_up_chain) = Self::create_bloom_chain(device, &size);
@@ -301,8 +330,12 @@ impl PostProcess {
             .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
             .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
             .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
-            .with_module(include_str!("../../shader/postprocess/bloom_prefilter.wgsl"))
-            .with_module(include_str!("../../shader/postprocess/bloom_downsample.wgsl"))
+            .with_module(include_str!(
+                "../../shader/postprocess/bloom_prefilter.wgsl"
+            ))
+            .with_module(include_str!(
+                "../../shader/postprocess/bloom_downsample.wgsl"
+            ))
             .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
             .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
             .build_modules_only();
@@ -430,6 +463,26 @@ impl PostProcess {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
             ],
@@ -711,6 +764,10 @@ impl PostProcess {
             scene_source,
             scene,
             scene_msaa,
+            normal_source,
+            normal_msaa,
+            position_source,
+            position_msaa,
             ssao,
             ssao_ping,
             bloom_down_chain,
@@ -754,6 +811,8 @@ impl PostProcess {
             cached_depth_view: None,
             bind_groups_dirty: true,
             last_proj: Mat4::IDENTITY,
+            last_view: Mat4::IDENTITY,
+            last_view_inv: Mat4::IDENTITY,
             last_view_proj: Mat4::IDENTITY,
             last_view_proj_inv: Mat4::IDENTITY,
             last_camera_position: Vec3::ZERO,
@@ -769,6 +828,8 @@ impl PostProcess {
         let initial_uniform = PostProcessUniform::new(
             post.last_proj,
             post.last_proj.inverse(),
+            post.last_view,
+            post.last_view_inv,
             post.last_view_proj,
             post.last_view_proj_inv,
             post.last_camera_position,
@@ -804,6 +865,24 @@ impl PostProcess {
         self.scene_source = scene_source;
         self.scene = scene;
         self.scene_msaa = scene_msaa;
+        let (normal_source, normal_msaa) = Self::create_gbuffer_target(
+            device,
+            &self.size,
+            GBUFFER_NORMAL_FORMAT,
+            self.sample_count,
+            "SceneNormal",
+        );
+        self.normal_source = normal_source;
+        self.normal_msaa = normal_msaa;
+        let (position_source, position_msaa) = Self::create_gbuffer_target(
+            device,
+            &self.size,
+            GBUFFER_POSITION_FORMAT,
+            self.sample_count,
+            "ScenePosition",
+        );
+        self.position_source = position_source;
+        self.position_msaa = position_msaa;
         self.ssao = TextureBundle::ssao(device, &self.size);
         self.ssao_ping = TextureBundle::ssao(device, &self.size);
         self.resolved_depth = if self.sample_count > 1 {
@@ -851,6 +930,8 @@ impl PostProcess {
 
     pub fn update_camera(&mut self, queue: &wgpu::Queue, camera: PostProcessCamera) {
         self.last_proj = camera.proj;
+        self.last_view = camera.view;
+        self.last_view_inv = camera.view_inv;
         self.last_view_proj = camera.view_proj;
         self.last_view_proj_inv = camera.view_proj_inv;
         self.last_camera_position = camera.position;
@@ -864,6 +945,18 @@ impl PostProcess {
             Some(msaa) => (&msaa.view, Some(&self.scene_source.view)),
             None => (&self.scene_source.view, None),
         }
+    }
+
+    pub fn gbuffer_views(&self) -> GBufferViews<'_> {
+        let normal = match self.normal_msaa.as_ref() {
+            Some(msaa) => (&msaa.view, Some(&self.normal_source.view)),
+            None => (&self.normal_source.view, None),
+        };
+        let position = match self.position_msaa.as_ref() {
+            Some(msaa) => (&msaa.view, Some(&self.position_source.view)),
+            None => (&self.position_source.view, None),
+        };
+        GBufferViews { normal, position }
     }
 
     pub fn scene_view(&self) -> &wgpu::TextureView {
@@ -1226,6 +1319,8 @@ impl PostProcess {
         let uniform = PostProcessUniform::new(
             self.last_proj,
             proj_inv,
+            self.last_view,
+            self.last_view_inv,
             self.last_view_proj,
             self.last_view_proj_inv,
             self.last_camera_position,
@@ -1321,6 +1416,14 @@ impl PostProcess {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&self.normal_source.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&self.position_source.view),
+                    },
                 ],
             }));
         } else {
@@ -1340,6 +1443,14 @@ impl PostProcess {
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Sampler(&self.sampler_noise),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(&self.normal_source.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(&self.position_source.view),
                     },
                 ],
             }));
@@ -1564,6 +1675,29 @@ impl PostProcess {
 
         (source, target, msaa)
     }
+
+    fn create_gbuffer_target(
+        device: &wgpu::Device,
+        size: &wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        sample_count: u32,
+        label: &str,
+    ) -> (TextureBundle, Option<MsaaTarget>) {
+        let source = TextureBundle::color(device, size, format, &format!("{label}Source"));
+        let msaa = if sample_count > 1 {
+            Some(MsaaTarget::new(
+                device,
+                size,
+                format,
+                sample_count,
+                &format!("{label}Msaa"),
+            ))
+        } else {
+            None
+        };
+
+        (source, msaa)
+    }
 }
 
 // align(16) keeps the uniform buffer size matching WGSL std140 padding rules.
@@ -1574,6 +1708,8 @@ struct PostProcessUniform {
     view_proj_inv: [[f32; 4]; 4],
     proj: [[f32; 4]; 4],
     proj_inv: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
+    view_inv: [[f32; 4]; 4],
     camera_position: [f32; 4],
     resolution: [f32; 2],
     viewport_offset: [f32; 2],
@@ -1594,6 +1730,8 @@ impl PostProcessUniform {
     fn new(
         proj: Mat4,
         proj_inv: Mat4,
+        view: Mat4,
+        view_inv: Mat4,
         view_proj: Mat4,
         view_proj_inv: Mat4,
         camera_position: Vec3,
@@ -1622,7 +1760,10 @@ impl PostProcessUniform {
             view_proj_inv: view_proj_inv.to_cols_array_2d(),
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
+            view: view.to_cols_array_2d(),
+            view_inv: view_inv.to_cols_array_2d(),
             camera_position: [camera_position.x, camera_position.y, camera_position.z, 1.0],
+            // remaining fields set below
             resolution: [resolution_width, resolution_height],
             viewport_offset: [viewport_offset.x, viewport_offset.y],
             viewport_scale: [viewport_scale.x, viewport_scale.y],

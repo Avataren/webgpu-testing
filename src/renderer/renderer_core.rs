@@ -228,17 +228,21 @@ impl Renderer {
         self.camera_position = camera.position(); // Store it
         self.camera_target = camera.target;
         self.camera_up = camera.up;
-        let vp = camera.view_proj(aspect);
+        let view = camera.view();
+        let view_inv = view.inverse();
+        let proj = camera.proj(aspect);
+        let vp = proj * view;
         let inv_vp = vp.inverse();
         let uni = CameraUniform::from_matrices(vp, inv_vp, camera.position());
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
-        let proj = camera.proj(aspect);
         self.postprocess.update_camera(
             &self.context.queue,
             PostProcessCamera {
                 proj,
+                view,
+                view_inv,
                 view_proj: vp,
                 view_proj_inv: inv_vp,
                 position: camera.position(),
@@ -365,10 +369,6 @@ impl Renderer {
             }
         }
 
-        let (scene_view, resolve_target) = {
-            let (view, resolve) = self.postprocess.scene_color_views();
-            (view.clone(), resolve.cloned())
-        };
         let depth_view = self.context.depth.view.clone();
         let surface_width = self.context.config.width;
         let surface_height = self.context.config.height;
@@ -378,6 +378,12 @@ impl Renderer {
 
         self.postprocess
             .update_viewport(&self.context.queue, render_region);
+
+        let (scene_view, resolve_target) = {
+            let (view, resolve) = self.postprocess.scene_color_views();
+            (view.clone(), resolve.cloned())
+        };
+        let gbuffer_views = self.postprocess.gbuffer_views();
 
         // Depth-only prepass
         {
@@ -425,9 +431,8 @@ impl Renderer {
 
         // Main color pass (to postprocess scene target)
         {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("MainPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            let color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = vec![
+                Some(wgpu::RenderPassColorAttachment {
                     view: &scene_view,
                     depth_slice: None,
                     resolve_target: resolve_target.as_ref(),
@@ -435,7 +440,40 @@ impl Renderer {
                         load: wgpu::LoadOp::Clear(environment.clear_color()),
                         store: wgpu::StoreOp::Store,
                     },
-                })],
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: gbuffer_views.normal.0,
+                    depth_slice: None,
+                    resolve_target: gbuffer_views.normal.1,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+                Some(wgpu::RenderPassColorAttachment {
+                    view: gbuffer_views.position.0,
+                    depth_slice: None,
+                    resolve_target: gbuffer_views.position.1,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ];
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("MainPass"),
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -463,6 +501,7 @@ impl Renderer {
                 prepared_batches.materials(),
                 scene_format,
                 self.context.sample_count,
+                true,
             );
         }
 
@@ -540,6 +579,7 @@ impl Renderer {
                 prepared_batches.materials(),
                 self.context.config.format,
                 1,
+                false,
             );
         }
 
@@ -550,14 +590,15 @@ impl Renderer {
             let overlay_needs_depth = overlay_batches
                 .iter()
                 .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
-            let depth_attachment = overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            });
+            let depth_attachment =
+                overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                });
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OverlayPass"),
@@ -586,6 +627,7 @@ impl Renderer {
                 prepared_batches.materials(),
                 self.context.config.format,
                 1,
+                false,
             );
         }
 
@@ -658,6 +700,7 @@ impl Renderer {
         self.stats
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_batches(
         &mut self,
         rpass: &mut wgpu::RenderPass<'_>,
@@ -666,6 +709,7 @@ impl Renderer {
         materials: &[Material],
         color_format: wgpu::TextureFormat,
         color_sample_count: u32,
+        use_gbuffer: bool,
     ) -> u32 {
         if batches.is_empty() {
             return 0;
@@ -675,9 +719,14 @@ impl Renderer {
 
         if let Some(bindless_group) = self.texture_binder.global_bind_group() {
             for batch in batches {
-                let Some(mesh) =
-                    self.setup_batch_state(rpass, assets, batch, color_format, color_sample_count)
-                else {
+                let Some(mesh) = self.setup_batch_state(
+                    rpass,
+                    assets,
+                    batch,
+                    color_format,
+                    color_sample_count,
+                    use_gbuffer,
+                ) else {
                     continue;
                 };
                 rpass.set_bind_group(3, bindless_group, &[]);
@@ -686,9 +735,14 @@ impl Renderer {
             }
         } else {
             for batch in batches {
-                let Some(mesh) =
-                    self.setup_batch_state(rpass, assets, batch, color_format, color_sample_count)
-                else {
+                let Some(mesh) = self.setup_batch_state(
+                    rpass,
+                    assets,
+                    batch,
+                    color_format,
+                    color_sample_count,
+                    use_gbuffer,
+                ) else {
                     continue;
                 };
                 draw_calls += self.draw_classic_batch(rpass, assets, mesh, batch, materials) as u32;
@@ -704,6 +758,7 @@ impl Renderer {
         batch: &OrderedBatch,
         color_format: wgpu::TextureFormat,
         color_sample_count: u32,
+        use_gbuffer: bool,
     ) -> Option<&'a Mesh> {
         let mesh = mesh_for_batch(assets, batch)?;
         let pipeline_key = PipelineKey::new(
@@ -714,6 +769,7 @@ impl Renderer {
             color_sample_count,
             batch.sampler_filtering,
             batch.cull_mode,
+            use_gbuffer,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);
         rpass.set_pipeline(pipeline);

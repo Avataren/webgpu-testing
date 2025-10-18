@@ -6,6 +6,7 @@ use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{
+    postprocess::{GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT},
     Material, PipelineBuilder, SamplerFilterMode, ShaderBuilder, Vertex, MAX_TEXTURES,
 };
 
@@ -24,9 +25,11 @@ pub(crate) struct PipelineKey {
     sample_count: u32,
     sampler_filtering: SamplerFilterMode,
     cull_mode: CullMode,
+    gbuffer: bool,
 }
 
 impl PipelineKey {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         depth_test: bool,
         depth_write: bool,
@@ -35,6 +38,7 @@ impl PipelineKey {
         sample_count: u32,
         sampler_filtering: SamplerFilterMode,
         cull_mode: CullMode,
+        gbuffer: bool,
     ) -> Self {
         Self {
             depth_test,
@@ -44,6 +48,7 @@ impl PipelineKey {
             sample_count,
             sampler_filtering,
             cull_mode,
+            gbuffer,
         }
     }
 }
@@ -268,7 +273,11 @@ impl RenderPipeline {
         let background_pipeline =
             PipelineBuilder::new(&context.device, &background_layout, &background_shader)
                 .with_label("EnvironmentBackgroundPipeline")
+                .with_vertex_entry("vs_main")
+                .with_fragment_entry("fs_main_gbuffer")
                 .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE))
                 .with_depth_stencil(
                     context.depth.format,
                     false, // depth_write
@@ -279,10 +288,14 @@ impl RenderPipeline {
                 .build();
 
         let mut pipelines = HashMap::new();
-        let color_targets = [(scene_format, sample_count), (context.config.format, 1)];
+        let color_targets = [
+            (scene_format, sample_count, true),
+            (scene_format, sample_count, false),
+            (context.config.format, 1, false),
+        ];
         for (filtering, shader_module) in &shader_modules {
             let filtering = *filtering;
-            for &(color_format, samples) in &color_targets {
+            for &(color_format, samples, gbuffer) in &color_targets {
                 for &depth_test in &[false, true] {
                     for &depth_write in &[false, true] {
                         for &alpha_blend in &[false, true] {
@@ -295,6 +308,7 @@ impl RenderPipeline {
                                     samples,
                                     filtering,
                                     cull_mode,
+                                    gbuffer,
                                 );
                                 let pipeline = Self::create_pipeline(
                                     context,
@@ -306,6 +320,7 @@ impl RenderPipeline {
                                     color_format,
                                     samples,
                                     cull_mode,
+                                    gbuffer,
                                 );
                                 pipelines.insert(key, pipeline);
                             }
@@ -349,6 +364,7 @@ impl RenderPipeline {
         color_format: wgpu::TextureFormat,
         sample_count: u32,
         cull_mode: CullMode,
+        gbuffer: bool,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
             wgpu::CompareFunction::LessEqual
@@ -365,8 +381,19 @@ impl RenderPipeline {
         let mut builder = PipelineBuilder::new(&context.device, pipeline_layout, shader)
             .with_label("MainRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
-            .with_color_target(color_format, blend_state)
             .with_multisample(sample_count);
+
+        if gbuffer {
+            builder = builder.with_fragment_entry("fs_main_gbuffer");
+        }
+
+        builder = builder.with_color_target(color_format, blend_state);
+
+        if gbuffer {
+            builder = builder
+                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
+        }
 
         builder = match cull_mode {
             CullMode::Back => builder.with_cull_mode(Some(wgpu::Face::Back)),

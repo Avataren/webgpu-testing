@@ -3,6 +3,8 @@ struct PostUniform {
     view_proj_inv : mat4x4<f32>,
     proj : mat4x4<f32>,
     proj_inv : mat4x4<f32>,
+    view : mat4x4<f32>,
+    view_inv : mat4x4<f32>,
     camera_position : vec4<f32>,
     resolution : vec2<f32>,
     viewport_offset : vec2<f32>,
@@ -56,4 +58,24 @@ fn safe_texel_size() -> vec2<f32> {
     let width = max(post_uniform.resolution.x, 1.0);
     let height = max(post_uniform.resolution.y, 1.0);
     return vec2<f32>(1.0 / width, 1.0 / height);
+}
+
+fn view_matrix() -> mat4x4<f32> {
+    return post_uniform.view;
+}
+
+fn view_inverse_matrix() -> mat4x4<f32> {
+    return post_uniform.view_inv;
+}
+
+fn world_to_view_position(world : vec3<f32>) -> vec3<f32> {
+    let view = view_matrix();
+    let transformed = view * vec4<f32>(world, 1.0);
+    return transformed.xyz;
+}
+
+fn world_to_view_normal(normal : vec3<f32>) -> vec3<f32> {
+    let view = view_matrix();
+    let basis = mat3x3<f32>(view[0].xyz, view[1].xyz, view[2].xyz);
+    return basis * normal;
 }

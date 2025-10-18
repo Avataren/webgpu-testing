@@ -212,10 +212,7 @@ impl EditorApplication {
                 return;
             }
 
-            let uv = Vec2::new(
-                local_x.clamp(0.0, 1.0),
-                local_y.clamp(0.0, 1.0),
-            );
+            let uv = Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0));
             self.pending_pick = Some(ViewportPick { uv });
         });
     }
@@ -236,12 +233,7 @@ impl EditorApplication {
         self.selection_override = Some(picked);
     }
 
-    fn pick_entity(
-        &self,
-        ctx: &UpdateContext,
-        uv: Vec2,
-        region: RenderRegion,
-    ) -> Option<Entity> {
+    fn pick_entity(&self, ctx: &UpdateContext, uv: Vec2, region: RenderRegion) -> Option<Entity> {
         let width = region.width().max(1) as f32;
         let height = region.height().max(1) as f32;
         let aspect = width / height;
@@ -269,8 +261,7 @@ impl EditorApplication {
                 .or_else(|| local_transform.map(|lt| lt.0))
                 .unwrap_or(Transform::IDENTITY);
 
-            let Some(distance) =
-                Self::entity_hit_distance(transform, *bounds, origin, direction)
+            let Some(distance) = Self::entity_hit_distance(transform, *bounds, origin, direction)
             else {
                 continue;
             };
@@ -284,11 +275,7 @@ impl EditorApplication {
         best.map(|(entity, _)| entity)
     }
 
-    fn ray_from_uv(
-        camera: &wgpu_cube::scene::Camera,
-        uv: Vec2,
-        aspect: f32,
-    ) -> (Vec3, Vec3) {
+    fn ray_from_uv(camera: &wgpu_cube::scene::Camera, uv: Vec2, aspect: f32) -> (Vec3, Vec3) {
         let ndc_x = uv.x * 2.0 - 1.0;
         let ndc_y = 1.0 - uv.y * 2.0;
 
@@ -337,11 +324,8 @@ impl EditorApplication {
             return None;
         }
 
-        let Some(local_t) =
-            Self::ray_aabb_intersection(origin_local, direction_local, bounds.min, bounds.max)
-        else {
-            return None;
-        };
+        let local_t =
+            Self::ray_aabb_intersection(origin_local, direction_local, bounds.min, bounds.max)?;
 
         let hit_local = origin_local + direction_local * local_t;
         let hit_world = (world_matrix * hit_local.extend(1.0)).truncate();
@@ -350,12 +334,7 @@ impl EditorApplication {
         distance.is_finite().then_some(distance)
     }
 
-    fn ray_aabb_intersection(
-        origin: Vec3,
-        direction: Vec3,
-        min: Vec3,
-        max: Vec3,
-    ) -> Option<f32> {
+    fn ray_aabb_intersection(origin: Vec3, direction: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
         let mut t_min = f32::NEG_INFINITY;
         let mut t_max = f32::INFINITY;
 
@@ -443,7 +422,7 @@ impl EditorApplication {
             let mut cached_bounds = None;
             if missing_mesh {
                 let (vertices, indices) = cube_mesh();
-                 cached_bounds = MeshBounds::from_vertices(&vertices);
+                cached_bounds = MeshBounds::from_vertices(&vertices);
                 let mesh = ctx.renderer.create_mesh(&vertices, &indices);
                 let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
                 if let Err(err) = ctx
@@ -455,8 +434,8 @@ impl EditorApplication {
                 }
             }
             if missing_bounds {
-                let bounds =
-                    cached_bounds.unwrap_or_else(|| MeshBounds::new(Vec3::splat(-0.5), Vec3::splat(0.5)));
+                let bounds = cached_bounds
+                    .unwrap_or_else(|| MeshBounds::new(Vec3::splat(-0.5), Vec3::splat(0.5)));
                 if let Err(err) = ctx.scene.main_world_mut().insert_one(entity, bounds) {
                     error!("failed to attach bounds to Editor Cube: {err}");
                 }

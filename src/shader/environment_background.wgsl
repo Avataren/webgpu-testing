@@ -65,16 +65,25 @@ fn environment_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(wrapped_u, clamped_v);
 }
 
-@fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+struct BackgroundOut {
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) world_pos: vec4<f32>,
+}
+
+fn sample_background(in: VsOut) -> BackgroundOut {
     if (!environment_enabled()) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return BackgroundOut(
+            vec4<f32>(0.0, 0.0, 0.0, 1.0),
+            vec4<f32>(0.0, 0.0, 0.0, 0.0),
+            vec4<f32>(0.0, 0.0, 0.0, 0.0),
+        );
     }
 
     let inv_view_proj = globals.inverse_view_proj;
     let clip = vec4<f32>(in.clip, 1.0);
     let world = inv_view_proj * clip;
-    let world_pos = world.xyz / world.w;
+    let world_pos = world.xyz / max(world.w, 1e-4);
     let dir = normalize(world_pos - globals.camera_pos);
 
     let uv = environment_uv(dir);
@@ -82,5 +91,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         * environment_intensity();
 
     let mapped = color / (color + vec3<f32>(1.0));
-    return vec4<f32>(mapped, 1.0);
+    BackgroundOut(
+        vec4<f32>(mapped, 1.0),
+        vec4<f32>(0.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 0.0),
+    )
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return sample_background(in).color;
+}
+
+@fragment
+fn fs_main_gbuffer(in: VsOut) -> BackgroundOut {
+    return sample_background(in);
 }
