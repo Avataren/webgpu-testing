@@ -1310,11 +1310,11 @@ impl PostProcess {
                 layout: &self.ssao_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 10,
+                        binding: 0,
                         resource: wgpu::BindingResource::TextureView(&resolved.view),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 11,
+                        binding: 1,
                         resource: wgpu::BindingResource::TextureView(&self.noise_view),
                     },
                     wgpu::BindGroupEntry {
