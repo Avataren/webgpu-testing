@@ -4,11 +4,12 @@ use super::assets::{
     SerializedAnimationClip, SerializedTransform,
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
-use super::internal::{gizmos, lights, rendering};
+use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::loader::SceneLoader;
 use crate::asset::Assets;
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
+use crate::scene::components::{SelectedInEditor, WorldTransform};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::{PendingGltfImport, RuneScriptComponent, RuneScriptSource, ScriptingState};
@@ -16,6 +17,13 @@ use crate::time::Instant;
 use hecs::World;
 use log::{error, warn};
 use std::collections::HashMap;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformGizmoMode {
+    Translate,
+    Rotate,
+    Scale,
+}
 
 #[derive(Clone)]
 pub(crate) struct SceneSnapshot {
@@ -26,6 +34,8 @@ pub(crate) struct SceneSnapshot {
     tree: SceneTreeAsset,
     main_scene_path: Vec<usize>,
     gizmo_resources: Option<gizmos::GizmoResources>,
+    transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
+    gizmo_mode: TransformGizmoMode,
 }
 
 impl SceneSnapshot {
@@ -37,6 +47,8 @@ impl SceneSnapshot {
         let tree = scene.export_tree_asset("SceneSnapshot");
         let main_scene_path = scene.path_from_root(scene.main_scene());
         let gizmo_resources = scene.gizmo_resources();
+        let transform_gizmo_resources = scene.transform_gizmo_resources();
+        let gizmo_mode = scene.transform_gizmo_mode;
 
         Self {
             assets,
@@ -46,6 +58,8 @@ impl SceneSnapshot {
             tree,
             main_scene_path,
             gizmo_resources,
+            transform_gizmo_resources,
+            gizmo_mode,
         }
     }
 
@@ -88,6 +102,8 @@ impl SceneSnapshot {
         scene.propagate_transforms();
 
         scene.gizmo_resources = self.gizmo_resources;
+        scene.transform_gizmo_resources = self.transform_gizmo_resources;
+        scene.transform_gizmo_mode = self.gizmo_mode;
 
         scene
     }
@@ -104,6 +120,8 @@ pub struct Scene {
     main_scene: SceneNodeId,
     scripting: ScriptingState,
     gizmo_resources: Option<gizmos::GizmoResources>,
+    transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
+    transform_gizmo_mode: TransformGizmoMode,
 }
 
 impl Scene {
@@ -125,6 +143,8 @@ impl Scene {
             main_scene: root_id,
             scripting: ScriptingState::default(),
             gizmo_resources: None,
+            transform_gizmo_resources: None,
+            transform_gizmo_mode: TransformGizmoMode::Translate,
         }
     }
 
@@ -191,6 +211,14 @@ impl Scene {
 
     pub fn scripting_mut(&mut self) -> &mut ScriptingState {
         &mut self.scripting
+    }
+
+    pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
+        self.transform_gizmo_mode
+    }
+
+    pub fn set_transform_gizmo_mode(&mut self, mode: TransformGizmoMode) {
+        self.transform_gizmo_mode = mode;
     }
 
     pub fn node_name(&self, node: SceneNodeId) -> &str {
@@ -362,6 +390,24 @@ impl Scene {
             .expect("gizmo resources must be initialized")
     }
 
+    pub(crate) fn transform_gizmo_resources(
+        &self,
+    ) -> Option<transform_gizmos::TransformGizmoResources> {
+        self.transform_gizmo_resources
+    }
+
+    fn ensure_transform_gizmo_resources(
+        &mut self,
+        renderer: &mut Renderer,
+    ) -> transform_gizmos::TransformGizmoResources {
+        if self.transform_gizmo_resources.is_none() {
+            let resources = transform_gizmos::create_resources(renderer, &mut self.assets);
+            self.transform_gizmo_resources = Some(resources);
+        }
+        self.transform_gizmo_resources
+            .expect("transform gizmo resources must be initialized")
+    }
+
     pub fn world(&self) -> &World {
         self.main_world()
     }
@@ -481,6 +527,7 @@ impl Scene {
         } else {
             None
         };
+        let mut selected_transform: Option<Transform> = None;
 
         for node in self.nodes_iter() {
             let world = node.instance().world();
@@ -495,6 +542,31 @@ impl Scene {
                 for gizmo in
                     gizmos::build_light_gizmos(world, camera_vectors, world_transform, resources)
                 {
+                    batcher.add(gizmo);
+                }
+            }
+
+            if gizmos_enabled && selected_transform.is_none() {
+                if let Some((_, (entity_world, _))) = world
+                    .query::<(&WorldTransform, &SelectedInEditor)>()
+                    .iter()
+                    .next()
+                {
+                    let combined = world_transform.mul_transform(&entity_world.0);
+                    selected_transform = Some(combined);
+                }
+            }
+        }
+
+        if gizmos_enabled {
+            if let Some(selection_transform) = selected_transform {
+                let transform_resources = self.ensure_transform_gizmo_resources(renderer);
+                for gizmo in transform_gizmos::build_transform_gizmos(
+                    camera_vectors,
+                    selection_transform,
+                    self.transform_gizmo_mode,
+                    transform_resources,
+                ) {
                     batcher.add(gizmo);
                 }
             }

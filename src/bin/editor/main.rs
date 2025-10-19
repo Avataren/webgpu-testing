@@ -21,7 +21,7 @@ use wgpu_cube::renderer::{
 };
 use wgpu_cube::scene::{
     EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, SelectedInEditor, Transform,
-    TransformComponent, Visible, WorldTransform,
+    TransformComponent, TransformGizmoMode, Visible, WorldTransform,
 };
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
@@ -50,6 +50,7 @@ struct EditorApplication {
     selection_override: Option<Option<Entity>>,
     runtime_state: RuntimeStateHandle,
     last_runtime_mode: RuntimeMode,
+    transform_gizmo_mode: TransformGizmoMode,
 }
 
 struct ViewportPick {
@@ -72,6 +73,7 @@ impl EditorApplication {
             selection_override: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
+            transform_gizmo_mode: TransformGizmoMode::Translate,
         }
     }
 
@@ -257,6 +259,21 @@ impl EditorApplication {
 
             let uv = Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0));
             self.pending_pick = Some(ViewportPick { uv });
+        });
+    }
+
+    fn handle_gizmo_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.camera_controller.is_looking() {
+            return;
+        }
+        ctx.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::W) {
+                self.transform_gizmo_mode = TransformGizmoMode::Translate;
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::E) {
+                self.transform_gizmo_mode = TransformGizmoMode::Rotate;
+            } else if input.consume_key(egui::Modifiers::NONE, egui::Key::R) {
+                self.transform_gizmo_mode = TransformGizmoMode::Scale;
+            }
         });
     }
 
@@ -620,6 +637,8 @@ impl RenderApplication for EditorApplication {
         if matches!(ctx.runtime, RuntimeMode::Editor) {
             self.camera_controller.update_camera(ctx);
         }
+        ctx.scene
+            .set_transform_gizmo_mode(self.transform_gizmo_mode);
         self.process_pending_imports(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
@@ -689,6 +708,7 @@ impl RenderApplication for EditorApplication {
         self.camera_controller.capture_input(ctx);
         if !is_playing {
             self.capture_viewport_pick_input(ctx);
+            self.handle_gizmo_shortcuts(ctx);
         } else {
             self.pending_pick = None;
         }

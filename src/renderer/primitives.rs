@@ -188,6 +188,58 @@ pub fn cylinder_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
+pub fn torus_mesh(segments: u32, ring_segments: u32, radius: f32, thickness: f32) -> (Vec<Vertex>, Vec<u32>) {
+    let segments = segments.max(3);
+    let ring_segments = ring_segments.max(3);
+    let mut vertices = Vec::with_capacity((segments * ring_segments) as usize);
+    let mut indices = Vec::with_capacity((segments * ring_segments * 6) as usize);
+
+    for i in 0..segments {
+        let u = i as f32 / segments as f32 * std::f32::consts::TAU;
+        let cos_u = u.cos();
+        let sin_u = u.sin();
+        let center = Vec3::new(cos_u * radius, sin_u * radius, 0.0);
+        let tangent = Vec3::new(-sin_u, cos_u, 0.0);
+        let normal_base = Vec3::new(cos_u, sin_u, 0.0);
+
+        for j in 0..ring_segments {
+            let angle_v = j as f32 / ring_segments as f32 * std::f32::consts::TAU;
+            let cos_v = angle_v.cos();
+            let sin_v = angle_v.sin();
+
+            let normal = (normal_base * cos_v) + (Vec3::Z * sin_v);
+            let position = center + normal * thickness;
+            let tangent_vec = tangent;
+            let tangent4 = [tangent_vec.x, tangent_vec.y, tangent_vec.z, 1.0];
+            let uv = [i as f32 / segments as f32, j as f32 / ring_segments as f32];
+
+            vertices.push(v(position.to_array(), normal.normalize().to_array(), uv, tangent4));
+        }
+    }
+
+    let ring_stride = ring_segments as u32;
+    for i in 0..segments {
+        let next_i = (i + 1) % segments;
+        for j in 0..ring_segments {
+            let next_j = (j + 1) % ring_segments;
+            let current = i as u32 * ring_stride + j as u32;
+            let next = i as u32 * ring_stride + next_j;
+            let current_next = next_i as u32 * ring_stride + j as u32;
+            let next_next = next_i as u32 * ring_stride + next_j;
+
+            indices.push(current);
+            indices.push(next);
+            indices.push(next_next);
+
+            indices.push(current);
+            indices.push(next_next);
+            indices.push(current_next);
+        }
+    }
+
+    (vertices, indices)
+}
+
 pub fn quad_mesh() -> (Vec<Vertex>, Vec<u32>) {
     let verts = vec![
         v(
