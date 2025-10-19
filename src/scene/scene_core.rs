@@ -6,7 +6,7 @@ use super::assets::{
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::loader::SceneLoader;
-use crate::asset::Assets;
+use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::components::{SelectedInEditor, TransformComponent, WorldTransform};
@@ -773,7 +773,7 @@ impl Scene {
 
             match SceneLoader::load_gltf_asset(&path, renderer, scale) {
                 Ok(mut bundle) => {
-                    if bundle.register_resources(&mut self.assets) {
+                    if bundle.register_resources(renderer, &mut self.assets) {
                         textures_updated = true;
                     }
 
@@ -1015,7 +1015,7 @@ impl Scene {
         }
 
         let node_ref = self.node(node);
-        let (entities, index_map) = serialize_world(node_ref.instance().world());
+        let (mut entities, index_map) = serialize_world(node_ref.instance().world());
         let animations: Vec<_> = node_ref
             .instance()
             .animations()
@@ -1030,12 +1030,38 @@ impl Scene {
 
         let name = name_override.unwrap_or_else(|| node_ref.name().to_string());
 
+        let mut mesh_map: HashMap<usize, usize> = HashMap::new();
+        let mut mesh_data: Vec<MeshData> = Vec::new();
+
+        for entity in &mut entities {
+            if let Some(handle_index) = entity.mesh_handle {
+                let mapped = if let Some(&existing) = mesh_map.get(&handle_index) {
+                    Some(existing)
+                } else if let Some(mesh) = self.assets.meshes.get(Handle::new(handle_index)) {
+                    let next_index = mesh_data.len();
+                    mesh_data.push(mesh.data().clone());
+                    mesh_map.insert(handle_index, next_index);
+                    Some(next_index)
+                } else {
+                    log::warn!(
+                        "Skipping missing mesh handle {} while exporting asset '{}'",
+                        handle_index,
+                        name
+                    );
+                    None
+                };
+
+                entity.mesh_handle = mapped;
+            }
+        }
+
         Some(SceneAsset {
             name,
             root_transform: SerializedTransform::from(*node_ref.local_transform()),
             entities,
             animations,
             animation_states,
+            mesh_data,
         })
     }
 

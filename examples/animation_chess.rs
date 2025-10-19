@@ -59,12 +59,12 @@ impl RenderApplication for ExampleApp {
 
         let root = scene.create_node("CombinedRoot", None);
 
-        let mut textures_changed = animation_asset.register_resources(&mut scene.assets);
+        let mut textures_changed = animation_asset.register_resources(renderer, &mut scene.assets);
         let animation_node =
             scene.instantiate_asset_named(&animation_asset.asset, "AnimatedBoxes", Some(root));
         scene.node_local_transform_mut(animation_node).translation = Vec3::new(-8.0, 0.0, 0.0);
 
-        textures_changed |= chess_asset.register_resources(&mut scene.assets);
+        textures_changed |= chess_asset.register_resources(renderer, &mut scene.assets);
         let chess_node =
             scene.instantiate_asset_named(&chess_asset.asset, "ChessBoard", Some(root));
         scene.node_local_transform_mut(chess_node).translation = Vec3::new(8.0, 0.0, 0.0);

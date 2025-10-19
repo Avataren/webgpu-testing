@@ -4,7 +4,7 @@ pub mod mesh;
 
 pub use cache::AssetCache;
 pub use handle::Handle;
-pub use mesh::Mesh;
+pub use mesh::{Mesh, MeshData};
 
 use crate::renderer::Texture;
 

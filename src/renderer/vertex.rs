@@ -1,8 +1,9 @@
 use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
 use std::mem;
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Debug)]
+#[derive(Clone, Copy, Pod, Zeroable, Debug, Serialize, Deserialize)]
 pub struct Vertex {
     pub pos: [f32; 3],
     pub normal: [f32; 3],

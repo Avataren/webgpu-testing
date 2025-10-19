@@ -8,9 +8,9 @@ use super::components::{
     TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
-use crate::asset::{Assets, Handle, Mesh};
+use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, Texture};
+use crate::renderer::{Material, Renderer, Texture};
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
@@ -209,6 +209,8 @@ pub struct SceneAsset {
     pub animations: Vec<SerializedAnimationClip>,
     #[serde(default)]
     pub animation_states: Vec<AnimationState>,
+    #[serde(default)]
+    pub mesh_data: Vec<MeshData>,
 }
 
 impl SceneAsset {
@@ -223,6 +225,7 @@ impl SceneAsset {
             entities,
             animations: Vec::new(),
             animation_states: Vec::new(),
+            mesh_data: Vec::new(),
         }
     }
 
@@ -371,6 +374,10 @@ impl SceneAssetResources {
         self.meshes.is_empty() && self.textures.is_empty()
     }
 
+    pub fn add_mesh(&mut self, mesh: Mesh) {
+        self.meshes.push(mesh);
+    }
+
     fn take_meshes(&mut self) -> Vec<Mesh> {
         std::mem::take(&mut self.meshes)
     }
@@ -434,9 +441,16 @@ impl SceneAssetBundle {
         self.resources_registered
     }
 
-    pub fn register_resources(&mut self, assets: &mut Assets) -> bool {
+    pub fn register_resources(&mut self, renderer: &Renderer, assets: &mut Assets) -> bool {
         if self.resources_registered {
             return false;
+        }
+
+        if self.resources.meshes.is_empty() && !self.asset.mesh_data.is_empty() {
+            for data in &self.asset.mesh_data {
+                let mesh = Mesh::from_data(renderer.get_device(), data.clone());
+                self.resources.add_mesh(mesh);
+            }
         }
 
         let mesh_offset = assets.meshes.len();
@@ -1173,6 +1187,7 @@ impl SceneAssetBuilder {
             entities: self.entities,
             animations: self.animations,
             animation_states: self.animation_states,
+            mesh_data: Vec::new(),
         }
     }
 }

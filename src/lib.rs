@@ -4,6 +4,7 @@ pub mod environment;
 pub mod gpu_particles;
 pub mod io;
 pub mod profiler;
+pub mod project;
 pub mod render_application;
 pub mod renderer;
 pub mod scene;

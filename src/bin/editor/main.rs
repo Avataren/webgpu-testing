@@ -5,6 +5,7 @@ mod history;
 mod inspector;
 mod layout;
 mod postprocess;
+mod project;
 mod windows;
 
 use std::fs;
@@ -17,6 +18,7 @@ use log::{error, warn};
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
+use wgpu_cube::project::{ProjectError, ProjectManifest};
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
@@ -66,6 +68,7 @@ struct EditorApplication {
     next_editor_entity_id: u128,
     pending_undo: bool,
     pending_redo: bool,
+    project: project::ProjectController,
 }
 
 struct ViewportPick {
@@ -150,6 +153,7 @@ impl EditorApplication {
             next_editor_entity_id: 1,
             pending_undo: false,
             pending_redo: false,
+            project: project::ProjectController::new(),
         }
     }
 
@@ -251,6 +255,58 @@ impl EditorApplication {
 
         if any_spawned {
             self.record_scene_change(ctx.scene);
+        }
+    }
+
+    fn handle_project_save(&mut self, ctx: &mut GpuUpdateContext, dir: PathBuf) {
+        match ProjectManifest::capture(ctx.scene, self.project.metadata().clone()) {
+            Ok(manifest) => {
+                if let Err(err) = manifest.save_to_dir(&dir) {
+                    error!("Failed to save project to {:?}: {err}", dir);
+                } else {
+                    self.project.set_current_dir(dir);
+                }
+            }
+            Err(ProjectError::EmptyScene) => {
+                warn!("Skipping project save: no exportable scene data available");
+            }
+            Err(err) => {
+                error!("Failed to prepare project for saving: {err}");
+            }
+        }
+    }
+
+    fn handle_project_load(&mut self, ctx: &mut GpuUpdateContext, dir: PathBuf) {
+        match ProjectManifest::load_from_dir(&dir) {
+            Ok(manifest) => {
+                let metadata = manifest.metadata.clone();
+                match manifest.instantiate_into(ctx.scene, ctx.renderer, &dir) {
+                    Ok(textures_changed) => {
+                        if textures_changed {
+                            ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
+                        }
+
+                        self.project.set_current_dir(dir);
+                        self.project.set_metadata(metadata);
+                        self.pending_imports.clear();
+                        self.pending_entity_deletions.clear();
+                        self.selected_entity = None;
+                        self.highlighted_entity = None;
+                        self.pending_undo = false;
+                        self.pending_redo = false;
+                        self.history = EditorHistory::new();
+                        self.initialize_history_state(ctx.scene);
+                        self.selection_override = Some(None);
+                        self.runtime_state.request_mode(RuntimeMode::Editor);
+                    }
+                    Err(err) => {
+                        error!("Failed to instantiate project scene: {err}");
+                    }
+                }
+            }
+            Err(err) => {
+                error!("Failed to load project from {:?}: {err}", dir);
+            }
         }
     }
 
@@ -1691,6 +1747,8 @@ impl EditorApplication {
         egui::TopBottomPanel::top("editor_top_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
+                    self.project.menu_contents(ui);
+
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         if ui.button("Import glTF...").clicked() {
@@ -1839,6 +1897,14 @@ impl RenderApplication for EditorApplication {
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        if let Some(dir) = self.project.take_pending_load() {
+            self.handle_project_load(ctx, dir);
+        }
+
+        if let Some(dir) = self.project.take_pending_save() {
+            self.handle_project_save(ctx, dir);
+        }
+
         ctx.scene.process_pending_gltf_imports(ctx.renderer);
     }
 
@@ -1861,6 +1927,7 @@ impl RenderApplication for EditorApplication {
         self.show_menu_bar(ctx);
 
         self.windows.show(ctx, default_ui);
+        self.project.show_settings_window(ctx);
 
         let runtime_mode = self.runtime_state.active_mode();
         if runtime_mode != self.last_runtime_mode {
