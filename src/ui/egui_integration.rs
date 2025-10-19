@@ -15,6 +15,7 @@ pub struct EguiContext {
     ui_callback: Option<EguiUiCallback>,
     pointer_locked: bool,
     pending_mouse_motion: egui::Vec2,
+    should_close: bool,
 }
 
 pub struct EguiRenderTarget<'a> {
@@ -68,6 +69,7 @@ impl EguiContext {
             ui_callback: None,
             pointer_locked: false,
             pending_mouse_motion: egui::Vec2::ZERO,
+            should_close: false,
         }
     }
 
@@ -205,6 +207,12 @@ impl EguiContext {
 
             for command in &output.commands {
                 match command {
+                    egui::ViewportCommand::Close => {
+                        self.should_close = true;
+                    }
+                    egui::ViewportCommand::CancelClose => {
+                        self.should_close = false;
+                    }
                     egui::ViewportCommand::CursorVisible(visible) => {
                         window.set_cursor_visible(*visible);
                         cursor_hidden_for_grab = !*visible;
@@ -243,6 +251,12 @@ impl EguiContext {
         } else {
             self.pointer_locked = false;
         }
+    }
+
+    pub fn take_should_close(&mut self) -> bool {
+        let should_close = self.should_close;
+        self.should_close = false;
+        should_close
     }
 
     pub fn handle_device_event(&mut self, event: &DeviceEvent) {

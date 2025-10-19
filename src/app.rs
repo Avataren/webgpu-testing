@@ -134,6 +134,7 @@ pub struct AppBuilder {
     auto_add_default_lighting: bool,
     skip_initial_frames: Option<u32>,
     settings: RenderSettings,
+    exit_on_escape: bool,
 }
 
 impl Default for AppBuilder {
@@ -146,6 +147,7 @@ impl Default for AppBuilder {
             auto_add_default_lighting: true,
             skip_initial_frames: None,
             settings: RenderSettings::load(),
+            exit_on_escape: true,
         }
     }
 }
@@ -199,6 +201,11 @@ impl AppBuilder {
         self
     }
 
+    pub fn disable_escape_exit(&mut self) -> &mut Self {
+        self.exit_on_escape = false;
+        self
+    }
+
     pub fn skip_initial_frames(&mut self, frames: u32) -> &mut Self {
         self.skip_initial_frames = Some(frames);
         self
@@ -222,6 +229,8 @@ impl AppBuilder {
             frame_counter: 0,
             skip_rendering_until_frame: self.skip_initial_frames,
             settings: self.settings,
+            exit_on_escape: self.exit_on_escape,
+            exit_requested: false,
             runtime_mode: RuntimeMode::Editor,
             runtime_state: RuntimeStateHandle::new(),
             gizmos_enabled: true,
@@ -297,6 +306,8 @@ pub struct App {
     #[cfg(feature = "egui")]
     scene_hierarchy: SceneHierarchyHandle,
     scene: Scene,
+    exit_on_escape: bool,
+    exit_requested: bool,
     runtime_mode: RuntimeMode,
     runtime_state: RuntimeStateHandle,
     gizmos_enabled: bool,
@@ -813,15 +824,25 @@ impl App {
         }
 
         #[cfg(feature = "egui")]
+        let mut egui_requested_close = false;
+
+        #[cfg(feature = "egui")]
         let egui_output = {
             if let (Some(egui), Some(window)) = (&mut self.egui_context, &self.window) {
                 egui.begin_frame(window.as_ref());
                 egui.run_ui();
-                Some(egui.end_frame(window.as_ref()))
+                let output = egui.end_frame(window.as_ref());
+                egui_requested_close = egui.take_should_close();
+                Some(output)
             } else {
                 None
             }
         };
+
+        #[cfg(feature = "egui")]
+        if egui_requested_close {
+            self.exit_requested = true;
+        }
 
         #[cfg(feature = "egui")]
         {
@@ -1067,6 +1088,10 @@ impl ApplicationHandler for App {
                         Err(err) => self.handle_surface_error(event_loop, &mut renderer, err),
                     };
                     self.renderer = Some(renderer);
+                    if self.exit_requested {
+                        event_loop.exit();
+                        return;
+                    }
                     if !should_continue {
                         return;
                     }
@@ -1087,7 +1112,9 @@ impl ApplicationHandler for App {
                 ..
             } => match logical_key {
                 Key::Named(NamedKey::Escape) => {
-                    event_loop.exit();
+                    if self.exit_on_escape {
+                        event_loop.exit();
+                    }
                 }
                 Key::Character(c) if c.as_str().eq_ignore_ascii_case("g") => {
                     if self.runtime_mode == RuntimeMode::Editor {

@@ -541,6 +541,27 @@ impl EditorApplication {
         });
     }
 
+    fn handle_general_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.camera_controller.is_looking() {
+            return;
+        }
+
+        ctx.input_mut(|input| {
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                self.clear_selection();
+            }
+        });
+    }
+
+    fn clear_selection(&mut self) {
+        self.pending_pick = None;
+        self.pointer_primary_down = false;
+        self.selection_press_uv = None;
+        self.gizmo_drag = None;
+        self.selection_override = Some(None);
+        self.selected_entity = None;
+    }
+
     fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
         if self.camera_controller.is_looking() {
             return;
@@ -1844,6 +1865,7 @@ impl RenderApplication for EditorApplication {
         builder.add_plugin(RuneScriptingPlugin::new());
         builder.disable_default_textures();
         builder.disable_default_lighting();
+        builder.disable_escape_exit();
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
@@ -1971,6 +1993,7 @@ impl RenderApplication for EditorApplication {
             self.capture_viewport_pick_input(ctx);
             self.handle_history_shortcuts(ctx);
             self.handle_gizmo_shortcuts(ctx);
+            self.handle_general_shortcuts(ctx);
         } else {
             self.pending_pick = None;
         }
