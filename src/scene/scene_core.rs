@@ -9,11 +9,12 @@ use super::loader::SceneLoader;
 use crate::asset::Assets;
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
-use crate::scene::components::{SelectedInEditor, WorldTransform};
+use crate::scene::components::{SelectedInEditor, TransformComponent, WorldTransform};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::{PendingGltfImport, RuneScriptComponent, RuneScriptSource, ScriptingState};
 use crate::time::Instant;
+use glam::Vec3;
 use hecs::World;
 use log::{error, warn};
 use std::collections::HashMap;
@@ -23,6 +24,23 @@ pub enum TransformGizmoMode {
     Translate,
     Rotate,
     Scale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TransformGizmoAxis {
+    X,
+    Y,
+    Z,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TransformGizmoHandle {
+    TranslateAxis(TransformGizmoAxis),
+    TranslateCenter,
+    RotateAxis(TransformGizmoAxis),
+    RotateScreen,
+    ScaleAxis(TransformGizmoAxis),
+    ScaleUniform,
 }
 
 #[derive(Clone)]
@@ -36,6 +54,7 @@ pub(crate) struct SceneSnapshot {
     gizmo_resources: Option<gizmos::GizmoResources>,
     transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
     gizmo_mode: TransformGizmoMode,
+    gizmo_hover: Option<TransformGizmoHandle>,
 }
 
 impl SceneSnapshot {
@@ -49,6 +68,7 @@ impl SceneSnapshot {
         let gizmo_resources = scene.gizmo_resources();
         let transform_gizmo_resources = scene.transform_gizmo_resources();
         let gizmo_mode = scene.transform_gizmo_mode;
+        let gizmo_hover = scene.transform_gizmo_hover;
 
         Self {
             assets,
@@ -60,6 +80,7 @@ impl SceneSnapshot {
             gizmo_resources,
             transform_gizmo_resources,
             gizmo_mode,
+            gizmo_hover,
         }
     }
 
@@ -104,6 +125,7 @@ impl SceneSnapshot {
         scene.gizmo_resources = self.gizmo_resources;
         scene.transform_gizmo_resources = self.transform_gizmo_resources;
         scene.transform_gizmo_mode = self.gizmo_mode;
+        scene.transform_gizmo_hover = self.gizmo_hover;
 
         scene
     }
@@ -122,6 +144,7 @@ pub struct Scene {
     gizmo_resources: Option<gizmos::GizmoResources>,
     transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
     transform_gizmo_mode: TransformGizmoMode,
+    transform_gizmo_hover: Option<TransformGizmoHandle>,
 }
 
 impl Scene {
@@ -145,6 +168,7 @@ impl Scene {
             gizmo_resources: None,
             transform_gizmo_resources: None,
             transform_gizmo_mode: TransformGizmoMode::Translate,
+            transform_gizmo_hover: None,
         }
     }
 
@@ -219,6 +243,62 @@ impl Scene {
 
     pub fn set_transform_gizmo_mode(&mut self, mode: TransformGizmoMode) {
         self.transform_gizmo_mode = mode;
+    }
+
+    pub fn transform_gizmo_hover(&self) -> Option<TransformGizmoHandle> {
+        self.transform_gizmo_hover
+    }
+
+    pub fn set_transform_gizmo_hover(&mut self, hover: Option<TransformGizmoHandle>) {
+        self.transform_gizmo_hover = hover;
+    }
+
+    pub fn selected_gizmo_transform(&self) -> Option<Transform> {
+        for node in self.nodes_iter() {
+            let node_world = *node.world_transform();
+            let world = node.instance().world();
+
+            if let Some((_, (world_transform, _))) = world
+                .query::<(&WorldTransform, &SelectedInEditor)>()
+                .iter()
+                .next()
+            {
+                return Some(node_world.mul_transform(&world_transform.0));
+            }
+
+            if let Some((_, (local_transform, _))) = world
+                .query::<(&TransformComponent, &SelectedInEditor)>()
+                .iter()
+                .next()
+            {
+                return Some(node_world.mul_transform(&local_transform.0));
+            }
+        }
+
+        None
+    }
+
+    pub fn transform_gizmo_hit(
+        &self,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+    ) -> Option<TransformGizmoHandle> {
+        let transform = self.selected_gizmo_transform()?;
+        let camera = self.camera();
+        let camera_vectors = rendering::CameraVectors {
+            position: camera.eye,
+            target: camera.target,
+            up: camera.up,
+            fov_y: camera.fov_y_radians,
+        };
+
+        transform_gizmos::hit_test(
+            camera_vectors,
+            transform,
+            self.transform_gizmo_mode,
+            ray_origin,
+            ray_dir,
+        )
     }
 
     pub fn node_name(&self, node: SceneNodeId) -> &str {
@@ -558,6 +638,10 @@ impl Scene {
             }
         }
 
+        if gizmos_enabled && selected_transform.is_none() {
+            selected_transform = self.selected_gizmo_transform();
+        }
+
         if gizmos_enabled {
             if let Some(selection_transform) = selected_transform {
                 let transform_resources = self.ensure_transform_gizmo_resources(renderer);
@@ -566,6 +650,7 @@ impl Scene {
                     selection_transform,
                     self.transform_gizmo_mode,
                     transform_resources,
+                    self.transform_gizmo_hover,
                 ) {
                     batcher.add(gizmo);
                 }

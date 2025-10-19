@@ -22,7 +22,7 @@ pub use camera::Camera;
 pub use graph::SceneNodeId;
 pub use loader::SceneLoader;
 pub(crate) use scene_core::SceneSnapshot;
-pub use scene_core::{Scene, TransformGizmoMode};
+pub use scene_core::{Scene, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode};
 pub use transform::Transform;
 
 // Re-export all components

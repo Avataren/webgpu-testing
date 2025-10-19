@@ -51,6 +51,7 @@ struct EditorApplication {
     runtime_state: RuntimeStateHandle,
     last_runtime_mode: RuntimeMode,
     transform_gizmo_mode: TransformGizmoMode,
+    scene_pointer_uv: Option<Vec2>,
 }
 
 struct ViewportPick {
@@ -74,6 +75,7 @@ impl EditorApplication {
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
             transform_gizmo_mode: TransformGizmoMode::Translate,
+            scene_pointer_uv: None,
         }
     }
 
@@ -642,6 +644,23 @@ impl RenderApplication for EditorApplication {
         self.process_pending_imports(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
+
+        let hovered_handle = if matches!(ctx.runtime, RuntimeMode::Editor) {
+            if let (Some(uv), Some(region)) = (self.scene_pointer_uv, self.scene_viewport.region())
+            {
+                let width = region.width().max(1) as f32;
+                let height = region.height().max(1) as f32;
+                let aspect = width / height;
+                let camera = ctx.scene.camera();
+                let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
+                ctx.scene.transform_gizmo_hit(origin, direction)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        ctx.scene.set_transform_gizmo_hover(hovered_handle);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
@@ -712,6 +731,28 @@ impl RenderApplication for EditorApplication {
         } else {
             self.pending_pick = None;
         }
+
+        let pointer_uv = if !is_playing && !self.camera_controller.is_looking() {
+            self.scene_viewport.rect().and_then(|rect| {
+                ctx.input(|input| input.pointer.hover_pos())
+                    .and_then(|pos| {
+                        if rect.contains(pos) {
+                            let local_x = (pos.x - rect.min.x) / rect.width();
+                            let local_y = (pos.y - rect.min.y) / rect.height();
+                            if local_x.is_finite() && local_y.is_finite() {
+                                Some(Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0)))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+            })
+        } else {
+            None
+        };
+        self.scene_pointer_uv = pointer_uv;
     }
 
     fn show_default_ui(&self) -> bool {

@@ -188,7 +188,12 @@ pub fn cylinder_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
-pub fn torus_mesh(segments: u32, ring_segments: u32, radius: f32, thickness: f32) -> (Vec<Vertex>, Vec<u32>) {
+pub fn torus_mesh(
+    segments: u32,
+    ring_segments: u32,
+    radius: f32,
+    thickness: f32,
+) -> (Vec<Vertex>, Vec<u32>) {
     let segments = segments.max(3);
     let ring_segments = ring_segments.max(3);
     let mut vertices = Vec::with_capacity((segments * ring_segments) as usize);
@@ -213,7 +218,12 @@ pub fn torus_mesh(segments: u32, ring_segments: u32, radius: f32, thickness: f32
             let tangent4 = [tangent_vec.x, tangent_vec.y, tangent_vec.z, 1.0];
             let uv = [i as f32 / segments as f32, j as f32 / ring_segments as f32];
 
-            vertices.push(v(position.to_array(), normal.normalize().to_array(), uv, tangent4));
+            vertices.push(v(
+                position.to_array(),
+                normal.normalize().to_array(),
+                uv,
+                tangent4,
+            ));
         }
     }
 
