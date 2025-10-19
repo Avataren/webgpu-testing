@@ -95,6 +95,37 @@ pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     (vertices, indices)
 }
 
+pub fn cone_side_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
+    let segments = segments.max(3);
+    let mut vertices = Vec::with_capacity((segments + 1) as usize);
+    let mut indices = Vec::with_capacity((segments * 3) as usize);
+    let tangent = [1.0, 0.0, 0.0, 1.0];
+
+    // Apex at origin pointing toward -Z.
+    vertices.push(v([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.5, 1.0], tangent));
+
+    for i in 0..=segments {
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let x = theta.cos();
+        let y = theta.sin();
+        let pos = [x, y, -1.0];
+
+        let normal = Vec3::new(x, y, 1.0).normalize();
+        let uv = [i as f32 / segments as f32, 0.0];
+
+        vertices.push(v(pos, normal.to_array(), uv, tangent));
+    }
+
+    for i in 1..=segments {
+        let next = if i == segments { 1 } else { i + 1 };
+        indices.push(0);
+        indices.push(i);
+        indices.push(next);
+    }
+
+    (vertices, indices)
+}
+
 pub fn cylinder_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     let segments = segments.max(3);
     let tangent = [1.0, 0.0, 0.0, 1.0];

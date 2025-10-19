@@ -2,7 +2,7 @@ use super::lights::{resolve_light_transform, safe_normalize};
 use super::rendering::{apply_billboard_transform, CameraVectors};
 use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
-use crate::renderer::primitives::{cone_mesh, cylinder_mesh, quad_mesh, sphere_mesh};
+use crate::renderer::primitives::{cone_side_mesh, cylinder_mesh, quad_mesh, sphere_mesh};
 use crate::renderer::texture::Texture;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{
@@ -17,7 +17,7 @@ use hecs::World;
 pub(crate) struct GizmoResources {
     pub quad: Handle<Mesh>,
     pub sphere: Handle<Mesh>,
-    pub cone: Handle<Mesh>,
+    pub cone_shell: Handle<Mesh>,
     pub cylinder: Handle<Mesh>,
     pub point_icon: Handle<Texture>,
     pub spot_icon: Handle<Texture>,
@@ -27,9 +27,14 @@ pub(crate) struct GizmoResources {
 const POINT_SPRITE_COLOR: [u8; 4] = [255, 226, 120, 255];
 const SPOT_SPRITE_COLOR: [u8; 4] = [120, 220, 255, 255];
 const DIRECTIONAL_SPRITE_COLOR: [u8; 4] = [140, 180, 255, 255];
-const POINT_VOLUME_COLOR: [u8; 4] = [255, 226, 120, 72];
-const SPOT_VOLUME_COLOR: [u8; 4] = [120, 220, 255, 72];
-const DIRECTIONAL_SHAFT_COLOR: [u8; 4] = [140, 180, 255, 160];
+const LIGHT_GEOMETRY_ALPHA: u8 = 128; // ~50% transparency
+
+const POINT_VOLUME_COLOR: [u8; 4] = [255, 226, 120, LIGHT_GEOMETRY_ALPHA];
+const SPOT_VOLUME_COLOR: [u8; 4] = [120, 220, 255, LIGHT_GEOMETRY_ALPHA];
+const SPOT_INNER_OUTLINE_COLOR: [u8; 4] = [120, 220, 255, LIGHT_GEOMETRY_ALPHA];
+const SPOT_OUTER_OUTLINE_COLOR: [u8; 4] = [120, 220, 255, LIGHT_GEOMETRY_ALPHA];
+const DIRECTIONAL_SHAFT_COLOR: [u8; 4] = [140, 180, 255, LIGHT_GEOMETRY_ALPHA];
+const LIGHT_GEOMETRY_DEPTH: DepthState = DepthState::new(false, false);
 
 const DIRECTIONAL_SHAFT_LENGTH: f32 = 2.25;
 const DIRECTIONAL_SHAFT_RADIUS: f32 = 0.12;
@@ -51,9 +56,9 @@ pub(crate) fn create_resources(renderer: &mut Renderer, assets: &mut Assets) -> 
     let sphere_mesh = renderer.create_mesh(&sphere_vertices, &sphere_indices);
     let sphere = assets.meshes.insert(sphere_mesh);
 
-    let (cone_vertices, cone_indices) = cone_mesh(16);
-    let cone_mesh = renderer.create_mesh(&cone_vertices, &cone_indices);
-    let cone = assets.meshes.insert(cone_mesh);
+    let (cone_shell_vertices, cone_shell_indices) = cone_side_mesh(16);
+    let cone_shell_mesh = renderer.create_mesh(&cone_shell_vertices, &cone_shell_indices);
+    let cone_shell = assets.meshes.insert(cone_shell_mesh);
 
     let (cylinder_vertices, cylinder_indices) = cylinder_mesh(16);
     let cylinder_mesh = renderer.create_mesh(&cylinder_vertices, &cylinder_indices);
@@ -72,7 +77,7 @@ pub(crate) fn create_resources(renderer: &mut Renderer, assets: &mut Assets) -> 
     GizmoResources {
         quad,
         sphere,
-        cone,
+        cone_shell,
         cylinder,
         point_icon,
         spot_icon,
@@ -148,7 +153,7 @@ fn build_point_light_gizmos(
                 Quat::IDENTITY,
                 Vec3::splat(radius),
             ),
-            depth_state: DepthState::new(false, false),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
             force_overlay: false,
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
@@ -204,18 +209,82 @@ fn build_spot_light_gizmos(
 
         let range = light.range.max(0.01);
         let outer_angle = light.outer_angle.max(0.01);
-        let radius = (outer_angle.tan() * range).max(0.05);
+        let inner_angle = light.inner_angle.clamp(0.0, outer_angle);
+        let outer_radius = (outer_angle.tan() * range).max(0.05);
+        let inner_radius = (inner_angle.tan() * range).max(0.02);
         let rotation = transform.rotation;
 
+        // Outer cone volume
         output.push(RenderObject {
-            mesh: resources.cone,
+            mesh: resources.cone_shell,
             material: volume_material(SPOT_VOLUME_COLOR),
             transform: Transform::from_trs(
                 transform.translation,
                 rotation,
-                Vec3::new(radius, radius, range),
+                Vec3::new(outer_radius, outer_radius, range),
             ),
-            depth_state: DepthState::new(false, false),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
+            force_overlay: false,
+            render_pass: Some(RenderPass::Gizmo),
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::None,
+        });
+
+        // Inner shell: slightly inset to convey falloff thickness.
+        let shell_scale = (inner_radius / outer_radius).clamp(0.0, 0.999).max(0.01);
+        output.push(RenderObject {
+            mesh: resources.cone_shell,
+            material: volume_material([
+                SPOT_VOLUME_COLOR[0],
+                SPOT_VOLUME_COLOR[1],
+                SPOT_VOLUME_COLOR[2],
+                60,
+            ]),
+            transform: Transform::from_trs(
+                transform.translation,
+                rotation,
+                Vec3::new(
+                    outer_radius * shell_scale,
+                    outer_radius * shell_scale,
+                    range,
+                ),
+            ),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
+            force_overlay: false,
+            render_pass: Some(RenderPass::Gizmo),
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::None,
+        });
+
+        // Outer outline to highlight total spread.
+        output.push(RenderObject {
+            mesh: resources.cone_shell,
+            material: outline_material(SPOT_OUTER_OUTLINE_COLOR),
+            transform: Transform::from_trs(
+                transform.translation,
+                rotation,
+                Vec3::new(outer_radius, outer_radius, range),
+            ),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
+            force_overlay: false,
+            render_pass: Some(RenderPass::Gizmo),
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::None,
+        });
+
+        // Inner outline clarifies the core beam threshold.
+        output.push(RenderObject {
+            mesh: resources.cone_shell,
+            material: outline_material(SPOT_INNER_OUTLINE_COLOR),
+            transform: Transform::from_trs(
+                transform.translation,
+                rotation,
+                Vec3::new(inner_radius, inner_radius, range),
+            ),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
             force_overlay: false,
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
@@ -284,7 +353,7 @@ fn build_directional_light_gizmos(
                     DIRECTIONAL_SHAFT_LENGTH,
                 ),
             ),
-            depth_state: DepthState::new(false, false),
+            depth_state: LIGHT_GEOMETRY_DEPTH,
             force_overlay: false,
             render_pass: Some(RenderPass::Gizmo),
             instance_source: InstanceSource::Cpu,
@@ -305,6 +374,10 @@ fn volume_material(color: [u8; 4]) -> Material {
     let mut material = Material::new(color).with_unlit().with_alpha();
     material.base_color = color;
     material
+}
+
+fn outline_material(color: [u8; 4]) -> Material {
+    Material::new(color).with_unlit().with_alpha()
 }
 
 fn align_vector(from: Vec3, direction: Vec3) -> Quat {
