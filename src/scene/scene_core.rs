@@ -364,13 +364,19 @@ impl Scene {
             let world = self.main_world_mut();
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (_, component) in query.iter() {
-                let source = component.source();
-                if matches!(
-                    source,
-                    RuneScriptSource::Inline { name, .. } if name.as_ref() == "editor_startup.rn"
-                ) {
+                let should_skip = match component.source() {
+                    RuneScriptSource::Inline { name, .. } => {
+                        let name_ref = name.as_ref();
+                        name_ref == "editor_startup.rn"
+                            || name_ref.starts_with("editor_import_gltf::")
+                    }
+                    RuneScriptSource::File { .. } => false,
+                };
+
+                if should_skip {
                     continue;
                 }
+
                 component.set_created_called(false);
             }
         }

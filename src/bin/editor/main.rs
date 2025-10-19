@@ -21,9 +21,9 @@ use wgpu_cube::renderer::{
 };
 use wgpu_cube::scene::components::{DirectionalLight, PointLight, SpotLight};
 use wgpu_cube::scene::{
-    EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, Parent, SelectedInEditor,
-    Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,
-    TransformGizmoSpace, Visible, WorldTransform,
+    Children, EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
+    SelectedInEditor, Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle,
+    TransformGizmoMode, TransformGizmoSpace, Visible, WorldTransform,
 };
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
@@ -45,6 +45,7 @@ struct EditorApplication {
     camera_controller: EditorCameraController,
     grid_postprocess: Option<ViewportGrid>,
     pending_imports: Vec<PathBuf>,
+    pending_entity_deletions: Vec<Entity>,
     windows: WindowToggles,
     selected_entity: Option<Entity>,
     highlighted_entity: Option<Entity>,
@@ -123,6 +124,7 @@ impl EditorApplication {
             camera_controller: EditorCameraController::default(),
             grid_postprocess: None,
             pending_imports: Vec::new(),
+            pending_entity_deletions: Vec::new(),
             windows: WindowToggles::new(),
             selected_entity: None,
             highlighted_entity: None,
@@ -233,6 +235,90 @@ impl EditorApplication {
             ctx.scene.set_animation_playback(false);
             ctx.scene.update(0.0);
         }
+    }
+
+    fn process_pending_entity_deletions(&mut self, ctx: &mut UpdateContext) {
+        if self.pending_entity_deletions.is_empty() {
+            return;
+        }
+
+        let pending = std::mem::take(&mut self.pending_entity_deletions);
+        let mut removed_entities = Vec::new();
+
+        {
+            let world = ctx.scene.main_world_mut();
+            for entity in pending {
+                if let Some(mut removed) = Self::remove_entity_subtree(world, entity) {
+                    removed_entities.append(&mut removed);
+                }
+            }
+        }
+
+        if removed_entities.is_empty() {
+            return;
+        }
+
+        if let Some(selected) = self.selected_entity {
+            if removed_entities.iter().any(|&entity| entity == selected) {
+                self.selected_entity = None;
+            }
+        }
+
+        if let Some(highlighted) = self.highlighted_entity {
+            if removed_entities.iter().any(|&entity| entity == highlighted) {
+                self.highlighted_entity = None;
+            }
+        }
+
+        if self
+            .gizmo_drag
+            .as_ref()
+            .is_some_and(|drag| removed_entities.iter().any(|&entity| entity == drag.entity))
+        {
+            self.gizmo_drag = None;
+        }
+
+        self.selection_override = Some(self.selected_entity);
+        ctx.scene.propagate_transforms();
+    }
+
+    fn remove_entity_subtree(world: &mut hecs::World, root: Entity) -> Option<Vec<Entity>> {
+        if !world.contains(root) {
+            return None;
+        }
+
+        let parent_entity = world.get::<&Parent>(root).map(|parent| parent.0).ok();
+        if let Some(parent_entity) = parent_entity {
+            let mut remove_children_component = false;
+            if let Ok(mut siblings) = world.get::<&mut Children>(parent_entity) {
+                siblings.0.retain(|&child| child != root);
+                remove_children_component = siblings.0.is_empty();
+            }
+            if remove_children_component {
+                let _ = world.remove_one::<Children>(parent_entity);
+            }
+        }
+
+        let mut entities = Vec::new();
+        let mut stack = vec![root];
+
+        while let Some(entity) = stack.pop() {
+            if !world.contains(entity) {
+                continue;
+            }
+
+            if let Ok(children) = world.get::<&Children>(entity) {
+                stack.extend(children.0.iter().copied());
+            }
+
+            entities.push(entity);
+        }
+
+        for entity in entities.iter().rev() {
+            let _ = world.despawn(*entity);
+        }
+
+        Some(entities)
     }
 
     fn sync_selection_component(&mut self, ctx: &mut UpdateContext) {
@@ -370,6 +456,12 @@ impl EditorApplication {
                 self.transform_gizmo_mode = TransformGizmoMode::Rotate;
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::R) {
                 self.transform_gizmo_mode = TransformGizmoMode::Scale;
+            }
+            if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
+                if let Some(entity) = self.selected_entity {
+                    self.pending_entity_deletions.push(entity);
+                    self.gizmo_drag = None;
+                }
             }
         });
     }
@@ -1519,6 +1611,7 @@ impl RenderApplication for EditorApplication {
         ctx.scene
             .set_transform_gizmo_space(self.transform_gizmo_space);
         self.process_pending_imports(ctx);
+        self.process_pending_entity_deletions(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
         self.update_gizmo_drag(ctx);
