@@ -26,6 +26,12 @@ pub enum TransformGizmoMode {
     Scale,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformGizmoSpace {
+    Local,
+    World,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TransformGizmoAxis {
     X,
@@ -55,6 +61,7 @@ pub(crate) struct SceneSnapshot {
     gizmo_resources: Option<gizmos::GizmoResources>,
     transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
     gizmo_mode: TransformGizmoMode,
+    gizmo_space: TransformGizmoSpace,
     gizmo_hover: Option<TransformGizmoHandle>,
 }
 
@@ -69,6 +76,7 @@ impl SceneSnapshot {
         let gizmo_resources = scene.gizmo_resources();
         let transform_gizmo_resources = scene.transform_gizmo_resources();
         let gizmo_mode = scene.transform_gizmo_mode;
+        let gizmo_space = scene.transform_gizmo_space;
         let gizmo_hover = scene.transform_gizmo_hover;
 
         Self {
@@ -81,6 +89,7 @@ impl SceneSnapshot {
             gizmo_resources,
             transform_gizmo_resources,
             gizmo_mode,
+            gizmo_space,
             gizmo_hover,
         }
     }
@@ -126,6 +135,7 @@ impl SceneSnapshot {
         scene.gizmo_resources = self.gizmo_resources;
         scene.transform_gizmo_resources = self.transform_gizmo_resources;
         scene.transform_gizmo_mode = self.gizmo_mode;
+        scene.transform_gizmo_space = self.gizmo_space;
         scene.transform_gizmo_hover = self.gizmo_hover;
 
         scene
@@ -145,6 +155,7 @@ pub struct Scene {
     gizmo_resources: Option<gizmos::GizmoResources>,
     transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
     transform_gizmo_mode: TransformGizmoMode,
+    transform_gizmo_space: TransformGizmoSpace,
     transform_gizmo_hover: Option<TransformGizmoHandle>,
 }
 
@@ -169,6 +180,7 @@ impl Scene {
             gizmo_resources: None,
             transform_gizmo_resources: None,
             transform_gizmo_mode: TransformGizmoMode::Translate,
+            transform_gizmo_space: TransformGizmoSpace::Local,
             transform_gizmo_hover: None,
         }
     }
@@ -246,6 +258,14 @@ impl Scene {
         self.transform_gizmo_mode = mode;
     }
 
+    pub fn transform_gizmo_space(&self) -> TransformGizmoSpace {
+        self.transform_gizmo_space
+    }
+
+    pub fn set_transform_gizmo_space(&mut self, space: TransformGizmoSpace) {
+        self.transform_gizmo_space = space;
+    }
+
     pub fn transform_gizmo_hover(&self) -> Option<TransformGizmoHandle> {
         self.transform_gizmo_hover
     }
@@ -297,6 +317,7 @@ impl Scene {
             camera_vectors,
             transform,
             self.transform_gizmo_mode,
+            self.transform_gizmo_space,
             ray_origin,
             ray_dir,
         )
@@ -650,6 +671,7 @@ impl Scene {
                     camera_vectors,
                     selection_transform,
                     self.transform_gizmo_mode,
+                    self.transform_gizmo_space,
                     transform_resources,
                     self.transform_gizmo_hover,
                 ) {

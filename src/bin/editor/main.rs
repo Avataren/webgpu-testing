@@ -19,10 +19,11 @@ use wgpu_cube::app::{
 use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
+use wgpu_cube::scene::components::{DirectionalLight, PointLight, SpotLight};
 use wgpu_cube::scene::{
     EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, Parent, SelectedInEditor,
     Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,
-    Visible, WorldTransform,
+    TransformGizmoSpace, Visible, WorldTransform,
 };
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
@@ -52,6 +53,7 @@ struct EditorApplication {
     runtime_state: RuntimeStateHandle,
     last_runtime_mode: RuntimeMode,
     transform_gizmo_mode: TransformGizmoMode,
+    transform_gizmo_space: TransformGizmoSpace,
     scene_pointer_uv: Option<Vec2>,
     gizmo_drag: Option<GizmoDragState>,
     pointer_primary_down: bool,
@@ -107,6 +109,11 @@ enum GizmoDragKind {
     },
 }
 
+const LIGHT_ICON_SCREEN_FRACTION: f32 = 0.055;
+const LIGHT_ICON_MIN_DISTANCE: f32 = 0.1;
+const LIGHT_ICON_ORTHO_WORLD_SIZE: f32 = 0.65;
+const LIGHT_ICON_PICK_PADDING: f32 = 0.15;
+
 impl EditorApplication {
     fn new() -> Self {
         Self {
@@ -124,6 +131,7 @@ impl EditorApplication {
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
             transform_gizmo_mode: TransformGizmoMode::Translate,
+            transform_gizmo_space: TransformGizmoSpace::Local,
             scene_pointer_uv: None,
             gizmo_drag: None,
             pointer_primary_down: false,
@@ -496,9 +504,13 @@ impl EditorApplication {
         camera_up = Self::safe_normalize(camera_up, Vec3::Y);
 
         let origin_point = initial_world.translation;
+        let gizmo_rotation = match self.transform_gizmo_space {
+            TransformGizmoSpace::Local => initial_world.rotation,
+            TransformGizmoSpace::World => Quat::IDENTITY,
+        };
         let kind = match handle {
             TransformGizmoHandle::TranslateAxis(axis) => {
-                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let axis_dir = Self::axis_direction(gizmo_rotation, axis);
                 let mut start_param =
                     Self::ray_axis_parameter(origin, direction, origin_point, axis_dir)
                         .unwrap_or(0.0);
@@ -526,8 +538,8 @@ impl EditorApplication {
                 }
             }
             TransformGizmoHandle::TranslatePlane(axis_a, axis_b) => {
-                let axis_a_dir = Self::axis_direction(initial_world.rotation, axis_a);
-                let axis_b_dir = Self::axis_direction(initial_world.rotation, axis_b);
+                let axis_a_dir = Self::axis_direction(gizmo_rotation, axis_a);
+                let axis_b_dir = Self::axis_direction(gizmo_rotation, axis_b);
                 let mut plane_normal = axis_a_dir.cross(axis_b_dir);
                 if plane_normal.length_squared() < 1e-6 {
                     return false;
@@ -558,7 +570,7 @@ impl EditorApplication {
                 }
             }
             TransformGizmoHandle::RotateAxis(axis) => {
-                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let axis_dir = Self::axis_direction(gizmo_rotation, axis);
                 let Some(point) =
                     Self::ray_plane_intersection(origin, direction, origin_point, axis_dir)
                 else {
@@ -592,7 +604,7 @@ impl EditorApplication {
                 }
             }
             TransformGizmoHandle::ScaleAxis(axis) => {
-                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let axis_dir = Self::axis_direction(gizmo_rotation, axis);
                 let mut start_param =
                     Self::ray_axis_parameter(origin, direction, origin_point, axis_dir)
                         .unwrap_or(0.0);
@@ -872,7 +884,109 @@ impl EditorApplication {
             }
         }
 
+        self.consider_light_picks(
+            world,
+            camera.eye,
+            camera.up,
+            camera.fov_y_radians,
+            origin,
+            direction,
+            &mut best,
+        );
+
         best.map(|(entity, _)| entity)
+    }
+
+    fn consider_light_picks(
+        &self,
+        world: &hecs::World,
+        camera_eye: Vec3,
+        camera_up: Vec3,
+        camera_fov_y: f32,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+        best: &mut Option<(Entity, f32)>,
+    ) {
+        let mut consider = |entity: Entity, distance: f32| {
+            if let Some((_, best_distance)) = best.as_ref() {
+                if distance >= *best_distance {
+                    return;
+                }
+            }
+            *best = Some((entity, distance));
+        };
+
+        for (entity, (_light, world_transform, local_transform)) in world
+            .query::<(
+                &PointLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|wt| wt.0)
+                .or_else(|| local_transform.map(|lt| lt.0))
+                .unwrap_or(Transform::IDENTITY);
+            if let Some(distance) = Self::light_icon_hit_distance(
+                camera_eye,
+                camera_up,
+                camera_fov_y,
+                transform.translation,
+                ray_origin,
+                ray_dir,
+            ) {
+                consider(entity, distance);
+            }
+        }
+
+        for (entity, (_light, world_transform, local_transform)) in world
+            .query::<(
+                &SpotLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|wt| wt.0)
+                .or_else(|| local_transform.map(|lt| lt.0))
+                .unwrap_or(Transform::IDENTITY);
+            if let Some(distance) = Self::light_icon_hit_distance(
+                camera_eye,
+                camera_up,
+                camera_fov_y,
+                transform.translation,
+                ray_origin,
+                ray_dir,
+            ) {
+                consider(entity, distance);
+            }
+        }
+
+        for (entity, (_light, world_transform, local_transform)) in world
+            .query::<(
+                &DirectionalLight,
+                Option<&WorldTransform>,
+                Option<&TransformComponent>,
+            )>()
+            .iter()
+        {
+            let transform = world_transform
+                .map(|wt| wt.0)
+                .or_else(|| local_transform.map(|lt| lt.0))
+                .unwrap_or(Transform::IDENTITY);
+            if let Some(distance) = Self::light_icon_hit_distance(
+                camera_eye,
+                camera_up,
+                camera_fov_y,
+                transform.translation,
+                ray_origin,
+                ray_dir,
+            ) {
+                consider(entity, distance);
+            }
+        }
     }
 
     fn viewport_uv(rect: egui::Rect, pos: egui::Pos2) -> Vec2 {
@@ -990,6 +1104,76 @@ impl EditorApplication {
 
         let hit = if t_min >= 0.0 { t_min } else { t_max };
         (hit.is_finite() && hit >= 0.0).then_some(hit)
+    }
+
+    fn light_icon_hit_distance(
+        camera_eye: Vec3,
+        camera_up: Vec3,
+        camera_fov_y: f32,
+        position: Vec3,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+    ) -> Option<f32> {
+        let icon_scale = Self::light_icon_world_scale(camera_eye, camera_fov_y, position);
+        let forward = Self::safe_normalize(camera_eye - position, Vec3::Z);
+        let up_hint = Self::safe_normalize(camera_up, Vec3::Y);
+        let (right, up) = Self::basis_from_up_forward(up_hint, forward);
+        let normal = forward;
+        let denom = ray_dir.dot(normal);
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+
+        let to_center = position - ray_origin;
+        let t = to_center.dot(normal) / denom;
+        if !t.is_finite() || t < 0.0 {
+            return None;
+        }
+
+        let hit_point = ray_origin + ray_dir * t;
+        let offset = hit_point - position;
+        let half_extent = 0.5 * icon_scale;
+        let padding = half_extent * LIGHT_ICON_PICK_PADDING;
+        let limit = half_extent + padding;
+
+        let proj_right = offset.dot(right);
+        let proj_up = offset.dot(up);
+        if proj_right.abs() <= limit && proj_up.abs() <= limit {
+            Some(t)
+        } else {
+            None
+        }
+    }
+
+    fn light_icon_world_scale(camera_eye: Vec3, camera_fov_y: f32, position: Vec3) -> f32 {
+        let distance = (camera_eye - position)
+            .length()
+            .max(LIGHT_ICON_MIN_DISTANCE);
+        let half_fov = (camera_fov_y * 0.5).max(1e-4);
+        if half_fov <= 1e-3 {
+            LIGHT_ICON_ORTHO_WORLD_SIZE
+        } else {
+            let vertical_extent = half_fov.tan();
+            2.0 * distance * vertical_extent * LIGHT_ICON_SCREEN_FRACTION
+        }
+    }
+
+    fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
+        let mut right = up_hint.cross(forward);
+        if right.length_squared() < 1e-6 {
+            right = Vec3::X;
+        } else {
+            right = right.normalize();
+        }
+
+        let mut up = forward.cross(right);
+        if up.length_squared() < 1e-6 {
+            up = Vec3::Y;
+        } else {
+            up = up.normalize();
+        }
+
+        (right, up)
     }
 
     fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
@@ -1289,6 +1473,19 @@ impl EditorApplication {
                 };
 
                 ui.label(egui::RichText::new(status_text).color(status_color));
+
+                ui.separator();
+                ui.label("Space:");
+                ui.selectable_value(
+                    &mut self.transform_gizmo_space,
+                    TransformGizmoSpace::Local,
+                    "Local",
+                );
+                ui.selectable_value(
+                    &mut self.transform_gizmo_space,
+                    TransformGizmoSpace::World,
+                    "World",
+                );
             });
         });
     }
@@ -1319,6 +1516,8 @@ impl RenderApplication for EditorApplication {
         }
         ctx.scene
             .set_transform_gizmo_mode(self.transform_gizmo_mode);
+        ctx.scene
+            .set_transform_gizmo_space(self.transform_gizmo_space);
         self.process_pending_imports(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);

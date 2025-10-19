@@ -6,7 +6,9 @@ use crate::renderer::primitives::{cone_mesh, cube_mesh, cylinder_mesh, torus_mes
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::DepthState;
 use crate::scene::transform::Transform;
-use crate::scene::{TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode};
+use crate::scene::{
+    TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
+};
 use glam::{Mat3, Quat, Vec3};
 
 #[derive(Clone, Copy)]
@@ -104,17 +106,21 @@ pub(crate) fn build_transform_gizmos(
     camera: CameraVectors,
     gizmo_transform: Transform,
     mode: TransformGizmoMode,
+    space: TransformGizmoSpace,
     resources: TransformGizmoResources,
     hovered: Option<TransformGizmoHandle>,
 ) -> Vec<RenderObject> {
+    let display_transform = apply_space(gizmo_transform, space);
     match mode {
         TransformGizmoMode::Translate => {
-            build_translate_gizmo(camera, gizmo_transform, resources, hovered)
+            build_translate_gizmo(camera, display_transform, resources, hovered)
         }
         TransformGizmoMode::Rotate => {
-            build_rotate_gizmo(camera, gizmo_transform, resources, hovered)
+            build_rotate_gizmo(camera, display_transform, resources, hovered)
         }
-        TransformGizmoMode::Scale => build_scale_gizmo(camera, gizmo_transform, resources, hovered),
+        TransformGizmoMode::Scale => {
+            build_scale_gizmo(camera, display_transform, resources, hovered)
+        }
     }
 }
 
@@ -122,6 +128,7 @@ pub(crate) fn hit_test(
     camera: CameraVectors,
     gizmo_transform: Transform,
     mode: TransformGizmoMode,
+    space: TransformGizmoSpace,
     ray_origin: Vec3,
     ray_dir: Vec3,
 ) -> Option<TransformGizmoHandle> {
@@ -130,7 +137,8 @@ pub(crate) fn hit_test(
         return None;
     }
 
-    let origin = gizmo_transform.translation;
+    let display_transform = apply_space(gizmo_transform, space);
+    let origin = display_transform.translation;
     let base_scale = gizmo_screen_scale(camera, origin);
 
     let mut best: Option<(TransformGizmoHandle, f32)> = None;
@@ -150,7 +158,7 @@ pub(crate) fn hit_test(
             let total_length = shaft_length + cone_length * 1.2;
             let pick_radius = TRANSLATE_AXIS_PICK_RADIUS * base_scale;
             for axis in AXES {
-                let axis_dir = axis_direction(gizmo_transform.rotation, axis);
+                let axis_dir = axis_direction(display_transform.rotation, axis);
                 if let Some(distance) =
                     distance_to_axis_segment(ray_origin, ray_dir, origin, axis_dir, total_length)
                 {
@@ -169,8 +177,8 @@ pub(crate) fn hit_test(
             let plane_half = plane_size * 0.5 + TRANSLATE_PLANE_PICK_PADDING * base_scale;
             let plane_thickness = TRANSLATE_PLANE_PICK_THICKNESS * base_scale;
             for &(axis_a, axis_b) in &TRANSLATE_PLANES {
-                let dir_a = axis_direction(gizmo_transform.rotation, axis_a);
-                let dir_b = axis_direction(gizmo_transform.rotation, axis_b);
+                let dir_a = axis_direction(display_transform.rotation, axis_a);
+                let dir_b = axis_direction(display_transform.rotation, axis_b);
                 let mut normal = dir_a.cross(dir_b);
                 if normal.length_squared() < 1e-6 {
                     continue;
@@ -209,7 +217,7 @@ pub(crate) fn hit_test(
             let ring_radius = ROTATION_RING_RADIUS * base_scale;
             let tolerance = (ROTATION_RING_PICK_THICKNESS * 1.5).max(0.06) * base_scale;
             for axis in AXES {
-                let normal = axis_direction(gizmo_transform.rotation, axis);
+                let normal = axis_direction(display_transform.rotation, axis);
                 if let Some(distance) =
                     ring_hit(ray_origin, ray_dir, origin, normal, ring_radius, tolerance)
                 {
@@ -232,7 +240,7 @@ pub(crate) fn hit_test(
         TransformGizmoMode::Scale => {
             let axis_radius = SCALE_AXIS_PICK_RADIUS * base_scale;
             for axis in AXES {
-                let axis_dir = axis_direction(gizmo_transform.rotation, axis);
+                let axis_dir = axis_direction(display_transform.rotation, axis);
                 let handle_center = origin + axis_dir * SCALE_HANDLE_OFFSET * base_scale;
                 if let Some(distance) = distance_point_to_ray(ray_origin, ray_dir, handle_center) {
                     if distance <= axis_radius {
@@ -497,6 +505,16 @@ fn align_vector(from: Vec3, direction: Vec3) -> Quat {
         Quat::IDENTITY
     } else {
         Quat::from_rotation_arc(from.normalize(), direction.normalize())
+    }
+}
+
+fn apply_space(transform: Transform, space: TransformGizmoSpace) -> Transform {
+    match space {
+        TransformGizmoSpace::Local => transform,
+        TransformGizmoSpace::World => Transform {
+            rotation: Quat::IDENTITY,
+            ..transform
+        },
     }
 }
 
