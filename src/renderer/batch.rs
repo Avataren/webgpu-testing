@@ -12,7 +12,8 @@ pub enum RenderPass {
     Opaque,      // Normal opaque geometry
     Transparent, // Alpha blended (needs sorting)
     Overlay,     // Draw last, typically with depth disabled
-    Gizmo,       // Editor gizmos and debug helpers
+    Gizmo,       // Editor gizmo wireframes (rendered as lines)
+    GizmoSolid,  // Editor gizmo icons / solid overlays
 }
 
 impl RenderPass {
@@ -20,18 +21,24 @@ impl RenderPass {
     /// front relative to the camera.  Transparent and overlay elements need
     /// back-to-front ordering so blending behaves as expected.
     pub fn requires_back_to_front_sort(self) -> bool {
-        matches!(self, Self::Transparent | Self::Overlay | Self::Gizmo)
+        matches!(
+            self,
+            Self::Transparent | Self::Overlay | Self::Gizmo | Self::GizmoSolid
+        )
     }
 
     /// Returns true when the pass intrinsically requires alpha blending.
     pub fn uses_alpha_blending(self) -> bool {
-        matches!(self, Self::Transparent | Self::Overlay | Self::Gizmo)
+        matches!(
+            self,
+            Self::Transparent | Self::Overlay | Self::Gizmo | Self::GizmoSolid
+        )
     }
 
     /// Sample count for the color attachment used by this pass.  Overlay
     /// passes are resolved directly into the swap chain, so MSAA is not used.
     pub fn color_sample_count(self, msaa_samples: u32) -> u32 {
-        if matches!(self, Self::Overlay | Self::Gizmo) {
+        if matches!(self, Self::Overlay | Self::Gizmo | Self::GizmoSolid) {
             1
         } else {
             msaa_samples

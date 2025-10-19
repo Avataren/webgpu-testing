@@ -353,7 +353,7 @@ impl Scene {
         self.gizmo_resources
     }
 
-    fn ensure_gizmo_resources(&mut self, renderer: &Renderer) -> gizmos::GizmoResources {
+    fn ensure_gizmo_resources(&mut self, renderer: &mut Renderer) -> gizmos::GizmoResources {
         if self.gizmo_resources.is_none() {
             let resources = gizmos::create_resources(renderer, &mut self.assets);
             self.gizmo_resources = Some(resources);

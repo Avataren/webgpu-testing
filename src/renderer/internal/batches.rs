@@ -25,6 +25,7 @@ pub(crate) struct PreparedBatches {
     pub transparent_range: Range<usize>,
     pub overlay_range: Range<usize>,
     pub gizmo_range: Range<usize>,
+    pub gizmo_solid_range: Range<usize>,
     pub materials: Vec<Material>,
 }
 
@@ -34,6 +35,7 @@ impl PreparedBatches {
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
         let mut gizmos = Vec::new();
+        let mut gizmo_solids = Vec::new();
         let materials = batcher.materials();
 
         for batch in batcher.iter() {
@@ -92,19 +94,23 @@ impl PreparedBatches {
                 RenderPass::Transparent => transparent.push(ordered),
                 RenderPass::Overlay => overlay.push(ordered),
                 RenderPass::Gizmo => gizmos.push(ordered),
+                RenderPass::GizmoSolid => gizmo_solids.push(ordered),
             }
         }
 
         sort_batches_back_to_front(&mut transparent, camera_pos);
         sort_batches_back_to_front(&mut overlay, camera_pos);
         sort_batches_back_to_front(&mut gizmos, camera_pos);
+        sort_batches_back_to_front(&mut gizmo_solids, camera_pos);
 
-        let mut batches =
-            Vec::with_capacity(opaque.len() + transparent.len() + overlay.len() + gizmos.len());
+        let mut batches = Vec::with_capacity(
+            opaque.len() + transparent.len() + overlay.len() + gizmos.len() + gizmo_solids.len(),
+        );
         let opaque_range = append_batches(&mut batches, opaque);
         let transparent_range = append_batches(&mut batches, transparent);
         let overlay_range = append_batches(&mut batches, overlay);
         let gizmo_range = append_batches(&mut batches, gizmos);
+        let gizmo_solid_range = append_batches(&mut batches, gizmo_solids);
 
         let mut offset = 0u32;
         for batch in &mut batches {
@@ -141,6 +147,7 @@ impl PreparedBatches {
             transparent_range,
             overlay_range,
             gizmo_range,
+            gizmo_solid_range,
             materials: materials.to_vec(),
         }
     }
@@ -168,6 +175,10 @@ impl PreparedBatches {
 
     pub(crate) fn gizmos(&self) -> &[OrderedBatch] {
         &self.batches[self.gizmo_range.clone()]
+    }
+
+    pub(crate) fn gizmo_solids(&self) -> &[OrderedBatch] {
+        &self.batches[self.gizmo_solid_range.clone()]
     }
 
     pub(crate) fn materials(&self) -> &[Material] {

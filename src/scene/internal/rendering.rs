@@ -19,6 +19,7 @@ pub(crate) struct CameraVectors {
     pub(crate) position: Vec3,
     pub(crate) target: Vec3,
     pub(crate) up: Vec3,
+    pub(crate) fov_y: f32,
 }
 
 impl CameraVectors {
@@ -27,6 +28,7 @@ impl CameraVectors {
             position: renderer.camera_position(),
             target: renderer.camera_target(),
             up: renderer.camera_up(),
+            fov_y: renderer.camera_fov_y(),
         }
     }
 }

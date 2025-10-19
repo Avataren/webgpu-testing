@@ -513,7 +513,10 @@ impl ShadowResources {
         for batch in batches {
             if matches!(
                 batch.pass,
-                RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo
+                RenderPass::Transparent
+                    | RenderPass::Overlay
+                    | RenderPass::Gizmo
+                    | RenderPass::GizmoSolid
             ) {
                 continue;
             }

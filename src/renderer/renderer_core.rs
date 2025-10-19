@@ -68,6 +68,8 @@ pub struct Renderer {
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
+    camera_fov_y: f32,
+    camera_aspect: f32,
     settings: RenderSettings,
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
@@ -94,6 +96,7 @@ impl Renderer {
 
     fn from_context(context: RenderContext, mut settings: RenderSettings) -> Self {
         let sample_count = context.sample_count;
+        let aspect = context.config.width as f32 / context.config.height.max(1) as f32;
         settings.sample_count = sample_count;
         let camera_buffer = CameraBuffer::new(&context.device);
         let environment = EnvironmentResources::new(&context.device, &context.queue);
@@ -129,6 +132,8 @@ impl Renderer {
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
+            camera_fov_y: 60f32.to_radians(),
+            camera_aspect: aspect,
             settings,
             #[cfg(feature = "egui")]
             ui_hook: None,
@@ -230,6 +235,8 @@ impl Renderer {
         self.camera_position = camera.position(); // Store it
         self.camera_target = camera.target;
         self.camera_up = camera.up;
+        self.camera_fov_y = camera.fov_y_radians;
+        self.camera_aspect = aspect;
         let view = camera.view();
         let view_inv = view.inverse();
         let proj = camera.proj(aspect);
@@ -264,6 +271,14 @@ impl Renderer {
 
     pub fn camera_up(&self) -> Vec3 {
         self.camera_up
+    }
+
+    pub fn camera_fov_y(&self) -> f32 {
+        self.camera_fov_y
+    }
+
+    pub fn camera_aspect(&self) -> f32 {
+        self.camera_aspect
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {
@@ -667,6 +682,39 @@ impl Renderer {
             );
         }
 
+        let gizmo_solid_batches = prepared_batches.gizmo_solids();
+        if !gizmo_solid_batches.is_empty() {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("GizmoSolidPass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            if let Some(region) = render_region {
+                region.apply_to_pass(&mut rpass);
+            }
+
+            frame_stats.gizmo_draw_calls += self.record_batches(
+                &mut rpass,
+                assets,
+                gizmo_solid_batches,
+                prepared_batches.materials(),
+                self.context.config.format,
+                1,
+                false,
+            );
+        }
+
         // --- EGUI (optional) ---
         #[cfg(feature = "egui")]
         if let Some(hook) = self.ui_hook.take() {
@@ -944,7 +992,7 @@ fn estimate_shadow_draw_calls(
 fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) -> u32 {
     if matches!(
         batch.pass,
-        RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo
+        RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo | RenderPass::GizmoSolid
     ) {
         return 0;
     }
