@@ -3,6 +3,8 @@ use crate::scene::{
     Children, MaterialComponent, MeshComponent, Name, Parent, Scene, Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
+use crate::scripting::RuneScriptComponent;
+#[cfg(feature = "egui")]
 use crate::ui::egui;
 #[cfg(feature = "egui")]
 use egui::collapsing_header::CollapsingState;
@@ -36,6 +38,7 @@ pub struct SceneEntityComponentsSummary {
     pub transform: Option<Transform>,
     pub mesh: Option<MeshComponent>,
     pub material: Option<MaterialComponent>,
+    pub script: Option<RuneScriptComponent>,
 }
 
 #[cfg(feature = "egui")]
@@ -74,6 +77,9 @@ impl SceneHierarchySnapshot {
             let material = entity_ref
                 .get::<&MaterialComponent>()
                 .map(|component| *component);
+            let script = entity_ref
+                .get::<&RuneScriptComponent>()
+                .map(|component| (*component).clone());
 
             nodes.insert(
                 entity,
@@ -91,6 +97,7 @@ impl SceneHierarchySnapshot {
                     transform,
                     mesh,
                     material,
+                    script,
                 },
             );
         }

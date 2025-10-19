@@ -6,6 +6,7 @@ mod inspector;
 mod layout;
 mod postprocess;
 mod project;
+mod script_editor;
 mod windows;
 
 use std::fs;
@@ -28,13 +29,15 @@ use wgpu_cube::scene::{
     Parent, SelectedInEditor, Transform, TransformComponent, TransformGizmoAxis,
     TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace, Visible, WorldTransform,
 };
-use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
+use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use camera::EditorCameraController;
 use history::{EditorHistory, HistorySelection};
+use inspector::InspectorAction;
 use layout::{create_editor_layout, EditorBehavior, EditorPane, ViewportState};
 use postprocess::ViewportGrid;
+use script_editor::{ScriptEditorEvent, ScriptEditorState};
 use windows::WindowToggles;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,6 +72,21 @@ struct EditorApplication {
     pending_undo: bool,
     pending_redo: bool,
     project: project::ProjectController,
+    script_editor: Option<ScriptEditorState>,
+    pending_script_actions: Vec<PendingScriptAction>,
+}
+
+enum PendingScriptAction {
+    SaveInline {
+        entity: Entity,
+        name: String,
+        contents: String,
+        message: String,
+    },
+    ReloadRuntime {
+        entity: Entity,
+        message: String,
+    },
 }
 
 struct ViewportPick {
@@ -154,6 +172,8 @@ impl EditorApplication {
             pending_undo: false,
             pending_redo: false,
             project: project::ProjectController::new(),
+            script_editor: None,
+            pending_script_actions: Vec::new(),
         }
     }
 
@@ -220,6 +240,102 @@ impl EditorApplication {
             format!("editor_import_gltf::{script_name}"),
             script_source,
         ))
+    }
+
+    fn apply_pending_script_actions(&mut self, ctx: &mut UpdateContext) {
+        if self.pending_script_actions.is_empty() {
+            return;
+        }
+
+        let actions = std::mem::take(&mut self.pending_script_actions);
+        let mut reload_runtime = false;
+        let mut notifications = Vec::new();
+
+        for action in actions {
+            match action {
+                PendingScriptAction::SaveInline {
+                    entity,
+                    name,
+                    contents,
+                    message,
+                } => {
+                    let mut updated = false;
+                    let mut error_message = None;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut RuneScriptComponent>(entity) {
+                            Ok(mut component) => {
+                                *component = RuneScriptComponent::new_inline(name, contents);
+                                updated = true;
+                            }
+                            Err(err) => {
+                                error_message =
+                                    Some(format!("Failed to update inline script: {err}"));
+                                warn!("Failed to update inline script for {:?}: {err}", entity);
+                            }
+                        }
+                    }
+
+                    if let Some(message) = error_message {
+                        self.notify_script_editor_error(entity, message);
+                    }
+
+                    if updated {
+                        reload_runtime = true;
+                        notifications.push((entity, message));
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                PendingScriptAction::ReloadRuntime { entity, message } => {
+                    reload_runtime = true;
+                    notifications.push((entity, message));
+                }
+            }
+        }
+
+        if reload_runtime {
+            ctx.scene.reset_script_runtime();
+            for (entity, message) in notifications {
+                self.notify_script_editor_saved(entity, message);
+            }
+        }
+    }
+
+    fn notify_script_editor_saved(&mut self, entity: Entity, message: impl Into<String>) {
+        if let Some(editor) = self.script_editor.as_mut() {
+            if editor.entity() == entity {
+                editor.finish_save(message);
+            }
+        }
+    }
+
+    fn notify_script_editor_error(&mut self, entity: Entity, message: impl Into<String>) {
+        if let Some(editor) = self.script_editor.as_mut() {
+            if editor.entity() == entity {
+                editor.fail_save(message);
+            }
+        }
+    }
+
+    fn ensure_script_editor_target_valid(&mut self, scene: &wgpu_cube::scene::Scene) {
+        if let Some(editor) = self.script_editor.as_mut() {
+            let world = scene.main_world();
+            if !world.contains(editor.entity()) {
+                editor.mark_target_missing("Entity has been removed.");
+                return;
+            }
+
+            match world.get::<&RuneScriptComponent>(editor.entity()) {
+                Ok(component) => {
+                    editor.clear_target_missing();
+                    let component_ref: &RuneScriptComponent = &component;
+                    editor.sync_with_component(component_ref);
+                }
+                Err(_) => {
+                    editor.mark_target_missing("Script component removed from entity.");
+                }
+            }
+        }
     }
 
     fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
@@ -332,13 +448,13 @@ impl EditorApplication {
         }
 
         if let Some(selected) = self.selected_entity {
-            if removed_entities.iter().any(|&entity| entity == selected) {
+            if removed_entities.contains(&selected) {
                 self.selected_entity = None;
             }
         }
 
         if let Some(highlighted) = self.highlighted_entity {
-            if removed_entities.iter().any(|&entity| entity == highlighted) {
+            if removed_entities.contains(&highlighted) {
                 self.highlighted_entity = None;
             }
         }
@@ -346,7 +462,7 @@ impl EditorApplication {
         if self
             .gizmo_drag
             .as_ref()
-            .is_some_and(|drag| removed_entities.iter().any(|&entity| entity == drag.entity))
+            .is_some_and(|drag| removed_entities.contains(&drag.entity))
         {
             self.gizmo_drag = None;
         }
@@ -1878,6 +1994,7 @@ impl RenderApplication for EditorApplication {
             self.camera_controller.update_camera(ctx);
         }
         self.ensure_editor_entity_ids(ctx.scene);
+        self.apply_pending_script_actions(ctx);
 
         if self.pending_undo {
             self.pending_undo = false;
@@ -1916,6 +2033,7 @@ impl RenderApplication for EditorApplication {
             None
         };
         ctx.scene.set_transform_gizmo_hover(hovered_handle);
+        self.ensure_script_editor_target_valid(ctx.scene);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
@@ -1964,6 +2082,7 @@ impl RenderApplication for EditorApplication {
         if let Some(selection) = self.selection_override.take() {
             scene_hierarchy_window.set_selected_entity(selection);
         }
+        let mut inspector_actions = Vec::new();
         let is_playing = matches!(runtime_mode, RuntimeMode::Playing);
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
@@ -1975,11 +2094,26 @@ impl RenderApplication for EditorApplication {
                     game_viewport,
                     scene_hierarchy: scene_hierarchy_window,
                     is_playing,
+                    inspector_actions: &mut inspector_actions,
                 };
                 dock_tree.ui(&mut behavior, ui);
             });
 
         self.selected_entity = scene_hierarchy_window.selected_entity();
+
+        for action in inspector_actions {
+            match action {
+                InspectorAction::EditScript { entity, component } => {
+                    if let Some(editor) = self.script_editor.as_mut() {
+                        if editor.entity() == entity {
+                            editor.sync_with_component(&component);
+                            continue;
+                        }
+                    }
+                    self.script_editor = Some(ScriptEditorState::new(entity, component));
+                }
+            }
+        }
 
         if is_playing {
             self.camera_controller.set_viewport_rect(None);
@@ -1996,6 +2130,37 @@ impl RenderApplication for EditorApplication {
             self.handle_general_shortcuts(ctx);
         } else {
             self.pending_pick = None;
+        }
+
+        let script_event = if let Some(editor) = self.script_editor.as_mut() {
+            editor.show(ctx)
+        } else {
+            ScriptEditorEvent::None
+        };
+
+        match script_event {
+            ScriptEditorEvent::None => {}
+            ScriptEditorEvent::Closed => {
+                self.script_editor = None;
+            }
+            ScriptEditorEvent::SaveInline {
+                entity,
+                name,
+                contents,
+                message,
+            } => {
+                self.pending_script_actions
+                    .push(PendingScriptAction::SaveInline {
+                        entity,
+                        name,
+                        contents,
+                        message,
+                    });
+            }
+            ScriptEditorEvent::SaveFile { entity, message } => {
+                self.pending_script_actions
+                    .push(PendingScriptAction::ReloadRuntime { entity, message });
+            }
         }
 
         let pointer_uv = if !is_playing && !self.camera_controller.is_looking() {

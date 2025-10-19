@@ -1,9 +1,23 @@
 use egui::Grid;
 use glam::{EulerRot, Vec3};
 
+use hecs::Entity;
+
+use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
 
-pub fn show_entity_inspector(ui: &mut egui::Ui, data: &SceneEntityInspectorData) {
+#[derive(Clone)]
+pub enum InspectorAction {
+    EditScript {
+        entity: Entity,
+        component: RuneScriptComponent,
+    },
+}
+
+pub fn show_entity_inspector(
+    ui: &mut egui::Ui,
+    data: &SceneEntityInspectorData,
+) -> Option<InspectorAction> {
     ui.label(format!("Name: {}", data.name));
     ui.label(format!("Entity: {:?}", data.entity));
     ui.add_space(8.0);
@@ -13,6 +27,8 @@ pub fn show_entity_inspector(ui: &mut egui::Ui, data: &SceneEntityInspectorData)
     show_mesh_section(ui, &data.components);
     ui.add_space(6.0);
     show_material_section(ui, &data.components);
+    ui.add_space(6.0);
+    show_script_section(ui, data)
 }
 
 fn show_transform_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSummary) {
@@ -107,4 +123,34 @@ fn show_material_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSu
 
 fn format_vec3(vec: Vec3) -> String {
     format!("{:.3}, {:.3}, {:.3}", vec.x, vec.y, vec.z)
+}
+
+fn show_script_section(
+    ui: &mut egui::Ui,
+    data: &SceneEntityInspectorData,
+) -> Option<InspectorAction> {
+    let mut action = None;
+    ui.collapsing("Script", |ui| {
+        if let Some(script) = data.components.script.as_ref() {
+            let source_label = match script.source() {
+                RuneScriptSource::Inline { name, .. } => {
+                    format!("Inline script: {}", name)
+                }
+                RuneScriptSource::File { path } => {
+                    format!("File: {}", path.display())
+                }
+            };
+            ui.label(source_label);
+
+            if ui.button("Edit").clicked() {
+                action = Some(InspectorAction::EditScript {
+                    entity: data.entity,
+                    component: script.clone(),
+                });
+            }
+        } else {
+            ui.label("No script component on this entity.");
+        }
+    });
+    action
 }

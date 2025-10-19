@@ -227,15 +227,15 @@ pub fn torus_mesh(
         }
     }
 
-    let ring_stride = ring_segments as u32;
+    let ring_stride = ring_segments;
     for i in 0..segments {
         let next_i = (i + 1) % segments;
         for j in 0..ring_segments {
             let next_j = (j + 1) % ring_segments;
-            let current = i as u32 * ring_stride + j as u32;
-            let next = i as u32 * ring_stride + next_j;
-            let current_next = next_i as u32 * ring_stride + j as u32;
-            let next_next = next_i as u32 * ring_stride + next_j;
+            let current = i * ring_stride + j;
+            let next = i * ring_stride + next_j;
+            let current_next = next_i * ring_stride + j;
+            let next_next = next_i * ring_stride + next_j;
 
             indices.push(current);
             indices.push(next);

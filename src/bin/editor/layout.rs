@@ -4,7 +4,7 @@ use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::SceneHierarchyWindow;
 
-use crate::inspector::show_entity_inspector;
+use crate::inspector::{show_entity_inspector, InspectorAction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EditorPane {
@@ -46,6 +46,7 @@ pub struct EditorBehavior<'a> {
     pub game_viewport: &'a mut ViewportState,
     pub scene_hierarchy: &'a mut SceneHierarchyWindow,
     pub is_playing: bool,
+    pub inspector_actions: &'a mut Vec<InspectorAction>,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -87,7 +88,9 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                 ui.separator();
 
                 if let Some(selection) = self.scene_hierarchy.selected_entity_data() {
-                    show_entity_inspector(ui, &selection);
+                    if let Some(action) = show_entity_inspector(ui, &selection) {
+                        self.inspector_actions.push(action);
+                    }
                 } else {
                     ui.label("Select an entity to view its components.");
                 }
