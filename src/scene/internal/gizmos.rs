@@ -6,8 +6,8 @@ use crate::renderer::primitives::{cone_side_mesh, cylinder_mesh, quad_mesh, sphe
 use crate::renderer::texture::Texture;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{
-    Billboard, BillboardOrientation, DepthState, DirectionalLight, PointLight, SpotLight,
-    TransformComponent, WorldTransform,
+    Billboard, BillboardOrientation, DepthState, DirectionalLight, PointLight, SelectedInEditor,
+    SpotLight, TransformComponent, WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Quat, Vec3};
@@ -107,11 +107,12 @@ fn build_point_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (light, world_transform, local_transform)) in world
+    for (_entity, (light, world_transform, local_transform, selected)) in world
         .query::<(
             &PointLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
+            Option<&SelectedInEditor>,
         )>()
         .iter()
     {
@@ -144,22 +145,24 @@ fn build_point_light_gizmos(
             cull_mode: CullMode::Back,
         });
 
-        let radius = light.range.max(0.01);
-        output.push(RenderObject {
-            mesh: resources.sphere,
-            material: volume_material(POINT_VOLUME_COLOR),
-            transform: Transform::from_trs(
-                transform.translation,
-                Quat::IDENTITY,
-                Vec3::splat(radius),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
+        if selected.is_some() {
+            let radius = light.range.max(0.01);
+            output.push(RenderObject {
+                mesh: resources.sphere,
+                material: volume_material(POINT_VOLUME_COLOR),
+                transform: Transform::from_trs(
+                    transform.translation,
+                    Quat::IDENTITY,
+                    Vec3::splat(radius),
+                ),
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
+        }
     }
 }
 
@@ -170,11 +173,12 @@ fn build_spot_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (light, world_transform, local_transform)) in world
+    for (_entity, (light, world_transform, local_transform, selected)) in world
         .query::<(
             &SpotLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
+            Option<&SelectedInEditor>,
         )>()
         .iter()
     {
@@ -207,90 +211,92 @@ fn build_spot_light_gizmos(
             cull_mode: CullMode::Back,
         });
 
-        let range = light.range.max(0.01);
-        let outer_angle = light.outer_angle.max(0.01);
-        let inner_angle = light.inner_angle.clamp(0.0, outer_angle);
-        let outer_radius = (outer_angle.tan() * range).max(0.05);
-        let inner_radius = (inner_angle.tan() * range).max(0.02);
-        let rotation = transform.rotation;
+        if selected.is_some() {
+            let range = light.range.max(0.01);
+            let outer_angle = light.outer_angle.max(0.01);
+            let inner_angle = light.inner_angle.clamp(0.0, outer_angle);
+            let outer_radius = (outer_angle.tan() * range).max(0.05);
+            let inner_radius = (inner_angle.tan() * range).max(0.02);
+            let rotation = transform.rotation;
 
-        // Outer cone volume
-        output.push(RenderObject {
-            mesh: resources.cone_shell,
-            material: volume_material(SPOT_VOLUME_COLOR),
-            transform: Transform::from_trs(
-                transform.translation,
-                rotation,
-                Vec3::new(outer_radius, outer_radius, range),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
-
-        // Inner shell: slightly inset to convey falloff thickness.
-        let shell_scale = (inner_radius / outer_radius).clamp(0.0, 0.999).max(0.01);
-        output.push(RenderObject {
-            mesh: resources.cone_shell,
-            material: volume_material([
-                SPOT_VOLUME_COLOR[0],
-                SPOT_VOLUME_COLOR[1],
-                SPOT_VOLUME_COLOR[2],
-                60,
-            ]),
-            transform: Transform::from_trs(
-                transform.translation,
-                rotation,
-                Vec3::new(
-                    outer_radius * shell_scale,
-                    outer_radius * shell_scale,
-                    range,
+            // Outer cone volume
+            output.push(RenderObject {
+                mesh: resources.cone_shell,
+                material: volume_material(SPOT_VOLUME_COLOR),
+                transform: Transform::from_trs(
+                    transform.translation,
+                    rotation,
+                    Vec3::new(outer_radius, outer_radius, range),
                 ),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
 
-        // Outer outline to highlight total spread.
-        output.push(RenderObject {
-            mesh: resources.cone_shell,
-            material: outline_material(SPOT_OUTER_OUTLINE_COLOR),
-            transform: Transform::from_trs(
-                transform.translation,
-                rotation,
-                Vec3::new(outer_radius, outer_radius, range),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
+            // Inner shell: slightly inset to convey falloff thickness.
+            let shell_scale = (inner_radius / outer_radius).clamp(0.0, 0.999).max(0.01);
+            output.push(RenderObject {
+                mesh: resources.cone_shell,
+                material: volume_material([
+                    SPOT_VOLUME_COLOR[0],
+                    SPOT_VOLUME_COLOR[1],
+                    SPOT_VOLUME_COLOR[2],
+                    60,
+                ]),
+                transform: Transform::from_trs(
+                    transform.translation,
+                    rotation,
+                    Vec3::new(
+                        outer_radius * shell_scale,
+                        outer_radius * shell_scale,
+                        range,
+                    ),
+                ),
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
 
-        // Inner outline clarifies the core beam threshold.
-        output.push(RenderObject {
-            mesh: resources.cone_shell,
-            material: outline_material(SPOT_INNER_OUTLINE_COLOR),
-            transform: Transform::from_trs(
-                transform.translation,
-                rotation,
-                Vec3::new(inner_radius, inner_radius, range),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
+            // Outer outline to highlight total spread.
+            output.push(RenderObject {
+                mesh: resources.cone_shell,
+                material: outline_material(SPOT_OUTER_OUTLINE_COLOR),
+                transform: Transform::from_trs(
+                    transform.translation,
+                    rotation,
+                    Vec3::new(outer_radius, outer_radius, range),
+                ),
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
+
+            // Inner outline clarifies the core beam threshold.
+            output.push(RenderObject {
+                mesh: resources.cone_shell,
+                material: outline_material(SPOT_INNER_OUTLINE_COLOR),
+                transform: Transform::from_trs(
+                    transform.translation,
+                    rotation,
+                    Vec3::new(inner_radius, inner_radius, range),
+                ),
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
+        }
     }
 }
 
@@ -301,11 +307,12 @@ fn build_directional_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (_light, world_transform, local_transform)) in world
+    for (_entity, (_light, world_transform, local_transform, selected)) in world
         .query::<(
             &DirectionalLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
+            Option<&SelectedInEditor>,
         )>()
         .iter()
     {
@@ -339,27 +346,29 @@ fn build_directional_light_gizmos(
             cull_mode: CullMode::Back,
         });
 
-        let shaft_rotation = align_vector(Vec3::Z, direction);
-        let shaft_translation = position + direction * (DIRECTIONAL_SHAFT_LENGTH * 0.5);
-        output.push(RenderObject {
-            mesh: resources.cylinder,
-            material: volume_material(DIRECTIONAL_SHAFT_COLOR),
-            transform: Transform::from_trs(
-                shaft_translation,
-                shaft_rotation,
-                Vec3::new(
-                    DIRECTIONAL_SHAFT_RADIUS,
-                    DIRECTIONAL_SHAFT_RADIUS,
-                    DIRECTIONAL_SHAFT_LENGTH,
+        if selected.is_some() {
+            let shaft_rotation = align_vector(Vec3::Z, direction);
+            let shaft_translation = position + direction * (DIRECTIONAL_SHAFT_LENGTH * 0.5);
+            output.push(RenderObject {
+                mesh: resources.cylinder,
+                material: volume_material(DIRECTIONAL_SHAFT_COLOR),
+                transform: Transform::from_trs(
+                    shaft_translation,
+                    shaft_rotation,
+                    Vec3::new(
+                        DIRECTIONAL_SHAFT_RADIUS,
+                        DIRECTIONAL_SHAFT_RADIUS,
+                        DIRECTIONAL_SHAFT_LENGTH,
+                    ),
                 ),
-            ),
-            depth_state: LIGHT_GEOMETRY_DEPTH,
-            force_overlay: false,
-            render_pass: Some(RenderPass::Gizmo),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::None,
-        });
+                depth_state: LIGHT_GEOMETRY_DEPTH,
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::None,
+            });
+        }
     }
 }
 
