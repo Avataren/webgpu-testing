@@ -77,9 +77,8 @@ enum GizmoDragKind {
     TranslateAxis {
         axis: TransformGizmoAxis,
         axis_dir: Vec3,
-        plane_normal: Vec3,
         origin: Vec3,
-        start_offset: f32,
+        start_param: f32,
     },
     TranslatePlane {
         plane_normal: Vec3,
@@ -500,23 +499,49 @@ impl EditorApplication {
         let kind = match handle {
             TransformGizmoHandle::TranslateAxis(axis) => {
                 let axis_dir = Self::axis_direction(initial_world.rotation, axis);
-                let Some(plane_normal) =
-                    Self::translation_plane_normal(axis_dir, camera_forward, camera_up)
-                else {
+                let mut start_param =
+                    Self::ray_axis_parameter(origin, direction, origin_point, axis_dir)
+                        .unwrap_or(0.0);
+                if start_param.abs() < 1e-4 {
+                    let Some(plane_normal) =
+                        Self::translation_plane_normal(axis_dir, camera_forward, camera_up)
+                    else {
+                        return false;
+                    };
+                    let Some(point) =
+                        Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                    else {
+                        return false;
+                    };
+                    start_param = (point - origin_point).dot(axis_dir);
+                }
+                if start_param.abs() < 1e-4 {
+                    start_param = 1.0;
+                }
+                GizmoDragKind::TranslateAxis {
+                    axis,
+                    axis_dir,
+                    origin: origin_point,
+                    start_param,
+                }
+            }
+            TransformGizmoHandle::TranslatePlane(axis_a, axis_b) => {
+                let axis_a_dir = Self::axis_direction(initial_world.rotation, axis_a);
+                let axis_b_dir = Self::axis_direction(initial_world.rotation, axis_b);
+                let mut plane_normal = axis_a_dir.cross(axis_b_dir);
+                if plane_normal.length_squared() < 1e-6 {
                     return false;
-                };
+                }
+                plane_normal = plane_normal.normalize();
                 let Some(point) =
                     Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
                 else {
                     return false;
                 };
-                let start_offset = (point - origin_point).dot(axis_dir);
-                GizmoDragKind::TranslateAxis {
-                    axis,
-                    axis_dir,
+                GizmoDragKind::TranslatePlane {
                     plane_normal,
                     origin: origin_point,
-                    start_offset,
+                    start_point: point,
                 }
             }
             TransformGizmoHandle::TranslateCenter => {
@@ -655,18 +680,15 @@ impl EditorApplication {
         match &mut drag.kind {
             GizmoDragKind::TranslateAxis {
                 axis_dir,
-                plane_normal,
                 origin,
-                start_offset,
+                start_param,
                 ..
             } => {
-                let Some(point) =
-                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                let Some(param) = Self::ray_axis_parameter(ray_origin, ray_dir, *origin, *axis_dir)
                 else {
                     return Ok(false);
                 };
-                let offset = (point - *origin).dot(*axis_dir);
-                let delta = offset - *start_offset;
+                let delta = param - *start_param;
                 if delta.is_finite() {
                     new_world.translation = drag.initial_world.translation + *axis_dir * delta;
                     updated = true;

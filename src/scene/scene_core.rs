@@ -37,6 +37,7 @@ pub enum TransformGizmoAxis {
 pub enum TransformGizmoHandle {
     TranslateAxis(TransformGizmoAxis),
     TranslateCenter,
+    TranslatePlane(TransformGizmoAxis, TransformGizmoAxis),
     RotateAxis(TransformGizmoAxis),
     RotateScreen,
     ScaleAxis(TransformGizmoAxis),

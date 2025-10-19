@@ -7,7 +7,7 @@ use crate::renderer::{Material, Renderer};
 use crate::scene::components::DepthState;
 use crate::scene::transform::Transform;
 use crate::scene::{TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode};
-use glam::{Quat, Vec3};
+use glam::{Mat3, Quat, Vec3};
 
 #[derive(Clone, Copy)]
 pub(crate) struct TransformGizmoResources {
@@ -24,6 +24,12 @@ const AXES: [TransformGizmoAxis; 3] = [
     TransformGizmoAxis::Z,
 ];
 
+const TRANSLATE_PLANES: [(TransformGizmoAxis, TransformGizmoAxis); 3] = [
+    (TransformGizmoAxis::X, TransformGizmoAxis::Y),
+    (TransformGizmoAxis::Y, TransformGizmoAxis::Z),
+    (TransformGizmoAxis::Z, TransformGizmoAxis::X),
+];
+
 const AXIS_X_COLOR: [u8; 4] = [250, 80, 90, 230];
 const AXIS_Y_COLOR: [u8; 4] = [80, 220, 120, 230];
 const AXIS_Z_COLOR: [u8; 4] = [90, 140, 250, 230];
@@ -35,6 +41,10 @@ const TRANSLATE_SHAFT_LENGTH: f32 = 0.9;
 const TRANSLATE_SHAFT_RADIUS: f32 = 0.035;
 const TRANSLATE_CONE_LENGTH: f32 = 0.25;
 const TRANSLATE_CONE_RADIUS: f32 = 0.12;
+const TRANSLATE_PLANE_SIZE: f32 = 0.32;
+const TRANSLATE_PLANE_OFFSET: f32 = 0.16;
+const TRANSLATE_PLANE_THICKNESS: f32 = 0.04;
+const TRANSLATE_PLANE_PICK_THICKNESS: f32 = 0.1;
 
 const SCALE_HANDLE_SIZE: f32 = 0.18;
 const SCALE_HANDLE_OFFSET: f32 = 0.9;
@@ -44,6 +54,7 @@ const ROTATION_RING_THICKNESS: f32 = 0.04;
 
 const TRANSLATE_AXIS_PICK_RADIUS: f32 = 0.32;
 const TRANSLATE_CENTER_PICK_RADIUS: f32 = 0.28;
+const TRANSLATE_PLANE_PICK_PADDING: f32 = 0.06;
 const SCALE_AXIS_PICK_RADIUS: f32 = 0.18;
 const SCALE_UNIFORM_PICK_RADIUS: f32 = 0.2;
 const ROTATION_RING_PICK_THICKNESS: f32 = 0.12;
@@ -153,6 +164,46 @@ pub(crate) fn hit_test(
                     consider(TransformGizmoHandle::TranslateCenter, distance);
                 }
             }
+            let plane_offset = TRANSLATE_PLANE_OFFSET * base_scale;
+            let plane_size = TRANSLATE_PLANE_SIZE * base_scale;
+            let plane_half = plane_size * 0.5 + TRANSLATE_PLANE_PICK_PADDING * base_scale;
+            let plane_thickness = TRANSLATE_PLANE_PICK_THICKNESS * base_scale;
+            for &(axis_a, axis_b) in &TRANSLATE_PLANES {
+                let dir_a = axis_direction(gizmo_transform.rotation, axis_a);
+                let dir_b = axis_direction(gizmo_transform.rotation, axis_b);
+                let mut normal = dir_a.cross(dir_b);
+                if normal.length_squared() < 1e-6 {
+                    continue;
+                }
+                normal = normal.normalize();
+                let denom = ray_dir.dot(normal);
+                if denom.abs() < 1e-6 {
+                    continue;
+                }
+                let t = (origin - ray_origin).dot(normal) / denom;
+                if !t.is_finite() || t < 0.0 {
+                    continue;
+                }
+                let hit = ray_origin + ray_dir * t;
+                let local = hit - origin;
+                let coord_a = local.dot(dir_a);
+                let coord_b = local.dot(dir_b);
+                let coord_n = local.dot(normal).abs();
+                if coord_a < plane_offset - plane_half
+                    || coord_a > plane_offset + plane_half
+                    || coord_b < plane_offset - plane_half
+                    || coord_b > plane_offset + plane_half
+                    || coord_n > plane_thickness
+                {
+                    continue;
+                }
+                let plane_center = origin + dir_a * plane_offset + dir_b * plane_offset;
+                let distance = (hit - plane_center).length();
+                consider(
+                    TransformGizmoHandle::TranslatePlane(axis_a, axis_b),
+                    distance,
+                );
+            }
         }
         TransformGizmoMode::Rotate => {
             let ring_radius = ROTATION_RING_RADIUS * base_scale;
@@ -213,6 +264,10 @@ fn build_translate_gizmo(
     let cone_length = TRANSLATE_CONE_LENGTH * base_scale;
     let cone_radius = TRANSLATE_CONE_RADIUS * base_scale;
 
+    let plane_offset = TRANSLATE_PLANE_OFFSET * base_scale;
+    let plane_size = TRANSLATE_PLANE_SIZE * base_scale;
+    let plane_thickness = TRANSLATE_PLANE_THICKNESS * base_scale;
+
     for axis in AXES {
         let axis_vec = axis_direction(gizmo_transform.rotation, axis);
         let color = highlight_color(
@@ -248,6 +303,38 @@ fn build_translate_gizmo(
                 cone_translation,
                 cone_rotation,
                 Vec3::new(cone_radius, cone_radius, cone_length),
+            ),
+            depth_state: GIZMO_DEPTH,
+            force_overlay: false,
+            render_pass: Some(RenderPass::GizmoSolid),
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::Back,
+        });
+    }
+
+    for &(axis_a, axis_b) in &TRANSLATE_PLANES {
+        let axis_a_vec = axis_direction(gizmo_transform.rotation, axis_a);
+        let axis_b_vec = axis_direction(gizmo_transform.rotation, axis_b);
+        let mut normal = axis_a_vec.cross(axis_b_vec);
+        if normal.length_squared() < 1e-6 {
+            continue;
+        }
+        normal = normal.normalize();
+        let plane_center =
+            gizmo_transform.translation + axis_a_vec * plane_offset + axis_b_vec * plane_offset;
+        let orientation = Quat::from_mat3(&Mat3::from_cols(axis_a_vec, axis_b_vec, normal));
+        let color = highlight_color(
+            plane_color(axis_a, axis_b),
+            hovered == Some(TransformGizmoHandle::TranslatePlane(axis_a, axis_b)),
+        );
+        gizmos.push(RenderObject {
+            mesh: resources.scale_cube,
+            material: solid_color_material(color),
+            transform: Transform::from_trs(
+                plane_center,
+                orientation,
+                Vec3::new(plane_size, plane_size, plane_thickness),
             ),
             depth_state: GIZMO_DEPTH,
             force_overlay: false,
@@ -436,6 +523,17 @@ fn axis_color(axis: TransformGizmoAxis) -> [u8; 4] {
         TransformGizmoAxis::Y => AXIS_Y_COLOR,
         TransformGizmoAxis::Z => AXIS_Z_COLOR,
     }
+}
+
+fn plane_color(axis_a: TransformGizmoAxis, axis_b: TransformGizmoAxis) -> [u8; 4] {
+    let color_a = axis_color(axis_a);
+    let color_b = axis_color(axis_b);
+    let mut result = [0u8; 4];
+    for i in 0..3 {
+        result[i] = ((color_a[i] as u16 + color_b[i] as u16) / 2) as u8;
+    }
+    result[3] = ((color_a[3] as u16 + color_b[3] as u16) / 2).min(255) as u8;
+    result
 }
 
 fn align_ring(axis: Vec3) -> Quat {
