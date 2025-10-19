@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use egui_tiles::{Tile, TileId, Tree};
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Quat, Vec2, Vec3, Vec4};
 use hecs::Entity;
 use log::{error, warn};
 use wgpu_cube::app::{
@@ -20,8 +20,9 @@ use wgpu_cube::renderer::{
     cube_mesh, CustomRenderContext, CustomRenderStage, Material, RenderRegion,
 };
 use wgpu_cube::scene::{
-    EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, SelectedInEditor, Transform,
-    TransformComponent, TransformGizmoMode, Visible, WorldTransform,
+    EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, Parent, SelectedInEditor,
+    Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,
+    Visible, WorldTransform,
 };
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
@@ -52,10 +53,58 @@ struct EditorApplication {
     last_runtime_mode: RuntimeMode,
     transform_gizmo_mode: TransformGizmoMode,
     scene_pointer_uv: Option<Vec2>,
+    gizmo_drag: Option<GizmoDragState>,
+    pointer_primary_down: bool,
+    pointer_press_uv: Option<Vec2>,
+    selection_press_uv: Option<Vec2>,
 }
 
 struct ViewportPick {
     uv: Vec2,
+}
+
+struct GizmoDragState {
+    entity: Entity,
+    handle: TransformGizmoHandle,
+    initial_local: Transform,
+    parent_world: Transform,
+    initial_world: Transform,
+    last_pointer_uv: Vec2,
+    kind: GizmoDragKind,
+}
+
+enum GizmoDragKind {
+    TranslateAxis {
+        axis: TransformGizmoAxis,
+        axis_dir: Vec3,
+        plane_normal: Vec3,
+        origin: Vec3,
+        start_offset: f32,
+    },
+    TranslatePlane {
+        plane_normal: Vec3,
+        origin: Vec3,
+        start_point: Vec3,
+    },
+    Rotate {
+        axis_dir: Vec3,
+        origin: Vec3,
+        start_vector: Vec3,
+    },
+    ScaleAxis {
+        axis: TransformGizmoAxis,
+        axis_dir: Vec3,
+        plane_normal: Vec3,
+        origin: Vec3,
+        start_offset: f32,
+        initial_scale: Vec3,
+    },
+    ScaleUniform {
+        plane_normal: Vec3,
+        origin: Vec3,
+        start_distance: f32,
+        initial_scale: Vec3,
+    },
 }
 
 impl EditorApplication {
@@ -76,6 +125,10 @@ impl EditorApplication {
             last_runtime_mode: RuntimeMode::Editor,
             transform_gizmo_mode: TransformGizmoMode::Translate,
             scene_pointer_uv: None,
+            gizmo_drag: None,
+            pointer_primary_down: false,
+            pointer_press_uv: None,
+            selection_press_uv: None,
         }
     }
 
@@ -226,42 +279,76 @@ impl EditorApplication {
     fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
         if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
             self.pending_pick = None;
+            self.pointer_primary_down = false;
+            self.pointer_press_uv = None;
+            self.selection_press_uv = None;
             return;
         }
 
         if self.camera_controller.is_looking() {
+            self.pointer_primary_down = false;
+            self.pointer_press_uv = None;
+            self.selection_press_uv = None;
             return;
         }
 
         let Some(rect) = self.scene_viewport.rect() else {
+            self.pointer_primary_down = false;
+            self.pointer_press_uv = None;
+            self.selection_press_uv = None;
             return;
         };
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
+            self.pointer_primary_down = false;
+            self.pointer_press_uv = None;
+            self.selection_press_uv = None;
             return;
         }
 
+        let mut pressed_uv: Option<Vec2> = None;
+        let mut released_uv: Option<Vec2> = None;
+        let mut pointer_down = false;
+
         ctx.input(|input| {
-            if !input.pointer.button_clicked(egui::PointerButton::Primary) {
-                return;
+            pointer_down = input.pointer.button_down(egui::PointerButton::Primary);
+
+            if input.pointer.button_pressed(egui::PointerButton::Primary) {
+                if let Some(pos) = input.pointer.latest_pos() {
+                    if rect.contains(pos) {
+                        let uv = Self::viewport_uv(rect, pos);
+                        if uv.is_finite() {
+                            pressed_uv = Some(uv);
+                        }
+                    }
+                }
             }
 
-            let Some(pos) = input.pointer.latest_pos() else {
-                return;
-            };
-
-            if !rect.contains(pos) {
-                return;
+            if input.pointer.button_released(egui::PointerButton::Primary) {
+                if let Some(pos) = input.pointer.latest_pos() {
+                    if rect.contains(pos) {
+                        let uv = Self::viewport_uv(rect, pos);
+                        if uv.is_finite() {
+                            released_uv = Some(uv);
+                        }
+                    }
+                }
             }
-
-            let local_x = (pos.x - rect.min.x) / rect.width();
-            let local_y = (pos.y - rect.min.y) / rect.height();
-            if !local_x.is_finite() || !local_y.is_finite() {
-                return;
-            }
-
-            let uv = Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0));
-            self.pending_pick = Some(ViewportPick { uv });
         });
+
+        self.pointer_primary_down = pointer_down;
+
+        if let Some(uv) = pressed_uv {
+            self.pointer_press_uv = Some(uv);
+            self.selection_press_uv = Some(uv);
+        }
+
+        if let Some(uv) = released_uv {
+            if self.gizmo_drag.is_none() && self.selection_press_uv.take().is_some() {
+                self.pending_pick = Some(ViewportPick { uv });
+            }
+        } else if !self.pointer_primary_down {
+            self.selection_press_uv = None;
+        }
     }
 
     fn handle_gizmo_shortcuts(&mut self, ctx: &egui::Context) {
@@ -298,6 +385,401 @@ impl EditorApplication {
         let picked = self.pick_entity(ctx, request.uv, region);
         self.selected_entity = picked;
         self.selection_override = Some(picked);
+    }
+
+    fn update_gizmo_drag(&mut self, ctx: &mut UpdateContext) {
+        if !matches!(ctx.runtime, RuntimeMode::Editor) {
+            self.gizmo_drag = None;
+            self.pointer_press_uv = None;
+            return;
+        }
+
+        if let Some(uv) = self.pointer_press_uv.take() {
+            if self.try_begin_gizmo_drag(ctx, uv) {
+                self.selection_press_uv = None;
+            }
+        }
+
+        let mut transforms_dirty = false;
+        let mut end_drag = false;
+
+        if let Some(drag) = self.gizmo_drag.as_mut() {
+            if !self.pointer_primary_down {
+                end_drag = true;
+            } else if let Some(region) = self.scene_viewport.region() {
+                let width = region.width().max(1) as f32;
+                let height = region.height().max(1) as f32;
+                if width > 0.0 && height > 0.0 {
+                    let aspect = width / height;
+                    let camera = ctx.scene.camera();
+                    let uv = self
+                        .scene_pointer_uv
+                        .filter(|uv| uv.is_finite())
+                        .unwrap_or(drag.last_pointer_uv);
+                    let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
+                    match Self::apply_gizmo_drag(ctx, drag, origin, direction) {
+                        Ok(updated) => {
+                            if updated {
+                                drag.last_pointer_uv = uv;
+                                transforms_dirty = true;
+                            }
+                        }
+                        Err(_) => {
+                            end_drag = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if transforms_dirty {
+            ctx.scene.propagate_transforms();
+        }
+
+        if end_drag {
+            self.gizmo_drag = None;
+        }
+    }
+
+    fn try_begin_gizmo_drag(&mut self, ctx: &mut UpdateContext, press_uv: Vec2) -> bool {
+        let Some(entity) = self.selected_entity else {
+            return false;
+        };
+
+        let Some(region) = self.scene_viewport.region() else {
+            return false;
+        };
+        let width = region.width().max(1) as f32;
+        let height = region.height().max(1) as f32;
+        if width <= 0.0 || height <= 0.0 {
+            return false;
+        }
+        let aspect = width / height;
+
+        let camera = *ctx.scene.camera();
+        let (origin, direction) = Self::ray_from_uv(&camera, press_uv, aspect);
+        let Some(handle) = ctx.scene.transform_gizmo_hit(origin, direction) else {
+            return false;
+        };
+
+        {
+            let world = ctx.scene.main_world();
+            if world.entity(entity).is_err() {
+                return false;
+            }
+        }
+
+        ctx.scene.propagate_transforms();
+
+        let (initial_local, parent_world, initial_world_opt) = {
+            let world = ctx.scene.main_world();
+            let local = world
+                .get::<&TransformComponent>(entity)
+                .map(|c| c.0)
+                .unwrap_or(Transform::IDENTITY);
+            let parent_world = world
+                .get::<&Parent>(entity)
+                .ok()
+                .and_then(|parent| world.get::<&WorldTransform>(parent.0).ok())
+                .map(|wt| wt.0)
+                .unwrap_or(Transform::IDENTITY);
+            let world_transform = world.get::<&WorldTransform>(entity).ok().map(|wt| wt.0);
+            (local, parent_world, world_transform)
+        };
+
+        let initial_world =
+            initial_world_opt.unwrap_or_else(|| parent_world.mul_transform(&initial_local));
+
+        let mut camera_forward = camera.target - camera.eye;
+        camera_forward = Self::safe_normalize(camera_forward, Vec3::NEG_Z);
+        let mut camera_up = camera.up;
+        camera_up = Self::safe_normalize(camera_up, Vec3::Y);
+
+        let origin_point = initial_world.translation;
+        let kind = match handle {
+            TransformGizmoHandle::TranslateAxis(axis) => {
+                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let Some(plane_normal) =
+                    Self::translation_plane_normal(axis_dir, camera_forward, camera_up)
+                else {
+                    return false;
+                };
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                else {
+                    return false;
+                };
+                let start_offset = (point - origin_point).dot(axis_dir);
+                GizmoDragKind::TranslateAxis {
+                    axis,
+                    axis_dir,
+                    plane_normal,
+                    origin: origin_point,
+                    start_offset,
+                }
+            }
+            TransformGizmoHandle::TranslateCenter => {
+                let plane_normal = camera_forward;
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                else {
+                    return false;
+                };
+                GizmoDragKind::TranslatePlane {
+                    plane_normal,
+                    origin: origin_point,
+                    start_point: point,
+                }
+            }
+            TransformGizmoHandle::RotateAxis(axis) => {
+                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, axis_dir)
+                else {
+                    return false;
+                };
+                let start_vector = point - origin_point;
+                if start_vector.length_squared() < 1e-6 {
+                    return false;
+                }
+                GizmoDragKind::Rotate {
+                    axis_dir,
+                    origin: origin_point,
+                    start_vector,
+                }
+            }
+            TransformGizmoHandle::RotateScreen => {
+                let axis_dir = -camera_forward;
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, axis_dir)
+                else {
+                    return false;
+                };
+                let start_vector = point - origin_point;
+                if start_vector.length_squared() < 1e-6 {
+                    return false;
+                }
+                GizmoDragKind::Rotate {
+                    axis_dir,
+                    origin: origin_point,
+                    start_vector,
+                }
+            }
+            TransformGizmoHandle::ScaleAxis(axis) => {
+                let axis_dir = Self::axis_direction(initial_world.rotation, axis);
+                let Some(plane_normal) =
+                    Self::translation_plane_normal(axis_dir, camera_forward, camera_up)
+                else {
+                    return false;
+                };
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                else {
+                    return false;
+                };
+                let start_offset = (point - origin_point).dot(axis_dir);
+                GizmoDragKind::ScaleAxis {
+                    axis,
+                    axis_dir,
+                    plane_normal,
+                    origin: origin_point,
+                    start_offset,
+                    initial_scale: initial_world.scale,
+                }
+            }
+            TransformGizmoHandle::ScaleUniform => {
+                let plane_normal = camera_forward;
+                let Some(point) =
+                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                else {
+                    return false;
+                };
+                let start_distance = (point - origin_point).length();
+                GizmoDragKind::ScaleUniform {
+                    plane_normal,
+                    origin: origin_point,
+                    start_distance,
+                    initial_scale: initial_world.scale,
+                }
+            }
+        };
+
+        self.gizmo_drag = Some(GizmoDragState {
+            entity,
+            handle,
+            initial_local,
+            parent_world,
+            initial_world,
+            last_pointer_uv: press_uv,
+            kind,
+        });
+
+        true
+    }
+
+    fn apply_gizmo_drag(
+        ctx: &mut UpdateContext,
+        drag: &mut GizmoDragState,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+    ) -> Result<bool, ()> {
+        let mut new_world = drag.initial_world;
+        let mut updated = false;
+
+        match &mut drag.kind {
+            GizmoDragKind::TranslateAxis {
+                axis_dir,
+                plane_normal,
+                origin,
+                start_offset,
+                ..
+            } => {
+                let Some(point) =
+                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                else {
+                    return Ok(false);
+                };
+                let offset = (point - *origin).dot(*axis_dir);
+                let delta = offset - *start_offset;
+                if delta.is_finite() {
+                    new_world.translation = drag.initial_world.translation + *axis_dir * delta;
+                    updated = true;
+                }
+            }
+            GizmoDragKind::TranslatePlane {
+                plane_normal,
+                origin,
+                start_point,
+            } => {
+                let Some(point) =
+                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                else {
+                    return Ok(false);
+                };
+                let delta = point - *start_point;
+                if delta.is_finite() {
+                    new_world.translation = drag.initial_world.translation + delta;
+                    updated = true;
+                }
+            }
+            GizmoDragKind::Rotate {
+                axis_dir,
+                origin,
+                start_vector,
+            } => {
+                let Some(point) =
+                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *axis_dir)
+                else {
+                    return Ok(false);
+                };
+                let current_vector = point - *origin;
+                let Some(angle) = Self::signed_angle(*start_vector, current_vector, *axis_dir)
+                else {
+                    return Ok(false);
+                };
+                let rotation = Quat::from_axis_angle(*axis_dir, angle);
+                new_world.rotation = rotation * drag.initial_world.rotation;
+                updated = true;
+            }
+            GizmoDragKind::ScaleAxis {
+                axis,
+                axis_dir,
+                plane_normal,
+                origin,
+                start_offset,
+                initial_scale,
+            } => {
+                let Some(point) =
+                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                else {
+                    return Ok(false);
+                };
+                let offset = (point - *origin).dot(*axis_dir);
+                let mut ratio = if start_offset.abs() < 1e-4 {
+                    1.0 + (offset - *start_offset)
+                } else {
+                    offset / *start_offset
+                };
+                if !ratio.is_finite() {
+                    return Ok(false);
+                }
+                if ratio.abs() < 0.01 {
+                    ratio = 0.01 * ratio.signum();
+                    if !ratio.is_finite() || ratio == 0.0 {
+                        ratio = 0.01;
+                    }
+                }
+
+                let mut scale = *initial_scale;
+                match axis {
+                    TransformGizmoAxis::X => scale.x = initial_scale.x * ratio,
+                    TransformGizmoAxis::Y => scale.y = initial_scale.y * ratio,
+                    TransformGizmoAxis::Z => scale.z = initial_scale.z * ratio,
+                }
+
+                new_world.scale = scale;
+                updated = true;
+            }
+            GizmoDragKind::ScaleUniform {
+                plane_normal,
+                origin,
+                start_distance,
+                initial_scale,
+            } => {
+                let Some(point) =
+                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                else {
+                    return Ok(false);
+                };
+                let distance = (point - *origin).length();
+                let mut ratio = if *start_distance < 1e-4 {
+                    1.0 + (distance - *start_distance)
+                } else {
+                    distance / start_distance.max(1e-4)
+                };
+                if !ratio.is_finite() {
+                    return Ok(false);
+                }
+                if ratio.abs() < 0.01 {
+                    ratio = 0.01 * ratio.signum();
+                    if !ratio.is_finite() || ratio == 0.0 {
+                        ratio = 0.01;
+                    }
+                }
+                new_world.scale = *initial_scale * ratio;
+                updated = true;
+            }
+        }
+
+        if !updated {
+            return Ok(false);
+        }
+
+        let new_local = Self::world_to_local(drag.parent_world, new_world);
+
+        {
+            let world = ctx.scene.main_world_mut();
+            let updated_existing = {
+                if let Ok(mut transform) = world.get::<&mut TransformComponent>(drag.entity) {
+                    transform.0 = new_local;
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if !updated_existing {
+                if let Err(err) = world.insert_one(drag.entity, TransformComponent(new_local)) {
+                    warn!(
+                        "failed to insert TransformComponent for {:?}: {err}",
+                        drag.entity
+                    );
+                    return Err(());
+                }
+            }
+        }
+
+        Ok(true)
     }
 
     fn pick_entity(&self, ctx: &UpdateContext, uv: Vec2, region: RenderRegion) -> Option<Entity> {
@@ -340,6 +822,23 @@ impl EditorApplication {
         }
 
         best.map(|(entity, _)| entity)
+    }
+
+    fn viewport_uv(rect: egui::Rect, pos: egui::Pos2) -> Vec2 {
+        let width = rect.width();
+        let height = rect.height();
+        if width <= 0.0 || height <= 0.0 {
+            return Vec2::ZERO;
+        }
+
+        let local_x = (pos.x - rect.min.x) / width;
+        let local_y = (pos.y - rect.min.y) / height;
+
+        if !local_x.is_finite() || !local_y.is_finite() {
+            Vec2::ZERO
+        } else {
+            Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0))
+        }
     }
 
     fn ray_from_uv(camera: &wgpu_cube::scene::Camera, uv: Vec2, aspect: f32) -> (Vec3, Vec3) {
@@ -440,6 +939,97 @@ impl EditorApplication {
 
         let hit = if t_min >= 0.0 { t_min } else { t_max };
         (hit.is_finite() && hit >= 0.0).then_some(hit)
+    }
+
+    fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
+        if vec.length_squared() < 1e-6 {
+            fallback
+        } else {
+            vec.normalize()
+        }
+    }
+
+    fn axis_basis(axis: TransformGizmoAxis) -> Vec3 {
+        match axis {
+            TransformGizmoAxis::X => Vec3::X,
+            TransformGizmoAxis::Y => Vec3::Y,
+            TransformGizmoAxis::Z => Vec3::Z,
+        }
+    }
+
+    fn axis_direction(rotation: Quat, axis: TransformGizmoAxis) -> Vec3 {
+        let dir = rotation * Self::axis_basis(axis);
+        if dir.length_squared() < 1e-6 {
+            Self::axis_basis(axis)
+        } else {
+            dir.normalize()
+        }
+    }
+
+    fn translation_plane_normal(axis_dir: Vec3, view_dir: Vec3, view_up: Vec3) -> Option<Vec3> {
+        let mut normal = axis_dir * axis_dir.dot(view_dir) - view_dir;
+        if normal.length_squared() < 1e-6 {
+            normal = axis_dir.cross(view_up);
+        }
+        if normal.length_squared() < 1e-6 {
+            let fallback = if axis_dir.x.abs() < 0.9 {
+                Vec3::X
+            } else {
+                Vec3::Y
+            };
+            normal = axis_dir.cross(fallback);
+        }
+        if normal.length_squared() < 1e-6 {
+            normal = axis_dir.cross(Vec3::Z);
+        }
+        if normal.length_squared() < 1e-6 {
+            return None;
+        }
+        Some(normal.normalize())
+    }
+
+    fn ray_plane_intersection(
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+        plane_origin: Vec3,
+        plane_normal: Vec3,
+    ) -> Option<Vec3> {
+        let denom = ray_dir.dot(plane_normal);
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+        let t = (plane_origin - ray_origin).dot(plane_normal) / denom;
+        if !t.is_finite() || t < 0.0 {
+            return None;
+        }
+        Some(ray_origin + ray_dir * t)
+    }
+
+    fn signed_angle(start: Vec3, current: Vec3, axis: Vec3) -> Option<f32> {
+        if start.length_squared() < 1e-6
+            || current.length_squared() < 1e-6
+            || axis.length_squared() < 1e-6
+        {
+            return None;
+        }
+
+        let start_norm = start.normalize();
+        let current_norm = current.normalize();
+        let axis_norm = axis.normalize();
+
+        let cross = start_norm.cross(current_norm);
+        let sin = cross.dot(axis_norm);
+        let cos = start_norm.dot(current_norm).clamp(-1.0, 1.0);
+        Some(sin.atan2(cos))
+    }
+
+    fn world_to_local(parent_world: Transform, world: Transform) -> Transform {
+        let parent_matrix = parent_world.matrix();
+        let parent_inverse = parent_matrix.inverse();
+        let world_matrix = world.matrix();
+        let local_matrix = parent_inverse * world_matrix;
+        let (scale, rotation, translation) = local_matrix.to_scale_rotation_translation();
+        Transform::from_trs(translation, rotation, scale)
     }
 
     fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
@@ -644,8 +1234,11 @@ impl RenderApplication for EditorApplication {
         self.process_pending_imports(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
+        self.update_gizmo_drag(ctx);
 
-        let hovered_handle = if matches!(ctx.runtime, RuntimeMode::Editor) {
+        let hovered_handle = if let Some(drag) = self.gizmo_drag.as_ref() {
+            Some(drag.handle)
+        } else if matches!(ctx.runtime, RuntimeMode::Editor) {
             if let (Some(uv), Some(region)) = (self.scene_pointer_uv, self.scene_viewport.region())
             {
                 let width = region.width().max(1) as f32;
