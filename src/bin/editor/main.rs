@@ -94,15 +94,16 @@ enum GizmoDragKind {
     ScaleAxis {
         axis: TransformGizmoAxis,
         axis_dir: Vec3,
-        plane_normal: Vec3,
         origin: Vec3,
-        start_offset: f32,
+        start_param: f32,
         initial_scale: Vec3,
     },
     ScaleUniform {
         plane_normal: Vec3,
         origin: Vec3,
-        start_distance: f32,
+        right: Vec3,
+        up: Vec3,
+        base_scale: f32,
         initial_scale: Vec3,
     },
 }
@@ -567,38 +568,63 @@ impl EditorApplication {
             }
             TransformGizmoHandle::ScaleAxis(axis) => {
                 let axis_dir = Self::axis_direction(initial_world.rotation, axis);
-                let Some(plane_normal) =
-                    Self::translation_plane_normal(axis_dir, camera_forward, camera_up)
-                else {
-                    return false;
-                };
-                let Some(point) =
-                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
-                else {
-                    return false;
-                };
-                let start_offset = (point - origin_point).dot(axis_dir);
+                let mut start_param =
+                    Self::ray_axis_parameter(origin, direction, origin_point, axis_dir)
+                        .unwrap_or(0.0);
+
+                if start_param.abs() < 1e-4 {
+                    let plane_normal =
+                        match Self::translation_plane_normal(axis_dir, camera_forward, camera_up) {
+                            Some(normal) => normal,
+                            None => return false,
+                        };
+                    let Some(point) =
+                        Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
+                    else {
+                        return false;
+                    };
+                    start_param = (point - origin_point).dot(axis_dir);
+                    if start_param.abs() < 1e-4 {
+                        start_param = 1.0;
+                    }
+                }
+                if start_param.abs() < 1e-4 {
+                    start_param = 1.0;
+                }
+
                 GizmoDragKind::ScaleAxis {
                     axis,
                     axis_dir,
-                    plane_normal,
                     origin: origin_point,
-                    start_offset,
+                    start_param,
                     initial_scale: initial_world.scale,
                 }
             }
             TransformGizmoHandle::ScaleUniform => {
                 let plane_normal = camera_forward;
-                let Some(point) =
-                    Self::ray_plane_intersection(origin, direction, origin_point, plane_normal)
-                else {
-                    return false;
+                let right = {
+                    let r = camera_forward.cross(camera_up);
+                    if r.length_squared() < 1e-6 {
+                        Vec3::X
+                    } else {
+                        r.normalize()
+                    }
                 };
-                let start_distance = (point - origin_point).length();
+                let up = {
+                    let u = right.cross(camera_forward);
+                    if u.length_squared() < 1e-6 {
+                        camera_up
+                    } else {
+                        u.normalize()
+                    }
+                };
+                let base_scale = Self::gizmo_screen_scale(&camera, origin_point);
                 GizmoDragKind::ScaleUniform {
                     plane_normal,
                     origin: origin_point,
-                    start_distance,
+                    right,
+                    up,
+                    base_scale,
                     initial_scale: initial_world.scale,
                 }
             }
@@ -684,21 +710,18 @@ impl EditorApplication {
             GizmoDragKind::ScaleAxis {
                 axis,
                 axis_dir,
-                plane_normal,
                 origin,
-                start_offset,
+                start_param,
                 initial_scale,
             } => {
-                let Some(point) =
-                    Self::ray_plane_intersection(ray_origin, ray_dir, *origin, *plane_normal)
+                let Some(param) = Self::ray_axis_parameter(ray_origin, ray_dir, *origin, *axis_dir)
                 else {
                     return Ok(false);
                 };
-                let offset = (point - *origin).dot(*axis_dir);
-                let mut ratio = if start_offset.abs() < 1e-4 {
-                    1.0 + (offset - *start_offset)
+                let mut ratio = if start_param.abs() < 1e-4 {
+                    1.0 + (param - *start_param)
                 } else {
-                    offset / *start_offset
+                    param / *start_param
                 };
                 if !ratio.is_finite() {
                     return Ok(false);
@@ -723,7 +746,9 @@ impl EditorApplication {
             GizmoDragKind::ScaleUniform {
                 plane_normal,
                 origin,
-                start_distance,
+                right,
+                up,
+                base_scale,
                 initial_scale,
             } => {
                 let Some(point) =
@@ -731,12 +756,16 @@ impl EditorApplication {
                 else {
                     return Ok(false);
                 };
-                let distance = (point - *origin).length();
-                let mut ratio = if *start_distance < 1e-4 {
-                    1.0 + (distance - *start_distance)
+                let delta = point - *origin;
+                let right_amt = delta.dot(*right);
+                let up_amt = delta.dot(*up);
+                let dominant = if right_amt.abs() >= up_amt.abs() {
+                    right_amt
                 } else {
-                    distance / start_distance.max(1e-4)
+                    up_amt
                 };
+                let scale_ref = base_scale.max(1e-3);
+                let mut ratio = 1.0 + dominant / scale_ref;
                 if !ratio.is_finite() {
                     return Ok(false);
                 }
@@ -1003,6 +1032,43 @@ impl EditorApplication {
             return None;
         }
         Some(ray_origin + ray_dir * t)
+    }
+
+    fn ray_axis_parameter(
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+        axis_origin: Vec3,
+        axis_dir: Vec3,
+    ) -> Option<f32> {
+        if axis_dir.length_squared() < 1e-6 {
+            return None;
+        }
+        let axis_dir = axis_dir.normalize();
+        let a = ray_dir.dot(ray_dir);
+        if a < 1e-6 {
+            return None;
+        }
+        let b = ray_dir.dot(axis_dir);
+        let w0 = ray_origin - axis_origin;
+        let d = ray_dir.dot(w0);
+        let e = axis_dir.dot(w0);
+        let denom = a - b * b;
+        let t = if denom.abs() > 1e-6 {
+            (a * e - b * d) / denom
+        } else {
+            e
+        };
+        t.is_finite().then_some(t)
+    }
+
+    fn gizmo_screen_scale(camera: &wgpu_cube::scene::Camera, position: Vec3) -> f32 {
+        let distance = (camera.eye - position).length().max(0.1);
+        let half_fov = (camera.fov_y_radians * 0.5).max(1e-4);
+        if half_fov <= 1e-3 {
+            1.0
+        } else {
+            2.0 * distance * half_fov.tan() * 0.16
+        }
     }
 
     fn signed_angle(start: Vec3, current: Vec3, axis: Vec3) -> Option<f32> {
