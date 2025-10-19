@@ -141,6 +141,27 @@ impl SceneSnapshot {
         scene
     }
 }
+
+#[derive(Clone)]
+pub struct SceneStateSnapshot {
+    snapshot: SceneSnapshot,
+}
+
+impl SceneStateSnapshot {
+    pub fn capture(scene: &Scene) -> Self {
+        Self {
+            snapshot: SceneSnapshot::capture(scene),
+        }
+    }
+
+    pub fn into_scene(self) -> Scene {
+        self.snapshot.into_scene()
+    }
+
+    pub fn restore(&self, scene: &mut Scene) {
+        *scene = self.snapshot.clone().into_scene();
+    }
+}
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,

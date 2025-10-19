@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use wgpu_cube::scene::{EditorEntityId, Scene, SceneSnapshot};
+use wgpu_cube::scene::{EditorEntityId, Scene, SceneStateSnapshot};
 
 const DEFAULT_HISTORY_CAPACITY: usize = 64;
 
@@ -31,7 +31,7 @@ impl EditorHistory {
         selected: Option<EditorEntityId>,
         highlighted: Option<EditorEntityId>,
     ) {
-        let snapshot = SceneSnapshot::capture(scene);
+        let snapshot = SceneStateSnapshot::capture(scene);
         self.current = Some(HistoryEntry::new(snapshot, selected, highlighted));
         self.undo_stack.clear();
         self.redo_stack.clear();
@@ -62,7 +62,7 @@ impl EditorHistory {
             self.push_undo_entry(current);
         }
 
-        let snapshot = SceneSnapshot::capture(scene);
+        let snapshot = SceneStateSnapshot::capture(scene);
         self.current = Some(HistoryEntry::new(snapshot, selected, highlighted));
         self.redo_stack.clear();
     }
@@ -115,14 +115,14 @@ pub struct HistorySelection {
 }
 
 struct HistoryEntry {
-    snapshot: Option<SceneSnapshot>,
+    snapshot: Option<SceneStateSnapshot>,
     selected: Option<EditorEntityId>,
     highlighted: Option<EditorEntityId>,
 }
 
 impl HistoryEntry {
     fn new(
-        snapshot: SceneSnapshot,
+        snapshot: SceneStateSnapshot,
         selected: Option<EditorEntityId>,
         highlighted: Option<EditorEntityId>,
     ) -> Self {
@@ -149,7 +149,7 @@ impl HistoryEntry {
             .expect("history entry snapshot must be present");
         *scene = snapshot.into_scene();
         let selection = self.selection();
-        self.snapshot = Some(SceneSnapshot::capture(scene));
+        self.snapshot = Some(SceneStateSnapshot::capture(scene));
         selection
     }
 

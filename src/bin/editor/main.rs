@@ -1458,7 +1458,7 @@ impl EditorApplication {
             let world = scene.main_world();
             world
                 .iter()
-                .filter(|entity_ref| entity_ref.get::<&EditorEntityId>().is_err())
+                .filter(|entity_ref| entity_ref.get::<&EditorEntityId>().is_none())
                 .map(|entity_ref| entity_ref.entity())
                 .collect()
         };
