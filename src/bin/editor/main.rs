@@ -1,6 +1,7 @@
 #![cfg(feature = "egui")]
 
 mod camera;
+mod history;
 mod inspector;
 mod layout;
 mod postprocess;
@@ -21,14 +22,15 @@ use wgpu_cube::renderer::{
 };
 use wgpu_cube::scene::components::{DirectionalLight, PointLight, SpotLight};
 use wgpu_cube::scene::{
-    Children, EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
-    SelectedInEditor, Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle,
-    TransformGizmoMode, TransformGizmoSpace, Visible, WorldTransform,
+    Children, EditorEntityId, EntityBuilder, MaterialComponent, MeshBounds, MeshComponent, Name,
+    Parent, SelectedInEditor, Transform, TransformComponent, TransformGizmoAxis,
+    TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace, Visible, WorldTransform,
 };
 use wgpu_cube::scripting::{RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{run_application, DefaultUI, RenderApplication};
 
 use camera::EditorCameraController;
+use history::{EditorHistory, HistorySelection};
 use layout::{create_editor_layout, EditorBehavior, EditorPane, ViewportState};
 use postprocess::ViewportGrid;
 use windows::WindowToggles;
@@ -60,6 +62,10 @@ struct EditorApplication {
     pointer_primary_down: bool,
     pointer_press_uv: Option<Vec2>,
     selection_press_uv: Option<Vec2>,
+    history: EditorHistory,
+    next_editor_entity_id: u128,
+    pending_undo: bool,
+    pending_redo: bool,
 }
 
 struct ViewportPick {
@@ -73,6 +79,7 @@ struct GizmoDragState {
     parent_world: Transform,
     initial_world: Transform,
     last_pointer_uv: Vec2,
+    any_change: bool,
     kind: GizmoDragKind,
 }
 
@@ -139,6 +146,10 @@ impl EditorApplication {
             pointer_primary_down: false,
             pointer_press_uv: None,
             selection_press_uv: None,
+            history: EditorHistory::new(),
+            next_editor_entity_id: 1,
+            pending_undo: false,
+            pending_redo: false,
         }
     }
 
@@ -213,6 +224,7 @@ impl EditorApplication {
         }
 
         let imports = std::mem::take(&mut self.pending_imports);
+        let mut any_spawned = false;
         for path in imports {
             let Some(script_source) = Self::create_import_script(&path) else {
                 continue;
@@ -229,11 +241,16 @@ impl EditorApplication {
                 .with_transform(Transform::default())
                 .with_script(script_source);
             builder.spawn();
+            any_spawned = true;
         }
 
         if matches!(ctx.runtime, RuntimeMode::Editor) {
             ctx.scene.set_animation_playback(false);
             ctx.scene.update(0.0);
+        }
+
+        if any_spawned {
+            self.record_scene_change(ctx.scene);
         }
     }
 
@@ -280,6 +297,7 @@ impl EditorApplication {
 
         self.selection_override = Some(self.selected_entity);
         ctx.scene.propagate_transforms();
+        self.record_scene_change(ctx.scene);
     }
 
     fn remove_entity_subtree(world: &mut hecs::World, root: Entity) -> Option<Vec<Entity>> {
@@ -368,6 +386,7 @@ impl EditorApplication {
         }
 
         self.highlighted_entity = new_highlight;
+        self.update_history_selection(ctx.scene);
     }
 
     fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
@@ -466,6 +485,33 @@ impl EditorApplication {
         });
     }
 
+    fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.camera_controller.is_looking() {
+            return;
+        }
+
+        ctx.input_mut(|input| {
+            let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            if input.consume_shortcut(&undo_shortcut) {
+                self.pending_undo = true;
+            }
+
+            let mut redo_mods = egui::Modifiers::COMMAND;
+            redo_mods.shift = true;
+            let redo_shortcut = egui::KeyboardShortcut::new(redo_mods, egui::Key::Z);
+            let redo_variants = [
+                redo_shortcut,
+                egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y),
+            ];
+            if redo_variants
+                .iter()
+                .any(|shortcut| input.consume_shortcut(shortcut))
+            {
+                self.pending_redo = true;
+            }
+        });
+    }
+
     fn process_viewport_pick(&mut self, ctx: &mut UpdateContext) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
             self.pending_pick = None;
@@ -479,12 +525,14 @@ impl EditorApplication {
         let Some(region) = self.scene_viewport.region() else {
             self.selected_entity = None;
             self.selection_override = Some(None);
+            self.update_history_selection(ctx.scene);
             return;
         };
 
         let picked = self.pick_entity(ctx, request.uv, region);
         self.selected_entity = picked;
         self.selection_override = Some(picked);
+        self.update_history_selection(ctx.scene);
     }
 
     fn update_gizmo_drag(&mut self, ctx: &mut UpdateContext) {
@@ -521,6 +569,7 @@ impl EditorApplication {
                         Ok(updated) => {
                             if updated {
                                 drag.last_pointer_uv = uv;
+                                drag.any_change = true;
                                 transforms_dirty = true;
                             }
                         }
@@ -536,8 +585,15 @@ impl EditorApplication {
             ctx.scene.propagate_transforms();
         }
 
+        let mut record_history = false;
         if end_drag {
-            self.gizmo_drag = None;
+            if let Some(drag) = self.gizmo_drag.take() {
+                record_history = drag.any_change;
+            }
+        }
+
+        if record_history {
+            self.record_scene_change(ctx.scene);
         }
     }
 
@@ -766,6 +822,7 @@ impl EditorApplication {
             parent_world,
             initial_world,
             last_pointer_uv: press_uv,
+            any_change: false,
             kind,
         });
 
@@ -1396,6 +1453,139 @@ impl EditorApplication {
         Transform::from_trs(translation, rotation, scale)
     }
 
+    fn ensure_editor_entity_ids(&mut self, scene: &mut wgpu_cube::scene::Scene) {
+        let missing: Vec<Entity> = {
+            let world = scene.main_world();
+            world
+                .iter()
+                .filter(|entity_ref| entity_ref.get::<&EditorEntityId>().is_err())
+                .map(|entity_ref| entity_ref.entity())
+                .collect()
+        };
+
+        if missing.is_empty() {
+            return;
+        }
+
+        let world = scene.main_world_mut();
+        for entity in missing {
+            let id = self.allocate_editor_entity_id();
+            let _ = world.insert_one(entity, EditorEntityId(id));
+        }
+    }
+
+    fn allocate_editor_entity_id(&mut self) -> u128 {
+        let id = self.next_editor_entity_id.max(1);
+        self.next_editor_entity_id = id.saturating_add(1);
+        id
+    }
+
+    fn refresh_next_editor_entity_id(&mut self, scene: &wgpu_cube::scene::Scene) {
+        let world = scene.main_world();
+        let mut max_seen = 0u128;
+        for (_, editor_id) in world.query::<&EditorEntityId>().iter() {
+            max_seen = max_seen.max(editor_id.0);
+        }
+        self.next_editor_entity_id = max_seen.saturating_add(1).max(1);
+    }
+
+    fn editor_id_for_entity(
+        scene: &wgpu_cube::scene::Scene,
+        entity: Entity,
+    ) -> Option<EditorEntityId> {
+        let world = scene.main_world();
+        if !world.contains(entity) {
+            return None;
+        }
+        world.get::<&EditorEntityId>(entity).ok().map(|id| *id)
+    }
+
+    fn entity_by_editor_id(
+        scene: &wgpu_cube::scene::Scene,
+        target: EditorEntityId,
+    ) -> Option<Entity> {
+        scene
+            .main_world()
+            .query::<&EditorEntityId>()
+            .iter()
+            .find_map(|(entity, id)| (id.0 == target.0).then_some(entity))
+    }
+
+    fn current_selection_ids(
+        &self,
+        scene: &wgpu_cube::scene::Scene,
+    ) -> (Option<EditorEntityId>, Option<EditorEntityId>) {
+        let selected = self
+            .selected_entity
+            .and_then(|entity| Self::editor_id_for_entity(scene, entity));
+        let highlighted = self
+            .highlighted_entity
+            .and_then(|entity| Self::editor_id_for_entity(scene, entity));
+        (selected, highlighted)
+    }
+
+    fn initialize_history_state(&mut self, scene: &mut wgpu_cube::scene::Scene) {
+        self.ensure_editor_entity_ids(scene);
+        self.refresh_next_editor_entity_id(scene);
+        let (selected, highlighted) = self.current_selection_ids(scene);
+        self.history.initialize(scene, selected, highlighted);
+    }
+
+    fn record_scene_change(&mut self, scene: &mut wgpu_cube::scene::Scene) {
+        self.ensure_editor_entity_ids(scene);
+        let (selected, highlighted) = self.current_selection_ids(scene);
+        self.history.record_change(scene, selected, highlighted);
+    }
+
+    fn update_history_selection(&mut self, scene: &wgpu_cube::scene::Scene) {
+        if !self.history.is_initialized() {
+            return;
+        }
+        let (selected, highlighted) = self.current_selection_ids(scene);
+        self.history.update_selection(selected, highlighted);
+    }
+
+    fn apply_history_selection(
+        &mut self,
+        scene: &wgpu_cube::scene::Scene,
+        selection: HistorySelection,
+    ) {
+        let selected = selection
+            .selected
+            .and_then(|id| Self::entity_by_editor_id(scene, id));
+        let highlighted = selection
+            .highlighted
+            .and_then(|id| Self::entity_by_editor_id(scene, id))
+            .or(selected);
+        self.selected_entity = selected;
+        self.highlighted_entity = highlighted;
+        self.selection_override = Some(selected);
+    }
+
+    fn perform_undo(&mut self, ctx: &mut UpdateContext) {
+        self.gizmo_drag = None;
+        self.pending_entity_deletions.clear();
+        if let Some(selection) = self.history.undo(ctx.scene) {
+            self.refresh_next_editor_entity_id(ctx.scene);
+            self.apply_history_selection(ctx.scene, selection);
+            ctx.scene.propagate_transforms();
+            self.sync_selection_component(ctx);
+            self.update_history_selection(ctx.scene);
+        }
+    }
+
+    fn perform_redo(&mut self, ctx: &mut UpdateContext) {
+        self.gizmo_drag = None;
+        self.pending_entity_deletions.clear();
+        if let Some(selection) = self.history.redo(ctx.scene) {
+            self.refresh_next_editor_entity_id(ctx.scene);
+            self.apply_history_selection(ctx.scene, selection);
+            ctx.scene.propagate_transforms();
+            self.sync_selection_component(ctx);
+            self.update_history_selection(ctx.scene);
+        }
+    }
+
     fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
         let has_editor_cube = {
             ctx.scene
@@ -1600,12 +1790,24 @@ impl RenderApplication for EditorApplication {
 
     fn setup(&mut self, ctx: &mut StartupContext) {
         self.ensure_default_scene(ctx);
+        self.initialize_history_state(ctx.scene);
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
         if matches!(ctx.runtime, RuntimeMode::Editor) {
             self.camera_controller.update_camera(ctx);
         }
+        self.ensure_editor_entity_ids(ctx.scene);
+
+        if self.pending_undo {
+            self.pending_undo = false;
+            self.pending_redo = false;
+            self.perform_undo(ctx);
+        } else if self.pending_redo {
+            self.pending_redo = false;
+            self.perform_redo(ctx);
+        }
+
         ctx.scene
             .set_transform_gizmo_mode(self.transform_gizmo_mode);
         ctx.scene
@@ -1700,6 +1902,7 @@ impl RenderApplication for EditorApplication {
         self.camera_controller.capture_input(ctx);
         if !is_playing {
             self.capture_viewport_pick_input(ctx);
+            self.handle_history_shortcuts(ctx);
             self.handle_gizmo_shortcuts(ctx);
         } else {
             self.pending_pick = None;

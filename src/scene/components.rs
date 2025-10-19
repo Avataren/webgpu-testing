@@ -153,6 +153,10 @@ impl Default for Visible {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SelectedInEditor;
 
+/// Persistent editor-scoped identifier used for undo/redo bookkeeping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EditorEntityId(pub u128);
+
 // ============================================================================
 // GPU-driven instance components
 // ============================================================================

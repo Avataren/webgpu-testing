@@ -3,8 +3,9 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    CanCastShadow, Children, DirectionalLight, GltfMaterial, GltfNode, MaterialComponent,
-    MeshBounds, MeshComponent, Name, Parent, PointLight, SpotLight, TransformComponent, Visible,
+    CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
+    MaterialComponent, MeshBounds, MeshComponent, Name, Parent, PointLight, SpotLight,
+    TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use crate::asset::{Assets, Handle, Mesh};
@@ -293,6 +294,10 @@ impl SceneAsset {
                 builder.add(CanCastShadow(casts_shadow));
             }
 
+            if let Some(editor_id) = entity.editor_id {
+                builder.add(EditorEntityId(editor_id));
+            }
+
             let entity_id = instance.world_mut().spawn(builder.build());
             entity_map.push(entity_id);
         }
@@ -488,6 +493,8 @@ pub struct SceneAssetEntity {
     pub spot_light: Option<SerializedSpotLight>,
     #[serde(default)]
     pub casts_shadow: Option<bool>,
+    #[serde(default)]
+    pub editor_id: Option<u128>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -613,6 +620,7 @@ impl SceneAssetEntity {
             .map(|light| SerializedSpotLight::from(*light));
 
         let casts_shadow = world.get::<&CanCastShadow>(entity).ok().map(|flag| flag.0);
+        let editor_id = world.get::<&EditorEntityId>(entity).ok().map(|id| id.0);
 
         Self {
             name,
@@ -630,6 +638,7 @@ impl SceneAssetEntity {
             point_light,
             spot_light,
             casts_shadow,
+            editor_id,
         }
     }
 }
@@ -650,6 +659,7 @@ pub struct SceneAssetEntityBuilder {
     point_light: Option<SerializedPointLight>,
     spot_light: Option<SerializedSpotLight>,
     casts_shadow: Option<bool>,
+    editor_id: Option<u128>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -670,6 +680,7 @@ impl SceneAssetEntityBuilder {
             point_light: None,
             spot_light: None,
             casts_shadow: None,
+            editor_id: None,
         }
     }
 
@@ -746,6 +757,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_editor_id(mut self, editor_id: u128) -> Self {
+        self.editor_id = Some(editor_id);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -763,6 +779,7 @@ impl SceneAssetEntityBuilder {
             point_light: self.point_light,
             spot_light: self.spot_light,
             casts_shadow: self.casts_shadow,
+            editor_id: self.editor_id,
         }
     }
 }
