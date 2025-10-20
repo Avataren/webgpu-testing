@@ -166,12 +166,23 @@ impl RenderApplication for EditorApplication {
                 }
             });
 
+        let game_tile_active = self
+            .find_pane_tile(EditorPane::GameViewport)
+            .map(|id| self.dock_tree.active_tiles().contains(&id))
+            .unwrap_or(false);
+
+        let scene_tile_active = self
+            .find_pane_tile(EditorPane::SceneViewport)
+            .map(|id| self.dock_tree.active_tiles().contains(&id))
+            .unwrap_or(false);
+
+        if is_playing && !show_fullscreen_game && !game_tile_active && scene_tile_active {
+            self.runtime_state.request_mode(RuntimeMode::Editor);
+        }
+
         if !is_playing
             && !matches!(self.runtime_state.desired_mode(), RuntimeMode::Playing)
-            && self
-                .find_pane_tile(EditorPane::GameViewport)
-                .map(|id| self.dock_tree.active_tiles().contains(&id))
-                .unwrap_or(false)
+            && game_tile_active
         {
             self.runtime_state.request_mode(RuntimeMode::Playing);
         }

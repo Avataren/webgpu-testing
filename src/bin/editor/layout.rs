@@ -185,9 +185,28 @@ fn show_viewport(
 
     let painter = ui.painter_at(rect);
 
-    if !active {
+    let Some(region) = compute_viewport_region(ui.ctx(), rect) else {
         viewport.clear();
         painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        return;
+    };
+
+    viewport.set(rect, region);
+
+    if !active {
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+
+        if let Some(text) = placeholder {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::TextStyle::Body.resolve(ui.style()),
+                Color32::from_gray(140),
+            );
+        }
+
+        return;
     }
 
     painter.rect_stroke(
@@ -203,27 +222,6 @@ fn show_viewport(
         egui::TextStyle::Button.resolve(ui.style()),
         Color32::from_gray(180),
     );
-
-    if !active {
-        if let Some(text) = placeholder {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::TextStyle::Body.resolve(ui.style()),
-                Color32::from_gray(140),
-            );
-        }
-        return;
-    }
-
-    let Some(region) = compute_viewport_region(ui.ctx(), rect) else {
-        viewport.clear();
-        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
-        return;
-    };
-
-    viewport.set(rect, region);
 }
 
 pub fn compute_viewport_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {
