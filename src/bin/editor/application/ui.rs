@@ -1,7 +1,7 @@
 use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::scene::TransformGizmoSpace;
 
-use super::core::EditorApplication;
+use super::core::{EditorApplication, GameViewDisplayMode};
 
 impl EditorApplication {
     pub(super) fn show_menu_bar(&mut self, ctx: &egui::Context) {
@@ -86,6 +86,19 @@ impl EditorApplication {
                     &mut self.transform_gizmo_space,
                     TransformGizmoSpace::World,
                     "World",
+                );
+
+                ui.separator();
+                ui.label("Game View:");
+                ui.selectable_value(
+                    &mut self.game_view_display,
+                    GameViewDisplayMode::Viewport,
+                    "Viewport",
+                );
+                ui.selectable_value(
+                    &mut self.game_view_display,
+                    GameViewDisplayMode::Fullscreen,
+                    "Fullscreen",
                 );
             });
         });

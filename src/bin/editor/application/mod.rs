@@ -12,7 +12,7 @@ mod ui;
 pub use self::core::EditorApplication;
 #[allow(unused_imports)]
 pub use self::core::EditorApplicationBuilder;
-use self::core::PendingScriptAction;
+use self::core::{GameViewDisplayMode, PendingScriptAction};
 
 use glam::Vec2;
 use wgpu_cube::app::{
@@ -23,7 +23,7 @@ use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication};
 
 use crate::inspector::InspectorAction;
-use crate::layout::EditorBehavior;
+use crate::layout::{EditorBehavior, EditorPane};
 use crate::postprocess::ViewportGrid;
 use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
 
@@ -123,13 +123,19 @@ impl RenderApplication for EditorApplication {
         self.game_viewport.clear();
         self.show_menu_bar(ctx);
 
-        self.windows.show(ctx, default_ui);
-        self.project.show_settings_window(ctx);
-
         let runtime_mode = self.runtime_state.active_mode();
         if runtime_mode != self.last_runtime_mode {
             self.last_runtime_mode = runtime_mode;
             self.ensure_viewport_tab_for_mode(runtime_mode);
+        }
+
+        let is_playing = matches!(runtime_mode, RuntimeMode::Playing);
+        let show_fullscreen_game =
+            is_playing && matches!(self.game_view_display, GameViewDisplayMode::Fullscreen);
+
+        if !show_fullscreen_game {
+            self.windows.show(ctx, default_ui);
+            self.project.show_settings_window(ctx);
         }
 
         let dock_tree = &mut self.dock_tree;
@@ -140,22 +146,37 @@ impl RenderApplication for EditorApplication {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
-        let is_playing = matches!(runtime_mode, RuntimeMode::Playing);
-        let transparent_frame =
-            egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
+        let mut central_frame = egui::Frame::central_panel(&ctx.style());
+        if show_fullscreen_game {
+            central_frame = central_frame.fill(egui::Color32::TRANSPARENT);
+        }
         egui::CentralPanel::default()
-            .frame(transparent_frame)
+            .frame(central_frame)
             .show(ctx, |ui| {
-                let mut behavior = EditorBehavior {
-                    scene_viewport,
-                    game_viewport,
-                    scene_hierarchy: scene_hierarchy_window,
-                    log_window,
-                    is_playing,
-                    inspector_actions: &mut inspector_actions,
-                };
-                dock_tree.ui(&mut behavior, ui);
+                if show_fullscreen_game {
+                    crate::layout::show_fullscreen_viewport(ui, game_viewport);
+                } else {
+                    let mut behavior = EditorBehavior {
+                        scene_viewport,
+                        game_viewport,
+                        scene_hierarchy: scene_hierarchy_window,
+                        log_window,
+                        is_playing,
+                        inspector_actions: &mut inspector_actions,
+                    };
+                    dock_tree.ui(&mut behavior, ui);
+                }
             });
+
+        if !is_playing
+            && !matches!(self.runtime_state.desired_mode(), RuntimeMode::Playing)
+            && self
+                .find_pane_tile(EditorPane::GameViewport)
+                .map(|id| self.dock_tree.active_tiles().contains(&id))
+                .unwrap_or(false)
+        {
+            self.runtime_state.request_mode(RuntimeMode::Playing);
+        }
 
         self.selection
             .set_selected(scene_hierarchy_window.selected_entity());
@@ -191,8 +212,12 @@ impl RenderApplication for EditorApplication {
             self.selection.clear_pending_pick();
         }
 
-        let script_event = if let Some(editor) = self.script_editor.as_mut() {
-            editor.show(ctx)
+        let script_event = if !show_fullscreen_game {
+            if let Some(editor) = self.script_editor.as_mut() {
+                editor.show(ctx)
+            } else {
+                ScriptEditorEvent::None
+            }
         } else {
             ScriptEditorEvent::None
         };

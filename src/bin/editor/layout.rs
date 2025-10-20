@@ -217,15 +217,15 @@ fn show_viewport(
         return;
     }
 
-    let Some(region) = compute_region(ui.ctx(), rect) else {
+    if let Some(region) = compute_viewport_region(ui.ctx(), rect) {
+        viewport.set(rect, region);
+    } else {
         viewport.clear();
-        return;
-    };
-
-    viewport.set(rect, region);
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    }
 }
 
-fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {
+pub fn compute_viewport_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {
     let pixels_per_point = ctx.pixels_per_point();
     let screen = ctx.viewport_rect();
     let max_width = (screen.width() * pixels_per_point).round().max(0.0) as u32;
@@ -238,4 +238,24 @@ fn compute_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion>
 
     let region = RenderRegion::new(min_x as u32, min_y as u32, width as u32, height as u32)?;
     region.clamp(max_width, max_height)
+}
+
+pub fn show_fullscreen_viewport(ui: &mut egui::Ui, viewport: &mut ViewportState) {
+    let desired = ui.available_size();
+    let desired = egui::vec2(desired.x.max(1.0), desired.y.max(1.0));
+    let (rect, _response) = ui.allocate_exact_size(desired, egui::Sense::click_and_drag());
+
+    if rect.width() <= 1.0 || rect.height() <= 1.0 {
+        viewport.clear();
+        return;
+    }
+
+    let painter = ui.painter_at(rect);
+
+    if let Some(region) = compute_viewport_region(ui.ctx(), rect) {
+        viewport.set(rect, region);
+    } else {
+        viewport.clear();
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    }
 }
