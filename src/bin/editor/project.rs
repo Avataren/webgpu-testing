@@ -25,10 +25,6 @@ impl ProjectController {
         &self.metadata
     }
 
-    pub fn metadata_mut(&mut self) -> &mut ProjectMetadata {
-        &mut self.metadata
-    }
-
     pub fn set_metadata(&mut self, metadata: ProjectMetadata) {
         self.metadata = metadata;
     }
@@ -53,8 +49,8 @@ impl ProjectController {
 
             if ui.button("Save Project").clicked() {
                 if let Some(dir) = self
-                    .current_dir
-                    .clone()
+                    .current_dir()
+                    .cloned()
                     .or_else(|| rfd::FileDialog::new().pick_folder())
                 {
                     self.pending_save = Some(dir);
@@ -91,19 +87,22 @@ impl ProjectController {
             return;
         }
 
+        let current_dir = self.current_dir().cloned();
+        let metadata = &mut self.metadata;
+        let settings_open = &mut self.settings_open;
         egui::Window::new("Project Settings")
-            .open(&mut self.settings_open)
+            .open(settings_open)
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(ctx, move |ui| {
                 ui.label("Name");
-                ui.text_edit_singleline(&mut self.metadata.name);
+                ui.text_edit_singleline(&mut metadata.name);
                 ui.separator();
 
                 ui.label("Description");
-                ui.text_edit_multiline(&mut self.metadata.description);
+                ui.text_edit_multiline(&mut metadata.description);
 
                 ui.separator();
-                match &self.current_dir {
+                match &current_dir {
                     Some(dir) => ui.label(format!("Location: {}", dir.display())),
                     None => ui.label("Location: (unsaved)"),
                 };
