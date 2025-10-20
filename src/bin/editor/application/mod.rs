@@ -19,7 +19,9 @@ use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
-use wgpu_cube::scene::{MaterialComponent, TransformComponent};
+use wgpu_cube::scene::{
+    CanCastShadow, DirectionalLight, MaterialComponent, PointLight, SpotLight, TransformComponent,
+};
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication};
 
@@ -340,6 +342,125 @@ impl EditorApplication {
                             }
                             Err(err) => {
                                 log::warn!("Failed to update material for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdatePointLight { entity, light } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut PointLight>(entity) {
+                            Ok(mut component) => {
+                                *component = light;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update point light for {:?}: {}",
+                                    entity,
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateDirectionalLight { entity, light } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut DirectionalLight>(entity) {
+                            Ok(mut component) => {
+                                *component = light;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update directional light for {:?}: {}",
+                                    entity,
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateSpotLight { entity, light } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut SpotLight>(entity) {
+                            Ok(mut component) => {
+                                *component = light;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update spot light for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::SetCanCastShadow {
+                    entity,
+                    casts_shadow,
+                } => {
+                    let mut updated = false;
+                    let mut needs_insert = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut CanCastShadow>(entity) {
+                            Ok(mut component) => {
+                                if component.0 != casts_shadow {
+                                    component.0 = casts_shadow;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                if casts_shadow {
+                                    log::debug!(
+                                        "CanCastShadow missing for {:?} before enabling shadows: {}",
+                                        entity,
+                                        err
+                                    );
+                                    needs_insert = true;
+                                } else {
+                                    log::debug!(
+                                        "CanCastShadow missing for {:?} while disabling shadows: {}",
+                                        entity,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if needs_insert {
+                        let world = ctx.scene.main_world_mut();
+                        match world.insert(entity, (CanCastShadow(true),)) {
+                            Ok(_) => {
+                                updated = true;
+                            }
+                            Err(insert_err) => {
+                                log::warn!(
+                                    "Failed to add CanCastShadow to {:?}: {}",
+                                    entity,
+                                    insert_err
+                                );
                             }
                         }
                     }
