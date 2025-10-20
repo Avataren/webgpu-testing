@@ -21,6 +21,7 @@ pub struct EditorApplication {
     pub(super) dock_tree: Tree<EditorPane>,
     pub(super) scene_viewport: ViewportState,
     pub(super) game_viewport: ViewportState,
+    pub(super) game_view_display: GameViewDisplayMode,
     pub(super) camera_controller: EditorCameraController,
     pub(super) grid_postprocess: Option<ViewportGrid>,
     pub(super) pending_imports: Vec<PathBuf>,
@@ -46,6 +47,7 @@ pub struct EditorApplicationBuilder {
     dock_tree: Option<Tree<EditorPane>>,
     scene_viewport: Option<ViewportState>,
     game_viewport: Option<ViewportState>,
+    game_view_display: Option<GameViewDisplayMode>,
     camera_controller: Option<EditorCameraController>,
     grid_postprocess: Option<Option<ViewportGrid>>,
     windows: Option<WindowToggles>,
@@ -70,6 +72,11 @@ impl EditorApplicationBuilder {
 
     pub fn with_game_viewport(mut self, viewport: ViewportState) -> Self {
         self.game_viewport = Some(viewport);
+        self
+    }
+
+    pub fn with_game_view_display(mut self, display: GameViewDisplayMode) -> Self {
+        self.game_view_display = Some(display);
         self
     }
 
@@ -103,6 +110,7 @@ impl EditorApplicationBuilder {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
             scene_viewport: self.scene_viewport.unwrap_or_default(),
             game_viewport: self.game_viewport.unwrap_or_default(),
+            game_view_display: self.game_view_display.unwrap_or_default(),
             camera_controller: self.camera_controller.unwrap_or_default(),
             grid_postprocess: self.grid_postprocess.unwrap_or_default(),
             pending_imports: Vec::new(),
@@ -131,6 +139,7 @@ impl EditorApplication {
             .with_dock_tree(create_editor_layout())
             .with_scene_viewport(ViewportState::default())
             .with_game_viewport(ViewportState::default())
+            .with_game_view_display(GameViewDisplayMode::default())
             .with_camera_controller(EditorCameraController::default())
             .with_grid_postprocess(None)
             .with_windows(WindowToggles::new())
@@ -174,6 +183,13 @@ impl EditorApplication {
             RuntimeMode::Playing => self.game_viewport.region(),
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GameViewDisplayMode {
+    #[default]
+    Viewport,
+    Fullscreen,
 }
 
 pub(super) enum PendingScriptAction {
