@@ -177,7 +177,7 @@ impl ProjectController {
                         ui.separator();
 
                         ui.label("Platform");
-                        egui::ComboBox::from_id_source(BUILD_PLATFORM_COMBO_ID)
+                        egui::ComboBox::from_id_salt(BUILD_PLATFORM_COMBO_ID)
                             .selected_text(self.build_dialog.platform.display_name())
                             .show_ui(ui, |ui| {
                                 for platform in BuildPlatform::ALL {

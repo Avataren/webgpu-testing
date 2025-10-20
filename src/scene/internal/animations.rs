@@ -17,7 +17,7 @@ pub(crate) fn advance_animations(
         return;
     }
 
-    let dt = dt as f32;
+    let dt_f32 = dt as f32;
 
     let mut transform_updates: HashMap<hecs::Entity, TransformUpdate> = HashMap::new();
     let mut material_updates: HashMap<usize, MaterialUpdate> = HashMap::new();
@@ -27,8 +27,17 @@ pub(crate) fn advance_animations(
             continue;
         }
 
+        if !state.playing && dt_f32 == 0.0 {
+            // When playback is disabled (e.g. leaving play mode in the editor)
+            // we restore the scene from a snapshot. Sampling the animations
+            // again would overwrite those restored transforms with the first
+            // frame of the animation, so skip applying updates when time isn't
+            // advancing.
+            continue;
+        }
+
         let clip = &animations[state.clip_index];
-        let sample_time = state.advance(dt, clip.duration);
+        let sample_time = state.advance(dt_f32, clip.duration);
         clip.sample(sample_time, &mut transform_updates, &mut material_updates);
     }
 
@@ -152,6 +161,10 @@ fn apply_material_updates(world: &mut World, material_updates: HashMap<usize, Ma
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::animation::{
+        AnimationChannel, AnimationInterpolation, AnimationOutput, AnimationSampler,
+        AnimationTarget, TransformProperty,
+    };
     use crate::scene::components::TransformComponent;
     use crate::scene::transform::Transform;
 
@@ -213,5 +226,88 @@ mod tests {
 
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert!((transform.0.translation.length() - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn animations_skip_when_not_playing_and_time_stands_still() {
+        let mut world = World::new();
+        let entity = world.spawn((TransformComponent(Transform::IDENTITY),));
+
+        let mut clip = AnimationClip::new("Scale");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![Vec3::splat(0.5), Vec3::splat(2.0)]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Scale,
+            },
+        });
+
+        let mut states = vec![AnimationState {
+            clip_index: 0,
+            time: 0.0,
+            speed: 1.0,
+            looping: true,
+            playing: false,
+        }];
+
+        advance_animations(&mut world, std::slice::from_ref(&clip), &mut states, 0.0);
+
+        let transform = world.get::<&TransformComponent>(entity).unwrap();
+        assert!(transform.0.scale.abs_diff_eq(Vec3::ONE, 1e-6));
+    }
+
+    #[test]
+    fn stopped_animations_keep_final_pose_when_time_advances() {
+        let mut world = World::new();
+        let entity = world.spawn((TransformComponent(Transform::IDENTITY),));
+
+        let mut clip = AnimationClip::new("Once");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![Vec3::ONE, Vec3::splat(3.0)]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Scale,
+            },
+        });
+
+        let mut state = AnimationState {
+            clip_index: 0,
+            time: 0.0,
+            speed: 1.0,
+            looping: false,
+            playing: true,
+        };
+
+        advance_animations(
+            &mut world,
+            std::slice::from_ref(&clip),
+            std::slice::from_mut(&mut state),
+            1.0,
+        );
+
+        {
+            let transform = world.get::<&TransformComponent>(entity).unwrap();
+            assert!(transform.0.scale.abs_diff_eq(Vec3::splat(3.0), 1e-6));
+        }
+        assert!(!state.playing);
+        assert!((state.time - 1.0).abs() < f32::EPSILON);
+
+        advance_animations(
+            &mut world,
+            std::slice::from_ref(&clip),
+            std::slice::from_mut(&mut state),
+            0.016,
+        );
+
+        let transform = world.get::<&TransformComponent>(entity).unwrap();
+        assert!(transform.0.scale.abs_diff_eq(Vec3::splat(3.0), 1e-6));
     }
 }
