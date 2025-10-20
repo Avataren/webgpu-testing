@@ -11,6 +11,7 @@ use wgpu_cube::scene::{
 
 use crate::camera::EditorCameraController;
 use crate::history::EditorHistory;
+use crate::inspector::InspectorAction;
 use crate::layout::{create_editor_layout, EditorPane, ViewportState};
 use crate::postprocess::ViewportGrid;
 use crate::project;
@@ -26,6 +27,7 @@ pub struct EditorApplication {
     pub(super) grid_postprocess: Option<ViewportGrid>,
     pub(super) pending_imports: Vec<PathBuf>,
     pub(super) pending_entity_deletions: Vec<Entity>,
+    pub(super) pending_inspector_actions: Vec<InspectorAction>,
     pub(super) windows: WindowToggles,
     pub(super) selection: SelectionState,
     pub(super) pointer: PointerState,
@@ -115,6 +117,7 @@ impl EditorApplicationBuilder {
             grid_postprocess: self.grid_postprocess.unwrap_or_default(),
             pending_imports: Vec::new(),
             pending_entity_deletions: Vec::new(),
+            pending_inspector_actions: Vec::new(),
             windows: self.windows.unwrap_or_else(WindowToggles::new),
             selection: SelectionState::default(),
             pointer: PointerState::default(),

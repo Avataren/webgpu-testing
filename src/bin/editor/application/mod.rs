@@ -19,6 +19,7 @@ use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
+use wgpu_cube::scene::{MaterialComponent, TransformComponent};
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication};
 
@@ -54,6 +55,7 @@ impl RenderApplication for EditorApplication {
         }
         self.ensure_editor_entity_ids(ctx.scene);
         self.apply_pending_script_actions(ctx);
+        self.apply_pending_inspector_actions(ctx);
 
         if self.undo_redo.take_undo() {
             self.undo_redo.clear_redo();
@@ -201,6 +203,9 @@ impl RenderApplication for EditorApplication {
                     }
                     self.script_editor = Some(ScriptEditorState::new(entity, component));
                 }
+                other => {
+                    self.pending_inspector_actions.push(other);
+                }
             }
         }
 
@@ -285,5 +290,67 @@ impl RenderApplication for EditorApplication {
 
     fn render_region(&self) -> Option<RenderRegion> {
         self.render_region_for_mode(self.runtime_state.active_mode())
+    }
+}
+
+impl EditorApplication {
+    fn apply_pending_inspector_actions(&mut self, ctx: &mut UpdateContext) {
+        if self.pending_inspector_actions.is_empty() {
+            return;
+        }
+
+        let actions = std::mem::take(&mut self.pending_inspector_actions);
+        let mut transforms_changed = false;
+
+        for action in actions {
+            match action {
+                InspectorAction::UpdateTransform { entity, transform } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut TransformComponent>(entity) {
+                            Ok(mut component) => {
+                                component.0 = transform;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update transform for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        transforms_changed = true;
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateMaterial { entity, material } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut MaterialComponent>(entity) {
+                            Ok(mut component) => {
+                                component.0 = material;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update material for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::EditScript { .. } => {
+                    // Script edits are handled immediately in the UI stage.
+                }
+            }
+        }
+
+        if transforms_changed {
+            ctx.scene.propagate_transforms();
+        }
     }
 }

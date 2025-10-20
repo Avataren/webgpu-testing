@@ -90,9 +90,8 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                 ui.separator();
 
                 if let Some(selection) = self.scene_hierarchy.selected_entity_data() {
-                    if let Some(action) = show_entity_inspector(ui, &selection) {
-                        self.inspector_actions.push(action);
-                    }
+                    let actions = show_entity_inspector(ui, &selection);
+                    self.inspector_actions.extend(actions);
                 } else {
                     ui.label("Select an entity to view its components.");
                 }
