@@ -1450,4 +1450,77 @@ mod tests {
         assert!(directional_count > 0, "no directional lights after restore");
         assert!(scene.has_any_lights());
     }
+
+    #[test]
+    fn snapshot_restores_transforms_after_playback() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::{Name, Visible};
+
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((
+            Name::new("AnimatedEntity"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(1.0, 2.0, -3.0),
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(0.5, 1.5, 2.5),
+            )),
+            Visible(true),
+        ));
+
+        let mut clip = AnimationClip::new("ScaleAnim");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(0.5, 1.5, 2.5),
+                    glam::Vec3::splat(3.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Scale,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        scene.play_animation(clip_index, true);
+
+        let initial_scale = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0
+            .scale;
+
+        let snapshot = SceneSnapshot::capture(&scene);
+
+        scene.set_animation_playback(true);
+        scene.update(0.5);
+
+        let animated_scale = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0
+            .scale;
+        assert_ne!(animated_scale, initial_scale);
+
+        let mut restored = snapshot.into_scene();
+        restored.set_animation_playback(false);
+        restored.update(0.0);
+
+        let world = restored.main_world();
+        let mut query = world.query::<(&Name, &TransformComponent)>();
+        let restored_scale = query
+            .iter()
+            .find(|(_, (name, _))| name.0 == "AnimatedEntity")
+            .map(|(_, (_, transform))| transform.0.scale)
+            .expect("restored entity not found");
+
+        assert!(restored_scale.abs_diff_eq(initial_scale, 1e-6));
+    }
 }
