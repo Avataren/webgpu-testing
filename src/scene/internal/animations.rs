@@ -27,12 +27,12 @@ pub(crate) fn advance_animations(
             continue;
         }
 
-        if !state.playing && dt_f32 == 0.0 {
+        if !state.playing {
             // When playback is disabled (e.g. leaving play mode in the editor)
             // we restore the scene from a snapshot. Sampling the animations
             // again would overwrite those restored transforms with the first
-            // frame of the animation, so skip applying updates when time isn't
-            // advancing.
+            // frame of the animation, so skip applying updates entirely until
+            // playback resumes. The last applied pose is preserved.
             continue;
         }
 
@@ -258,6 +258,44 @@ mod tests {
 
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert!(transform.0.scale.abs_diff_eq(Vec3::ONE, 1e-6));
+    }
+
+    #[test]
+    fn animations_skip_when_not_playing_even_if_time_advances() {
+        let mut world = World::new();
+        let entity = world.spawn((TransformComponent(Transform::IDENTITY),));
+
+        let mut clip = AnimationClip::new("Scale");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![Vec3::ONE, Vec3::splat(4.0)]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Scale,
+            },
+        });
+
+        let mut state = AnimationState {
+            clip_index: 0,
+            time: 0.0,
+            speed: 1.0,
+            looping: true,
+            playing: false,
+        };
+
+        advance_animations(
+            &mut world,
+            std::slice::from_ref(&clip),
+            std::slice::from_mut(&mut state),
+            0.5,
+        );
+
+        let transform = world.get::<&TransformComponent>(entity).unwrap();
+        assert!(transform.0.scale.abs_diff_eq(Vec3::ONE, 1e-6));
+        assert_eq!(state.time, 0.0);
     }
 
     #[test]
