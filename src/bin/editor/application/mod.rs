@@ -149,7 +149,7 @@ impl RenderApplication for EditorApplication {
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
-            .frame(central_frame)
+            .frame(transparent_frame)
             .show(ctx, |ui| {
                 if show_fullscreen_game {
                     crate::layout::show_fullscreen_viewport(ui, game_viewport);
