@@ -420,7 +420,6 @@ impl EditorApplication {
                     casts_shadow,
                 } => {
                     let mut updated = false;
-                    let mut needs_insert = false;
                     {
                         let world = ctx.scene.main_world_mut();
                         match world.get::<&mut CanCastShadow>(entity) {
@@ -432,12 +431,18 @@ impl EditorApplication {
                             }
                             Err(err) => {
                                 if casts_shadow {
-                                    log::debug!(
-                                        "CanCastShadow missing for {:?} before enabling shadows: {}",
-                                        entity,
-                                        err
-                                    );
-                                    needs_insert = true;
+                                    match world.insert(entity, (CanCastShadow(true),)) {
+                                        Ok(_) => {
+                                            updated = true;
+                                        }
+                                        Err(insert_err) => {
+                                            log::warn!(
+                                                "Failed to add CanCastShadow to {:?}: {}",
+                                                entity,
+                                                insert_err
+                                            );
+                                        }
+                                    }
                                 } else {
                                     log::debug!(
                                         "CanCastShadow missing for {:?} while disabling shadows: {}",
@@ -445,22 +450,6 @@ impl EditorApplication {
                                         err
                                     );
                                 }
-                            }
-                        }
-                    }
-
-                    if needs_insert {
-                        let world = ctx.scene.main_world_mut();
-                        match world.insert(entity, (CanCastShadow(true),)) {
-                            Ok(_) => {
-                                updated = true;
-                            }
-                            Err(insert_err) => {
-                                log::warn!(
-                                    "Failed to add CanCastShadow to {:?}: {}",
-                                    entity,
-                                    insert_err
-                                );
                             }
                         }
                     }

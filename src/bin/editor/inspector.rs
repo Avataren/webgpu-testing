@@ -1,4 +1,7 @@
-use egui::{color_picker::color_edit_button_rgba, color_picker::Alpha, DragValue, Grid};
+use egui::{
+    color_picker::color_edit_button_rgb, color_picker::color_edit_button_rgba, color_picker::Alpha,
+    DragValue, Grid,
+};
 use glam::{EulerRot, Quat, Vec3};
 use std::f32::consts::PI;
 use std::ops::RangeInclusive;
@@ -462,7 +465,7 @@ fn float_drag_value(
 fn light_color_editor(ui: &mut egui::Ui, label: &str, color: &mut Vec3) -> bool {
     let mut rgba = egui::Rgba::from_rgb(color.x, color.y, color.z);
     ui.label(label);
-    let changed = color_edit_button_rgba(ui, &mut rgba, Alpha::Opaque).changed();
+    let changed = color_edit_button_rgb(ui, &mut rgba).changed();
     ui.end_row();
     if changed {
         *color = Vec3::new(
