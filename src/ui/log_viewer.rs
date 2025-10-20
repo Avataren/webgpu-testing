@@ -299,21 +299,14 @@ impl LogWindow {
         }
 
         window.show(ctx, |ui| {
-            self.level_controls(ui);
-            ui.separator();
-            let filtered: Vec<_> = entries
-                .iter()
-                .filter(|entry| self.enabled_levels.contains(&entry.level))
-                .collect();
-            ScrollArea::vertical()
-                .stick_to_bottom(self.auto_scroll)
-                .show(ui, |ui| {
-                    for entry in filtered {
-                        render_entry(ui, entry);
-                        ui.add_space(4.0);
-                    }
-                });
+            self.show_contents(ui, &entries);
         });
+    }
+
+    /// Render the log controls and entries inside an existing egui UI.
+    pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let entries = self.entries_snapshot();
+        self.show_contents(ui, &entries);
     }
 
     fn entries_snapshot(&self) -> Vec<LogEntry> {
@@ -321,6 +314,23 @@ impl LogWindow {
             .lock()
             .map(|buffer| buffer.snapshot())
             .unwrap_or_default()
+    }
+
+    fn show_contents(&mut self, ui: &mut egui::Ui, entries: &[LogEntry]) {
+        self.level_controls(ui);
+        ui.separator();
+
+        ScrollArea::vertical()
+            .stick_to_bottom(self.auto_scroll)
+            .show(ui, |ui| {
+                for entry in entries
+                    .iter()
+                    .filter(|entry| self.enabled_levels.contains(&entry.level))
+                {
+                    render_entry(ui, entry);
+                    ui.add_space(4.0);
+                }
+            });
     }
 
     fn level_controls(&mut self, ui: &mut egui::Ui) {

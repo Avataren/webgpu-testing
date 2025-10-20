@@ -5,7 +5,6 @@ pub struct WindowToggles {
     pub stats: bool,
     pub environment: bool,
     pub postprocess: bool,
-    pub log: bool,
 }
 
 impl WindowToggles {
@@ -14,7 +13,6 @@ impl WindowToggles {
             stats: true,
             environment: false,
             postprocess: false,
-            log: false,
         }
     }
 
@@ -22,7 +20,6 @@ impl WindowToggles {
         ui.checkbox(&mut self.stats, "Statistics");
         ui.checkbox(&mut self.postprocess, "Post-processing");
         ui.checkbox(&mut self.environment, "Environment");
-        ui.checkbox(&mut self.log, "Log");
     }
 
     pub fn show(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
@@ -35,6 +32,5 @@ impl WindowToggles {
         default_ui
             .environment_window_mut()
             .show(ctx, Some(&mut self.environment));
-        default_ui.log_window_mut().show(ctx, Some(&mut self.log));
     }
 }

@@ -165,6 +165,12 @@ impl DefaultUI {
         &mut self.log_window
     }
 
+    pub fn scene_hierarchy_and_log_windows_mut(
+        &mut self,
+    ) -> (&mut SceneHierarchyWindow, &mut LogWindow) {
+        (&mut self.scene_hierarchy_window, &mut self.log_window)
+    }
+
     pub fn postprocess_window_mut(&mut self) -> &mut PostProcessWindow {
         &mut self.postprocess_window
     }

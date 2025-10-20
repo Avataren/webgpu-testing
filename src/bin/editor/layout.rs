@@ -2,7 +2,7 @@ use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::SceneHierarchyWindow;
+use wgpu_cube::{LogWindow, SceneHierarchyWindow};
 
 use crate::inspector::{show_entity_inspector, InspectorAction};
 
@@ -12,7 +12,8 @@ pub enum EditorPane {
     SceneViewport,
     GameViewport,
     Inspector,
-    Console,
+    AssetBrowser,
+    Log,
 }
 
 #[derive(Default)]
@@ -45,6 +46,7 @@ pub struct EditorBehavior<'a> {
     pub scene_viewport: &'a mut ViewportState,
     pub game_viewport: &'a mut ViewportState,
     pub scene_hierarchy: &'a mut SceneHierarchyWindow,
+    pub log_window: &'a mut LogWindow,
     pub is_playing: bool,
     pub inspector_actions: &'a mut Vec<InspectorAction>,
 }
@@ -95,9 +97,14 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                     ui.label("Select an entity to view its components.");
                 }
             }
-            EditorPane::Console => {
-                ui.heading("Console");
-                ui.label("Engine logs will appear in this panel.");
+            EditorPane::AssetBrowser => {
+                ui.heading("Asset Browser");
+                ui.label("Browse project assets (coming soon).");
+            }
+            EditorPane::Log => {
+                ui.heading("Log");
+                ui.add_space(4.0);
+                self.log_window.ui(ui);
             }
         }
 
@@ -116,7 +123,8 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                 }
             }
             EditorPane::Inspector => "Inspector".into(),
-            EditorPane::Console => "Console".into(),
+            EditorPane::AssetBrowser => "Assets".into(),
+            EditorPane::Log => "Log".into(),
         }
     }
 }
@@ -128,12 +136,14 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
     let scene_view = tiles.insert_pane(EditorPane::SceneViewport);
     let game_view = tiles.insert_pane(EditorPane::GameViewport);
     let inspector = tiles.insert_pane(EditorPane::Inspector);
-    let console = tiles.insert_pane(EditorPane::Console);
+    let asset_browser = tiles.insert_pane(EditorPane::AssetBrowser);
+    let log_view = tiles.insert_pane(EditorPane::Log);
 
     let hierarchy_tab = tiles.insert_tab_tile(vec![hierarchy]);
     let viewport_tab = tiles.insert_tab_tile(vec![scene_view, game_view]);
     let inspector_tab = tiles.insert_tab_tile(vec![inspector]);
-    let console_tab = tiles.insert_tab_tile(vec![console]);
+    let asset_tab = tiles.insert_tab_tile(vec![asset_browser]);
+    let log_tab = tiles.insert_tab_tile(vec![log_view]);
 
     let horizontal = tiles.insert_horizontal_tile(vec![hierarchy_tab, viewport_tab, inspector_tab]);
     if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(horizontal) {
@@ -142,10 +152,16 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
         linear.shares.set_share(inspector_tab, 0.2);
     }
 
-    let root = tiles.insert_vertical_tile(vec![horizontal, console_tab]);
+    let bottom_split = tiles.insert_horizontal_tile(vec![asset_tab, log_tab]);
+    if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(bottom_split) {
+        linear.shares.set_share(asset_tab, 0.5);
+        linear.shares.set_share(log_tab, 0.5);
+    }
+
+    let root = tiles.insert_vertical_tile(vec![horizontal, bottom_split]);
     if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(root) {
-        linear.shares.set_share(horizontal, 0.8);
-        linear.shares.set_share(console_tab, 0.2);
+        linear.shares.set_share(horizontal, 0.78);
+        linear.shares.set_share(bottom_split, 0.22);
     }
 
     Tree::new("editor_dock", root, tiles)

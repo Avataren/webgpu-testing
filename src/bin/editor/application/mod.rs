@@ -135,7 +135,7 @@ impl RenderApplication for EditorApplication {
         let dock_tree = &mut self.dock_tree;
         let scene_viewport = &mut self.scene_viewport;
         let game_viewport = &mut self.game_viewport;
-        let scene_hierarchy_window = default_ui.scene_hierarchy_window_mut();
+        let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
         if let Some(selection) = self.selection.take_override() {
             scene_hierarchy_window.set_selected_entity(selection);
         }
@@ -150,6 +150,7 @@ impl RenderApplication for EditorApplication {
                     scene_viewport,
                     game_viewport,
                     scene_hierarchy: scene_hierarchy_window,
+                    log_window,
                     is_playing,
                     inspector_actions: &mut inspector_actions,
                 };
