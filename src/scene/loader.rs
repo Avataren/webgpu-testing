@@ -1451,7 +1451,8 @@ mod tests {
     use crate::scene::animation::{
         AnimationInterpolation, AnimationOutput, AnimationTarget, TransformProperty,
     };
-    use crate::scene::components::{Name, TransformComponent, Visible};
+    use crate::scene::components::{Children, GltfNode, Name, Parent, TransformComponent, Visible};
+    use crate::scene::scene_core::SceneSnapshot;
     use crate::scene::{Scene, Transform};
     use glam::Vec3;
     use serde_json::Value;
@@ -1749,6 +1750,149 @@ mod tests {
                 .translation
                 .expect("Translation update missing")
                 .abs_diff_eq(expected_final, 1e-5));
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_gltf_transforms() {
+        let gltf_paths = [
+            "web/assets/animated/AnimatedCube.gltf",
+            "web/assets/animated/AnimatedColorsCube.gltf",
+        ];
+
+        for path in gltf_paths {
+            let path = Path::new(path);
+            let (document, buffers, _) =
+                SceneLoader::import_gltf_native(path).expect("import gltf");
+
+            let mut scene = Scene::new();
+            let mut node_entities: Vec<Option<hecs::Entity>> = vec![None; document.nodes().len()];
+            let mut child_indices: Vec<Vec<usize>> = vec![Vec::new(); document.nodes().len()];
+
+            for node in document.nodes() {
+                let (translation, rotation, scale) = node.transform().decomposed();
+                let transform = Transform::from_trs(
+                    glam::Vec3::from(translation),
+                    glam::Quat::from_array(rotation),
+                    glam::Vec3::from(scale),
+                );
+
+                let entity = scene.main_world_mut().spawn((
+                    Name::new(node.name().unwrap_or("Unnamed")),
+                    TransformComponent(transform),
+                    Visible(true),
+                    GltfNode(node.index()),
+                ));
+
+                child_indices[node.index()] = node.children().map(|child| child.index()).collect();
+                node_entities[node.index()] = Some(entity);
+            }
+
+            for (node_index, children) in child_indices.iter().enumerate() {
+                let Some(parent_entity) = node_entities[node_index] else {
+                    continue;
+                };
+
+                let mut child_entities = Vec::new();
+                for child_index in children {
+                    if let Some(child_entity) = node_entities[*child_index] {
+                        scene
+                            .main_world_mut()
+                            .insert_one(child_entity, Parent(parent_entity))
+                            .unwrap();
+                        child_entities.push(child_entity);
+                    }
+                }
+
+                if !child_entities.is_empty() {
+                    scene
+                        .main_world_mut()
+                        .insert_one(parent_entity, Children(child_entities))
+                        .unwrap();
+                }
+            }
+
+            SceneLoader::load_animations(
+                &document,
+                &buffers,
+                &node_entities,
+                &mut scene,
+                path,
+                1.0,
+            )
+            .expect("load animations");
+
+            scene.propagate_transforms();
+
+            let mut initial_transforms: HashMap<usize, (Transform, Transform)> = HashMap::new();
+            {
+                let world = scene.main_world();
+                let mut query = world.query::<(
+                    &GltfNode,
+                    &TransformComponent,
+                    Option<&crate::scene::components::WorldTransform>,
+                )>();
+                for (_, (gltf_node, transform, world_transform)) in query.iter() {
+                    let world_value = world_transform.map(|wt| wt.0).unwrap_or_else(|| {
+                        Transform::from_trs(glam::Vec3::ZERO, glam::Quat::IDENTITY, glam::Vec3::ONE)
+                    });
+                    initial_transforms.insert(gltf_node.0, (transform.0, world_value));
+                }
+            }
+
+            let snapshot = SceneSnapshot::capture(&scene);
+            let _original_tree = scene.export_tree_asset("Original");
+
+            scene.set_animation_playback(true);
+            scene.update(0.5);
+
+            let mut restored = snapshot.into_scene();
+            restored.set_animation_playback(false);
+            restored.update(0.0);
+            restored.propagate_transforms();
+
+            let world = restored.main_world();
+            let mut query = world.query::<(&GltfNode, &TransformComponent)>();
+            for (_, (gltf_node, transform)) in query.iter() {
+                let (initial_local, _initial_world) = initial_transforms
+                    .get(&gltf_node.0)
+                    .copied()
+                    .expect("missing initial transform");
+
+                assert!(transform
+                    .0
+                    .translation
+                    .abs_diff_eq(initial_local.translation, 1e-5));
+                assert!(transform
+                    .0
+                    .rotation
+                    .abs_diff_eq(initial_local.rotation, 1e-5));
+                assert!(transform.0.scale.abs_diff_eq(initial_local.scale, 1e-5));
+            }
+
+            let world = restored.main_world();
+            let mut query =
+                world.query::<(&GltfNode, Option<&crate::scene::components::WorldTransform>)>();
+            for (_, (gltf_node, world_transform)) in query.iter() {
+                let (_, initial_world) = initial_transforms
+                    .get(&gltf_node.0)
+                    .copied()
+                    .expect("missing initial transform");
+
+                let restored_world = world_transform.map(|wt| wt.0).unwrap_or_else(|| {
+                    Transform::from_trs(glam::Vec3::ZERO, glam::Quat::IDENTITY, glam::Vec3::ONE)
+                });
+
+                assert!(restored_world
+                    .translation
+                    .abs_diff_eq(initial_world.translation, 1e-5));
+                assert!(restored_world
+                    .rotation
+                    .abs_diff_eq(initial_world.rotation, 1e-5));
+                assert!(restored_world.scale.abs_diff_eq(initial_world.scale, 1e-5));
+            }
+
+            let _restored_tree = restored.export_tree_asset("Restored");
         }
     }
 }
