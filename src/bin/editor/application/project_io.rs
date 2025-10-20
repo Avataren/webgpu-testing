@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use log::{error, warn};
+use log::{error, info, warn};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::project::{ProjectError, ProjectManifest};
 use wgpu_cube::scene::EntityBuilder;
@@ -8,6 +8,7 @@ use wgpu_cube::scene::Transform;
 
 use super::core::{EditorApplication, UndoRedoState};
 use crate::history::EditorHistory;
+use crate::project::{BuildPlatform, ProjectBuildRequest};
 
 impl EditorApplication {
     pub(super) fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
@@ -94,6 +95,71 @@ impl EditorApplication {
             }
             Err(err) => {
                 error!("Failed to load project from {:?}: {err}", dir);
+            }
+        }
+    }
+
+    pub(super) fn handle_project_build(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        request: ProjectBuildRequest,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            let _ = request;
+            warn!("Project builds are not supported when running inside the browser editor");
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::fs;
+
+            if let Err(err) = fs::create_dir_all(&request.output_dir) {
+                error!(
+                    "Failed to prepare build output directory {:?}: {err}",
+                    request.output_dir
+                );
+                return;
+            }
+
+            match ProjectManifest::capture(ctx.scene, self.project.metadata().clone()) {
+                Ok(manifest) => {
+                    if let Err(err) = manifest.save_to_dir(&request.output_dir) {
+                        error!(
+                            "Failed to save project manifest to {:?}: {err}",
+                            request.output_dir
+                        );
+                        return;
+                    }
+
+                    match request.platform {
+                        BuildPlatform::Desktop => {
+                            info!(
+                                "Saved build manifest for desktop target at {:?}",
+                                request.output_dir
+                            );
+                            info!("Desktop build command execution is not yet implemented");
+                        }
+                        BuildPlatform::Web => {
+                            info!(
+                                "Saved build manifest for web target at {:?}",
+                                request.output_dir
+                            );
+                            info!("Web build command execution is not yet implemented");
+                        }
+                    }
+                }
+                Err(ProjectError::EmptyScene) => {
+                    warn!(
+                        "Skipping project build: no exportable scene data available for {:?}",
+                        request.platform
+                    );
+                }
+                Err(err) => {
+                    error!("Failed to prepare project for building: {err}");
+                }
             }
         }
     }

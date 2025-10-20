@@ -34,6 +34,10 @@ impl EditorApplication {
                     }
                 });
 
+                ui.menu_button("Build", |ui| {
+                    self.project.build_menu_contents(ui);
+                });
+
                 ui.menu_button("Window", |ui| {
                     self.windows.window_menu(ui);
                 });

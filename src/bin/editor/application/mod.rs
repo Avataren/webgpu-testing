@@ -104,6 +104,10 @@ impl RenderApplication for EditorApplication {
             self.handle_project_save(ctx, dir);
         }
 
+        if let Some(request) = self.project.take_pending_build() {
+            self.handle_project_build(ctx, request);
+        }
+
         ctx.scene.process_pending_gltf_imports(ctx.renderer);
     }
 
@@ -138,6 +142,7 @@ impl RenderApplication for EditorApplication {
         if !show_fullscreen_game {
             self.windows.show(ctx, default_ui);
             self.project.show_settings_window(ctx);
+            self.project.show_build_window(ctx);
         }
 
         let dock_tree = &mut self.dock_tree;
