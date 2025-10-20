@@ -219,10 +219,8 @@ fn show_viewport(
 
     let Some(region) = compute_viewport_region(ui.ctx(), rect) else {
         viewport.clear();
-        return;
-    };
-
-    viewport.set(rect, region);
+        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+    }
 }
 
 pub fn compute_viewport_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {

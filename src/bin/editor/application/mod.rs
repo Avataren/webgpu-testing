@@ -23,7 +23,7 @@ use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication};
 
 use crate::inspector::InspectorAction;
-use crate::layout::EditorBehavior;
+use crate::layout::{EditorBehavior, EditorPane};
 use crate::postprocess::ViewportGrid;
 use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
 
@@ -149,7 +149,7 @@ impl RenderApplication for EditorApplication {
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
-            .frame(transparent_frame)
+            .frame(central_frame)
             .show(ctx, |ui| {
                 if show_fullscreen_game {
                     crate::layout::show_fullscreen_viewport(ui, game_viewport);
@@ -165,6 +165,16 @@ impl RenderApplication for EditorApplication {
                     dock_tree.ui(&mut behavior, ui);
                 }
             });
+
+        if !is_playing
+            && !matches!(self.runtime_state.desired_mode(), RuntimeMode::Playing)
+            && self
+                .find_pane_tile(EditorPane::GameViewport)
+                .map(|id| self.dock_tree.active_tiles().contains(&id))
+                .unwrap_or(false)
+        {
+            self.runtime_state.request_mode(RuntimeMode::Playing);
+        }
 
         self.selection
             .set_selected(scene_hierarchy_window.selected_entity());
