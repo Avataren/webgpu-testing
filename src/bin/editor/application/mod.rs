@@ -422,6 +422,7 @@ impl EditorApplication {
                     let mut updated = false;
                     {
                         let world = ctx.scene.main_world_mut();
+                        let mut needs_insert = false;
                         match world.get::<&mut CanCastShadow>(entity) {
                             Ok(mut component) => {
                                 if component.0 != casts_shadow {
@@ -431,23 +432,27 @@ impl EditorApplication {
                             }
                             Err(err) => {
                                 if casts_shadow {
-                                    match world.insert(entity, (CanCastShadow(true),)) {
-                                        Ok(_) => {
-                                            updated = true;
-                                        }
-                                        Err(insert_err) => {
-                                            log::warn!(
-                                                "Failed to add CanCastShadow to {:?}: {}",
-                                                entity,
-                                                insert_err
-                                            );
-                                        }
-                                    }
+                                    needs_insert = true;
                                 } else {
                                     log::debug!(
                                         "CanCastShadow missing for {:?} while disabling shadows: {}",
                                         entity,
                                         err
+                                    );
+                                }
+                            }
+                        }
+
+                        if needs_insert {
+                            match world.insert(entity, (CanCastShadow(true),)) {
+                                Ok(_) => {
+                                    updated = true;
+                                }
+                                Err(insert_err) => {
+                                    log::warn!(
+                                        "Failed to add CanCastShadow to {:?}: {}",
+                                        entity,
+                                        insert_err
                                     );
                                 }
                             }

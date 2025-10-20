@@ -463,15 +463,15 @@ fn float_drag_value(
 }
 
 fn light_color_editor(ui: &mut egui::Ui, label: &str, color: &mut Vec3) -> bool {
-    let mut rgba = egui::Rgba::from_rgb(color.x, color.y, color.z);
+    let mut rgb = [color.x, color.y, color.z];
     ui.label(label);
-    let changed = color_edit_button_rgb(ui, &mut rgba).changed();
+    let changed = color_edit_button_rgb(ui, &mut rgb).changed();
     ui.end_row();
     if changed {
         *color = Vec3::new(
-            rgba.r().clamp(0.0, 1.0),
-            rgba.g().clamp(0.0, 1.0),
-            rgba.b().clamp(0.0, 1.0),
+            rgb[0].clamp(0.0, 1.0),
+            rgb[1].clamp(0.0, 1.0),
+            rgb[2].clamp(0.0, 1.0),
         );
     }
     changed
