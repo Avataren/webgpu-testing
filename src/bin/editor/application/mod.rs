@@ -146,10 +146,8 @@ impl RenderApplication for EditorApplication {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
-        let mut central_frame = egui::Frame::central_panel(&ctx.style());
-        if show_fullscreen_game {
-            central_frame = central_frame.fill(egui::Color32::TRANSPARENT);
-        }
+        let transparent_frame =
+            egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
             .frame(central_frame)
             .show(ctx, |ui| {

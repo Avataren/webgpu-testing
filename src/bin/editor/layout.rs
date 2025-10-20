@@ -217,9 +217,7 @@ fn show_viewport(
         return;
     }
 
-    if let Some(region) = compute_viewport_region(ui.ctx(), rect) {
-        viewport.set(rect, region);
-    } else {
+    let Some(region) = compute_viewport_region(ui.ctx(), rect) else {
         viewport.clear();
         painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
     }
@@ -250,12 +248,9 @@ pub fn show_fullscreen_viewport(ui: &mut egui::Ui, viewport: &mut ViewportState)
         return;
     }
 
-    let painter = ui.painter_at(rect);
-
     if let Some(region) = compute_viewport_region(ui.ctx(), rect) {
         viewport.set(rect, region);
     } else {
         viewport.clear();
-        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
     }
 }
