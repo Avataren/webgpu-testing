@@ -1,9 +1,7 @@
 use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, transforms};
-use crate::scene::components::TransformComponent;
 use crate::scene::transform::Transform;
 use hecs::World;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SceneNodeId(u32);
@@ -102,7 +100,6 @@ pub(crate) struct SceneInstance {
     world: World,
     animations: Vec<AnimationClip>,
     animation_states: Vec<AnimationState>,
-    rest_pose: Option<HashMap<hecs::Entity, Transform>>,
 }
 
 impl SceneInstance {
@@ -111,7 +108,6 @@ impl SceneInstance {
             world: World::new(),
             animations: Vec::new(),
             animation_states: Vec::new(),
-            rest_pose: None,
         }
     }
 
@@ -139,8 +135,6 @@ impl SceneInstance {
         if clip_index >= self.animations.len() {
             return None;
         }
-
-        self.capture_rest_pose();
 
         let mut state = AnimationState::new(clip_index);
         state.looping = looping;
@@ -177,39 +171,9 @@ impl SceneInstance {
         )
     }
 
-    pub(crate) fn capture_rest_pose(&mut self) {
-        if self.rest_pose.is_some() {
-            return;
-        }
-
-        let mut rest = HashMap::new();
-        for (entity, transform) in self.world.query::<&TransformComponent>().iter() {
-            rest.insert(entity, transform.0);
-        }
-        self.rest_pose = Some(rest);
-    }
-
-    pub(crate) fn restore_rest_pose(&mut self) {
-        let Some(rest) = self.rest_pose.take() else {
-            return;
-        };
-
-        for (entity, transform) in rest {
-            if let Ok(mut component) = self.world.get::<&mut TransformComponent>(entity) {
-                component.0 = transform;
-            }
-        }
-
-        self.propagate_transforms();
-    }
-
     pub(crate) fn push_animation_state(&mut self, state: AnimationState) -> Option<usize> {
         if state.clip_index >= self.animations.len() {
             return None;
-        }
-
-        if state.playing {
-            self.capture_rest_pose();
         }
 
         let index = self.animation_states.len();
