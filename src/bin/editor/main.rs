@@ -54,23 +54,16 @@ struct EditorApplication {
     pending_imports: Vec<PathBuf>,
     pending_entity_deletions: Vec<Entity>,
     windows: WindowToggles,
-    selected_entity: Option<Entity>,
-    highlighted_entity: Option<Entity>,
-    pending_pick: Option<ViewportPick>,
-    selection_override: Option<Option<Entity>>,
+    selection: SelectionState,
+    pointer: PointerState,
     runtime_state: RuntimeStateHandle,
     last_runtime_mode: RuntimeMode,
     transform_gizmo_mode: TransformGizmoMode,
     transform_gizmo_space: TransformGizmoSpace,
-    scene_pointer_uv: Option<Vec2>,
     gizmo_drag: Option<GizmoDragState>,
-    pointer_primary_down: bool,
-    pointer_press_uv: Option<Vec2>,
-    selection_press_uv: Option<Vec2>,
     history: EditorHistory,
     next_editor_entity_id: u128,
-    pending_undo: bool,
-    pending_redo: bool,
+    undo_redo: UndoRedoState,
     project: project::ProjectController,
     script_editor: Option<ScriptEditorState>,
     pending_script_actions: Vec<PendingScriptAction>,
@@ -96,7 +89,6 @@ struct ViewportPick {
 struct GizmoDragState {
     entity: Entity,
     handle: TransformGizmoHandle,
-    initial_local: Transform,
     parent_world: Transform,
     initial_world: Transform,
     last_pointer_uv: Vec2,
@@ -106,7 +98,6 @@ struct GizmoDragState {
 
 enum GizmoDragKind {
     TranslateAxis {
-        axis: TransformGizmoAxis,
         axis_dir: Vec3,
         origin: Vec3,
         start_param: f32,
@@ -138,6 +129,193 @@ enum GizmoDragKind {
     },
 }
 
+#[derive(Default)]
+struct SelectionState {
+    selected: Option<Entity>,
+    highlighted: Option<Entity>,
+    pending_pick: Option<ViewportPick>,
+    override_request: Option<Option<Entity>>,
+}
+
+impl SelectionState {
+    fn set_selected(&mut self, entity: Option<Entity>) {
+        self.selected = entity;
+    }
+
+    fn set_highlighted(&mut self, entity: Option<Entity>) {
+        self.highlighted = entity;
+    }
+
+    fn request_override(&mut self, entity: Option<Entity>) {
+        self.override_request = Some(entity);
+    }
+
+    fn take_override(&mut self) -> Option<Option<Entity>> {
+        self.override_request.take()
+    }
+
+    fn clear_pending_pick(&mut self) {
+        self.pending_pick = None;
+    }
+}
+
+#[derive(Default)]
+struct PointerState {
+    scene_uv: Option<Vec2>,
+    primary_down: bool,
+    press_uv: Option<Vec2>,
+    selection_press_uv: Option<Vec2>,
+}
+
+impl PointerState {
+    fn reset_press(&mut self) {
+        self.primary_down = false;
+        self.press_uv = None;
+        self.selection_press_uv = None;
+    }
+
+    fn set_scene_uv(&mut self, uv: Option<Vec2>) {
+        self.scene_uv = uv;
+    }
+}
+
+#[derive(Default)]
+struct UndoRedoState {
+    pending_undo: bool,
+    pending_redo: bool,
+}
+
+impl UndoRedoState {
+    fn request_undo(&mut self) {
+        self.pending_undo = true;
+    }
+
+    fn request_redo(&mut self) {
+        self.pending_redo = true;
+    }
+
+    fn take_undo(&mut self) -> bool {
+        std::mem::take(&mut self.pending_undo)
+    }
+
+    fn take_redo(&mut self) -> bool {
+        std::mem::take(&mut self.pending_redo)
+    }
+
+    fn clear_redo(&mut self) {
+        self.pending_redo = false;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CameraView {
+    eye: Vec3,
+    up: Vec3,
+    fov_y: f32,
+}
+
+impl CameraView {
+    fn new(eye: Vec3, up: Vec3, fov_y: f32) -> Self {
+        Self { eye, up, fov_y }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SceneRay {
+    origin: Vec3,
+    direction: Vec3,
+}
+
+impl SceneRay {
+    fn new(origin: Vec3, direction: Vec3) -> Self {
+        Self { origin, direction }
+    }
+}
+
+#[derive(Default)]
+struct EditorApplicationBuilder {
+    dock_tree: Option<Tree<EditorPane>>,
+    scene_viewport: Option<ViewportState>,
+    game_viewport: Option<ViewportState>,
+    camera_controller: Option<EditorCameraController>,
+    grid_postprocess: Option<Option<ViewportGrid>>,
+    windows: Option<WindowToggles>,
+    project: Option<project::ProjectController>,
+    history: Option<EditorHistory>,
+}
+
+impl EditorApplicationBuilder {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn with_dock_tree(mut self, dock_tree: Tree<EditorPane>) -> Self {
+        self.dock_tree = Some(dock_tree);
+        self
+    }
+
+    fn with_scene_viewport(mut self, viewport: ViewportState) -> Self {
+        self.scene_viewport = Some(viewport);
+        self
+    }
+
+    fn with_game_viewport(mut self, viewport: ViewportState) -> Self {
+        self.game_viewport = Some(viewport);
+        self
+    }
+
+    fn with_camera_controller(mut self, controller: EditorCameraController) -> Self {
+        self.camera_controller = Some(controller);
+        self
+    }
+
+    fn with_grid_postprocess(mut self, grid: Option<ViewportGrid>) -> Self {
+        self.grid_postprocess = Some(grid);
+        self
+    }
+
+    fn with_windows(mut self, windows: WindowToggles) -> Self {
+        self.windows = Some(windows);
+        self
+    }
+
+    fn with_project(mut self, project: project::ProjectController) -> Self {
+        self.project = Some(project);
+        self
+    }
+
+    fn with_history(mut self, history: EditorHistory) -> Self {
+        self.history = Some(history);
+        self
+    }
+
+    fn build(self) -> EditorApplication {
+        EditorApplication {
+            dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
+            scene_viewport: self.scene_viewport.unwrap_or_default(),
+            game_viewport: self.game_viewport.unwrap_or_default(),
+            camera_controller: self.camera_controller.unwrap_or_default(),
+            grid_postprocess: self.grid_postprocess.unwrap_or_default(),
+            pending_imports: Vec::new(),
+            pending_entity_deletions: Vec::new(),
+            windows: self.windows.unwrap_or_else(WindowToggles::new),
+            selection: SelectionState::default(),
+            pointer: PointerState::default(),
+            runtime_state: RuntimeStateHandle::new(),
+            last_runtime_mode: RuntimeMode::Editor,
+            transform_gizmo_mode: TransformGizmoMode::Translate,
+            transform_gizmo_space: TransformGizmoSpace::Local,
+            gizmo_drag: None,
+            history: self.history.unwrap_or_else(EditorHistory::new),
+            next_editor_entity_id: 1,
+            undo_redo: UndoRedoState::default(),
+            project: self.project.unwrap_or_else(project::ProjectController::new),
+            script_editor: None,
+            pending_script_actions: Vec::new(),
+        }
+    }
+}
+
 const LIGHT_ICON_SCREEN_FRACTION: f32 = 0.055;
 const LIGHT_ICON_MIN_DISTANCE: f32 = 0.1;
 const LIGHT_ICON_ORTHO_WORLD_SIZE: f32 = 0.65;
@@ -145,36 +323,20 @@ const LIGHT_ICON_PICK_PADDING: f32 = 0.15;
 
 impl EditorApplication {
     fn new() -> Self {
-        Self {
-            dock_tree: create_editor_layout(),
-            scene_viewport: ViewportState::default(),
-            game_viewport: ViewportState::default(),
-            camera_controller: EditorCameraController::default(),
-            grid_postprocess: None,
-            pending_imports: Vec::new(),
-            pending_entity_deletions: Vec::new(),
-            windows: WindowToggles::new(),
-            selected_entity: None,
-            highlighted_entity: None,
-            pending_pick: None,
-            selection_override: None,
-            runtime_state: RuntimeStateHandle::new(),
-            last_runtime_mode: RuntimeMode::Editor,
-            transform_gizmo_mode: TransformGizmoMode::Translate,
-            transform_gizmo_space: TransformGizmoSpace::Local,
-            scene_pointer_uv: None,
-            gizmo_drag: None,
-            pointer_primary_down: false,
-            pointer_press_uv: None,
-            selection_press_uv: None,
-            history: EditorHistory::new(),
-            next_editor_entity_id: 1,
-            pending_undo: false,
-            pending_redo: false,
-            project: project::ProjectController::new(),
-            script_editor: None,
-            pending_script_actions: Vec::new(),
-        }
+        Self::builder()
+            .with_dock_tree(create_editor_layout())
+            .with_scene_viewport(ViewportState::default())
+            .with_game_viewport(ViewportState::default())
+            .with_camera_controller(EditorCameraController::default())
+            .with_grid_postprocess(None)
+            .with_windows(WindowToggles::new())
+            .with_project(project::ProjectController::new())
+            .with_history(EditorHistory::new())
+            .build()
+    }
+
+    fn builder() -> EditorApplicationBuilder {
+        EditorApplicationBuilder::new()
     }
 
     fn set_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
@@ -406,13 +568,13 @@ impl EditorApplication {
                         self.project.set_metadata(metadata);
                         self.pending_imports.clear();
                         self.pending_entity_deletions.clear();
-                        self.selected_entity = None;
-                        self.highlighted_entity = None;
-                        self.pending_undo = false;
-                        self.pending_redo = false;
+                        self.selection.set_selected(None);
+                        self.selection.set_highlighted(None);
+                        self.selection.clear_pending_pick();
+                        self.undo_redo = UndoRedoState::default();
                         self.history = EditorHistory::new();
                         self.initialize_history_state(ctx.scene);
-                        self.selection_override = Some(None);
+                        self.selection.request_override(None);
                         self.runtime_state.request_mode(RuntimeMode::Editor);
                     }
                     Err(err) => {
@@ -447,15 +609,15 @@ impl EditorApplication {
             return;
         }
 
-        if let Some(selected) = self.selected_entity {
+        if let Some(selected) = self.selection.selected {
             if removed_entities.contains(&selected) {
-                self.selected_entity = None;
+                self.selection.set_selected(None);
             }
         }
 
-        if let Some(highlighted) = self.highlighted_entity {
+        if let Some(highlighted) = self.selection.highlighted {
             if removed_entities.contains(&highlighted) {
-                self.highlighted_entity = None;
+                self.selection.set_highlighted(None);
             }
         }
 
@@ -467,7 +629,7 @@ impl EditorApplication {
             self.gizmo_drag = None;
         }
 
-        self.selection_override = Some(self.selected_entity);
+        self.selection.request_override(self.selection.selected);
         ctx.scene.propagate_transforms();
         self.record_scene_change(ctx.scene);
     }
@@ -512,8 +674,8 @@ impl EditorApplication {
     }
 
     fn sync_selection_component(&mut self, ctx: &mut UpdateContext) {
-        if self.selected_entity == self.highlighted_entity {
-            if let Some(entity) = self.selected_entity {
+        if self.selection.selected == self.selection.highlighted {
+            if let Some(entity) = self.selection.selected {
                 let missing_marker = ctx
                     .scene
                     .main_world()
@@ -530,8 +692,8 @@ impl EditorApplication {
                             "failed to reapply editor selection marker to {:?}: {err}",
                             entity
                         );
-                        self.selected_entity = None;
-                        self.highlighted_entity = None;
+                        self.selection.set_selected(None);
+                        self.selection.set_highlighted(None);
                     }
                 }
             }
@@ -542,51 +704,43 @@ impl EditorApplication {
         {
             let world = ctx.scene.main_world_mut();
 
-            if let Some(previous) = self.highlighted_entity.take() {
+            if let Some(previous) = self.selection.highlighted.take() {
                 let _ = world.remove_one::<SelectedInEditor>(previous);
             }
 
-            if let Some(entity) = self.selected_entity {
+            if let Some(entity) = self.selection.selected {
                 match world.insert_one(entity, SelectedInEditor) {
                     Ok(()) => new_highlight = Some(entity),
                     Err(err) => {
                         warn!("failed to mark entity {:?} as selected: {err}", entity);
-                        self.selected_entity = None;
+                        self.selection.set_selected(None);
                     }
                 }
             }
         }
 
-        self.highlighted_entity = new_highlight;
+        self.selection.set_highlighted(new_highlight);
         self.update_history_selection(ctx.scene);
     }
 
     fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
         if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
-            self.pending_pick = None;
-            self.pointer_primary_down = false;
-            self.pointer_press_uv = None;
-            self.selection_press_uv = None;
+            self.selection.clear_pending_pick();
+            self.pointer.reset_press();
             return;
         }
 
         if self.camera_controller.is_looking() {
-            self.pointer_primary_down = false;
-            self.pointer_press_uv = None;
-            self.selection_press_uv = None;
+            self.pointer.reset_press();
             return;
         }
 
         let Some(rect) = self.scene_viewport.rect() else {
-            self.pointer_primary_down = false;
-            self.pointer_press_uv = None;
-            self.selection_press_uv = None;
+            self.pointer.reset_press();
             return;
         };
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
-            self.pointer_primary_down = false;
-            self.pointer_press_uv = None;
-            self.selection_press_uv = None;
+            self.pointer.reset_press();
             return;
         }
 
@@ -620,19 +774,19 @@ impl EditorApplication {
             }
         });
 
-        self.pointer_primary_down = pointer_down;
+        self.pointer.primary_down = pointer_down;
 
         if let Some(uv) = pressed_uv {
-            self.pointer_press_uv = Some(uv);
-            self.selection_press_uv = Some(uv);
+            self.pointer.press_uv = Some(uv);
+            self.pointer.selection_press_uv = Some(uv);
         }
 
         if let Some(uv) = released_uv {
-            if self.gizmo_drag.is_none() && self.selection_press_uv.take().is_some() {
-                self.pending_pick = Some(ViewportPick { uv });
+            if self.gizmo_drag.is_none() && self.pointer.selection_press_uv.take().is_some() {
+                self.selection.pending_pick = Some(ViewportPick { uv });
             }
-        } else if !self.pointer_primary_down {
-            self.selection_press_uv = None;
+        } else if !self.pointer.primary_down {
+            self.pointer.selection_press_uv = None;
         }
     }
 
@@ -649,7 +803,7 @@ impl EditorApplication {
                 self.transform_gizmo_mode = TransformGizmoMode::Scale;
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
-                if let Some(entity) = self.selected_entity {
+                if let Some(entity) = self.selection.selected {
                     self.pending_entity_deletions.push(entity);
                     self.gizmo_drag = None;
                 }
@@ -670,12 +824,11 @@ impl EditorApplication {
     }
 
     fn clear_selection(&mut self) {
-        self.pending_pick = None;
-        self.pointer_primary_down = false;
-        self.selection_press_uv = None;
+        self.selection.clear_pending_pick();
+        self.pointer.reset_press();
         self.gizmo_drag = None;
-        self.selection_override = Some(None);
-        self.selected_entity = None;
+        self.selection.request_override(None);
+        self.selection.set_selected(None);
     }
 
     fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
@@ -685,8 +838,8 @@ impl EditorApplication {
 
         ctx.input_mut(|input| {
             let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-            if input.consume_shortcut(&undo_shortcut) {
-                self.pending_undo = true;
+            if input.consume_shortcut(&undo_shortcut) && self.history.can_undo() {
+                self.undo_redo.request_undo();
             }
 
             let mut redo_mods = egui::Modifiers::COMMAND;
@@ -699,45 +852,46 @@ impl EditorApplication {
             if redo_variants
                 .iter()
                 .any(|shortcut| input.consume_shortcut(shortcut))
+                && self.history.can_redo()
             {
-                self.pending_redo = true;
+                self.undo_redo.request_redo();
             }
         });
     }
 
     fn process_viewport_pick(&mut self, ctx: &mut UpdateContext) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
-            self.pending_pick = None;
+            self.selection.clear_pending_pick();
             return;
         };
 
-        let Some(request) = self.pending_pick.take() else {
+        let Some(request) = self.selection.pending_pick.take() else {
             return;
         };
 
         let Some(region) = self.scene_viewport.region() else {
-            self.selected_entity = None;
-            self.selection_override = Some(None);
+            self.selection.set_selected(None);
+            self.selection.request_override(None);
             self.update_history_selection(ctx.scene);
             return;
         };
 
         let picked = self.pick_entity(ctx, request.uv, region);
-        self.selected_entity = picked;
-        self.selection_override = Some(picked);
+        self.selection.set_selected(picked);
+        self.selection.request_override(picked);
         self.update_history_selection(ctx.scene);
     }
 
     fn update_gizmo_drag(&mut self, ctx: &mut UpdateContext) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
             self.gizmo_drag = None;
-            self.pointer_press_uv = None;
+            self.pointer.press_uv = None;
             return;
         }
 
-        if let Some(uv) = self.pointer_press_uv.take() {
+        if let Some(uv) = self.pointer.press_uv.take() {
             if self.try_begin_gizmo_drag(ctx, uv) {
-                self.selection_press_uv = None;
+                self.pointer.selection_press_uv = None;
             }
         }
 
@@ -745,7 +899,7 @@ impl EditorApplication {
         let mut end_drag = false;
 
         if let Some(drag) = self.gizmo_drag.as_mut() {
-            if !self.pointer_primary_down {
+            if !self.pointer.primary_down {
                 end_drag = true;
             } else if let Some(region) = self.scene_viewport.region() {
                 let width = region.width().max(1) as f32;
@@ -754,7 +908,8 @@ impl EditorApplication {
                     let aspect = width / height;
                     let camera = ctx.scene.camera();
                     let uv = self
-                        .scene_pointer_uv
+                        .pointer
+                        .scene_uv
                         .filter(|uv| uv.is_finite())
                         .unwrap_or(drag.last_pointer_uv);
                     let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
@@ -791,7 +946,7 @@ impl EditorApplication {
     }
 
     fn try_begin_gizmo_drag(&mut self, ctx: &mut UpdateContext, press_uv: Vec2) -> bool {
-        let Some(entity) = self.selected_entity else {
+        let Some(entity) = self.selection.selected else {
             return false;
         };
 
@@ -872,7 +1027,6 @@ impl EditorApplication {
                     start_param = 1.0;
                 }
                 GizmoDragKind::TranslateAxis {
-                    axis,
                     axis_dir,
                     origin: origin_point,
                     start_param,
@@ -1011,7 +1165,6 @@ impl EditorApplication {
         self.gizmo_drag = Some(GizmoDragState {
             entity,
             handle,
-            initial_local,
             parent_world,
             initial_world,
             last_pointer_uv: press_uv,
@@ -1036,7 +1189,6 @@ impl EditorApplication {
                 axis_dir,
                 origin,
                 start_param,
-                ..
             } => {
                 let Some(param) = Self::ray_axis_parameter(ray_origin, ray_dir, *origin, *axis_dir)
                 else {
@@ -1226,15 +1378,9 @@ impl EditorApplication {
             }
         }
 
-        self.consider_light_picks(
-            world,
-            camera.eye,
-            camera.up,
-            camera.fov_y_radians,
-            origin,
-            direction,
-            &mut best,
-        );
+        let camera_view = CameraView::new(camera.eye, camera.up, camera.fov_y_radians);
+        let ray = SceneRay::new(origin, direction);
+        self.consider_light_picks(world, camera_view, ray, &mut best);
 
         best.map(|(entity, _)| entity)
     }
@@ -1242,11 +1388,8 @@ impl EditorApplication {
     fn consider_light_picks(
         &self,
         world: &hecs::World,
-        camera_eye: Vec3,
-        camera_up: Vec3,
-        camera_fov_y: f32,
-        ray_origin: Vec3,
-        ray_dir: Vec3,
+        camera: CameraView,
+        ray: SceneRay,
         best: &mut Option<(Entity, f32)>,
     ) {
         let mut consider = |entity: Entity, distance: f32| {
@@ -1271,12 +1414,12 @@ impl EditorApplication {
                 .or_else(|| local_transform.map(|lt| lt.0))
                 .unwrap_or(Transform::IDENTITY);
             if let Some(distance) = Self::light_icon_hit_distance(
-                camera_eye,
-                camera_up,
-                camera_fov_y,
+                camera.eye,
+                camera.up,
+                camera.fov_y,
                 transform.translation,
-                ray_origin,
-                ray_dir,
+                ray.origin,
+                ray.direction,
             ) {
                 consider(entity, distance);
             }
@@ -1295,12 +1438,12 @@ impl EditorApplication {
                 .or_else(|| local_transform.map(|lt| lt.0))
                 .unwrap_or(Transform::IDENTITY);
             if let Some(distance) = Self::light_icon_hit_distance(
-                camera_eye,
-                camera_up,
-                camera_fov_y,
+                camera.eye,
+                camera.up,
+                camera.fov_y,
                 transform.translation,
-                ray_origin,
-                ray_dir,
+                ray.origin,
+                ray.direction,
             ) {
                 consider(entity, distance);
             }
@@ -1319,12 +1462,12 @@ impl EditorApplication {
                 .or_else(|| local_transform.map(|lt| lt.0))
                 .unwrap_or(Transform::IDENTITY);
             if let Some(distance) = Self::light_icon_hit_distance(
-                camera_eye,
-                camera_up,
-                camera_fov_y,
+                camera.eye,
+                camera.up,
+                camera.fov_y,
                 transform.translation,
-                ray_origin,
-                ray_dir,
+                ray.origin,
+                ray.direction,
             ) {
                 consider(entity, distance);
             }
@@ -1709,10 +1852,12 @@ impl EditorApplication {
         scene: &wgpu_cube::scene::Scene,
     ) -> (Option<EditorEntityId>, Option<EditorEntityId>) {
         let selected = self
-            .selected_entity
+            .selection
+            .selected
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
         let highlighted = self
-            .highlighted_entity
+            .selection
+            .highlighted
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
         (selected, highlighted)
     }
@@ -1750,9 +1895,9 @@ impl EditorApplication {
             .highlighted
             .and_then(|id| Self::entity_by_editor_id(scene, id))
             .or(selected);
-        self.selected_entity = selected;
-        self.highlighted_entity = highlighted;
-        self.selection_override = Some(selected);
+        self.selection.set_selected(selected);
+        self.selection.set_highlighted(highlighted);
+        self.selection.request_override(selected);
     }
 
     fn perform_undo(&mut self, ctx: &mut UpdateContext) {
@@ -1968,6 +2113,12 @@ impl EditorApplication {
     }
 }
 
+impl Default for EditorApplication {
+    fn default() -> Self {
+        EditorApplication::new()
+    }
+}
+
 impl RenderApplication for EditorApplication {
     fn name(&self) -> &str {
         "Engine Editor"
@@ -1996,12 +2147,10 @@ impl RenderApplication for EditorApplication {
         self.ensure_editor_entity_ids(ctx.scene);
         self.apply_pending_script_actions(ctx);
 
-        if self.pending_undo {
-            self.pending_undo = false;
-            self.pending_redo = false;
+        if self.undo_redo.take_undo() {
+            self.undo_redo.clear_redo();
             self.perform_undo(ctx);
-        } else if self.pending_redo {
-            self.pending_redo = false;
+        } else if self.undo_redo.take_redo() {
             self.perform_redo(ctx);
         }
 
@@ -2018,7 +2167,7 @@ impl RenderApplication for EditorApplication {
         let hovered_handle = if let Some(drag) = self.gizmo_drag.as_ref() {
             Some(drag.handle)
         } else if matches!(ctx.runtime, RuntimeMode::Editor) {
-            if let (Some(uv), Some(region)) = (self.scene_pointer_uv, self.scene_viewport.region())
+            if let (Some(uv), Some(region)) = (self.pointer.scene_uv, self.scene_viewport.region())
             {
                 let width = region.width().max(1) as f32;
                 let height = region.height().max(1) as f32;
@@ -2079,7 +2228,7 @@ impl RenderApplication for EditorApplication {
         let scene_viewport = &mut self.scene_viewport;
         let game_viewport = &mut self.game_viewport;
         let scene_hierarchy_window = default_ui.scene_hierarchy_window_mut();
-        if let Some(selection) = self.selection_override.take() {
+        if let Some(selection) = self.selection.take_override() {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
@@ -2099,7 +2248,8 @@ impl RenderApplication for EditorApplication {
                 dock_tree.ui(&mut behavior, ui);
             });
 
-        self.selected_entity = scene_hierarchy_window.selected_entity();
+        self.selection
+            .set_selected(scene_hierarchy_window.selected_entity());
 
         for action in inspector_actions {
             match action {
@@ -2129,7 +2279,7 @@ impl RenderApplication for EditorApplication {
             self.handle_gizmo_shortcuts(ctx);
             self.handle_general_shortcuts(ctx);
         } else {
-            self.pending_pick = None;
+            self.selection.clear_pending_pick();
         }
 
         let script_event = if let Some(editor) = self.script_editor.as_mut() {
@@ -2183,7 +2333,7 @@ impl RenderApplication for EditorApplication {
         } else {
             None
         };
-        self.scene_pointer_uv = pointer_uv;
+        self.pointer.set_scene_uv(pointer_uv);
     }
 
     fn show_default_ui(&self) -> bool {
