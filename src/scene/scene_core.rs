@@ -569,6 +569,7 @@ impl Scene {
             node.instance_mut().update(dt, absolute_time);
         }
 
+        self.propagate_transforms();
         self.update_world_transforms();
 
         let main_scene_index = self.main_scene.index();
@@ -1470,6 +1471,40 @@ mod tests {
             Visible(true),
         ));
 
+        let parent = scene.main_world_mut().spawn((
+            Name::new("Parent"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(3.0, -5.0, 1.5),
+                glam::Quat::from_rotation_x(0.15),
+                glam::Vec3::splat(0.9),
+            )),
+            Visible(true),
+        ));
+        let child = scene.main_world_mut().spawn((
+            Name::new("Child"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(0.5, 1.0, -0.25),
+                glam::Quat::from_rotation_y(-0.35),
+                glam::Vec3::new(1.5, 0.75, 1.25),
+            )),
+            Parent(parent),
+            Visible(true),
+        ));
+        scene
+            .main_world_mut()
+            .insert_one(parent, Children(vec![child]))
+            .unwrap();
+
+        let static_entity = scene.main_world_mut().spawn((
+            Name::new("StaticEntity"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(7.0, -1.0, 4.0),
+                glam::Quat::from_rotation_z(0.25),
+                glam::Vec3::splat(0.75),
+            )),
+            Visible(true),
+        ));
+
         let mut clip = AnimationClip::new("ScaleAnim");
         clip.add_channel(AnimationChannel {
             sampler: AnimationSampler {
@@ -1495,6 +1530,11 @@ mod tests {
             .unwrap()
             .0
             .scale;
+
+        let world = scene.main_world();
+        let initial_parent_transform = world.get::<&TransformComponent>(parent).unwrap().0;
+        let initial_child_transform = world.get::<&TransformComponent>(child).unwrap().0;
+        let initial_static_transform = world.get::<&TransformComponent>(static_entity).unwrap().0;
 
         let snapshot = SceneSnapshot::capture(&scene);
 
@@ -1522,5 +1562,46 @@ mod tests {
             .expect("restored entity not found");
 
         assert!(restored_scale.abs_diff_eq(initial_scale, 1e-6));
+
+        let mut query = world.query::<(&Name, &TransformComponent)>();
+        let mut find_transform = |label: &str| {
+            query
+                .iter()
+                .find(|(_, (name, _))| name.0 == label)
+                .map(|(_, (_, transform))| transform.0)
+                .expect("entity not found")
+        };
+
+        let restored_parent_transform = find_transform("Parent");
+        let restored_child_transform = find_transform("Child");
+        let restored_static_transform = find_transform("StaticEntity");
+
+        assert!(restored_static_transform
+            .translation
+            .abs_diff_eq(initial_static_transform.translation, 1e-6));
+        assert!(restored_static_transform
+            .rotation
+            .abs_diff_eq(initial_static_transform.rotation, 1e-6));
+        assert!(restored_static_transform
+            .scale
+            .abs_diff_eq(initial_static_transform.scale, 1e-6));
+        assert!(restored_parent_transform
+            .translation
+            .abs_diff_eq(initial_parent_transform.translation, 1e-6));
+        assert!(restored_parent_transform
+            .rotation
+            .abs_diff_eq(initial_parent_transform.rotation, 1e-6));
+        assert!(restored_parent_transform
+            .scale
+            .abs_diff_eq(initial_parent_transform.scale, 1e-6));
+        assert!(restored_child_transform
+            .translation
+            .abs_diff_eq(initial_child_transform.translation, 1e-6));
+        assert!(restored_child_transform
+            .rotation
+            .abs_diff_eq(initial_child_transform.rotation, 1e-6));
+        assert!(restored_child_transform
+            .scale
+            .abs_diff_eq(initial_child_transform.scale, 1e-6));
     }
 }
