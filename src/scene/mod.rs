@@ -30,7 +30,7 @@ pub use transform::Transform;
 
 // Re-export all components
 pub use components::{
-    Children, EditorEntityId, GltfMaterial, GltfNode, MaterialComponent, MeshBounds, MeshComponent,
-    Name, OrbitAnimation, Parent, RotateAnimation, SelectedInEditor, TransformComponent, Visible,
-    WorldTransform,
+    CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
+    MaterialComponent, MeshBounds, MeshComponent, Name, OrbitAnimation, Parent, PointLight,
+    RotateAnimation, SelectedInEditor, SpotLight, TransformComponent, Visible, WorldTransform,
 };

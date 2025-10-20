@@ -1,11 +1,15 @@
-use egui::{color_picker::color_edit_button_rgba, color_picker::Alpha, DragValue, Grid};
+use egui::{
+    color_picker::color_edit_button_rgb, color_picker::color_edit_button_rgba, color_picker::Alpha,
+    DragValue, Grid,
+};
 use glam::{EulerRot, Quat, Vec3};
 use std::f32::consts::PI;
+use std::ops::RangeInclusive;
 
 use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
-use wgpu_cube::scene::Transform;
+use wgpu_cube::scene::{CanCastShadow, DirectionalLight, PointLight, SpotLight, Transform};
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
 
@@ -23,6 +27,22 @@ pub enum InspectorAction {
         entity: Entity,
         material: Material,
     },
+    UpdatePointLight {
+        entity: Entity,
+        light: PointLight,
+    },
+    UpdateDirectionalLight {
+        entity: Entity,
+        light: DirectionalLight,
+    },
+    UpdateSpotLight {
+        entity: Entity,
+        light: SpotLight,
+    },
+    SetCanCastShadow {
+        entity: Entity,
+        casts_shadow: bool,
+    },
 }
 
 pub fn show_entity_inspector(
@@ -39,6 +59,8 @@ pub fn show_entity_inspector(
     show_mesh_section(ui, &data.components);
     ui.add_space(6.0);
     show_material_section(ui, data.entity, &data.components, &mut actions);
+    ui.add_space(6.0);
+    show_light_sections(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
     if let Some(action) = show_script_section(ui, data) {
         actions.push(action);
@@ -201,6 +223,160 @@ fn show_material_section(
     });
 }
 
+fn show_light_sections(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    components: &SceneEntityComponentsSummary,
+    actions: &mut Vec<InspectorAction>,
+) {
+    if let Some(light) = components.point_light {
+        show_point_light_section(ui, entity, light, components.can_cast_shadow, actions);
+    }
+
+    if let Some(light) = components.directional_light {
+        ui.add_space(6.0);
+        show_directional_light_section(ui, entity, light, components.can_cast_shadow, actions);
+    }
+
+    if let Some(light) = components.spot_light {
+        ui.add_space(6.0);
+        show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
+    }
+}
+
+fn show_point_light_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    mut light: PointLight,
+    casts_shadow: Option<CanCastShadow>,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.collapsing("Point Light", |ui| {
+        let mut changed = false;
+
+        Grid::new("point_light_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                changed |= light_color_editor(ui, "Color", &mut light.color);
+                changed |= float_drag_value(
+                    ui,
+                    "Intensity",
+                    &mut light.intensity,
+                    0.1,
+                    Some(0.0..=1000.0),
+                );
+                if light.intensity < 0.0 {
+                    light.intensity = 0.0;
+                }
+
+                changed |= float_drag_value(ui, "Range", &mut light.range, 0.1, Some(0.0..=1000.0));
+                if light.range < 0.0 {
+                    light.range = 0.0;
+                }
+
+                shadow_checkbox_row(ui, entity, casts_shadow, actions);
+            });
+
+        if changed {
+            actions.push(InspectorAction::UpdatePointLight { entity, light });
+        }
+    });
+}
+
+fn show_directional_light_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    mut light: DirectionalLight,
+    casts_shadow: Option<CanCastShadow>,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.collapsing("Directional Light", |ui| {
+        let mut changed = false;
+
+        Grid::new("directional_light_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                changed |= light_color_editor(ui, "Color", &mut light.color);
+                changed |= float_drag_value(
+                    ui,
+                    "Intensity",
+                    &mut light.intensity,
+                    0.1,
+                    Some(0.0..=1000.0),
+                );
+                if light.intensity < 0.0 {
+                    light.intensity = 0.0;
+                }
+
+                changed |= float_drag_value(
+                    ui,
+                    "Shadow Size",
+                    &mut light.shadow_size,
+                    0.1,
+                    Some(0.0..=500.0),
+                );
+                if light.shadow_size < 0.0 {
+                    light.shadow_size = 0.0;
+                }
+
+                shadow_checkbox_row(ui, entity, casts_shadow, actions);
+            });
+
+        if changed {
+            actions.push(InspectorAction::UpdateDirectionalLight { entity, light });
+        }
+    });
+}
+
+fn show_spot_light_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    mut light: SpotLight,
+    casts_shadow: Option<CanCastShadow>,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.collapsing("Spot Light", |ui| {
+        let mut changed = false;
+
+        Grid::new("spot_light_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                changed |= light_color_editor(ui, "Color", &mut light.color);
+                changed |= float_drag_value(
+                    ui,
+                    "Intensity",
+                    &mut light.intensity,
+                    0.1,
+                    Some(0.0..=1000.0),
+                );
+                if light.intensity < 0.0 {
+                    light.intensity = 0.0;
+                }
+
+                changed |= float_drag_value(ui, "Range", &mut light.range, 0.1, Some(0.0..=1000.0));
+                if light.range < 0.0 {
+                    light.range = 0.0;
+                }
+
+                changed |= light_angle_editor(ui, "Inner Angle (deg)", &mut light.inner_angle);
+                changed |= light_angle_editor(ui, "Outer Angle (deg)", &mut light.outer_angle);
+
+                if light.outer_angle < light.inner_angle {
+                    light.outer_angle = light.inner_angle;
+                }
+
+                shadow_checkbox_row(ui, entity, casts_shadow, actions);
+            });
+
+        if changed {
+            actions.push(InspectorAction::UpdateSpotLight { entity, light });
+        }
+    });
+}
+
 fn show_script_section(
     ui: &mut egui::Ui,
     data: &SceneEntityInspectorData,
@@ -267,4 +443,62 @@ fn material_float_editor(
     } else {
         false
     }
+}
+
+fn float_drag_value(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    speed: f32,
+    range: Option<RangeInclusive<f32>>,
+) -> bool {
+    ui.label(label);
+    let mut drag = DragValue::new(value).speed(speed);
+    if let Some(range) = range {
+        drag = drag.range(range);
+    }
+    let changed = ui.add(drag).changed();
+    ui.end_row();
+    changed
+}
+
+fn light_color_editor(ui: &mut egui::Ui, label: &str, color: &mut Vec3) -> bool {
+    let mut rgba = egui::Rgba::from_rgb(color.x, color.y, color.z);
+    ui.label(label);
+    let changed = color_edit_button_rgb(ui, &mut rgba).changed();
+    ui.end_row();
+    if changed {
+        *color = Vec3::new(
+            rgba.r().clamp(0.0, 1.0),
+            rgba.g().clamp(0.0, 1.0),
+            rgba.b().clamp(0.0, 1.0),
+        );
+    }
+    changed
+}
+
+fn light_angle_editor(ui: &mut egui::Ui, label: &str, radians: &mut f32) -> bool {
+    let mut degrees = radians.to_degrees();
+    let changed = float_drag_value(ui, label, &mut degrees, 1.0, Some(0.0..=179.0));
+    if changed {
+        *radians = degrees.clamp(0.0, 179.0).to_radians();
+    }
+    changed
+}
+
+fn shadow_checkbox_row(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    flag: Option<CanCastShadow>,
+    actions: &mut Vec<InspectorAction>,
+) {
+    let mut casts_shadow = flag.map(|flag| flag.0).unwrap_or(false);
+    ui.label("Cast Shadows");
+    if ui.checkbox(&mut casts_shadow, "Enabled").changed() {
+        actions.push(InspectorAction::SetCanCastShadow {
+            entity,
+            casts_shadow,
+        });
+    }
+    ui.end_row();
 }
