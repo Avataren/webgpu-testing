@@ -1469,6 +1469,71 @@ mod tests {
     }
 
     #[test]
+    fn autoplayed_animation_restores_rest_pose_after_stop() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::Visible;
+
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(-4.0, 1.0, 2.0),
+                glam::Quat::IDENTITY,
+                glam::Vec3::splat(0.75),
+            )),
+            Visible(true),
+        ));
+
+        let baseline = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        let mut clip = AnimationClip::new("AutoPlay");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(-4.0, 1.0, 2.0),
+                    glam::Vec3::new(5.0, 7.0, -3.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Translation,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        scene.play_animation(clip_index, true);
+
+        scene.update(0.5);
+
+        let animated = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+        assert!(!animated.translation.abs_diff_eq(baseline.translation, 1e-5));
+
+        scene.set_animation_playback(false);
+
+        let restored = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        assert!(restored.translation.abs_diff_eq(baseline.translation, 1e-5));
+        assert!(restored.rotation.abs_diff_eq(baseline.rotation, 1e-5));
+        assert!(restored.scale.abs_diff_eq(baseline.scale, 1e-5));
+    }
+
+    #[test]
     fn snapshot_restores_default_lighting() {
         let mut scene = Scene::new();
         assert!(!scene.has_any_lights());

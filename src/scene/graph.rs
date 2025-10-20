@@ -140,6 +140,8 @@ impl SceneInstance {
             return None;
         }
 
+        self.capture_rest_pose();
+
         let mut state = AnimationState::new(clip_index);
         state.looping = looping;
         let index = self.animation_states.len();
@@ -204,6 +206,10 @@ impl SceneInstance {
     pub(crate) fn push_animation_state(&mut self, state: AnimationState) -> Option<usize> {
         if state.clip_index >= self.animations.len() {
             return None;
+        }
+
+        if state.playing {
+            self.capture_rest_pose();
         }
 
         let index = self.animation_states.len();
