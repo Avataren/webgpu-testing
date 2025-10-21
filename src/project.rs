@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 pub const PROJECT_FILE_NAME: &str = "project.json";
-const CONTENT_DIR: &str = "content";
+pub const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -49,6 +49,26 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
+    /// Creates a manifest with default scene and environment data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
+    ///
+    /// let manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+    /// assert_eq!(manifest.metadata.name, "Untitled Project");
+    /// ```
+    pub fn new_empty(metadata: ProjectMetadata) -> Self {
+        let environment = SerializedEnvironment::from_environment(&Environment::default());
+        Self {
+            version: PROJECT_VERSION,
+            scene: SceneAsset::builder(metadata.name.clone()).build(),
+            metadata,
+            environment,
+        }
+    }
+
     pub fn capture(scene: &Scene, metadata: ProjectMetadata) -> Result<Self, ProjectError> {
         let asset = scene
             .export_main_asset(metadata.name.clone())

@@ -111,6 +111,10 @@ impl RenderApplication for EditorApplication {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
 
+        if let Some(request) = self.project.take_pending_create() {
+            self.handle_project_create(ctx, request);
+        }
+
         if let Some(dir) = self.project.take_pending_load() {
             self.handle_project_load(ctx, dir);
         }
@@ -143,6 +147,12 @@ impl RenderApplication for EditorApplication {
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         self.viewports.scene_viewport.clear();
         self.viewports.game_viewport.clear();
+
+        self.project.show_startup_dialog(ctx);
+        if self.project.is_startup_dialog_visible() {
+            return;
+        }
+
         self.show_menu_bar(ctx);
 
         let active_mode = self.runtime_state.active_mode();

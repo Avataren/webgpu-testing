@@ -12,7 +12,7 @@ use std::{
 
 use log::{error, info, warn};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
-use wgpu_cube::project::{ProjectError, ProjectManifest};
+use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
 use wgpu_cube::scene::{EntityBuilder, Transform};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,7 +20,7 @@ use wgpu_cube::scene::SerializedRuneScriptSource;
 
 use super::core::{EditorApplication, UndoRedoState};
 use crate::history::EditorHistory;
-use crate::project::{BuildPlatform, ProjectBuildRequest};
+use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest};
 
 #[cfg(not(target_arch = "wasm32"))]
 use thiserror::Error;
@@ -40,6 +40,19 @@ enum BuildCommandError {
     Io(#[from] std::io::Error),
     #[error("missing build artifact at {0:?}")]
     MissingArtifact(PathBuf),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Error)]
+enum NewProjectError {
+    #[error("{0:?} already exists and is not a directory")]
+    NotADirectory(PathBuf),
+    #[error("{0:?} already exists and is not empty")]
+    DirectoryNotEmpty(PathBuf),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Project(#[from] ProjectError),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -289,7 +302,67 @@ fn build_web_index(title: &str) -> String {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError> {
+    let dir = &request.directory;
+
+    if dir.exists() {
+        if !dir.is_dir() {
+            return Err(NewProjectError::NotADirectory(dir.clone()));
+        }
+
+        let mut entries = fs::read_dir(dir)?;
+        if let Some(entry) = entries.next() {
+            entry?;
+            return Err(NewProjectError::DirectoryNotEmpty(dir.clone()));
+        }
+    } else {
+        if let Some(parent) = dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::create_dir(dir)?;
+    }
+
+    fs::create_dir_all(dir.join(CONTENT_DIR))?;
+
+    let manifest = ProjectManifest::new_empty(request.metadata.clone());
+    manifest.save_to_dir(dir)?;
+
+    Ok(())
+}
+
 impl EditorApplication {
+    pub(super) fn handle_project_create(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        request: NewProjectRequest,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            let _ = request;
+            warn!("Project creation is not supported when running inside the browser editor");
+            self.project.report_startup_error(
+                "Project creation is not supported in WebAssembly builds of the editor.",
+            );
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = request.directory.clone();
+            match create_new_project(&request) {
+                Ok(()) => {
+                    info!("Created new project at {:?}", dir);
+                    self.handle_project_load(ctx, dir);
+                }
+                Err(err) => {
+                    error!("Failed to create project at {:?}: {err}", dir);
+                    self.project.report_startup_error(err.to_string());
+                }
+            }
+        }
+    }
+
     pub(super) fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
         if self.pending_imports.is_empty() {
             return;

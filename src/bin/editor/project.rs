@@ -12,7 +12,9 @@ pub struct ProjectController {
     pending_save: Option<PathBuf>,
     pending_load: Option<PathBuf>,
     pending_build: Option<ProjectBuildRequest>,
+    pending_create: Option<NewProjectRequest>,
     settings_open: bool,
+    startup_dialog: StartupDialogState,
     build_dialog: BuildDialogState,
 }
 
@@ -24,7 +26,9 @@ impl ProjectController {
             pending_save: None,
             pending_load: None,
             pending_build: None,
+            pending_create: None,
             settings_open: false,
+            startup_dialog: StartupDialogState::new(),
             build_dialog: BuildDialogState::default(),
         }
     }
@@ -43,6 +47,104 @@ impl ProjectController {
 
     pub fn set_current_dir(&mut self, dir: PathBuf) {
         self.current_dir = Some(dir);
+        self.startup_dialog.on_project_loaded();
+    }
+
+    pub fn is_startup_dialog_visible(&self) -> bool {
+        self.startup_dialog.visible
+    }
+
+    pub fn show_startup_dialog(&mut self, ctx: &egui::Context) {
+        if !self.startup_dialog.visible {
+            return;
+        }
+
+        let mut window = egui::Window::new("Select Project")
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]);
+
+        window.show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.vertical(|ui| {
+                ui.heading("Welcome to the Editor");
+                ui.label("Load an existing project or create a new one to get started.");
+                ui.add_space(12.0);
+
+                ui.heading("Load Project");
+
+                #[cfg(not(target_arch = "wasm32"))]
+                if ui.button("Open Project Folder...").clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        self.startup_dialog.clear_error();
+                        self.pending_load = Some(dir);
+                        self.startup_dialog.dismiss();
+                    }
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ui.add_enabled(false, egui::Button::new("Open Project Folder..."));
+                    ui.label("Project loading is unavailable in the WebAssembly editor.");
+                }
+
+                ui.add_space(16.0);
+                ui.heading("Create Project");
+
+                let name_response =
+                    ui.text_edit_singleline(&mut self.startup_dialog.new_project_name);
+                if name_response.changed() {
+                    self.startup_dialog.clear_error();
+                }
+
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Location:");
+                    ui.label(self.startup_dialog.location_display());
+                });
+
+                #[cfg(not(target_arch = "wasm32"))]
+                if ui.button("Choose Folder...").clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                        self.startup_dialog.set_root(dir);
+                    }
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ui.add_enabled(false, egui::Button::new("Choose Folder..."));
+                }
+
+                ui.add_space(8.0);
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    if ui.button("Create Project").clicked() {
+                        self.startup_dialog.clear_error();
+                        match self.startup_dialog.build_creation_request() {
+                            Ok(request) => {
+                                self.pending_create = Some(request);
+                                self.startup_dialog.dismiss();
+                            }
+                            Err(message) => self.startup_dialog.set_error(message),
+                        }
+                    }
+                }
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ui.add_enabled(false, egui::Button::new("Create Project"));
+                    ui.label("Project creation is unavailable in the WebAssembly editor.");
+                }
+
+                if let Some(err) = self.startup_dialog.error_message.as_deref() {
+                    ui.add_space(8.0);
+                    ui.colored_label(egui::Color32::from_rgb(200, 64, 64), err);
+                }
+            });
+        });
     }
 
     pub fn menu_contents(&mut self, ui: &mut egui::Ui) {
@@ -140,8 +242,17 @@ impl ProjectController {
         self.pending_load.take()
     }
 
+    pub fn take_pending_create(&mut self) -> Option<NewProjectRequest> {
+        self.pending_create.take()
+    }
+
     pub fn take_pending_build(&mut self) -> Option<ProjectBuildRequest> {
         self.pending_build.take()
+    }
+
+    pub fn report_startup_error(&mut self, message: impl Into<String>) {
+        self.startup_dialog.visible = true;
+        self.startup_dialog.error_message = Some(message.into());
     }
 
     pub fn show_build_window(&mut self, ctx: &egui::Context) {
@@ -243,6 +354,93 @@ impl ProjectController {
             let keep_open = self.build_dialog.open;
             self.build_dialog.open = open && keep_open;
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct NewProjectRequest {
+    pub directory: PathBuf,
+    pub metadata: ProjectMetadata,
+}
+
+struct StartupDialogState {
+    visible: bool,
+    new_project_name: String,
+    new_project_root: Option<PathBuf>,
+    error_message: Option<String>,
+}
+
+impl StartupDialogState {
+    fn new() -> Self {
+        Self {
+            visible: cfg!(not(target_arch = "wasm32")),
+            new_project_name: "NewProject".to_string(),
+            new_project_root: None,
+            error_message: None,
+        }
+    }
+
+    fn dismiss(&mut self) {
+        self.visible = false;
+    }
+
+    fn on_project_loaded(&mut self) {
+        self.visible = false;
+        self.error_message = None;
+    }
+
+    fn clear_error(&mut self) {
+        self.error_message = None;
+    }
+
+    fn set_error(&mut self, message: String) {
+        self.error_message = Some(message);
+    }
+
+    fn set_root(&mut self, dir: PathBuf) {
+        self.new_project_root = Some(dir);
+        self.clear_error();
+    }
+
+    fn location_display(&self) -> String {
+        match &self.new_project_root {
+            Some(root) => {
+                let trimmed = self.new_project_name.trim();
+                if trimmed.is_empty() {
+                    root.display().to_string()
+                } else {
+                    root.join(trimmed).display().to_string()
+                }
+            }
+            None => "(choose folder)".to_string(),
+        }
+    }
+
+    fn build_creation_request(&self) -> Result<NewProjectRequest, String> {
+        let name = self.new_project_name.trim();
+        if name.is_empty() {
+            return Err("Enter a project folder name.".to_string());
+        }
+
+        if name.chars().any(|ch| ch == '/' || ch == '\\') {
+            return Err("Project folder name cannot contain path separators.".to_string());
+        }
+
+        let root = self
+            .new_project_root
+            .as_ref()
+            .ok_or_else(|| "Choose a folder for the project.".to_string())?;
+
+        let directory = root.join(name);
+        let metadata = ProjectMetadata {
+            name: name.to_string(),
+            description: String::new(),
+        };
+
+        Ok(NewProjectRequest {
+            directory,
+            metadata,
+        })
     }
 }
 
