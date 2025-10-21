@@ -1,16 +1,20 @@
 use glam::Vec3;
 use log::error;
 use wgpu_cube::app::StartupContext;
-use wgpu_cube::renderer::{cube_mesh, Material};
+use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
-use wgpu_cube::scene::EntityBuilder;
+use wgpu_cube::scene::{EntityBuilder, Scene};
 
 use super::core::EditorApplication;
 
 impl EditorApplication {
-    pub(super) fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
+    pub(super) fn ensure_editor_scene_basics(
+        &mut self,
+        scene: &mut Scene,
+        renderer: &mut Renderer,
+    ) {
         let has_editor_cube = {
-            ctx.scene
+            scene
                 .main_world()
                 .query::<&Name>()
                 .iter()
@@ -21,13 +25,13 @@ impl EditorApplication {
             let startup_script = Self::load_script("editor_startup.rn");
 
             if let Some(script) = startup_script {
-                let world = ctx.scene.main_world_mut();
+                let world = scene.main_world_mut();
                 EntityBuilder::new(world)
                     .with_name("Editor Startup Script")
                     .with_script(script)
                     .spawn();
 
-                ctx.scene.update(0.0);
+                scene.update(0.0);
             } else {
                 error!("Failed to load editor startup script");
                 return;
@@ -35,7 +39,7 @@ impl EditorApplication {
         }
 
         let cube_entity = {
-            let world = ctx.scene.main_world();
+            let world = scene.main_world();
             world
                 .query::<&Name>()
                 .iter()
@@ -45,21 +49,20 @@ impl EditorApplication {
 
         if let Some(entity) = cube_entity {
             let missing_mesh = {
-                let world = ctx.scene.main_world();
+                let world = scene.main_world();
                 world.get::<&MeshComponent>(entity).is_err()
             };
             let missing_bounds = {
-                let world = ctx.scene.main_world();
+                let world = scene.main_world();
                 world.get::<&MeshBounds>(entity).is_err()
             };
             let mut cached_bounds = None;
             if missing_mesh {
                 let (vertices, indices) = cube_mesh();
                 cached_bounds = MeshBounds::from_vertices(&vertices);
-                let mesh = ctx.renderer.create_mesh(&vertices, &indices);
-                let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-                if let Err(err) = ctx
-                    .scene
+                let mesh = renderer.create_mesh(&vertices, &indices);
+                let mesh_handle = scene.assets.meshes.insert(mesh);
+                if let Err(err) = scene
                     .main_world_mut()
                     .insert_one(entity, MeshComponent(mesh_handle))
                 {
@@ -69,18 +72,17 @@ impl EditorApplication {
             if missing_bounds {
                 let bounds = cached_bounds
                     .unwrap_or_else(|| MeshBounds::new(Vec3::splat(-0.5), Vec3::splat(0.5)));
-                if let Err(err) = ctx.scene.main_world_mut().insert_one(entity, bounds) {
+                if let Err(err) = scene.main_world_mut().insert_one(entity, bounds) {
                     error!("failed to attach bounds to Editor Cube: {err}");
                 }
             }
 
             let missing_material = {
-                let world = ctx.scene.main_world();
+                let world = scene.main_world();
                 world.get::<&MaterialComponent>(entity).is_err()
             };
             if missing_material {
-                if let Err(err) = ctx
-                    .scene
+                if let Err(err) = scene
                     .main_world_mut()
                     .insert_one(entity, MaterialComponent(Material::pbr()))
                 {
@@ -89,23 +91,27 @@ impl EditorApplication {
             }
 
             let missing_visibility = {
-                let world = ctx.scene.main_world();
+                let world = scene.main_world();
                 world.get::<&Visible>(entity).is_err()
             };
             if missing_visibility {
-                if let Err(err) = ctx.scene.main_world_mut().insert_one(entity, Visible(true)) {
+                if let Err(err) = scene.main_world_mut().insert_one(entity, Visible(true)) {
                     error!("failed to mark Editor Cube visible: {err}");
                 }
             }
         }
 
-        if !ctx.scene.has_any_lights() {
-            ctx.scene.add_default_lighting();
+        if !scene.has_any_lights() {
+            scene.add_default_lighting();
         }
 
-        let camera = ctx.scene.camera_mut();
+        let camera = scene.camera_mut();
         camera.eye = Vec3::new(6.0, 4.0, 6.0);
         camera.target = Vec3::new(0.0, 0.5, 0.0);
         camera.up = Vec3::Y;
+    }
+
+    pub(super) fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
+        self.ensure_editor_scene_basics(ctx.scene, ctx.renderer);
     }
 }

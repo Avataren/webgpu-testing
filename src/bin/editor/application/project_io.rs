@@ -423,6 +423,7 @@ impl EditorApplication {
                 let metadata = manifest.metadata.clone();
                 match manifest.instantiate_into(ctx.scene, ctx.renderer, &dir) {
                     Ok(textures_changed) => {
+                        self.ensure_editor_scene_basics(ctx.scene, ctx.renderer);
                         if textures_changed {
                             ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
                         }
