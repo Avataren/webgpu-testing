@@ -52,17 +52,17 @@ pub enum TransformGizmoHandle {
 
 #[derive(Clone)]
 pub(crate) struct SceneSnapshot {
-    assets: Assets,
-    environment: Environment,
-    camera: Camera,
-    time: f64,
-    tree: SceneTreeAsset,
-    main_scene_path: Vec<usize>,
-    gizmo_resources: Option<gizmos::GizmoResources>,
-    transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
-    gizmo_mode: TransformGizmoMode,
-    gizmo_space: TransformGizmoSpace,
-    gizmo_hover: Option<TransformGizmoHandle>,
+    pub(crate) assets: Assets,
+    pub(crate) environment: Environment,
+    pub(crate) camera: Camera,
+    pub(crate) time: f64,
+    pub(crate) tree: SceneTreeAsset,
+    pub(crate) main_scene_path: Vec<usize>,
+    pub(crate) gizmo_resources: Option<gizmos::GizmoResources>,
+    pub(crate) transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
+    pub(crate) gizmo_mode: TransformGizmoMode,
+    pub(crate) gizmo_space: TransformGizmoSpace,
+    pub(crate) gizmo_hover: Option<TransformGizmoHandle>,
 }
 
 impl SceneSnapshot {
@@ -100,7 +100,6 @@ impl SceneSnapshot {
         scene.set_environment(self.environment);
         scene.set_camera(self.camera);
         scene.set_time(self.time);
-
         let tree_root = scene.instantiate_tree_asset(&self.tree, None);
 
         let main_scene = if self.main_scene_path.is_empty() {
@@ -140,6 +139,49 @@ impl SceneSnapshot {
 
         scene
     }
+
+    pub fn restore_without_assets(&self, scene: &mut Scene) {
+        // Clear current entities
+        let entities_to_remove: Vec<_> = scene
+            .main_world()
+            .iter()
+            .map(|entity_ref| entity_ref.entity())
+            .collect();
+
+        for entity in entities_to_remove {
+            let _ = scene.main_world_mut().despawn(entity);
+        }
+
+        // Restore the tree (uses current asset storage)
+        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
+
+        // Restore main scene
+        let main_scene = if self.main_scene_path.is_empty() {
+            Some(tree_root)
+        } else {
+            scene
+                .node_from_path(&self.main_scene_path)
+                .or(Some(tree_root))
+        };
+
+        if let Some(main) = main_scene {
+            scene.set_main_scene(main);
+        }
+
+        // Restore other state (but NOT assets)
+        scene.set_camera(self.camera);
+        scene.set_environment(self.environment.clone());
+        scene.set_time(self.time);
+
+        // Restore gizmo state
+        scene.gizmo_resources = self.gizmo_resources;
+        scene.transform_gizmo_resources = self.transform_gizmo_resources;
+        scene.transform_gizmo_mode = self.gizmo_mode;
+        scene.transform_gizmo_space = self.gizmo_space;
+        scene.transform_gizmo_hover = self.gizmo_hover;
+
+        scene.propagate_transforms();
+    }
 }
 
 #[derive(Clone)]
@@ -160,6 +202,11 @@ impl SceneStateSnapshot {
 
     pub fn restore(&self, scene: &mut Scene) {
         *scene = self.snapshot.clone().into_scene();
+    }
+
+    // ADD this wrapper method
+    pub fn restore_without_assets(&self, scene: &mut Scene) {
+        self.snapshot.restore_without_assets(scene);
     }
 }
 pub struct Scene {
@@ -425,8 +472,14 @@ impl Scene {
         }
 
         if !playing {
-            self.propagate_transforms();
-            self.update_world_transforms();
+            // Ensure transforms are fully propagated at both entity and node levels
+            self.propagate_transforms(); // Propagates Parent/Children in ECS world
+            self.update_world_transforms(); // Updates scene node transforms
+
+            // Force one more propagation to catch any missed updates
+            for node in self.nodes_iter_mut() {
+                node.instance_mut().propagate_transforms();
+            }
         }
     }
 
@@ -809,6 +862,18 @@ impl Scene {
         if textures_updated {
             renderer.update_texture_bind_group(&self.assets);
         }
+
+        // CRITICAL: After importing, propagate transforms and capture rest pose
+        self.propagate_transforms();
+
+        // If we're currently in editor mode, make sure the rest pose is captured
+        // This ensures that when Play is pressed, we have the correct initial state
+        for node in self.nodes_iter_mut() {
+            let instance = node.instance_mut();
+            // Ensure rest pose is captured for newly imported entities
+            instance.begin_playback();
+            instance.restore_rest_pose();
+        }
     }
 
     fn attach_imported_animations(
@@ -940,11 +1005,12 @@ impl Scene {
     }
 
     pub fn export_main_asset(&self, name: impl Into<String>) -> Option<SceneAsset> {
-        self.export_node_asset_internal(self.main_scene, Some(name.into()))
+        self.export_node_asset_internal(self.main_scene, Some(name.into()), true)
+        // REMAP FOR SAVE
     }
 
     pub fn export_node_asset(&self, node: SceneNodeId) -> Option<SceneAsset> {
-        self.export_node_asset_internal(node, None)
+        self.export_node_asset_internal(node, None, true) // REMAP FOR SAVE
     }
 
     pub fn export_tree_asset(&self, name: impl Into<String>) -> SceneTreeAsset {
@@ -965,7 +1031,7 @@ impl Scene {
         build_tree_asset_node(
             node_ref.name(),
             *node_ref.local_transform(),
-            self.export_node_asset_internal(node, None),
+            self.export_node_asset_internal(node, None, false), // DON'T REMAP FOR SNAPSHOTS
             children,
         )
     }
@@ -990,7 +1056,7 @@ impl Scene {
             return None;
         }
 
-        let asset = self.export_node_asset_internal(node, None);
+        let asset = self.export_node_asset_internal(node, None, true);
         let (name, transform, children_ids) = {
             let node_ref = self.node(node);
             (
@@ -1022,6 +1088,7 @@ impl Scene {
         &self,
         node: SceneNodeId,
         name_override: Option<String>,
+        remap_handles: bool, // NEW PARAMETER
     ) -> Option<SceneAsset> {
         if !self.is_valid_node(node) {
             return None;
@@ -1046,26 +1113,32 @@ impl Scene {
         let mut mesh_map: HashMap<usize, usize> = HashMap::new();
         let mut mesh_data: Vec<MeshData> = Vec::new();
 
-        for entity in &mut entities {
-            if let Some(handle_index) = entity.mesh_handle {
-                let mapped = if let Some(&existing) = mesh_map.get(&handle_index) {
-                    Some(existing)
-                } else if let Some(mesh) = self.assets.meshes.get(Handle::new(handle_index)) {
-                    let next_index = mesh_data.len();
-                    mesh_data.push(mesh.data().clone());
-                    mesh_map.insert(handle_index, next_index);
-                    Some(next_index)
-                } else {
-                    log::warn!(
-                        "Skipping missing mesh handle {} while exporting asset '{}'",
-                        handle_index,
-                        name
-                    );
-                    None
-                };
+        if remap_handles {
+            // ONLY REMAP IF REQUESTED
+            for entity in &mut entities {
+                if let Some(handle_index) = entity.mesh_handle {
+                    let mapped = if let Some(&existing) = mesh_map.get(&handle_index) {
+                        Some(existing)
+                    } else if let Some(mesh) = self.assets.meshes.get(Handle::new(handle_index)) {
+                        let next_index = mesh_data.len();
+                        mesh_data.push(mesh.data().clone());
+                        mesh_map.insert(handle_index, next_index);
+                        Some(next_index)
+                    } else {
+                        log::warn!(
+                            "Skipping missing mesh handle {} while exporting asset '{}'",
+                            handle_index,
+                            name
+                        );
+                        None
+                    };
 
-                entity.mesh_handle = mapped;
+                    entity.mesh_handle = mapped;
+                }
             }
+        } else { // FOR SNAPSHOTS: KEEP ORIGINAL HANDLES, NO MESH DATA
+             // Don't modify mesh handles, don't extract mesh data
+             // The full asset pool is preserved separately in the snapshot
         }
 
         Some(SceneAsset {

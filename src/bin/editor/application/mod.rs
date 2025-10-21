@@ -4,6 +4,7 @@ mod history;
 mod input;
 mod picking;
 mod project_io;
+mod runtime_mode;
 mod scripts;
 mod selection;
 mod setup;
@@ -52,6 +53,13 @@ impl RenderApplication for EditorApplication {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
+        // DETECT MODE CHANGES FIRST - saves state BEFORE any animation changes
+        let current_mode = ctx.runtime;
+        if current_mode != self.last_runtime_mode {
+            self.detect_mode_transition(ctx, current_mode);
+        }
+
+        // Regular editor updates
         if matches!(ctx.runtime, RuntimeMode::Editor) {
             self.camera_controller.update_camera(ctx);
         }
@@ -98,6 +106,9 @@ impl RenderApplication for EditorApplication {
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        // PROCESS MODE TRANSITIONS FIRST
+        self.process_pending_mode_transition(ctx);
+
         if let Some(dir) = self.project.take_pending_load() {
             self.handle_project_load(ctx, dir);
         }
@@ -131,13 +142,8 @@ impl RenderApplication for EditorApplication {
         self.game_viewport.clear();
         self.show_menu_bar(ctx);
 
-        let runtime_mode = self.runtime_state.active_mode();
-        if runtime_mode != self.last_runtime_mode {
-            self.last_runtime_mode = runtime_mode;
-            self.ensure_viewport_tab_for_mode(runtime_mode);
-        }
-
-        let is_playing = matches!(runtime_mode, RuntimeMode::Playing);
+        let active_mode = self.runtime_state.active_mode();
+        let is_playing = matches!(active_mode, RuntimeMode::Playing);
         let show_fullscreen_game =
             is_playing && matches!(self.game_view_display, GameViewDisplayMode::Fullscreen);
 

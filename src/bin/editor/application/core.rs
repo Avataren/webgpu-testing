@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
 use hecs::Entity;
+use std::collections::HashMap;
 use wgpu_cube::app::{RuntimeMode, RuntimeStateHandle};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
@@ -17,6 +18,24 @@ use crate::postprocess::ViewportGrid;
 use crate::project;
 use crate::script_editor::ScriptEditorState;
 use crate::windows::WindowToggles;
+
+pub(super) struct RuntimeModeTransition {
+    pub(super) from: RuntimeMode,
+    pub(super) to: RuntimeMode,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct EditorCameraState {
+    pub(super) eye: Vec3,
+    pub(super) target: Vec3,
+    pub(super) up: Vec3,
+    pub(super) fov_y_radians: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct EditorTransformState {
+    pub(super) transforms: HashMap<Entity, Transform>,
+}
 
 pub struct EditorApplication {
     pub(super) dock_tree: Tree<EditorPane>,
@@ -42,6 +61,9 @@ pub struct EditorApplication {
     pub(super) project: project::ProjectController,
     pub(super) script_editor: Option<ScriptEditorState>,
     pub(super) pending_script_actions: Vec<PendingScriptAction>,
+    pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
+    pub(super) editor_camera_state: Option<EditorCameraState>,
+    pub(super) editor_transform_state: Option<EditorTransformState>,
 }
 
 #[derive(Default)]
@@ -132,6 +154,9 @@ impl EditorApplicationBuilder {
             project: self.project.unwrap_or_else(project::ProjectController::new),
             script_editor: None,
             pending_script_actions: Vec::new(),
+            pending_mode_transition: None,
+            editor_camera_state: None,
+            editor_transform_state: None,
         }
     }
 }

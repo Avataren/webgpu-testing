@@ -71,9 +71,12 @@ impl EditorApplication {
                 ui.separator();
 
                 let (status_text, status_color) = match (active_play, requesting_play) {
-                    (true, true) => ("Play Mode", egui::Color32::from_rgb(120, 200, 120)),
+                    (true, true) => ("▶ Playing", egui::Color32::from_rgb(120, 200, 120)),
                     (true, false) => ("Stopping...", egui::Color32::from_rgb(220, 190, 0)),
-                    (false, true) => ("Starting...", egui::Color32::from_rgb(220, 190, 0)),
+                    (false, true) => (
+                        "Starting Play Mode...",
+                        egui::Color32::from_rgb(220, 190, 0),
+                    ),
                     (false, false) => ("Editor Mode", egui::Color32::from_gray(180)),
                 };
 
