@@ -5,7 +5,7 @@ use std::path::Path;
 use super::components::*;
 use crate::asset::Handle;
 use crate::asset::Mesh;
-use crate::renderer::{Material, Renderer, Texture, Vertex};
+use crate::renderer::{material::MaterialFlags, Material, Renderer, Texture, Vertex};
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
@@ -413,13 +413,58 @@ impl SceneLoader {
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Scene".to_string());
 
-        let asset = temp_scene
+        let mut asset = temp_scene
             .export_main_asset(default_name)
             .ok_or_else(|| "Scene export produced no asset".to_string())?;
 
+        let mut used_texture_indices = std::collections::BTreeSet::new();
+        for entity in &asset.entities {
+            if let Some(material) = &entity.material {
+                let flags = MaterialFlags::from_bits(material.flags);
+                if flags.contains(MaterialFlags::USE_BASE_COLOR_TEXTURE) {
+                    used_texture_indices.insert(material.base_color_texture);
+                }
+                if flags.contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE) {
+                    used_texture_indices.insert(material.metallic_roughness_texture);
+                }
+                if flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
+                    used_texture_indices.insert(material.normal_texture);
+                }
+                if flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE) {
+                    used_texture_indices.insert(material.emissive_texture);
+                }
+                if flags.contains(MaterialFlags::USE_OCCLUSION_TEXTURE) {
+                    used_texture_indices.insert(material.occlusion_texture);
+                }
+            }
+        }
+
+        let mut texture_index_remap = std::collections::HashMap::new();
+        for (local_index, original_index) in used_texture_indices.iter().enumerate() {
+            texture_index_remap.insert(*original_index, local_index as u32);
+        }
+
+        if !texture_index_remap.is_empty() {
+            asset.apply_resource_mappings(0, &texture_index_remap);
+        }
+
         let assets = std::mem::take(&mut temp_scene.assets);
         let meshes = assets.meshes.into_inner();
-        let textures = assets.textures.into_inner();
+        let mut textures: Vec<(u32, Texture)> = assets
+            .textures
+            .into_inner()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, texture)| {
+                let index_u32 = index as u32;
+                texture_index_remap
+                    .get(&index_u32)
+                    .copied()
+                    .map(|local_index| (local_index, texture))
+            })
+            .collect();
+
+        textures.sort_by_key(|(local_index, _)| *local_index);
 
         Ok(SceneAssetBundle::new(
             asset,

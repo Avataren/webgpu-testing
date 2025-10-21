@@ -16,6 +16,7 @@ use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -338,8 +339,12 @@ impl SceneAsset {
         instance
     }
 
-    pub(crate) fn apply_resource_offsets(&mut self, mesh_offset: usize, texture_offset: u32) {
-        if mesh_offset == 0 && texture_offset == 0 {
+    pub(crate) fn apply_resource_mappings(
+        &mut self,
+        mesh_offset: usize,
+        texture_map: &std::collections::HashMap<u32, u32>,
+    ) {
+        if mesh_offset == 0 && texture_map.is_empty() {
             return;
         }
 
@@ -349,7 +354,7 @@ impl SceneAsset {
             }
 
             if let Some(material) = &mut entity.material {
-                material.apply_texture_offset(texture_offset);
+                material.remap_textures(texture_map);
             }
         }
     }
@@ -358,11 +363,11 @@ impl SceneAsset {
 #[derive(Debug, Default)]
 pub struct SceneAssetResources {
     meshes: Vec<Mesh>,
-    textures: Vec<Texture>,
+    textures: Vec<(u32, Texture)>,
 }
 
 impl SceneAssetResources {
-    pub fn new(meshes: Vec<Mesh>, textures: Vec<Texture>) -> Self {
+    pub fn new(meshes: Vec<Mesh>, textures: Vec<(u32, Texture)>) -> Self {
         Self { meshes, textures }
     }
 
@@ -382,7 +387,7 @@ impl SceneAssetResources {
         std::mem::take(&mut self.meshes)
     }
 
-    fn take_textures(&mut self) -> Vec<Texture> {
+    fn take_textures(&mut self) -> Vec<(u32, Texture)> {
         std::mem::take(&mut self.textures)
     }
 }
@@ -390,7 +395,7 @@ impl SceneAssetResources {
 #[derive(Debug, Default)]
 pub struct SceneAssetResourcesBuilder {
     meshes: Vec<Mesh>,
-    textures: Vec<Texture>,
+    textures: Vec<(u32, Texture)>,
 }
 
 impl SceneAssetResourcesBuilder {
@@ -404,7 +409,8 @@ impl SceneAssetResourcesBuilder {
     }
 
     pub fn with_texture(mut self, texture: Texture) -> Self {
-        self.textures.push(texture);
+        let index = self.textures.len();
+        self.textures.push((index as u32, texture));
         self
     }
 
@@ -413,7 +419,8 @@ impl SceneAssetResourcesBuilder {
     }
 
     pub fn add_texture(&mut self, texture: Texture) {
-        self.textures.push(texture);
+        let index = self.textures.len();
+        self.textures.push((index as u32, texture));
     }
 
     pub fn build(self) -> SceneAssetResources {
@@ -458,26 +465,23 @@ impl SceneAssetBundle {
             let _ = assets.meshes.insert(mesh);
         }
 
-        let texture_offset_usize = assets.textures.len();
-        let texture_offset = match u32::try_from(texture_offset_usize) {
-            Ok(offset) => offset,
-            Err(_) => {
-                log::warn!(
-                    "Texture count {} exceeds u32::MAX; new textures may reference invalid indices",
-                    texture_offset_usize
-                );
-                u32::MAX
-            }
-        };
-
         let mut textures_added = false;
-        for texture in self.resources.take_textures() {
-            let _ = assets.textures.insert(texture);
+        let mut texture_map = std::collections::HashMap::new();
+        for (original_index, texture) in self.resources.take_textures() {
+            let handle = assets.textures.insert(texture);
+            if let Ok(new_index) = u32::try_from(handle.index()) {
+                texture_map.insert(original_index, new_index);
+            } else {
+                log::warn!(
+                    "Texture index {} exceeds u32::MAX; skipping texture remap",
+                    handle.index()
+                );
+            }
             textures_added = true;
         }
 
         self.asset
-            .apply_resource_offsets(mesh_offset, texture_offset);
+            .apply_resource_mappings(mesh_offset, &texture_map);
 
         self.resources_registered = true;
         textures_added
@@ -942,12 +946,22 @@ impl From<Material> for SerializedMaterial {
 }
 
 impl SerializedMaterial {
-    fn apply_texture_offset(&mut self, offset: u32) {
-        self.base_color_texture = self.base_color_texture.wrapping_add(offset);
-        self.metallic_roughness_texture = self.metallic_roughness_texture.wrapping_add(offset);
-        self.normal_texture = self.normal_texture.wrapping_add(offset);
-        self.emissive_texture = self.emissive_texture.wrapping_add(offset);
-        self.occlusion_texture = self.occlusion_texture.wrapping_add(offset);
+    fn remap_textures(&mut self, mapping: &std::collections::HashMap<u32, u32>) {
+        if let Some(&mapped) = mapping.get(&self.base_color_texture) {
+            self.base_color_texture = mapped;
+        }
+        if let Some(&mapped) = mapping.get(&self.metallic_roughness_texture) {
+            self.metallic_roughness_texture = mapped;
+        }
+        if let Some(&mapped) = mapping.get(&self.normal_texture) {
+            self.normal_texture = mapped;
+        }
+        if let Some(&mapped) = mapping.get(&self.emissive_texture) {
+            self.emissive_texture = mapped;
+        }
+        if let Some(&mapped) = mapping.get(&self.occlusion_texture) {
+            self.occlusion_texture = mapped;
+        }
     }
 }
 
@@ -1197,6 +1211,21 @@ mod tests {
     use super::*;
     use glam::Vec3;
 
+    fn make_material(flags: MaterialFlags, base_texture: u32) -> SerializedMaterial {
+        SerializedMaterial {
+            base_color: [255, 255, 255, 255],
+            flags: flags.bits(),
+            base_color_texture: base_texture,
+            metallic_roughness_texture: 0,
+            normal_texture: 0,
+            emissive_texture: 0,
+            occlusion_texture: 0,
+            metallic_factor: 0,
+            roughness_factor: 0,
+            emissive_strength: 0,
+        }
+    }
+
     #[test]
     fn serialized_transform_roundtrip() {
         let transform = Transform::from_trs(
@@ -1213,5 +1242,54 @@ mod tests {
             .abs_diff_eq(transform.translation, 1e-5));
         assert!(restored.rotation.abs_diff_eq(transform.rotation, 1e-5));
         assert!(restored.scale.abs_diff_eq(transform.scale, 1e-5));
+    }
+
+    #[test]
+    fn texture_indices_can_be_rebased_multiple_times() {
+        let mut asset = SceneAsset {
+            name: "Test".into(),
+            root_transform: SerializedTransform::identity(),
+            entities: vec![SceneAssetEntity {
+                name: Some("Entity".into()),
+                transform: SerializedTransform::identity(),
+                visible: true,
+                mesh_handle: None,
+                mesh_bounds: None,
+                material: Some(make_material(MaterialFlags::USE_BASE_COLOR_TEXTURE, 10)),
+                parent: None,
+                children: Vec::new(),
+                gltf_node: None,
+                gltf_material: None,
+                script: None,
+                directional_light: None,
+                point_light: None,
+                spot_light: None,
+                casts_shadow: None,
+                editor_id: None,
+            }],
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+        };
+
+        let mut to_local = std::collections::HashMap::new();
+        to_local.insert(10, 0);
+        asset.apply_resource_mappings(0, &to_local);
+
+        let material = asset.entities[0]
+            .material
+            .as_ref()
+            .expect("material present");
+        assert_eq!(material.base_color_texture, 0);
+
+        let mut to_global = std::collections::HashMap::new();
+        to_global.insert(0, 42);
+        asset.apply_resource_mappings(0, &to_global);
+
+        let material = asset.entities[0]
+            .material
+            .as_ref()
+            .expect("material present");
+        assert_eq!(material.base_color_texture, 42);
     }
 }
