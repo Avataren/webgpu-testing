@@ -9,6 +9,7 @@ use wgpu_cube::scene::{
     Transform, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
 
+use crate::asset_browser::AssetBrowserState;
 use crate::camera::EditorCameraController;
 use crate::history::EditorHistory;
 use crate::inspector::InspectorAction;
@@ -39,6 +40,7 @@ pub struct EditorApplication {
     pub(super) next_editor_entity_id: u128,
     pub(super) undo_redo: UndoRedoState,
     pub(super) project: project::ProjectController,
+    pub(super) asset_browser: AssetBrowserState,
     pub(super) script_editor: Option<ScriptEditorState>,
     pub(super) pending_script_actions: Vec<PendingScriptAction>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
@@ -130,6 +132,7 @@ pub struct EditorApplicationBuilder {
     viewports: Option<ViewportSystem>,
     selection: Option<SelectionSystem>,
     transform_tool: Option<TransformToolSystem>,
+    asset_browser: Option<AssetBrowserState>,
 }
 
 impl EditorApplicationBuilder {
@@ -177,6 +180,11 @@ impl EditorApplicationBuilder {
         self
     }
 
+    pub fn with_asset_browser(mut self, asset_browser: AssetBrowserState) -> Self {
+        self.asset_browser = Some(asset_browser);
+        self
+    }
+
     pub fn build(self) -> EditorApplication {
         let viewports = self.viewports.unwrap_or_default();
 
@@ -196,6 +204,7 @@ impl EditorApplicationBuilder {
             next_editor_entity_id: 1,
             undo_redo: UndoRedoState::default(),
             project: self.project.unwrap_or_else(project::ProjectController::new),
+            asset_browser: self.asset_browser.unwrap_or_default(),
             script_editor: None,
             pending_script_actions: Vec::new(),
             pending_mode_transition: None,
@@ -215,6 +224,7 @@ impl EditorApplication {
             .with_history(EditorHistory::new())
             .with_selection(SelectionSystem::default())
             .with_transform_tool(TransformToolSystem::default())
+            .with_asset_browser(AssetBrowserState::default())
             .build()
     }
 

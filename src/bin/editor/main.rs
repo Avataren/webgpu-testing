@@ -1,6 +1,7 @@
 #![cfg(feature = "egui")]
 
 mod application;
+mod asset_browser;
 mod camera;
 mod history;
 mod inspector;

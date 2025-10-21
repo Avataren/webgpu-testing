@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use wgpu_cube::project::ProjectMetadata;
+use wgpu_cube::project::{ProjectMetadata, CONTENT_DIR};
 
 #[cfg(not(target_arch = "wasm32"))]
 const BUILD_PLATFORM_COMBO_ID: &str = "project_build_platform";
@@ -50,6 +50,18 @@ impl ProjectController {
         self.startup_dialog.on_project_loaded();
     }
 
+    pub fn content_root(&self) -> Option<PathBuf> {
+        let dir = self.current_dir()?;
+        let path = dir.join(CONTENT_DIR);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if !path.exists() {
+            return None;
+        }
+
+        Some(path)
+    }
+
     pub fn is_startup_dialog_visible(&self) -> bool {
         self.startup_dialog.visible
     }
@@ -59,7 +71,7 @@ impl ProjectController {
             return;
         }
 
-        let mut window = egui::Window::new("Select Project")
+        let window = egui::Window::new("Select Project")
             .collapsible(false)
             .resizable(false)
             .title_bar(false)

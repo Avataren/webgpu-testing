@@ -169,6 +169,7 @@ impl RenderApplication for EditorApplication {
             self.project.show_build_window(ctx);
         }
 
+        let content_root = self.project.content_root();
         let dock_tree = &mut self.dock_tree;
         let scene_viewport = &mut self.viewports.scene_viewport;
         let game_viewport = &mut self.viewports.game_viewport;
@@ -192,6 +193,8 @@ impl RenderApplication for EditorApplication {
                         log_window,
                         is_playing,
                         inspector_actions: &mut inspector_actions,
+                        asset_browser: &mut self.asset_browser,
+                        content_root,
                     };
                     dock_tree.ui(&mut behavior, ui);
                 }

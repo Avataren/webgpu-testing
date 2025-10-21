@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::{LogWindow, SceneHierarchyWindow};
 
+use crate::asset_browser::AssetBrowserState;
 use crate::inspector::{show_entity_inspector, InspectorAction};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,8 @@ pub struct EditorBehavior<'a> {
     pub log_window: &'a mut LogWindow,
     pub is_playing: bool,
     pub inspector_actions: &'a mut Vec<InspectorAction>,
+    pub asset_browser: &'a mut AssetBrowserState,
+    pub content_root: Option<PathBuf>,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -97,8 +102,7 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                 }
             }
             EditorPane::AssetBrowser => {
-                ui.heading("Asset Browser");
-                ui.label("Browse project assets (coming soon).");
+                self.asset_browser.ui(ui, self.content_root.as_deref());
             }
             EditorPane::Log => {
                 ui.heading("Log");
