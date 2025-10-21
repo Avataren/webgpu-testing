@@ -28,27 +28,29 @@ impl EditorApplication {
             return;
         }
 
-        if let Some(selected) = self.selection.selected {
+        if let Some(selected) = self.selection.selected() {
             if removed_entities.contains(&selected) {
                 self.selection.set_selected(None);
             }
         }
 
-        if let Some(highlighted) = self.selection.highlighted {
+        if let Some(highlighted) = self.selection.highlighted() {
             if removed_entities.contains(&highlighted) {
                 self.selection.set_highlighted(None);
             }
         }
 
         if self
+            .transform_tool
             .gizmo_drag
             .as_ref()
             .is_some_and(|drag| removed_entities.contains(&drag.entity))
         {
-            self.gizmo_drag = None;
+            self.transform_tool.gizmo_drag = None;
         }
 
-        self.selection.request_override(self.selection.selected);
+        let current_selected = self.selection.selected();
+        self.selection.request_override(current_selected);
         ctx.scene.propagate_transforms();
         self.record_scene_change(ctx.scene);
     }
@@ -96,8 +98,10 @@ impl EditorApplication {
     }
 
     pub(super) fn sync_selection_component(&mut self, ctx: &mut UpdateContext) {
-        if self.selection.selected == self.selection.highlighted {
-            if let Some(entity) = self.selection.selected {
+        let current_selected = self.selection.selected();
+        let current_highlighted = self.selection.highlighted();
+        if current_selected == current_highlighted {
+            if let Some(entity) = current_selected {
                 let missing_marker = ctx
                     .scene
                     .main_world()
@@ -126,11 +130,11 @@ impl EditorApplication {
         {
             let world = ctx.scene.main_world_mut();
 
-            if let Some(previous) = self.selection.highlighted.take() {
+            if let Some(previous) = self.selection.take_highlighted() {
                 let _ = world.remove_one::<SelectedInEditor>(previous);
             }
 
-            if let Some(entity) = self.selection.selected {
+            if let Some(entity) = self.selection.selected() {
                 match world.insert_one(entity, SelectedInEditor) {
                     Ok(()) => new_highlight = Some(entity),
                     Err(err) => {
@@ -147,8 +151,8 @@ impl EditorApplication {
 
     pub(super) fn clear_selection(&mut self) {
         self.selection.clear_pending_pick();
-        self.pointer.reset_press();
-        self.gizmo_drag = None;
+        self.selection.pointer.reset_press();
+        self.transform_tool.gizmo_drag = None;
         self.selection.request_override(None);
         self.selection.set_selected(None);
     }

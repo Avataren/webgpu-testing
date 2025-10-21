@@ -11,30 +11,31 @@ use super::core::{EditorApplication, GizmoDragKind, GizmoDragState};
 impl EditorApplication {
     pub(super) fn update_gizmo_drag(&mut self, ctx: &mut UpdateContext) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
-            self.gizmo_drag = None;
-            self.pointer.press_uv = None;
+            self.transform_tool.gizmo_drag = None;
+            self.selection.pointer.press_uv = None;
             return;
         }
 
-        if let Some(uv) = self.pointer.press_uv.take() {
+        if let Some(uv) = self.selection.pointer.press_uv.take() {
             if self.try_begin_gizmo_drag(ctx, uv) {
-                self.pointer.selection_press_uv = None;
+                self.selection.pointer.selection_press_uv = None;
             }
         }
 
         let mut transforms_dirty = false;
         let mut end_drag = false;
 
-        if let Some(drag) = self.gizmo_drag.as_mut() {
-            if !self.pointer.primary_down {
+        if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
+            if !self.selection.pointer.primary_down {
                 end_drag = true;
-            } else if let Some(region) = self.scene_viewport.region() {
+            } else if let Some(region) = self.viewports.scene_viewport.region() {
                 let width = region.width().max(1) as f32;
                 let height = region.height().max(1) as f32;
                 if width > 0.0 && height > 0.0 {
                     let aspect = width / height;
                     let camera = ctx.scene.camera();
                     let uv = self
+                        .selection
                         .pointer
                         .scene_uv
                         .filter(|uv| uv.is_finite())
@@ -62,7 +63,7 @@ impl EditorApplication {
 
         let mut record_history = false;
         if end_drag {
-            if let Some(drag) = self.gizmo_drag.take() {
+            if let Some(drag) = self.transform_tool.gizmo_drag.take() {
                 record_history = drag.any_change;
             }
         }
@@ -73,11 +74,11 @@ impl EditorApplication {
     }
 
     pub(super) fn try_begin_gizmo_drag(&mut self, ctx: &mut UpdateContext, press_uv: Vec2) -> bool {
-        let Some(entity) = self.selection.selected else {
+        let Some(entity) = self.selection.selected() else {
             return false;
         };
 
-        let Some(region) = self.scene_viewport.region() else {
+        let Some(region) = self.viewports.scene_viewport.region() else {
             return false;
         };
         let width = region.width().max(1) as f32;
@@ -127,7 +128,7 @@ impl EditorApplication {
         camera_up = Self::safe_normalize(camera_up, Vec3::Y);
 
         let origin_point = initial_world.translation;
-        let gizmo_rotation = match self.transform_gizmo_space {
+        let gizmo_rotation = match self.transform_tool.gizmo_space {
             TransformGizmoSpace::Local => initial_world.rotation,
             TransformGizmoSpace::World => Quat::IDENTITY,
         };
@@ -289,7 +290,7 @@ impl EditorApplication {
             }
         };
 
-        self.gizmo_drag = Some(GizmoDragState {
+        self.transform_tool.gizmo_drag = Some(GizmoDragState {
             entity,
             handle,
             parent_world,

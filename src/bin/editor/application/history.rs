@@ -64,11 +64,11 @@ impl EditorApplication {
     ) -> (Option<EditorEntityId>, Option<EditorEntityId>) {
         let selected = self
             .selection
-            .selected
+            .selected()
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
         let highlighted = self
             .selection
-            .highlighted
+            .highlighted()
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
         (selected, highlighted)
     }
@@ -108,7 +108,7 @@ impl EditorApplication {
     }
 
     pub(super) fn perform_undo(&mut self, ctx: &mut UpdateContext) {
-        self.gizmo_drag = None;
+        self.transform_tool.gizmo_drag = None;
         self.pending_entity_deletions.clear();
         if let Some(selection) = self.history.undo(ctx.scene) {
             self.refresh_next_editor_entity_id(ctx.scene);
@@ -120,7 +120,7 @@ impl EditorApplication {
     }
 
     pub(super) fn perform_redo(&mut self, ctx: &mut UpdateContext) {
-        self.gizmo_drag = None;
+        self.transform_tool.gizmo_drag = None;
         self.pending_entity_deletions.clear();
         if let Some(selection) = self.history.redo(ctx.scene) {
             self.refresh_next_editor_entity_id(ctx.scene);

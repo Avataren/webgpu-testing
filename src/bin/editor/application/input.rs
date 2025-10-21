@@ -8,21 +8,21 @@ impl EditorApplication {
     pub(super) fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
         if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
             self.selection.clear_pending_pick();
-            self.pointer.reset_press();
+            self.selection.pointer.reset_press();
             return;
         }
 
         if self.camera_controller.is_looking() {
-            self.pointer.reset_press();
+            self.selection.pointer.reset_press();
             return;
         }
 
-        let Some(rect) = self.scene_viewport.rect() else {
-            self.pointer.reset_press();
+        let Some(rect) = self.viewports.scene_viewport.rect() else {
+            self.selection.pointer.reset_press();
             return;
         };
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
-            self.pointer.reset_press();
+            self.selection.pointer.reset_press();
             return;
         }
 
@@ -56,19 +56,21 @@ impl EditorApplication {
             }
         });
 
-        self.pointer.primary_down = pointer_down;
+        self.selection.pointer.primary_down = pointer_down;
 
         if let Some(uv) = pressed_uv {
-            self.pointer.press_uv = Some(uv);
-            self.pointer.selection_press_uv = Some(uv);
+            self.selection.pointer.press_uv = Some(uv);
+            self.selection.pointer.selection_press_uv = Some(uv);
         }
 
         if let Some(uv) = released_uv {
-            if self.gizmo_drag.is_none() && self.pointer.selection_press_uv.take().is_some() {
-                self.selection.pending_pick = Some(ViewportPick { uv });
+            if self.transform_tool.gizmo_drag.is_none()
+                && self.selection.pointer.selection_press_uv.take().is_some()
+            {
+                self.selection.set_pending_pick(ViewportPick { uv });
             }
-        } else if !self.pointer.primary_down {
-            self.pointer.selection_press_uv = None;
+        } else if !self.selection.pointer.primary_down {
+            self.selection.pointer.selection_press_uv = None;
         }
     }
 
@@ -78,16 +80,16 @@ impl EditorApplication {
         }
         ctx.input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::W) {
-                self.transform_gizmo_mode = TransformGizmoMode::Translate;
+                self.transform_tool.gizmo_mode = TransformGizmoMode::Translate;
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::E) {
-                self.transform_gizmo_mode = TransformGizmoMode::Rotate;
+                self.transform_tool.gizmo_mode = TransformGizmoMode::Rotate;
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::R) {
-                self.transform_gizmo_mode = TransformGizmoMode::Scale;
+                self.transform_tool.gizmo_mode = TransformGizmoMode::Scale;
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
-                if let Some(entity) = self.selection.selected {
+                if let Some(entity) = self.selection.selected() {
                     self.pending_entity_deletions.push(entity);
-                    self.gizmo_drag = None;
+                    self.transform_tool.gizmo_drag = None;
                 }
             }
         });
