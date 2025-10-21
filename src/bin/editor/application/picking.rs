@@ -19,11 +19,11 @@ impl EditorApplication {
             return;
         };
 
-        let Some(request) = self.selection.pending_pick.take() else {
+        let Some(request) = self.selection.take_pending_pick() else {
             return;
         };
 
-        let Some(region) = self.scene_viewport.region() else {
+        let Some(region) = self.viewports.scene_viewport.region() else {
             self.selection.set_selected(None);
             self.selection.request_override(None);
             self.update_history_selection(ctx.scene);

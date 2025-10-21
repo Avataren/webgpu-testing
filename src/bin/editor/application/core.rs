@@ -25,22 +25,16 @@ pub(super) struct RuntimeModeTransition {
 
 pub struct EditorApplication {
     pub(super) dock_tree: Tree<EditorPane>,
-    pub(super) scene_viewport: ViewportState,
-    pub(super) game_viewport: ViewportState,
-    pub(super) game_view_display: GameViewDisplayMode,
+    pub(super) viewports: ViewportSystem,
     pub(super) camera_controller: EditorCameraController,
-    pub(super) grid_postprocess: Option<ViewportGrid>,
     pub(super) pending_imports: Vec<PathBuf>,
     pub(super) pending_entity_deletions: Vec<Entity>,
     pub(super) pending_inspector_actions: Vec<InspectorAction>,
     pub(super) windows: WindowToggles,
-    pub(super) selection: SelectionState,
-    pub(super) pointer: PointerState,
+    pub(super) selection: SelectionSystem,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
-    pub(super) transform_gizmo_mode: TransformGizmoMode,
-    pub(super) transform_gizmo_space: TransformGizmoSpace,
-    pub(super) gizmo_drag: Option<GizmoDragState>,
+    pub(super) transform_tool: TransformToolSystem,
     pub(super) history: EditorHistory,
     pub(super) next_editor_entity_id: u128,
     pub(super) undo_redo: UndoRedoState,
@@ -52,16 +46,90 @@ pub struct EditorApplication {
 }
 
 #[derive(Default)]
+pub struct ViewportSystem {
+    pub(super) scene_viewport: ViewportState,
+    pub(super) game_viewport: ViewportState,
+    pub(super) game_view_display: GameViewDisplayMode,
+    pub(super) grid_postprocess: Option<ViewportGrid>,
+}
+
+#[derive(Default)]
+pub struct SelectionSystem {
+    state: SelectionState,
+    pub(super) pointer: PointerState,
+    pending_pick: Option<ViewportPick>,
+}
+
+impl SelectionSystem {
+    pub(super) fn selected(&self) -> Option<Entity> {
+        self.state.selected
+    }
+
+    pub(super) fn set_selected(&mut self, entity: Option<Entity>) {
+        self.state.set_selected(entity);
+    }
+
+    pub(super) fn highlighted(&self) -> Option<Entity> {
+        self.state.highlighted
+    }
+
+    pub(super) fn set_highlighted(&mut self, entity: Option<Entity>) {
+        self.state.set_highlighted(entity);
+    }
+
+    pub(super) fn take_highlighted(&mut self) -> Option<Entity> {
+        let current = self.state.highlighted;
+        self.state.highlighted = None;
+        current
+    }
+
+    pub(super) fn request_override(&mut self, entity: Option<Entity>) {
+        self.state.request_override(entity);
+    }
+
+    pub(super) fn take_override(&mut self) -> Option<Option<Entity>> {
+        self.state.take_override()
+    }
+
+    pub(super) fn clear_pending_pick(&mut self) {
+        self.pending_pick = None;
+    }
+
+    pub(super) fn set_pending_pick(&mut self, pick: ViewportPick) {
+        self.pending_pick = Some(pick);
+    }
+
+    pub(super) fn take_pending_pick(&mut self) -> Option<ViewportPick> {
+        self.pending_pick.take()
+    }
+}
+
+pub struct TransformToolSystem {
+    pub(super) gizmo_mode: TransformGizmoMode,
+    pub(super) gizmo_space: TransformGizmoSpace,
+    pub(super) gizmo_drag: Option<GizmoDragState>,
+}
+
+impl Default for TransformToolSystem {
+    fn default() -> Self {
+        Self {
+            gizmo_mode: TransformGizmoMode::Translate,
+            gizmo_space: TransformGizmoSpace::Local,
+            gizmo_drag: None,
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct EditorApplicationBuilder {
     dock_tree: Option<Tree<EditorPane>>,
-    scene_viewport: Option<ViewportState>,
-    game_viewport: Option<ViewportState>,
-    game_view_display: Option<GameViewDisplayMode>,
     camera_controller: Option<EditorCameraController>,
-    grid_postprocess: Option<Option<ViewportGrid>>,
     windows: Option<WindowToggles>,
     project: Option<project::ProjectController>,
     history: Option<EditorHistory>,
+    viewports: Option<ViewportSystem>,
+    selection: Option<SelectionSystem>,
+    transform_tool: Option<TransformToolSystem>,
 }
 
 impl EditorApplicationBuilder {
@@ -74,28 +142,8 @@ impl EditorApplicationBuilder {
         self
     }
 
-    pub fn with_scene_viewport(mut self, viewport: ViewportState) -> Self {
-        self.scene_viewport = Some(viewport);
-        self
-    }
-
-    pub fn with_game_viewport(mut self, viewport: ViewportState) -> Self {
-        self.game_viewport = Some(viewport);
-        self
-    }
-
-    pub fn with_game_view_display(mut self, display: GameViewDisplayMode) -> Self {
-        self.game_view_display = Some(display);
-        self
-    }
-
     pub fn with_camera_controller(mut self, controller: EditorCameraController) -> Self {
         self.camera_controller = Some(controller);
-        self
-    }
-
-    pub fn with_grid_postprocess(mut self, grid: Option<ViewportGrid>) -> Self {
-        self.grid_postprocess = Some(grid);
         self
     }
 
@@ -114,25 +162,36 @@ impl EditorApplicationBuilder {
         self
     }
 
+    pub fn with_viewports(mut self, viewports: ViewportSystem) -> Self {
+        self.viewports = Some(viewports);
+        self
+    }
+
+    pub fn with_selection(mut self, selection: SelectionSystem) -> Self {
+        self.selection = Some(selection);
+        self
+    }
+
+    pub fn with_transform_tool(mut self, transform_tool: TransformToolSystem) -> Self {
+        self.transform_tool = Some(transform_tool);
+        self
+    }
+
     pub fn build(self) -> EditorApplication {
+        let viewports = self.viewports.unwrap_or_default();
+
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
-            scene_viewport: self.scene_viewport.unwrap_or_default(),
-            game_viewport: self.game_viewport.unwrap_or_default(),
-            game_view_display: self.game_view_display.unwrap_or_default(),
+            viewports,
             camera_controller: self.camera_controller.unwrap_or_default(),
-            grid_postprocess: self.grid_postprocess.unwrap_or_default(),
             pending_imports: Vec::new(),
             pending_entity_deletions: Vec::new(),
             pending_inspector_actions: Vec::new(),
             windows: self.windows.unwrap_or_else(WindowToggles::new),
-            selection: SelectionState::default(),
-            pointer: PointerState::default(),
+            selection: self.selection.unwrap_or_default(),
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
-            transform_gizmo_mode: TransformGizmoMode::Translate,
-            transform_gizmo_space: TransformGizmoSpace::Local,
-            gizmo_drag: None,
+            transform_tool: self.transform_tool.unwrap_or_default(),
             history: self.history.unwrap_or_else(EditorHistory::new),
             next_editor_entity_id: 1,
             undo_redo: UndoRedoState::default(),
@@ -149,14 +208,13 @@ impl EditorApplication {
     pub fn new() -> Self {
         Self::builder()
             .with_dock_tree(create_editor_layout())
-            .with_scene_viewport(ViewportState::default())
-            .with_game_viewport(ViewportState::default())
-            .with_game_view_display(GameViewDisplayMode::default())
+            .with_viewports(ViewportSystem::default())
             .with_camera_controller(EditorCameraController::default())
-            .with_grid_postprocess(None)
             .with_windows(WindowToggles::new())
             .with_project(project::ProjectController::new())
             .with_history(EditorHistory::new())
+            .with_selection(SelectionSystem::default())
+            .with_transform_tool(TransformToolSystem::default())
             .build()
     }
 
@@ -191,8 +249,8 @@ impl EditorApplication {
 
     pub(super) fn render_region_for_mode(&self, mode: RuntimeMode) -> Option<RenderRegion> {
         match mode {
-            RuntimeMode::Editor => self.scene_viewport.region(),
-            RuntimeMode::Playing => self.game_viewport.region(),
+            RuntimeMode::Editor => self.viewports.scene_viewport.region(),
+            RuntimeMode::Playing => self.viewports.game_viewport.region(),
         }
     }
 }
@@ -268,7 +326,6 @@ pub(super) enum GizmoDragKind {
 pub(super) struct SelectionState {
     pub(super) selected: Option<Entity>,
     pub(super) highlighted: Option<Entity>,
-    pub(super) pending_pick: Option<ViewportPick>,
     pub(super) override_request: Option<Option<Entity>>,
 }
 
@@ -287,10 +344,6 @@ impl SelectionState {
 
     pub(super) fn take_override(&mut self) -> Option<Option<Entity>> {
         self.override_request.take()
-    }
-
-    pub(super) fn clear_pending_pick(&mut self) {
-        self.pending_pick = None;
     }
 }
 

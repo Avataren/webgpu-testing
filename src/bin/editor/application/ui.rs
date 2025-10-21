@@ -85,12 +85,12 @@ impl EditorApplication {
                 ui.separator();
                 ui.label("Space:");
                 ui.selectable_value(
-                    &mut self.transform_gizmo_space,
+                    &mut self.transform_tool.gizmo_space,
                     TransformGizmoSpace::Local,
                     "Local",
                 );
                 ui.selectable_value(
-                    &mut self.transform_gizmo_space,
+                    &mut self.transform_tool.gizmo_space,
                     TransformGizmoSpace::World,
                     "World",
                 );
@@ -98,12 +98,12 @@ impl EditorApplication {
                 ui.separator();
                 ui.label("Game View:");
                 ui.selectable_value(
-                    &mut self.game_view_display,
+                    &mut self.viewports.game_view_display,
                     GameViewDisplayMode::Viewport,
                     "Viewport",
                 );
                 ui.selectable_value(
-                    &mut self.game_view_display,
+                    &mut self.viewports.game_view_display,
                     GameViewDisplayMode::Fullscreen,
                     "Fullscreen",
                 );

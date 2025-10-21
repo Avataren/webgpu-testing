@@ -36,7 +36,7 @@ impl EditorApplication {
                 to: new_mode,
             });
 
-            self.gizmo_drag = None;
+            self.transform_tool.gizmo_drag = None;
             self.selection.clear_pending_pick();
         }
 
