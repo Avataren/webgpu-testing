@@ -62,8 +62,7 @@ pub struct EditorApplication {
     pub(super) script_editor: Option<ScriptEditorState>,
     pub(super) pending_script_actions: Vec<PendingScriptAction>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
-    pub(super) editor_camera_state: Option<EditorCameraState>,
-    pub(super) editor_transform_state: Option<EditorTransformState>,
+    pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
 }
 
 #[derive(Default)]
@@ -155,8 +154,7 @@ impl EditorApplicationBuilder {
             script_editor: None,
             pending_script_actions: Vec::new(),
             pending_mode_transition: None,
-            editor_camera_state: None,
-            editor_transform_state: None,
+            editor_scene_snapshot: None,
         }
     }
 }
