@@ -137,6 +137,7 @@ impl SceneSnapshot {
         scene.transform_gizmo_mode = self.gizmo_mode;
         scene.transform_gizmo_space = self.gizmo_space;
         scene.transform_gizmo_hover = self.gizmo_hover;
+        scene.playback_snapshot = None;
 
         scene
     }
@@ -178,6 +179,7 @@ pub struct Scene {
     transform_gizmo_mode: TransformGizmoMode,
     transform_gizmo_space: TransformGizmoSpace,
     transform_gizmo_hover: Option<TransformGizmoHandle>,
+    playback_snapshot: Option<SceneSnapshot>,
 }
 
 impl Scene {
@@ -203,6 +205,7 @@ impl Scene {
             transform_gizmo_mode: TransformGizmoMode::Translate,
             transform_gizmo_space: TransformGizmoSpace::Local,
             transform_gizmo_hover: None,
+            playback_snapshot: None,
         }
     }
 
@@ -406,14 +409,45 @@ impl Scene {
     }
 
     pub fn set_animation_playback(&mut self, playing: bool) {
+        if playing {
+            self.ensure_playback_snapshot();
+        } else if let Some(snapshot) = self.playback_snapshot.take() {
+            *self = snapshot.into_scene();
+
+            for node in self.nodes_iter_mut() {
+                let instance = node.instance_mut();
+                for state in instance.animation_states_mut() {
+                    state.playing = false;
+                    state.time = 0.0;
+                }
+            }
+
+            self.propagate_transforms();
+            self.update_world_transforms();
+            return;
+        }
+
         for node in self.nodes_iter_mut() {
-            let states = node.instance_mut().animation_states_mut();
+            let instance = node.instance_mut();
+
+            if playing {
+                instance.begin_playback();
+            } else {
+                instance.restore_rest_pose();
+            }
+
+            let states = instance.animation_states_mut();
             for state in states {
                 state.playing = playing;
                 if !playing {
                     state.time = 0.0;
                 }
             }
+        }
+
+        if !playing {
+            self.propagate_transforms();
+            self.update_world_transforms();
         }
     }
 
@@ -485,9 +519,22 @@ impl Scene {
         clip_index: usize,
         looping: bool,
     ) -> Option<usize> {
-        self.node_mut(node)
+        let result = self
+            .node_mut(node)
             .instance_mut()
-            .play_animation(clip_index, looping)
+            .play_animation(clip_index, looping);
+
+        if result.is_some() {
+            self.ensure_playback_snapshot();
+        }
+
+        result
+    }
+
+    fn ensure_playback_snapshot(&mut self) {
+        if self.playback_snapshot.is_none() {
+            self.playback_snapshot = Some(SceneSnapshot::capture(self));
+        }
     }
 
     fn main_instance(&self) -> &SceneInstance {
@@ -1390,6 +1437,137 @@ mod tests {
     }
 
     #[test]
+    fn stopping_playback_restores_rest_pose_without_snapshot() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::Visible;
+
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(1.0, 2.0, 3.0),
+                glam::Quat::IDENTITY,
+                glam::Vec3::splat(1.5),
+            )),
+            Visible(true),
+        ));
+
+        let mut clip = AnimationClip::new("Translate");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(1.0, 2.0, 3.0),
+                    glam::Vec3::new(10.0, 20.0, 30.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Translation,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        scene.play_animation(clip_index, true);
+
+        scene.set_animation_playback(false);
+
+        let initial_transform = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        scene.set_animation_playback(true);
+        scene.update(0.5);
+
+        scene.set_animation_playback(false);
+        let restored_transform = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        assert!(restored_transform
+            .translation
+            .abs_diff_eq(initial_transform.translation, 1e-5));
+        assert!(restored_transform
+            .rotation
+            .abs_diff_eq(initial_transform.rotation, 1e-5));
+        assert!(restored_transform
+            .scale
+            .abs_diff_eq(initial_transform.scale, 1e-5));
+    }
+
+    #[test]
+    fn autoplayed_animation_restores_rest_pose_after_stop() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::Visible;
+
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(-4.0, 1.0, 2.0),
+                glam::Quat::IDENTITY,
+                glam::Vec3::splat(0.75),
+            )),
+            Visible(true),
+        ));
+
+        let baseline = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        let mut clip = AnimationClip::new("AutoPlay");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(-4.0, 1.0, 2.0),
+                    glam::Vec3::new(5.0, 7.0, -3.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Translation,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        scene.play_animation(clip_index, true);
+
+        scene.update(0.5);
+
+        let animated = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+        assert!(!animated.translation.abs_diff_eq(baseline.translation, 1e-5));
+
+        scene.set_animation_playback(false);
+
+        let restored = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0;
+
+        assert!(restored.translation.abs_diff_eq(baseline.translation, 1e-5));
+        assert!(restored.rotation.abs_diff_eq(baseline.rotation, 1e-5));
+        assert!(restored.scale.abs_diff_eq(baseline.scale, 1e-5));
+    }
+
+    #[test]
     fn snapshot_restores_default_lighting() {
         let mut scene = Scene::new();
         assert!(!scene.has_any_lights());
@@ -1522,5 +1700,241 @@ mod tests {
             .expect("restored entity not found");
 
         assert!(restored_scale.abs_diff_eq(initial_scale, 1e-6));
+    }
+
+    #[test]
+    fn snapshot_restores_hierarchical_transforms_after_playback() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::{Children, Name, Parent, Visible};
+
+        let mut scene = Scene::new();
+        let world = scene.main_world_mut();
+
+        let parent = world.spawn((
+            Name::new("Parent"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(5.0, -3.0, 2.0),
+                glam::Quat::from_rotation_y(0.5),
+                glam::Vec3::new(1.5, 2.0, 0.75),
+            )),
+            Visible(true),
+        ));
+
+        let child_a = world.spawn((
+            Name::new("ChildA"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(-2.0, 1.0, 0.5),
+                glam::Quat::from_rotation_x(-0.25),
+                glam::Vec3::new(0.5, 0.75, 1.25),
+            )),
+            Parent(parent),
+            Visible(true),
+        ));
+
+        let child_b = world.spawn((
+            Name::new("ChildB"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(1.0, -2.5, 3.0),
+                glam::Quat::from_rotation_z(0.8),
+                glam::Vec3::new(0.9, 1.1, 0.6),
+            )),
+            Parent(parent),
+            Visible(true),
+        ));
+
+        let grandchild = world.spawn((
+            Name::new("Grandchild"),
+            TransformComponent(Transform::from_trs(
+                glam::Vec3::new(0.25, 0.5, -0.75),
+                glam::Quat::from_rotation_x(0.35),
+                glam::Vec3::new(1.25, 0.8, 0.95),
+            )),
+            Parent(child_a),
+            Visible(true),
+        ));
+
+        world
+            .insert_one(parent, Children(vec![child_a, child_b]))
+            .unwrap();
+        world
+            .insert_one(child_a, Children(vec![grandchild]))
+            .unwrap();
+
+        let mut clip = AnimationClip::new("HierarchyAnim");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(5.0, -3.0, 2.0),
+                    glam::Vec3::new(10.0, -1.0, -4.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity: parent,
+                property: TransformProperty::Translation,
+            },
+        });
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Quat(vec![
+                    glam::Quat::from_rotation_y(0.5),
+                    glam::Quat::from_rotation_y(1.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity: parent,
+                property: TransformProperty::Rotation,
+            },
+        });
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(0.5, 0.75, 1.25),
+                    glam::Vec3::splat(1.5),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity: child_a,
+                property: TransformProperty::Scale,
+            },
+        });
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(1.0, -2.5, 3.0),
+                    glam::Vec3::new(-1.0, -3.0, 4.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity: child_b,
+                property: TransformProperty::Translation,
+            },
+        });
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Quat(vec![
+                    glam::Quat::from_rotation_x(0.35),
+                    glam::Quat::from_rotation_x(-0.8),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity: grandchild,
+                property: TransformProperty::Rotation,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        let _ = scene.play_animation(clip_index, true);
+
+        scene.set_animation_playback(false);
+
+        let mut initial_transforms: std::collections::HashMap<String, Transform> =
+            std::collections::HashMap::new();
+        {
+            let world_ref = scene.main_world();
+            for (_entity, (name, transform)) in
+                world_ref.query::<(&Name, &TransformComponent)>().iter()
+            {
+                initial_transforms.insert(name.0.clone(), transform.0);
+            }
+        }
+
+        let snapshot = SceneSnapshot::capture(&scene);
+
+        scene.set_animation_playback(true);
+        scene.update(0.5);
+
+        let mut restored = snapshot.into_scene();
+        restored.set_animation_playback(false);
+        restored.update(0.0);
+
+        let world = restored.main_world();
+        for (_entity, (name, transform)) in world.query::<(&Name, &TransformComponent)>().iter() {
+            let expected = initial_transforms
+                .get(&name.0)
+                .expect("initial transform missing for entity");
+            assert!(transform
+                .0
+                .translation
+                .abs_diff_eq(expected.translation, 1e-5));
+            assert!(transform.0.rotation.abs_diff_eq(expected.rotation, 1e-5));
+            assert!(transform.0.scale.abs_diff_eq(expected.scale, 1e-5));
+        }
+    }
+
+    #[test]
+    fn stopping_preview_restores_rest_pose() {
+        use crate::scene::animation::{
+            AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput,
+            AnimationSampler, AnimationTarget, TransformProperty,
+        };
+        use crate::scene::components::{Name, Visible};
+
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((
+            Name::new("PreviewEntity"),
+            TransformComponent(Transform::from_translation(glam::Vec3::new(0.0, 1.0, 0.0))),
+            Visible(true),
+        ));
+
+        let mut clip = AnimationClip::new("Translate");
+        clip.add_channel(AnimationChannel {
+            sampler: AnimationSampler {
+                times: vec![0.0, 1.0],
+                output: AnimationOutput::Vec3(vec![
+                    glam::Vec3::new(0.0, 1.0, 0.0),
+                    glam::Vec3::new(5.0, 10.0, -3.0),
+                ]),
+                interpolation: AnimationInterpolation::Linear,
+            },
+            target: AnimationTarget::Transform {
+                entity,
+                property: TransformProperty::Translation,
+            },
+        });
+
+        let clip_index = scene.add_animation_clip(clip);
+        scene.play_animation(clip_index, true);
+
+        let initial_translation = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0
+            .translation;
+
+        scene.set_animation_playback(true);
+        scene.update(0.5);
+
+        let animated_translation = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0
+            .translation;
+        assert_ne!(animated_translation, initial_translation);
+
+        scene.set_animation_playback(false);
+        scene.update(0.0);
+
+        let restored_translation = scene
+            .main_world()
+            .get::<&TransformComponent>(entity)
+            .unwrap()
+            .0
+            .translation;
+        assert!(restored_translation.abs_diff_eq(initial_translation, 1e-5));
     }
 }
