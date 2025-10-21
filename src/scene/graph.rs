@@ -1,9 +1,7 @@
 use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, transforms};
-use crate::scene::components::TransformComponent;
 use crate::scene::transform::Transform;
 use hecs::World;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SceneNodeId(u32);
@@ -102,7 +100,6 @@ pub(crate) struct SceneInstance {
     world: World,
     animations: Vec<AnimationClip>,
     animation_states: Vec<AnimationState>,
-    rest_pose: Option<HashMap<hecs::Entity, Transform>>,
 }
 
 impl SceneInstance {
@@ -111,7 +108,6 @@ impl SceneInstance {
             world: World::new(),
             animations: Vec::new(),
             animation_states: Vec::new(),
-            rest_pose: None,
         }
     }
 
@@ -139,8 +135,6 @@ impl SceneInstance {
         if clip_index >= self.animations.len() {
             return None;
         }
-
-        self.capture_rest_pose();
 
         let mut state = AnimationState::new(clip_index);
         state.looping = looping;
@@ -177,47 +171,9 @@ impl SceneInstance {
         )
     }
 
-    pub(crate) fn begin_playback(&mut self) {
-        self.rest_pose = None;
-        self.capture_rest_pose();
-    }
-
-    pub(crate) fn capture_rest_pose(&mut self) {
-        if let Some(rest) = self.rest_pose.as_mut() {
-            for (entity, transform) in self.world.query::<&TransformComponent>().iter() {
-                rest.entry(entity).or_insert(transform.0);
-            }
-            return;
-        }
-
-        let mut rest = HashMap::new();
-        for (entity, transform) in self.world.query::<&TransformComponent>().iter() {
-            rest.insert(entity, transform.0);
-        }
-        self.rest_pose = Some(rest);
-    }
-
-    pub(crate) fn restore_rest_pose(&mut self) {
-        let Some(rest) = self.rest_pose.take() else {
-            return;
-        };
-
-        for (entity, transform) in rest {
-            if let Ok(mut component) = self.world.get::<&mut TransformComponent>(entity) {
-                component.0 = transform;
-            }
-        }
-
-        self.propagate_transforms();
-    }
-
     pub(crate) fn push_animation_state(&mut self, state: AnimationState) -> Option<usize> {
         if state.clip_index >= self.animations.len() {
             return None;
-        }
-
-        if state.playing {
-            self.capture_rest_pose();
         }
 
         let index = self.animation_states.len();
@@ -235,112 +191,5 @@ impl SceneInstance {
 
     pub(crate) fn into_world(self) -> World {
         self.world
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::scene::components::TransformComponent;
-
-    #[test]
-    fn capture_rest_pose_extends_to_new_entities() {
-        let mut instance = SceneInstance::new();
-
-        let entity_a =
-            instance
-                .world_mut()
-                .spawn((TransformComponent(Transform::from_translation(
-                    glam::Vec3::new(1.0, 0.0, 0.0),
-                )),));
-
-        instance.capture_rest_pose();
-
-        let entity_b =
-            instance
-                .world_mut()
-                .spawn((TransformComponent(Transform::from_translation(
-                    glam::Vec3::new(-2.0, 0.0, 0.0),
-                )),));
-
-        instance.capture_rest_pose();
-
-        {
-            let mut transform_a = instance
-                .world_mut()
-                .get::<&mut TransformComponent>(entity_a)
-                .unwrap();
-            transform_a.0.translation = glam::Vec3::new(5.0, 5.0, 5.0);
-        }
-
-        {
-            let mut transform_b = instance
-                .world_mut()
-                .get::<&mut TransformComponent>(entity_b)
-                .unwrap();
-            transform_b.0.translation = glam::Vec3::new(-8.0, 1.0, 3.0);
-        }
-
-        instance.restore_rest_pose();
-
-        let restored_a = instance
-            .world()
-            .get::<&TransformComponent>(entity_a)
-            .unwrap()
-            .0;
-        let restored_b = instance
-            .world()
-            .get::<&TransformComponent>(entity_b)
-            .unwrap()
-            .0;
-
-        assert!(restored_a
-            .translation
-            .abs_diff_eq(glam::Vec3::new(1.0, 0.0, 0.0), 1e-5));
-        assert!(restored_b
-            .translation
-            .abs_diff_eq(glam::Vec3::new(-2.0, 0.0, 0.0), 1e-5));
-    }
-
-    #[test]
-    fn begin_playback_refreshes_existing_rest_pose() {
-        let mut instance = SceneInstance::new();
-        let entity = instance
-            .world_mut()
-            .spawn((TransformComponent(Transform::from_translation(
-                glam::Vec3::new(1.0, 2.0, 3.0),
-            )),));
-
-        instance.capture_rest_pose();
-
-        {
-            let mut transform = instance
-                .world_mut()
-                .get::<&mut TransformComponent>(entity)
-                .unwrap();
-            transform.0.translation = glam::Vec3::new(-4.0, 5.0, -6.0);
-        }
-
-        instance.begin_playback();
-
-        {
-            let mut transform = instance
-                .world_mut()
-                .get::<&mut TransformComponent>(entity)
-                .unwrap();
-            transform.0.translation = glam::Vec3::new(42.0, 0.0, 0.0);
-        }
-
-        instance.restore_rest_pose();
-
-        let restored = instance
-            .world()
-            .get::<&TransformComponent>(entity)
-            .unwrap()
-            .0;
-
-        assert!(restored
-            .translation
-            .abs_diff_eq(glam::Vec3::new(-4.0, 5.0, -6.0), 1e-5));
     }
 }
