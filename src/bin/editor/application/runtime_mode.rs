@@ -55,10 +55,9 @@ impl EditorApplication {
     fn exit_play_mode(&mut self, ctx: &mut GpuUpdateContext) {
         info!("Exiting play mode - restoring editor scene");
 
-        // Simply restore the entire scene from the snapshot
+        // Completely restore the scene from the snapshot
         if let Some(snapshot) = self.editor_scene_snapshot.take() {
-            // Use restore_without_assets to keep any assets loaded during play
-            snapshot.restore_without_assets(ctx.scene);
+            snapshot.restore(ctx.scene); // Changed from restore_without_assets
         }
 
         // Reinitialize editor state
