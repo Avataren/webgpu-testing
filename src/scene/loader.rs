@@ -405,10 +405,10 @@ impl SceneLoader {
         scale: f32,
     ) -> Result<SceneAssetBundle, String> {
         let mut temp_scene = Scene::new();
-        Self::load_gltf(path.as_ref(), &mut temp_scene, renderer, scale)?;
+        let resolved_path = crate::project::resolve_project_path(path);
+        Self::load_gltf(&resolved_path, &mut temp_scene, renderer, scale)?;
 
-        let default_name = path
-            .as_ref()
+        let default_name = resolved_path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Scene".to_string());
@@ -958,15 +958,49 @@ impl SceneLoader {
             let source = gltf_texture.source();
             let texture = match source.source() {
                 gltf::image::Source::Uri { uri, .. } => {
-                    let texture_path = base_dir.join(uri);
-                    log::debug!("  Loading texture from file: {:?}", texture_path);
+                    let decoded = crate::io::percent_decode_uri(uri).ok();
+                    let mut candidates = Vec::new();
 
-                    Texture::from_path(
-                        renderer.get_device(),
-                        renderer.get_queue(),
-                        &texture_path,
-                        false, // sRGB
-                    )?
+                    if let Some(ref decoded_path) = decoded {
+                        candidates.push(base_dir.join(decoded_path));
+                    }
+
+                    if decoded.as_deref() != Some(uri) {
+                        candidates.push(base_dir.join(uri));
+                    }
+
+                    let mut last_error: Option<String> = None;
+                    let mut loaded: Option<Texture> = None;
+
+                    for candidate in candidates {
+                        log::debug!("  Loading texture from file: {:?}", candidate);
+                        match Texture::from_path(
+                            renderer.get_device(),
+                            renderer.get_queue(),
+                            &candidate,
+                            false,
+                        ) {
+                            Ok(texture) => {
+                                loaded = Some(texture);
+                                break;
+                            }
+                            Err(err) => {
+                                last_error = Some(err);
+                            }
+                        }
+                    }
+
+                    loaded.ok_or_else(|| {
+                        last_error.unwrap_or_else(|| {
+                            format!(
+                                "Failed to load image {:?}",
+                                decoded
+                                    .as_ref()
+                                    .map(|path| base_dir.join(path))
+                                    .unwrap_or_else(|| base_dir.join(uri))
+                            )
+                        })
+                    })?
                 }
                 gltf::image::Source::View { .. } => {
                     let img_data = &images[source.index()];

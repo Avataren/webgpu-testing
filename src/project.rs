@@ -4,11 +4,46 @@ use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 use thiserror::Error;
 
 pub const PROJECT_FILE_NAME: &str = "project.json";
 pub const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
+
+fn active_project_root_cell() -> &'static RwLock<Option<PathBuf>> {
+    static ACTIVE_PROJECT_ROOT: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
+    ACTIVE_PROJECT_ROOT.get_or_init(|| RwLock::new(None))
+}
+
+/// Sets the active project root used to resolve relative asset paths at runtime.
+///
+/// Passing `None` clears the project root, causing relative paths to resolve
+/// against the current working directory instead.
+pub fn set_active_project_root(root: Option<PathBuf>) {
+    let cell = active_project_root_cell();
+    *cell.write().expect("project root lock poisoned") = root;
+}
+
+/// Returns the active project root if one has been configured.
+pub fn active_project_root() -> Option<PathBuf> {
+    let cell = active_project_root_cell();
+    cell.read().expect("project root lock poisoned").clone()
+}
+
+/// Resolves a path relative to the active project root when available.
+pub fn resolve_project_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    if let Some(root) = active_project_root() {
+        return root.join(path);
+    }
+
+    path.to_path_buf()
+}
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -117,6 +152,8 @@ impl ProjectManifest {
         renderer: &mut Renderer,
         project_root: &Path,
     ) -> Result<bool, ProjectError> {
+        set_active_project_root(Some(project_root.to_path_buf()));
+
         let mut new_scene = Scene::new();
         let environment = self.environment.clone().into_environment(project_root)?;
         new_scene.set_environment(environment);

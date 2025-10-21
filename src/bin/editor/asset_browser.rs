@@ -15,6 +15,28 @@ enum Feedback {
 }
 
 impl AssetBrowserState {
+    pub fn selected_folder(&self, content_root: &Path) -> PathBuf {
+        self.selected_folder
+            .as_ref()
+            .filter(|selected| selected.starts_with(content_root))
+            .cloned()
+            .unwrap_or_else(|| content_root.to_path_buf())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn report_error(&mut self, message: impl Into<String>) {
+        self.feedback = Some(Feedback::Error(message.into()));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn report_info(&mut self, message: impl Into<String>) {
+        self.feedback = Some(Feedback::Info(message.into()));
+    }
+
+    pub fn clear_feedback(&mut self) {
+        self.feedback = None;
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui, content_root: Option<&Path>) {
         #[cfg(target_arch = "wasm32")]
         {

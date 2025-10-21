@@ -1,5 +1,70 @@
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PercentDecodeError {
+    IncompleteEscape,
+    InvalidEscape,
+    InvalidUtf8,
+}
+
+impl std::fmt::Display for PercentDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PercentDecodeError::IncompleteEscape => {
+                write!(f, "incomplete percent-escape sequence")
+            }
+            PercentDecodeError::InvalidEscape => {
+                write!(f, "invalid percent-escape sequence")
+            }
+            PercentDecodeError::InvalidUtf8 => {
+                write!(f, "percent-decoded string is not valid UTF-8")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PercentDecodeError {}
+
+fn decode_hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Percent-decodes a URI string, returning an owned string on success.
+///
+/// This helper is shared by the editor import pipeline and the runtime
+/// loader so both sides agree on how glTF dependency paths are decoded.
+pub fn percent_decode_uri(uri: &str) -> Result<String, PercentDecodeError> {
+    let mut bytes = Vec::with_capacity(uri.len());
+    let mut i = 0;
+    let raw = uri.as_bytes();
+
+    while i < raw.len() {
+        match raw[i] {
+            b'%' => {
+                if i + 2 >= raw.len() {
+                    return Err(PercentDecodeError::IncompleteEscape);
+                }
+
+                let hi = decode_hex(raw[i + 1]).ok_or(PercentDecodeError::InvalidEscape)?;
+                let lo = decode_hex(raw[i + 2]).ok_or(PercentDecodeError::InvalidEscape)?;
+                bytes.push((hi << 4) | lo);
+                i += 3;
+            }
+            byte => {
+                bytes.push(byte);
+                i += 1;
+            }
+        }
+    }
+
+    String::from_utf8(bytes).map_err(|_| PercentDecodeError::InvalidUtf8)
+}
+
 #[cfg(target_arch = "wasm32")]
 use std::path::PathBuf;
 

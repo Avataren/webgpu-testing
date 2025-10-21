@@ -10,8 +10,13 @@ use std::{
     thread,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use gltf::{buffer::Source as BufferSource, image::Source as ImageSource, Gltf};
+
 use log::{error, info, warn};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
+#[cfg(not(target_arch = "wasm32"))]
+use wgpu_cube::io::percent_decode_uri;
 use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
 use wgpu_cube::scene::{EntityBuilder, Transform};
 
@@ -125,6 +130,262 @@ fn sanitize_project_stem(name: &str) -> String {
         "project".to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct ImportedGltf {
+    absolute_gltf: PathBuf,
+    project_relative_gltf: PathBuf,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, thiserror::Error)]
+enum ImportAssetError {
+    #[error("File {path:?} is not a glTF asset (.gltf or .glb).")]
+    UnsupportedExtension { path: PathBuf },
+    #[error("Source file {path:?} does not exist.")]
+    MissingSource { path: PathBuf },
+    #[error("Failed to parse glTF file {path:?}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: gltf::Error,
+    },
+    #[error("The selected folder {destination:?} is outside the project content directory.")]
+    DestinationOutside { destination: PathBuf },
+    #[error("glTF reference '{uri}' escapes the target folder.")]
+    DependencyEscapes { uri: String },
+    #[error("glTF reference '{uri}' is not supported.")]
+    UnsupportedReference { uri: String },
+    #[error("glTF reference '{uri}' contains an invalid escape sequence.")]
+    MalformedUri { uri: String },
+    #[error("glTF reference '{uri}' could not be resolved at {resolved:?}.")]
+    MissingDependency { uri: String, resolved: PathBuf },
+    #[error("Failed to create folder {path:?}: {source}")]
+    CreateDir {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("Failed to copy {source:?} -> {destination:?}: {error}")]
+    Copy {
+        source: PathBuf,
+        destination: PathBuf,
+        #[source]
+        error: std::io::Error,
+    },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_gltf_into_project(
+    project_dir: &Path,
+    content_root: &Path,
+    destination_root: &Path,
+    source_path: &Path,
+) -> Result<ImportedGltf, ImportAssetError> {
+    if !destination_root.starts_with(content_root) {
+        return Err(ImportAssetError::DestinationOutside {
+            destination: destination_root.to_path_buf(),
+        });
+    }
+
+    let source_path = source_path.to_path_buf();
+    if !source_path.exists() {
+        return Err(ImportAssetError::MissingSource { path: source_path });
+    }
+
+    let extension = source_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("gltf") | Some("glb") => {}
+        _ => {
+            return Err(ImportAssetError::UnsupportedExtension {
+                path: source_path.clone(),
+            })
+        }
+    }
+
+    fs::create_dir_all(destination_root).map_err(|source| ImportAssetError::CreateDir {
+        path: destination_root.to_path_buf(),
+        source,
+    })?;
+
+    let base_name = source_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("asset");
+    let asset_folder = unique_asset_folder(destination_root, base_name);
+
+    fs::create_dir_all(&asset_folder).map_err(|source| ImportAssetError::CreateDir {
+        path: asset_folder.clone(),
+        source,
+    })?;
+
+    let result = (|| -> Result<ImportedGltf, ImportAssetError> {
+        let dependencies = collect_gltf_dependencies(&source_path)?;
+        let source_dir = source_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        for uri in dependencies {
+            let decoded = percent_decode_uri(&uri)
+                .map_err(|_| ImportAssetError::MalformedUri { uri: uri.clone() })?;
+            if decoded.contains("://") || decoded.starts_with("//") {
+                return Err(ImportAssetError::UnsupportedReference { uri });
+            }
+
+            if decoded.starts_with("data:") {
+                continue;
+            }
+
+            let relative_path = Path::new(&decoded);
+            if relative_path.is_absolute() {
+                return Err(ImportAssetError::UnsupportedReference { uri });
+            }
+
+            let source_dependency = source_dir.join(relative_path);
+            if !source_dependency.exists() {
+                return Err(ImportAssetError::MissingDependency {
+                    uri,
+                    resolved: source_dependency,
+                });
+            }
+
+            let destination_dependency = safe_join(&asset_folder, relative_path, &uri)?;
+            if let Some(parent) = destination_dependency.parent() {
+                fs::create_dir_all(parent).map_err(|source| ImportAssetError::CreateDir {
+                    path: parent.to_path_buf(),
+                    source,
+                })?;
+            }
+
+            fs::copy(&source_dependency, &destination_dependency).map_err(|error| {
+                ImportAssetError::Copy {
+                    source: source_dependency.clone(),
+                    destination: destination_dependency.clone(),
+                    error,
+                }
+            })?;
+        }
+
+        let destination_file = asset_folder.join(source_path.file_name().ok_or_else(|| {
+            ImportAssetError::UnsupportedExtension {
+                path: source_path.clone(),
+            }
+        })?);
+
+        fs::copy(&source_path, &destination_file).map_err(|error| ImportAssetError::Copy {
+            source: source_path.clone(),
+            destination: destination_file.clone(),
+            error,
+        })?;
+
+        let project_relative = destination_file
+            .strip_prefix(project_dir)
+            .map(Path::to_path_buf)
+            .map_err(|_| ImportAssetError::DestinationOutside {
+                destination: destination_file.clone(),
+            })?;
+
+        Ok(ImportedGltf {
+            absolute_gltf: destination_file,
+            project_relative_gltf: project_relative,
+        })
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&asset_folder);
+    }
+
+    result
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_gltf_dependencies(path: &Path) -> Result<BTreeSet<String>, ImportAssetError> {
+    let mut dependencies = BTreeSet::new();
+    let document = Gltf::open(path).map_err(|source| ImportAssetError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    for buffer in document.buffers() {
+        if let BufferSource::Uri(uri) = buffer.source() {
+            let trimmed = uri.trim();
+            if !trimmed.starts_with("data:") {
+                dependencies.insert(trimmed.to_string());
+            }
+        }
+    }
+
+    for image in document.images() {
+        match image.source() {
+            ImageSource::View { .. } => {}
+            ImageSource::Uri { uri, .. } => {
+                let trimmed = uri.trim();
+                if !trimmed.starts_with("data:") {
+                    dependencies.insert(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(dependencies)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn safe_join(base: &Path, relative: &Path, original: &str) -> Result<PathBuf, ImportAssetError> {
+    use std::path::Component;
+
+    let mut result = base.to_path_buf();
+    let mut depth = 0usize;
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => {
+                result.push(part);
+                depth += 1;
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if depth == 0 {
+                    return Err(ImportAssetError::DependencyEscapes {
+                        uri: original.to_string(),
+                    });
+                }
+                result.pop();
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(ImportAssetError::DependencyEscapes {
+                    uri: original.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn unique_asset_folder(destination_root: &Path, base_name: &str) -> PathBuf {
+    let sanitized = if base_name.is_empty() {
+        "asset"
+    } else {
+        base_name
+    };
+    let mut candidate = sanitized.to_string();
+    let mut counter = 1usize;
+    loop {
+        let path = destination_root.join(&candidate);
+        if !path.exists() {
+            return path;
+        }
+        candidate = format!("{sanitized}_{counter:02}");
+        counter += 1;
     }
 }
 
@@ -368,34 +629,94 @@ impl EditorApplication {
             return;
         }
 
-        let imports = std::mem::take(&mut self.pending_imports);
-        let mut any_spawned = false;
-        for path in imports {
-            let Some(script_source) = Self::create_import_script(&path) else {
-                continue;
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.pending_imports.is_empty() {
+                warn!("glTF imports are not supported when running inside the browser editor");
+            }
+            self.pending_imports.clear();
+            let _ = ctx;
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(project_dir) = self.project.current_dir().cloned() else {
+                self.asset_browser
+                    .report_error("Open or create a project before importing assets.");
+                warn!("Ignoring glTF import request: no project directory is active");
+                self.pending_imports.clear();
+                return;
             };
 
-            let entity_name = path
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().into_owned())
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| "Imported glTF".to_string());
+            let Some(content_root) = self.project.content_root() else {
+                self.asset_browser
+                    .report_error("The project's content folder is unavailable.");
+                warn!("Ignoring glTF import request: project content folder missing");
+                self.pending_imports.clear();
+                return;
+            };
 
-            let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
-                .with_name(format!("{entity_name} (glTF)"))
-                .with_transform(Transform::default())
-                .with_script(script_source);
-            builder.spawn();
-            any_spawned = true;
-        }
+            let destination_root = self.asset_browser.selected_folder(&content_root);
+            let mut any_spawned = false;
 
-        if matches!(ctx.runtime, RuntimeMode::Editor) {
-            ctx.scene.set_animation_playback(false);
-            ctx.scene.update(0.0);
-        }
+            for source_path in std::mem::take(&mut self.pending_imports) {
+                match copy_gltf_into_project(
+                    &project_dir,
+                    &content_root,
+                    &destination_root,
+                    &source_path,
+                ) {
+                    Ok(result) => {
+                        let Some(script_source) =
+                            Self::create_import_script(&result.project_relative_gltf)
+                        else {
+                            error!(
+                                "Failed to build import script for {:?}; skipping entity spawn",
+                                result.project_relative_gltf
+                            );
+                            self.asset_browser
+                                .report_error("Failed to prepare glTF import script.");
+                            if let Some(folder) = result.absolute_gltf.parent() {
+                                let _ = fs::remove_dir_all(folder);
+                            }
+                            continue;
+                        };
 
-        if any_spawned {
-            self.record_scene_change(ctx.scene);
+                        let entity_name = result
+                            .absolute_gltf
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| "Imported glTF".to_string());
+
+                        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
+                            .with_name(format!("{entity_name} (glTF)"))
+                            .with_transform(Transform::default())
+                            .with_script(script_source);
+                        builder.spawn();
+                        any_spawned = true;
+
+                        let display_path =
+                            result.project_relative_gltf.to_string_lossy().to_string();
+                        self.asset_browser
+                            .report_info(format!("Imported asset to {display_path}"));
+                    }
+                    Err(err) => {
+                        error!("Failed to import glTF asset {:?}: {}", source_path, err);
+                        self.asset_browser.report_error(err.to_string());
+                    }
+                }
+            }
+
+            if matches!(ctx.runtime, RuntimeMode::Editor) {
+                ctx.scene.set_animation_playback(false);
+                ctx.scene.update(0.0);
+            }
+
+            if any_spawned {
+                self.record_scene_change(ctx.scene);
+            }
         }
     }
 

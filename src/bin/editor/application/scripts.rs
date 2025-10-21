@@ -27,8 +27,13 @@ impl EditorApplication {
 
     pub(super) fn create_import_script(path: &Path) -> Option<RuneScriptSource> {
         let template = Self::load_script_text("editor_import_gltf.rn")?;
-        let path_string = path.to_string_lossy();
-        let encoded_path = match serde_json::to_string(path_string.as_ref()) {
+        let raw_path = path.to_string_lossy();
+        let mut path_string = raw_path.replace('\\', "/");
+        if std::path::MAIN_SEPARATOR != '/' {
+            path_string = path_string.replace(std::path::MAIN_SEPARATOR, "/");
+        }
+
+        let encoded_path = match serde_json::to_string(&path_string) {
             Ok(value) => value,
             Err(err) => {
                 error!("Failed to encode glTF path {path:?}: {err}");
