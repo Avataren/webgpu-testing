@@ -47,6 +47,10 @@ name = "editor"
 path = "src/bin/editor/main.rs"
 required-features = ["egui"]
 
+[[bin]]
+name = "player"
+path = "src/bin/player/main.rs"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 console_error_panic_hook = "0.1"

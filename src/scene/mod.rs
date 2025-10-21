@@ -15,7 +15,8 @@ pub mod transform;
 pub use assets::{
     SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity, SceneAssetEntityBuilder,
     SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset, SceneTreeAssetNode,
-    SceneTreeAssetNodeBuilder, SerializedTransform,
+    SceneTreeAssetNodeBuilder, SerializedRuneScript, SerializedRuneScriptSource,
+    SerializedTransform,
 };
 pub use builder::EntityBuilder;
 pub use camera::Camera;

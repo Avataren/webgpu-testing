@@ -1,14 +1,293 @@
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::{BufRead, BufReader},
+    path::Path,
+    process::{Command, ExitStatus, Stdio},
+    thread,
+};
+
 use log::{error, info, warn};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::project::{ProjectError, ProjectManifest};
-use wgpu_cube::scene::EntityBuilder;
-use wgpu_cube::scene::Transform;
+use wgpu_cube::scene::{EntityBuilder, Transform};
+
+#[cfg(not(target_arch = "wasm32"))]
+use wgpu_cube::scene::SerializedRuneScriptSource;
 
 use super::core::{EditorApplication, UndoRedoState};
 use crate::history::EditorHistory;
 use crate::project::{BuildPlatform, ProjectBuildRequest};
+
+#[cfg(not(target_arch = "wasm32"))]
+use thiserror::Error;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Error)]
+enum BuildCommandError {
+    #[error("failed to spawn {command}: {source}")]
+    Spawn {
+        command: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{command} exited with status {status}")]
+    Failed { command: String, status: ExitStatus },
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("missing build artifact at {0:?}")]
+    MissingArtifact(PathBuf),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_command_with_logging(label: &str, mut command: Command) -> Result<(), BuildCommandError> {
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    info!("Running {}: {:?}", label, command);
+
+    let mut child = command.spawn().map_err(|source| BuildCommandError::Spawn {
+        command: label.to_string(),
+        source,
+    })?;
+
+    let stdout_handle = child.stdout.take().map(|stdout| {
+        spawn_logging_thread(format!("{} (stdout)", label), stdout, log::Level::Info)
+    });
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        spawn_logging_thread(format!("{} (stderr)", label), stderr, log::Level::Warn)
+    });
+
+    let status = child.wait().map_err(BuildCommandError::Io)?;
+
+    if let Some(handle) = stdout_handle {
+        let _ = handle.join();
+    }
+    if let Some(handle) = stderr_handle {
+        let _ = handle.join();
+    }
+
+    if !status.success() {
+        return Err(BuildCommandError::Failed {
+            command: label.to_string(),
+            status,
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_logging_thread<R>(label: String, reader: R, level: log::Level) -> thread::JoinHandle<()>
+where
+    R: std::io::Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let buf_reader = BufReader::new(reader);
+        for line in buf_reader.lines() {
+            match line {
+                Ok(line) => log::log!(level, "{}: {}", label, line),
+                Err(err) => log::error!("{}: failed to read process output: {}", label, err),
+            }
+        }
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn sanitize_project_stem(name: &str) -> String {
+    let mut result = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            result.push(ch);
+        } else if !result.ends_with('_') {
+            result.push('_');
+        }
+    }
+
+    let trimmed = result.trim_matches('_');
+    if trimmed.is_empty() {
+        "project".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn copy_required_scripts(
+    manifest: &ProjectManifest,
+    output_dir: &Path,
+) -> Result<(), BuildCommandError> {
+    let mut scripts = BTreeSet::new();
+
+    for entity in &manifest.scene.entities {
+        if let Some(script) = &entity.script {
+            if let SerializedRuneScriptSource::File { path } = &script.source {
+                scripts.insert(path.clone());
+            }
+        }
+    }
+
+    for script_path in scripts {
+        let source = if script_path.is_absolute() {
+            script_path.clone()
+        } else {
+            PathBuf::from(&script_path)
+        };
+
+        let destination = output_dir.join(&script_path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::copy(&source, &destination)?;
+        info!("Copied script {:?} -> {:?}", source, destination);
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_desktop_artifacts(
+    manifest: &ProjectManifest,
+    output_dir: &Path,
+) -> Result<(), BuildCommandError> {
+    let mut command = Command::new("cargo");
+    command
+        .arg("build")
+        .arg("--release")
+        .arg("--bin")
+        .arg("player");
+    run_command_with_logging("cargo build (desktop)", command)?;
+
+    let binary_name = format!("player{}", std::env::consts::EXE_SUFFIX);
+    let source_path = Path::new("target").join("release").join(&binary_name);
+    if !source_path.exists() {
+        return Err(BuildCommandError::MissingArtifact(source_path));
+    }
+
+    let target_name = format!(
+        "{}{}",
+        sanitize_project_stem(&manifest.metadata.name),
+        std::env::consts::EXE_SUFFIX
+    );
+    let target_path = output_dir.join(target_name);
+    fs::copy(&source_path, &target_path)?;
+    info!("Copied desktop binary to {:?}", target_path);
+
+    copy_required_scripts(manifest, output_dir)?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_web_artifacts(
+    manifest: &ProjectManifest,
+    output_dir: &Path,
+) -> Result<(), BuildCommandError> {
+    let mut cargo_cmd = Command::new("cargo");
+    cargo_cmd
+        .arg("build")
+        .arg("--release")
+        .arg("--bin")
+        .arg("player")
+        .arg("--target")
+        .arg("wasm32-unknown-unknown");
+    run_command_with_logging("cargo build (wasm)", cargo_cmd)?;
+
+    let wasm_path = Path::new("target")
+        .join("wasm32-unknown-unknown")
+        .join("release")
+        .join("player.wasm");
+    if !wasm_path.exists() {
+        return Err(BuildCommandError::MissingArtifact(wasm_path));
+    }
+
+    let pkg_dir = output_dir.join("pkg");
+    if pkg_dir.exists() {
+        fs::remove_dir_all(&pkg_dir)?;
+    }
+    fs::create_dir_all(&pkg_dir)?;
+
+    let mut bindgen_cmd = Command::new("wasm-bindgen");
+    bindgen_cmd
+        .arg("--target")
+        .arg("web")
+        .arg("--no-typescript")
+        .arg("--out-dir")
+        .arg(&pkg_dir)
+        .arg(&wasm_path);
+    run_command_with_logging("wasm-bindgen", bindgen_cmd)?;
+
+    let index_path = output_dir.join("index.html");
+    fs::write(&index_path, build_web_index(&manifest.metadata.name))?;
+    info!("Wrote web entry point to {:?}", index_path);
+
+    copy_required_scripts(manifest, output_dir)?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_web_index(title: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <style>
+      body {{
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #141414;
+        color: #e0e0e0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }}
+
+      #status {{
+        font-size: 1rem;
+        opacity: 0.85;
+      }}
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading {title}…</div>
+    <script type="module">
+      async function init() {{
+        try {{
+          const wasm = await import("./pkg/player.js");
+          if (typeof wasm.default === "function") {{
+            await wasm.default();
+          }}
+          wasm.start_app();
+          const status = document.getElementById("status");
+          if (status) {{
+            status.textContent = "";
+          }}
+        }} catch (err) {{
+          console.error("Failed to start project", err);
+          const status = document.getElementById("status");
+          if (status) {{
+            status.textContent = "Failed to start project: " + err;
+          }}
+        }}
+      }}
+
+      init();
+    </script>
+  </body>
+</html>
+"#
+    )
+}
 
 impl EditorApplication {
     pub(super) fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
@@ -114,14 +393,23 @@ impl EditorApplication {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use std::fs;
-
             if let Err(err) = fs::create_dir_all(&request.output_dir) {
                 error!(
                     "Failed to prepare build output directory {:?}: {err}",
                     request.output_dir
                 );
                 return;
+            }
+
+            let content_dir = request.output_dir.join("content");
+            if content_dir.exists() {
+                if let Err(err) = fs::remove_dir_all(&content_dir) {
+                    error!(
+                        "Failed to clean previous content directory {:?}: {err}",
+                        content_dir
+                    );
+                    return;
+                }
             }
 
             match ProjectManifest::capture(ctx.scene, self.project.metadata().clone()) {
@@ -134,20 +422,22 @@ impl EditorApplication {
                         return;
                     }
 
-                    match request.platform {
+                    let build_result = match request.platform {
                         BuildPlatform::Desktop => {
-                            info!(
-                                "Saved build manifest for desktop target at {:?}",
-                                request.output_dir
-                            );
-                            info!("Desktop build command execution is not yet implemented");
+                            build_desktop_artifacts(&manifest, &request.output_dir)
                         }
-                        BuildPlatform::Web => {
+                        BuildPlatform::Web => build_web_artifacts(&manifest, &request.output_dir),
+                    };
+
+                    match build_result {
+                        Ok(()) => {
                             info!(
-                                "Saved build manifest for web target at {:?}",
-                                request.output_dir
+                                "Project build for {:?} completed at {:?}",
+                                request.platform, request.output_dir
                             );
-                            info!("Web build command execution is not yet implemented");
+                        }
+                        Err(err) => {
+                            error!("Failed to build project for {:?}: {err}", request.platform);
                         }
                     }
                 }

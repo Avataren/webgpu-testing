@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-const PROJECT_FILE_NAME: &str = "project.json";
+pub const PROJECT_FILE_NAME: &str = "project.json";
 const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
 
@@ -78,6 +78,16 @@ impl ProjectManifest {
         let json = fs::read_to_string(&manifest_path)?;
         let mut manifest: ProjectManifest = serde_json::from_str(&json)?;
         manifest.environment.resolve_paths(dir)?;
+        Ok(manifest)
+    }
+
+    pub fn from_json_str(json: &str) -> Result<Self, ProjectError> {
+        let manifest: ProjectManifest = serde_json::from_str(json)?;
+        Ok(manifest)
+    }
+
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, ProjectError> {
+        let manifest: ProjectManifest = serde_json::from_slice(bytes)?;
         Ok(manifest)
     }
 
@@ -175,6 +185,7 @@ impl SerializedEnvironment {
                     project_dir.join(path)
                 };
 
+                #[cfg(not(target_arch = "wasm32"))]
                 if !absolute.exists() {
                     return Err(ProjectError::MissingEnvironmentFile(absolute));
                 }
