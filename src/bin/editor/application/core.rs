@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
 use hecs::Entity;
-use std::collections::HashMap;
 use wgpu_cube::app::{RuntimeMode, RuntimeStateHandle};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
@@ -22,19 +21,6 @@ use crate::windows::WindowToggles;
 pub(super) struct RuntimeModeTransition {
     pub(super) from: RuntimeMode,
     pub(super) to: RuntimeMode,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct EditorCameraState {
-    pub(super) eye: Vec3,
-    pub(super) target: Vec3,
-    pub(super) up: Vec3,
-    pub(super) fov_y_radians: f32,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct EditorTransformState {
-    pub(super) transforms: HashMap<Entity, Transform>,
 }
 
 pub struct EditorApplication {

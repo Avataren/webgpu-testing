@@ -1,7 +1,6 @@
 use log::info;
-use std::collections::HashMap;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
-use wgpu_cube::scene::{SceneStateSnapshot, TransformComponent}; // Add SceneStateSnapshot here
+use wgpu_cube::scene::SceneStateSnapshot;
 
 use super::core::{EditorApplication, RuntimeModeTransition};
 
