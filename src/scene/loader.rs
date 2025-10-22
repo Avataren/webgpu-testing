@@ -1,6 +1,6 @@
 // scene/loader.rs - Improved version with better debugging
 use glam::{Quat, Vec3, Vec4};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::components::*;
 use crate::asset::Handle;
@@ -51,6 +51,7 @@ struct PrimitiveMesh {
     handle: Handle<Mesh>,
     material_index: Option<usize>,
     bounds: MeshBounds,
+    primitive_index: usize,
 }
 
 type GltfImport = (
@@ -131,6 +132,7 @@ impl SceneLoader {
         world: &mut hecs::World,
         scale_multiplier: f32,
         node_entities: &mut [Option<hecs::Entity>],
+        source_path: &PathBuf,
     ) -> Result<hecs::Entity, String> {
         let node_name = node.name().unwrap_or("Unnamed");
         log::debug!(
@@ -168,6 +170,7 @@ impl SceneLoader {
         entity_builder.add(TransformComponent(transform));
         entity_builder.add(Visible(true));
         entity_builder.add(GltfNode(node.index()));
+        entity_builder.add(GltfSource(source_path.clone()));
 
         // Add parent if exists
         if let Some(parent_entity) = parent {
@@ -194,6 +197,7 @@ impl SceneLoader {
                     let primitive = primitives[0];
                     entity_builder.add(MeshComponent(primitive.handle));
                     entity_builder.add(primitive.bounds);
+                    entity_builder.add(GltfPrimitive(primitive.primitive_index));
 
                     let material = if let Some(mat_idx) = primitive.material_index {
                         materials.get(mat_idx).copied().unwrap_or(Material::pbr())
@@ -229,8 +233,8 @@ impl SceneLoader {
         let mut children = Vec::new();
 
         // Spawn extra mesh primitives as child entities
-        for (primitive_index, primitive) in extra_primitives.into_iter().enumerate() {
-            let primitive_name = format!("{}_Primitive_{}", node_name, primitive_index + 1);
+        for (primitive_slot, primitive) in extra_primitives.into_iter().enumerate() {
+            let primitive_name = format!("{}_Primitive_{}", node_name, primitive_slot + 1);
             log::debug!("  Creating extra primitive: {}", primitive_name);
 
             let mut primitive_builder = hecs::EntityBuilder::new();
@@ -240,8 +244,11 @@ impl SceneLoader {
             primitive_builder.add(TransformComponent(Transform::IDENTITY));
             primitive_builder.add(Visible(true));
             primitive_builder.add(Parent(entity));
+            primitive_builder.add(GltfNode(node.index()));
+            primitive_builder.add(GltfSource(source_path.clone()));
             primitive_builder.add(MeshComponent(primitive.handle));
             primitive_builder.add(primitive.bounds);
+            primitive_builder.add(GltfPrimitive(primitive.primitive_index));
 
             let material = if let Some(mat_idx) = primitive.material_index {
                 materials.get(mat_idx).copied().unwrap_or(Material::pbr())
@@ -269,6 +276,7 @@ impl SceneLoader {
                 world,
                 scale_multiplier,
                 node_entities,
+                source_path,
             )?;
             children.push(child_entity);
         }
@@ -294,6 +302,7 @@ impl SceneLoader {
         scale: f32,
     ) -> Result<(), String> {
         let path = path.as_ref();
+        let path_buf = path.to_path_buf();
         log::info!("=== Loading glTF: {:?} ===", path);
 
         #[cfg(target_arch = "wasm32")]
@@ -346,7 +355,7 @@ impl SceneLoader {
 
             let primitives = &mut mesh_handles[mesh_index];
 
-            for primitive in gltf_mesh.primitives() {
+            for (primitive_index, primitive) in gltf_mesh.primitives().enumerate() {
                 let (handle, bounds) = Self::load_primitive(
                     &primitive,
                     &buffers,
@@ -359,6 +368,7 @@ impl SceneLoader {
                     handle,
                     material_index: primitive.material().index(),
                     bounds,
+                    primitive_index,
                 });
             }
         }
@@ -397,6 +407,7 @@ impl SceneLoader {
                     scene.world_mut(),
                     scale,
                     &mut node_entities,
+                    &path_buf,
                 )?;
             }
         }
@@ -425,7 +436,8 @@ impl SceneLoader {
         scale: f32,
     ) -> Result<SceneAssetBundle, String> {
         let mut temp_scene = Scene::new();
-        let resolved_path = crate::project::resolve_project_path(path);
+        let source_path = path.as_ref().to_path_buf();
+        let resolved_path = crate::project::resolve_project_path(&source_path);
         Self::load_gltf(&resolved_path, &mut temp_scene, renderer, scale)?;
 
         let default_name = resolved_path
@@ -436,6 +448,12 @@ impl SceneLoader {
         let mut asset = temp_scene
             .export_main_asset(default_name)
             .ok_or_else(|| "Scene export produced no asset".to_string())?;
+
+        for entity in &mut asset.entities {
+            if entity.gltf_source.is_some() {
+                entity.gltf_source = Some(source_path.clone());
+            }
+        }
 
         let mut used_texture_indices = std::collections::BTreeSet::new();
         for entity in &asset.entities {

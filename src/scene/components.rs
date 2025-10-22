@@ -6,6 +6,7 @@ use crate::asset::Mesh;
 use crate::renderer::{Material, Vertex};
 use crate::scene::Transform;
 use glam::Vec3;
+use std::path::PathBuf;
 
 // ============================================================================
 // Billboard Components
@@ -156,6 +157,14 @@ pub struct SelectedInEditor;
 /// Persistent editor-scoped identifier used for undo/redo bookkeeping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EditorEntityId(pub u128);
+
+/// Source glTF asset used to spawn this entity.
+#[derive(Debug, Clone)]
+pub struct GltfSource(pub PathBuf);
+
+/// Primitive index within a glTF node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GltfPrimitive(pub usize);
 
 // ============================================================================
 // GPU-driven instance components

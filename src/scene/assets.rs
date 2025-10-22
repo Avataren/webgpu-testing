@@ -4,8 +4,8 @@ use super::animation::{
 };
 use super::components::{
     CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
-    MaterialComponent, MeshBounds, MeshComponent, Name, Parent, PointLight, SpotLight,
-    TransformComponent, Visible,
+    GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
+    PointLight, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -279,6 +279,14 @@ impl SceneAsset {
                 builder.add(GltfMaterial(gltf_mat));
             }
 
+            if let Some(gltf_source) = &entity.gltf_source {
+                builder.add(GltfSource(gltf_source.clone()));
+            }
+
+            if let Some(gltf_primitive) = entity.gltf_primitive {
+                builder.add(GltfPrimitive(gltf_primitive));
+            }
+
             if let Some(script) = &entity.script {
                 builder.add(script.clone().into_component());
             }
@@ -482,6 +490,19 @@ impl SceneAssetResourcesBuilder {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ResourceRegistration {
+    pub mesh_map: HashMap<usize, usize>,
+    pub texture_map: HashMap<u32, u32>,
+    pub textures_changed: bool,
+}
+
+impl ResourceRegistration {
+    pub fn textures_changed(&self) -> bool {
+        self.textures_changed
+    }
+}
+
 #[derive(Debug)]
 pub struct SceneAssetBundle {
     pub asset: SceneAsset,
@@ -506,9 +527,9 @@ impl SceneAssetBundle {
         &mut self,
         renderer: &R,
         assets: &mut Assets,
-    ) -> bool {
+    ) -> ResourceRegistration {
         if self.resources_registered {
-            return false;
+            return ResourceRegistration::default();
         }
 
         if self.resources.meshes.is_empty() && !self.asset.mesh_data.is_empty() {
@@ -599,7 +620,11 @@ impl SceneAssetBundle {
         }
 
         self.resources_registered = true;
-        textures_added
+        ResourceRegistration {
+            mesh_map,
+            texture_map,
+            textures_changed: textures_added,
+        }
     }
 }
 
@@ -616,6 +641,10 @@ pub struct SceneAssetEntity {
     pub children: Vec<usize>,
     pub gltf_node: Option<usize>,
     pub gltf_material: Option<usize>,
+    #[serde(default)]
+    pub gltf_source: Option<PathBuf>,
+    #[serde(default)]
+    pub gltf_primitive: Option<usize>,
     #[serde(default)]
     pub script: Option<SerializedRuneScript>,
     #[serde(default)]
@@ -732,6 +761,14 @@ impl SceneAssetEntity {
 
         let gltf_node = world.get::<&GltfNode>(entity).ok().map(|node| node.0);
         let gltf_material = world.get::<&GltfMaterial>(entity).ok().map(|mat| mat.0);
+        let gltf_source = world
+            .get::<&GltfSource>(entity)
+            .ok()
+            .map(|source| source.0.clone());
+        let gltf_primitive = world
+            .get::<&GltfPrimitive>(entity)
+            .ok()
+            .map(|primitive| primitive.0);
         let script = world
             .get::<&RuneScriptComponent>(entity)
             .ok()
@@ -766,6 +803,8 @@ impl SceneAssetEntity {
             children,
             gltf_node,
             gltf_material,
+            gltf_source,
+            gltf_primitive,
             script,
             directional_light,
             point_light,
@@ -787,6 +826,8 @@ pub struct SceneAssetEntityBuilder {
     children: Vec<usize>,
     gltf_node: Option<usize>,
     gltf_material: Option<usize>,
+    gltf_source: Option<PathBuf>,
+    gltf_primitive: Option<usize>,
     script: Option<SerializedRuneScript>,
     directional_light: Option<SerializedDirectionalLight>,
     point_light: Option<SerializedPointLight>,
@@ -808,6 +849,8 @@ impl SceneAssetEntityBuilder {
             children: Vec::new(),
             gltf_node: None,
             gltf_material: None,
+            gltf_source: None,
+            gltf_primitive: None,
             script: None,
             directional_light: None,
             point_light: None,
@@ -865,6 +908,16 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_gltf_source(mut self, source: PathBuf) -> Self {
+        self.gltf_source = Some(source);
+        self
+    }
+
+    pub fn with_gltf_primitive(mut self, primitive: usize) -> Self {
+        self.gltf_primitive = Some(primitive);
+        self
+    }
+
     pub fn with_script(mut self, script: SerializedRuneScript) -> Self {
         self.script = Some(script);
         self
@@ -907,6 +960,8 @@ impl SceneAssetEntityBuilder {
             children: self.children,
             gltf_node: self.gltf_node,
             gltf_material: self.gltf_material,
+            gltf_source: self.gltf_source,
+            gltf_primitive: self.gltf_primitive,
             script: self.script,
             directional_light: self.directional_light,
             point_light: self.point_light,
@@ -1375,6 +1430,8 @@ mod tests {
                 children: Vec::new(),
                 gltf_node: None,
                 gltf_material: None,
+                gltf_source: None,
+                gltf_primitive: None,
                 script: None,
                 directional_light: None,
                 point_light: None,

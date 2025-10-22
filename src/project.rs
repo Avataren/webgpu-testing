@@ -1,7 +1,10 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::renderer::Renderer;
-use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources};
+use crate::scene::{
+    Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader, SerializedMaterial,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
@@ -75,12 +78,19 @@ impl Default for ProjectMetadata {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProjectImport {
+    pub path: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectManifest {
     version: u32,
     pub metadata: ProjectMetadata,
     pub scene: SceneAsset,
     pub environment: SerializedEnvironment,
+    #[serde(default)]
+    pub imports: Vec<ProjectImport>,
 }
 
 impl ProjectManifest {
@@ -101,19 +111,32 @@ impl ProjectManifest {
             scene: SceneAsset::builder(metadata.name.clone()).build(),
             metadata,
             environment,
+            imports: Vec::new(),
         }
     }
 
     pub fn capture(scene: &Scene, metadata: ProjectMetadata) -> Result<Self, ProjectError> {
-        let asset = scene
+        let mut asset = scene
             .export_main_asset(metadata.name.clone())
             .ok_or(ProjectError::EmptyScene)?;
         let environment = SerializedEnvironment::from_environment(scene.environment());
+        let mut imports_set: BTreeSet<PathBuf> = BTreeSet::new();
+        for entity in &asset.entities {
+            if let Some(source) = &entity.gltf_source {
+                imports_set.insert(source.clone());
+            }
+        }
+        asset.mesh_data.clear();
+        let imports = imports_set
+            .into_iter()
+            .map(|path| ProjectImport { path })
+            .collect();
         Ok(Self {
             version: PROJECT_VERSION,
             metadata,
             scene: asset,
             environment,
+            imports,
         })
     }
 
@@ -158,8 +181,84 @@ impl ProjectManifest {
         let environment = self.environment.clone().into_environment(project_root)?;
         new_scene.set_environment(environment);
 
+        let mut textures_changed = false;
+
+        let mut mesh_lookup: HashMap<(PathBuf, Option<usize>, Option<usize>), usize> =
+            HashMap::new();
+        let mut material_lookup: HashMap<(PathBuf, usize), SerializedMaterial> = HashMap::new();
+
+        for import in &self.imports {
+            match SceneLoader::load_gltf_asset(&import.path, renderer, 1.0) {
+                Ok(mut bundle) => {
+                    let registration = bundle.register_resources(renderer, &mut new_scene.assets);
+                    textures_changed |= registration.textures_changed;
+
+                    for entity in &bundle.asset.entities {
+                        let Some(source) = &entity.gltf_source else {
+                            continue;
+                        };
+
+                        if let Some(mesh_handle) = entity.mesh_handle {
+                            mesh_lookup.insert(
+                                (source.clone(), entity.gltf_node, entity.gltf_primitive),
+                                mesh_handle,
+                            );
+                        }
+
+                        if let Some(gltf_material) = entity.gltf_material {
+                            if let Some(material) = &entity.material {
+                                material_lookup
+                                    .insert((source.clone(), gltf_material), material.clone());
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to reimport glTF {:?} while instantiating project: {}",
+                        import.path,
+                        err
+                    );
+                }
+            }
+        }
+
         let mut bundle = SceneAssetBundle::new(self.scene.clone(), SceneAssetResources::default());
-        let textures_changed = bundle.register_resources(renderer, &mut new_scene.assets);
+
+        for entity in &mut bundle.asset.entities {
+            let Some(source) = entity.gltf_source.clone() else {
+                continue;
+            };
+
+            let mesh_key = (source.clone(), entity.gltf_node, entity.gltf_primitive);
+            if let Some(&mesh_handle) = mesh_lookup.get(&mesh_key) {
+                entity.mesh_handle = Some(mesh_handle);
+            } else if entity.mesh_handle.is_some() {
+                log::warn!(
+                    "Missing reimported mesh for {:?} (node {:?}, primitive {:?})",
+                    source,
+                    entity.gltf_node,
+                    entity.gltf_primitive
+                );
+            }
+
+            if let Some(gltf_material) = entity.gltf_material {
+                if let Some(material) = material_lookup.get(&(source.clone(), gltf_material)) {
+                    entity.material = Some(material.clone());
+                } else if entity.material.is_some() {
+                    log::warn!(
+                        "Missing reimported material for {:?} (material index {})",
+                        source,
+                        gltf_material
+                    );
+                }
+            }
+        }
+
+        bundle.asset.mesh_data.clear();
+
+        let registration = bundle.register_resources(renderer, &mut new_scene.assets);
+        textures_changed |= registration.textures_changed;
 
         if !bundle.asset.entities.is_empty() {
             let main = new_scene.instantiate_asset(&bundle.asset, None);
@@ -345,6 +444,7 @@ mod tests {
             metadata: ProjectMetadata::default(),
             scene: SceneAsset::builder("Test").build(),
             environment: serialized.clone(),
+            imports: Vec::new(),
         })
         .unwrap();
         fs::write(&manifest_path, json).unwrap();
