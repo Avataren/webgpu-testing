@@ -339,6 +339,35 @@ impl SceneAsset {
         instance
     }
 
+    pub(crate) fn apply_resource_mappings_from_maps(
+        &mut self,
+        mesh_map: &std::collections::HashMap<usize, usize>,
+        texture_map: &std::collections::HashMap<u32, u32>,
+    ) {
+        if mesh_map.is_empty() && texture_map.is_empty() {
+            return;
+        }
+
+        for entity in &mut self.entities {
+            // Remap mesh handles using the map
+            if let Some(mesh_handle) = &mut entity.mesh_handle {
+                if let Some(&new_index) = mesh_map.get(mesh_handle) {
+                    *mesh_handle = new_index;
+                } else {
+                    log::warn!(
+                        "Mesh handle {} not found in mesh_map during resource mapping",
+                        mesh_handle
+                    );
+                }
+            }
+
+            // Remap texture indices in materials
+            if let Some(material) = &mut entity.material {
+                material.remap_textures(texture_map);
+            }
+        }
+    }
+
     pub(crate) fn apply_resource_mappings(
         &mut self,
         mesh_offset: usize,
@@ -460,9 +489,10 @@ impl SceneAssetBundle {
             }
         }
 
-        let mesh_offset = assets.meshes.len();
-        for mesh in self.resources.take_meshes() {
-            let _ = assets.meshes.insert(mesh);
+        let mut mesh_map = std::collections::HashMap::new();
+        for (local_index, mesh) in self.resources.take_meshes().into_iter().enumerate() {
+            let handle = assets.meshes.insert(mesh);
+            mesh_map.insert(local_index, handle.index());
         }
 
         let mut textures_added = false;
@@ -480,8 +510,53 @@ impl SceneAssetBundle {
             textures_added = true;
         }
 
+        // self.asset
+        //     .apply_resource_mappings_from_maps(&mesh_map, &texture_map);
+
+        // DEBUG: Log the mappings
+        log::info!("=== GLTF IMPORT DEBUG ===");
+        log::info!("Mesh map: {:?}", mesh_map);
+        log::info!("Texture map: {:?}", texture_map);
+
+        // DEBUG: Log what's in the asset before remapping
+        for (i, entity) in self.asset.entities.iter().enumerate() {
+            if let Some(mesh_handle) = entity.mesh_handle {
+                log::info!("Entity {}: mesh_handle={}", i, mesh_handle);
+            }
+            if let Some(material) = &entity.material {
+                log::info!("Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}", 
+            i, material.base_color_texture, material.metallic_roughness_texture, material.normal_texture);
+            }
+        }
+
+        // Apply both mappings to remap local indices to global indices
         self.asset
-            .apply_resource_mappings(mesh_offset, &texture_map);
+            .apply_resource_mappings_from_maps(&mesh_map, &texture_map);
+
+        // DEBUG: Log what's in the asset after remapping
+        log::info!("=== AFTER REMAPPING ===");
+        for (i, entity) in self.asset.entities.iter().enumerate() {
+            if let Some(mesh_handle) = entity.mesh_handle {
+                log::info!("Entity {}: mesh_handle={}", i, mesh_handle);
+            }
+            if let Some(material) = &entity.material {
+                log::info!("Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}", 
+            i, material.base_color_texture, material.metallic_roughness_texture, material.normal_texture);
+            }
+        }
+
+        log::info!("=== MESH-MATERIAL ASSOCIATIONS ===");
+        for (i, entity) in self.asset.entities.iter().enumerate() {
+            if let Some(mesh) = entity.mesh_handle {
+                if let Some(mat) = &entity.material {
+                    log::info!("Entity {}: mesh={}, base_texture={}, metallic_texture={}, normal_texture={}, gltf_mat_idx={:?}", 
+                        i, mesh, mat.base_color_texture, mat.metallic_roughness_texture, 
+                        mat.normal_texture, entity.gltf_material);
+                } else {
+                    log::info!("Entity {}: mesh={}, NO MATERIAL", i, mesh);
+                }
+            }
+        }
 
         self.resources_registered = true;
         textures_added

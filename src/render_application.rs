@@ -103,7 +103,7 @@ impl DefaultUI {
             postprocess_window: PostProcessWindow::new(post_handle),
             environment_window: EnvironmentWindow::new(env_handle),
             scene_hierarchy_window: SceneHierarchyWindow::new(hierarchy_handle),
-            stats_open: true,
+            stats_open: false,
             log_open: false,
             postprocess_open: false,
             environment_open: false,

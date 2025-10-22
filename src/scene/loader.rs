@@ -448,6 +448,9 @@ impl SceneLoader {
             asset.apply_resource_mappings(0, &texture_index_remap);
         }
 
+        log::info!("Used texture indices: {:?}", used_texture_indices);
+        log::info!("Texture index remap: {:?}", texture_index_remap);
+
         let assets = std::mem::take(&mut temp_scene.assets);
         let meshes = assets.meshes.into_inner();
         let mut textures: Vec<(u32, Texture)> = assets
@@ -465,6 +468,16 @@ impl SceneLoader {
             .collect();
 
         textures.sort_by_key(|(local_index, _)| *local_index);
+
+        log::info!("=== TEXTURE EXTRACTION ===");
+        log::info!("texture_index_remap: {:?}", texture_index_remap);
+        log::info!(
+            "textures vec (local_index, texture): {} textures",
+            textures.len()
+        );
+        for (local_idx, _) in &textures {
+            log::info!("  local_index={}", local_idx);
+        }
 
         Ok(SceneAssetBundle::new(
             asset,
