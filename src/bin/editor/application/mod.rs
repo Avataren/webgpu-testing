@@ -15,17 +15,22 @@ pub use self::core::EditorApplication;
 pub use self::core::EditorApplicationBuilder;
 use self::core::{GameViewDisplayMode, PendingScriptAction};
 
-use glam::Vec2;
+use glam::{Quat, Vec2, Vec3};
+use hecs::Entity;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
-use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
+use wgpu_cube::renderer::primitives::{
+    cone_mesh, cube_mesh, cylinder_mesh, quad_mesh, sphere_mesh, torus_mesh,
+};
+use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, MaterialComponent, ParticleSystemComponent, PointLight,
-    SpotLight, TransformComponent,
+    CanCastShadow, DirectionalLight, EntityBuilder, MaterialComponent, MeshBounds,
+    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
+    TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
-use wgpu_cube::{DefaultUI, RenderApplication};
+use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
 
 use crate::inspector::InspectorAction;
 use crate::layout::{EditorBehavior, EditorPane};
@@ -111,6 +116,7 @@ impl RenderApplication for EditorApplication {
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
+        self.apply_pending_scene_creations(ctx);
 
         if let Some(request) = self.project.take_pending_create() {
             self.handle_project_create(ctx, request);
@@ -179,6 +185,7 @@ impl RenderApplication for EditorApplication {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
+        let mut creation_actions = Vec::new();
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
@@ -194,12 +201,17 @@ impl RenderApplication for EditorApplication {
                         log_window,
                         is_playing,
                         inspector_actions: &mut inspector_actions,
+                        scene_creation_actions: &mut creation_actions,
                         asset_browser: &mut self.asset_browser,
                         content_root,
                     };
                     dock_tree.ui(&mut behavior, ui);
                 }
             });
+
+        if self.scene_hierarchy_handle.is_none() {
+            self.scene_hierarchy_handle = Some(scene_hierarchy_window.handle());
+        }
 
         let game_tile_active = self
             .find_pane_tile(EditorPane::GameViewport)
@@ -240,6 +252,10 @@ impl RenderApplication for EditorApplication {
                     self.pending_inspector_actions.push(other);
                 }
             }
+        }
+
+        if !creation_actions.is_empty() {
+            self.pending_scene_creations.extend(creation_actions);
         }
 
         if is_playing {
@@ -523,5 +539,179 @@ impl EditorApplication {
         if transforms_changed {
             ctx.scene.propagate_transforms();
         }
+    }
+
+    fn apply_pending_scene_creations(&mut self, ctx: &mut GpuUpdateContext) {
+        if self.pending_scene_creations.is_empty() {
+            return;
+        }
+
+        let actions = std::mem::take(&mut self.pending_scene_creations);
+        let mut last_created = None;
+
+        for action in actions {
+            let created = match action {
+                SceneCreationAction::Primitive(preset) => self.create_primitive(ctx, preset),
+                SceneCreationAction::ParticleSystem(preset) => {
+                    self.create_particle_system(ctx, preset)
+                }
+                SceneCreationAction::PointLight => self.create_point_light(ctx),
+                SceneCreationAction::DirectionalLight => self.create_directional_light(ctx),
+                SceneCreationAction::SpotLight => self.create_spot_light(ctx),
+                SceneCreationAction::Camera => self.create_camera(ctx),
+            };
+
+            if let Some(entity) = created {
+                last_created = Some(entity);
+            }
+        }
+
+        if let Some(entity) = last_created {
+            self.selection.set_selected(Some(entity));
+            self.selection.set_highlighted(Some(entity));
+            self.selection.request_override(Some(entity));
+            self.record_scene_change(ctx.scene);
+            self.undo_redo.clear_redo();
+
+            if let Some(handle) = self.scene_hierarchy_handle.clone() {
+                if let Ok(mut state) = handle.lock() {
+                    state.refresh_from_scene(ctx.scene);
+                }
+            }
+        }
+    }
+
+    fn create_primitive(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        preset: ScenePrimitivePreset,
+    ) -> Option<Entity> {
+        let (vertices, indices) = match preset {
+            ScenePrimitivePreset::Cube => cube_mesh(),
+            ScenePrimitivePreset::Sphere => sphere_mesh(32, 16),
+            ScenePrimitivePreset::Plane => quad_mesh(),
+            ScenePrimitivePreset::Cylinder => cylinder_mesh(32),
+            ScenePrimitivePreset::Cone => cone_mesh(32),
+            ScenePrimitivePreset::Torus => torus_mesh(32, 16, 1.0, 0.35),
+        };
+
+        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
+        let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
+        let bounds = MeshBounds::from_vertices(&vertices);
+
+        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut());
+        builder = builder
+            .with_name(preset.display_name())
+            .with_transform(Transform::default())
+            .with_mesh(mesh_handle)
+            .with_material(Material::pbr())
+            .visible(true);
+
+        if let Some(bounds) = bounds {
+            builder = builder.with_component(bounds);
+        }
+
+        Some(builder.spawn())
+    }
+
+    fn create_particle_system(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        preset: ParticleBehaviorPreset,
+    ) -> Option<Entity> {
+        let name = format!("{} Particle System", preset.display_name());
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name(name)
+            .with_transform(Transform::default())
+            .with_component(ParticleSystemComponent::new(120.0, preset))
+            .spawn();
+
+        Some(entity)
+    }
+
+    fn create_point_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let transform = Transform::from_trs(Vec3::new(3.0, 3.0, 2.0), Quat::IDENTITY, Vec3::ONE);
+        let light = PointLight {
+            color: Vec3::splat(1.0),
+            intensity: 120.0,
+            range: 12.0,
+        };
+
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name("Point Light")
+            .with_transform(transform)
+            .with_component(light)
+            .with_component(CanCastShadow(true))
+            .spawn();
+
+        Some(entity)
+    }
+
+    fn create_directional_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let direction = Vec3::new(0.35, -1.0, -0.85).normalize();
+        let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
+        let transform = Transform::from_trs(Vec3::new(0.0, 6.0, 0.0), rotation, Vec3::ONE);
+        let light = DirectionalLight::new(Vec3::new(0.9, 0.95, 1.0), 3.0);
+
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name("Directional Light")
+            .with_transform(transform)
+            .with_component(light)
+            .with_component(CanCastShadow(true))
+            .spawn();
+
+        Some(entity)
+    }
+
+    fn create_spot_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let position = Vec3::new(-4.0, 5.0, -3.0);
+        let target = Vec3::new(0.0, 1.0, 0.0);
+        let direction = (target - position).normalize();
+        let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
+        let transform = Transform::from_trs(position, rotation, Vec3::ONE);
+        let light = SpotLight {
+            color: Vec3::new(1.0, 0.95, 0.9),
+            intensity: 15.0,
+            inner_angle: 0.35,
+            outer_angle: 0.6,
+            range: 18.0,
+        };
+
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name("Spot Light")
+            .with_transform(transform)
+            .with_component(light)
+            .with_component(CanCastShadow(true))
+            .spawn();
+
+        Some(entity)
+    }
+
+    fn create_camera(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let position = Vec3::new(0.0, 3.0, 6.0);
+        let target = Vec3::ZERO;
+        let direction = {
+            let dir = target - position;
+            if dir.length_squared() > 1e-6 {
+                dir.normalize()
+            } else {
+                Vec3::NEG_Z
+            }
+        };
+        let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
+        let transform = Transform::from_trs(position, rotation, Vec3::ONE);
+
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name("Camera")
+            .with_transform(transform)
+            .spawn();
+
+        let mut camera = *ctx.scene.camera();
+        camera.eye = position;
+        camera.target = target;
+        camera.up = Vec3::Y;
+        ctx.scene.set_camera(camera);
+
+        Some(entity)
     }
 }

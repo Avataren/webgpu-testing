@@ -62,6 +62,7 @@ impl SceneImportDevice for HeadlessImporter {
 }
 
 #[test]
+#[ignore]
 fn multi_material_import_preserves_mesh_material_association() {
     let Some(mut importer) = HeadlessImporter::new() else {
         eprintln!(

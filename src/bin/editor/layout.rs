@@ -4,7 +4,7 @@ use egui::{Color32, Stroke, StrokeKind};
 use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
 
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::{LogWindow, SceneHierarchyWindow};
+use wgpu_cube::{LogWindow, SceneCreationAction, SceneHierarchyWindow};
 
 use crate::asset_browser::AssetBrowserState;
 use crate::inspector::{show_entity_inspector, InspectorAction};
@@ -52,6 +52,7 @@ pub struct EditorBehavior<'a> {
     pub log_window: &'a mut LogWindow,
     pub is_playing: bool,
     pub inspector_actions: &'a mut Vec<InspectorAction>,
+    pub scene_creation_actions: &'a mut Vec<SceneCreationAction>,
     pub asset_browser: &'a mut AssetBrowserState,
     pub content_root: Option<PathBuf>,
 }
@@ -69,7 +70,8 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        self.scene_hierarchy.ui(ui);
+                        let actions = self.scene_hierarchy.ui(ui);
+                        self.scene_creation_actions.extend(actions);
                     });
             }
             EditorPane::SceneViewport => {

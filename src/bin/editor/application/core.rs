@@ -8,6 +8,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     Transform, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
+use wgpu_cube::{SceneCreationAction, SceneHierarchyHandle};
 
 use crate::asset_browser::AssetBrowserState;
 use crate::camera::EditorCameraController;
@@ -31,6 +32,7 @@ pub struct EditorApplication {
     pub(super) pending_imports: Vec<PathBuf>,
     pub(super) pending_entity_deletions: Vec<Entity>,
     pub(super) pending_inspector_actions: Vec<InspectorAction>,
+    pub(super) pending_scene_creations: Vec<SceneCreationAction>,
     pub(super) windows: WindowToggles,
     pub(super) selection: SelectionSystem,
     pub(super) runtime_state: RuntimeStateHandle,
@@ -45,6 +47,7 @@ pub struct EditorApplication {
     pub(super) pending_script_actions: Vec<PendingScriptAction>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
+    pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
 }
 
 #[derive(Default)]
@@ -195,6 +198,7 @@ impl EditorApplicationBuilder {
             pending_imports: Vec::new(),
             pending_entity_deletions: Vec::new(),
             pending_inspector_actions: Vec::new(),
+            pending_scene_creations: Vec::new(),
             windows: self.windows.unwrap_or_else(WindowToggles::new),
             selection: self.selection.unwrap_or_default(),
             runtime_state: RuntimeStateHandle::new(),
@@ -209,6 +213,7 @@ impl EditorApplicationBuilder {
             pending_script_actions: Vec::new(),
             pending_mode_transition: None,
             editor_scene_snapshot: None,
+            scene_hierarchy_handle: None,
         }
     }
 }

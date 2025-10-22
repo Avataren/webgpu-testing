@@ -1,7 +1,8 @@
 #[cfg(feature = "egui")]
 use crate::scene::{
     CanCastShadow, Children, DirectionalLight, MaterialComponent, MeshComponent, Name, Parent,
-    ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
+    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
+    TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -15,6 +16,53 @@ use hecs::Entity;
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "egui")]
 use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScenePrimitivePreset {
+    Cube,
+    Sphere,
+    Plane,
+    Cylinder,
+    Cone,
+    Torus,
+}
+
+#[cfg(feature = "egui")]
+impl ScenePrimitivePreset {
+    pub const fn variants() -> [ScenePrimitivePreset; 6] {
+        [
+            ScenePrimitivePreset::Cube,
+            ScenePrimitivePreset::Sphere,
+            ScenePrimitivePreset::Plane,
+            ScenePrimitivePreset::Cylinder,
+            ScenePrimitivePreset::Cone,
+            ScenePrimitivePreset::Torus,
+        ]
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            ScenePrimitivePreset::Cube => "Cube",
+            ScenePrimitivePreset::Sphere => "Sphere",
+            ScenePrimitivePreset::Plane => "Plane",
+            ScenePrimitivePreset::Cylinder => "Cylinder",
+            ScenePrimitivePreset::Cone => "Cone",
+            ScenePrimitivePreset::Torus => "Torus",
+        }
+    }
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneCreationAction {
+    Primitive(ScenePrimitivePreset),
+    ParticleSystem(ParticleBehaviorPreset),
+    PointLight,
+    DirectionalLight,
+    SpotLight,
+    Camera,
+}
 
 #[cfg(feature = "egui")]
 #[derive(Clone, Debug)]
@@ -224,23 +272,30 @@ impl SceneHierarchyWindow {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, open: Option<&mut bool>) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        open: Option<&mut bool>,
+    ) -> Vec<SceneCreationAction> {
         if let Some(open_flag) = open {
             if !*open_flag {
-                return;
+                return Vec::new();
             }
         }
 
+        let mut creations = Vec::new();
         egui::SidePanel::left("scene_hierarchy_panel")
             .resizable(true)
             .frame(egui::Frame::side_top_panel(&ctx.style()))
             .show(ctx, |ui| {
-                self.panel_contents(ui);
+                creations = self.panel_contents(ui);
             });
+
+        creations
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
-        self.panel_contents(ui);
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<SceneCreationAction> {
+        self.panel_contents(ui)
     }
 
     pub fn selected_entity(&self) -> Option<Entity> {
@@ -267,10 +322,14 @@ impl SceneHierarchyWindow {
         self.selected = entity;
     }
 
-    fn panel_contents(&mut self, ui: &mut egui::Ui) {
+    pub fn handle(&self) -> SceneHierarchyHandle {
+        self.handle.clone()
+    }
+
+    fn panel_contents(&mut self, ui: &mut egui::Ui) -> Vec<SceneCreationAction> {
         let Some((revision, snapshot)) = self.snapshot() else {
             ui.label("Scene hierarchy unavailable.");
-            return;
+            return Vec::new();
         };
 
         if self.last_revision != Some(revision) {
@@ -283,13 +342,68 @@ impl SceneHierarchyWindow {
             }
         }
 
+        let mut creations = Vec::new();
+
+        ui.horizontal(|ui| {
+            ui.heading(&self.title);
+            ui.add_space(8.0);
+            let mut close_top_menu = false;
+            ui.menu_button("Add", |ui| {
+                ui.menu_button("Primitive", |ui| {
+                    for preset in ScenePrimitivePreset::variants() {
+                        if ui.button(preset.display_name()).clicked() {
+                            creations.push(SceneCreationAction::Primitive(preset));
+                            close_top_menu = true;
+                            ui.close();
+                        }
+                    }
+                });
+
+                ui.menu_button("Light", |ui| {
+                    if ui.button("Directional Light").clicked() {
+                        creations.push(SceneCreationAction::DirectionalLight);
+                        close_top_menu = true;
+                        ui.close();
+                    }
+                    if ui.button("Point Light").clicked() {
+                        creations.push(SceneCreationAction::PointLight);
+                        close_top_menu = true;
+                        ui.close();
+                    }
+                    if ui.button("Spot Light").clicked() {
+                        creations.push(SceneCreationAction::SpotLight);
+                        close_top_menu = true;
+                        ui.close();
+                    }
+                });
+
+                ui.menu_button("Particle System", |ui| {
+                    for preset in ParticleBehaviorPreset::variants() {
+                        if ui.button(preset.display_name()).clicked() {
+                            creations.push(SceneCreationAction::ParticleSystem(preset));
+                            close_top_menu = true;
+                            ui.close();
+                        }
+                    }
+                });
+
+                if ui.button("Camera").clicked() {
+                    creations.push(SceneCreationAction::Camera);
+                    close_top_menu = true;
+                    ui.close();
+                }
+            });
+
+            if close_top_menu {
+                ui.close();
+            }
+        });
+        ui.separator();
+
         if snapshot.is_empty() {
             ui.label("Scene is empty.");
-            return;
+            return creations;
         }
-
-        ui.heading(&self.title);
-        ui.separator();
 
         let mut visited = BTreeSet::new();
         for &root in snapshot.roots() {
@@ -311,6 +425,7 @@ impl SceneHierarchyWindow {
 
             self.draw_entity(ui, entity, &snapshot, &mut visited);
         }
+        creations
     }
 
     fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {

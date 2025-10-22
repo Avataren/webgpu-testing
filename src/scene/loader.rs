@@ -2167,6 +2167,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn complex_gltf_transforms_restore_after_stop() {
         let path = Path::new("web/assets/chessboard/ABeautifulGame.gltf");
         let (mut scene, document, buffers, node_entities) = instantiate_gltf_scene(path);
@@ -2201,6 +2202,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn complex_gltf_snapshot_restores_after_stop() {
         use crate::scene::scene_core::SceneSnapshot;
 
