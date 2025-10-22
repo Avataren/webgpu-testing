@@ -462,7 +462,7 @@ impl EditorApplication {
                         .main_world()
                         .get::<&EnvironmentComponent>(entity)
                         .ok()
-                        .map(|existing| existing.clone());
+                        .map(|existing| EnvironmentComponent::clone(&*existing));
 
                     let mut component = component;
                     let should_enable_hdr = {
