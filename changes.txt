@@ -228,3 +228,12 @@ index c9caafd..79cb71a 100644
  
          let post = Self {
              scene,
+# Unreleased
+
+- Editor hierarchy and inspector now surface GPU particle system entities. Use the scene tree's
+  context menu (right-click > **Add Object > GPU Particle System**) to spawn emitters, then adjust
+  their spawn rate or behaviour preset directly from the inspector.
+- Project saves now emit both `project.json` and a matching `scene.json` that captures the primary
+  scene asset. Build scripts that package projects should copy both files to retain the new
+  particle system components.
+

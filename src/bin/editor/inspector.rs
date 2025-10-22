@@ -1,6 +1,6 @@
 use egui::{
     color_picker::color_edit_button_rgb, color_picker::color_edit_button_rgba, color_picker::Alpha,
-    DragValue, Grid,
+    ComboBox, DragValue, Grid,
 };
 use glam::{EulerRot, Quat, Vec3};
 use std::f32::consts::PI;
@@ -9,7 +9,10 @@ use std::ops::RangeInclusive;
 use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
-use wgpu_cube::scene::{CanCastShadow, DirectionalLight, PointLight, SpotLight, Transform};
+use wgpu_cube::scene::{
+    CanCastShadow, DirectionalLight, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
+    SpotLight, Transform,
+};
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
 
@@ -43,6 +46,10 @@ pub enum InspectorAction {
         entity: Entity,
         casts_shadow: bool,
     },
+    UpdateParticleSystem {
+        entity: Entity,
+        component: ParticleSystemComponent,
+    },
 }
 
 pub fn show_entity_inspector(
@@ -61,6 +68,8 @@ pub fn show_entity_inspector(
     show_material_section(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
     show_light_sections(ui, data.entity, &data.components, &mut actions);
+    ui.add_space(6.0);
+    show_particle_system_section(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
     if let Some(action) = show_script_section(ui, data) {
         actions.push(action);
@@ -219,6 +228,63 @@ fn show_material_section(
             }
         } else {
             ui.label("No Material component on this entity.");
+        }
+    });
+}
+
+fn show_particle_system_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    components: &SceneEntityComponentsSummary,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.collapsing("Particle System", |ui| {
+        if let Some(component) = components.particle_system {
+            let mut updated = component;
+            let mut changed = false;
+
+            Grid::new("particle_system_component_grid")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("Spawn rate");
+                    if ui
+                        .add(
+                            DragValue::new(&mut updated.spawn_rate)
+                                .range(0.0..=10_000.0)
+                                .speed(0.1),
+                        )
+                        .changed()
+                    {
+                        updated.spawn_rate = updated.spawn_rate.max(0.0);
+                        changed = true;
+                    }
+                    ui.end_row();
+
+                    ui.label("Behavior");
+                    let mut behavior = updated.behavior;
+                    ComboBox::from_id_salt("particle_behavior_combo")
+                        .selected_text(behavior.display_name())
+                        .show_ui(ui, |ui| {
+                            for preset in ParticleBehaviorPreset::variants() {
+                                ui.selectable_value(&mut behavior, preset, preset.display_name());
+                            }
+                        });
+                    if behavior != updated.behavior {
+                        updated.behavior = behavior;
+                        changed = true;
+                    }
+                    ui.end_row();
+                });
+
+            if changed {
+                actions.push(InspectorAction::UpdateParticleSystem {
+                    entity,
+                    component: updated,
+                });
+            }
+        } else {
+            ui.label("No particle system component on this entity.");
         }
     });
 }

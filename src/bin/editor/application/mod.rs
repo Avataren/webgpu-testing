@@ -21,7 +21,8 @@ use wgpu_cube::app::{
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, MaterialComponent, PointLight, SpotLight, TransformComponent,
+    CanCastShadow, DirectionalLight, MaterialComponent, ParticleSystemComponent, PointLight,
+    SpotLight, TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication};
@@ -432,6 +433,31 @@ impl EditorApplication {
                             }
                             Err(err) => {
                                 log::warn!("Failed to update spot light for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateParticleSystem { entity, component } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut ParticleSystemComponent>(entity) {
+                            Ok(mut existing) => {
+                                if *existing != component {
+                                    *existing = component;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update particle system for {:?}: {}",
+                                    entity,
+                                    err
+                                );
                             }
                         }
                     }

@@ -6,6 +6,7 @@ use crate::asset::Mesh;
 use crate::renderer::{Material, Vertex};
 use crate::scene::Transform;
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 // ============================================================================
@@ -177,6 +178,56 @@ pub struct GltfPrimitive(pub usize);
 #[derive(Debug, Clone, Copy)]
 pub struct GpuParticleInstance {
     pub index: u32,
+}
+
+// ============================================================================
+// Particle System Components
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleBehaviorPreset {
+    #[default]
+    Physics,
+    Starfield,
+    Boids,
+    OptimizedBoids,
+}
+
+impl ParticleBehaviorPreset {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            ParticleBehaviorPreset::Physics => "Physics",
+            ParticleBehaviorPreset::Starfield => "Starfield",
+            ParticleBehaviorPreset::Boids => "Boids",
+            ParticleBehaviorPreset::OptimizedBoids => "Optimized Boids",
+        }
+    }
+
+    pub const fn variants() -> [ParticleBehaviorPreset; 4] {
+        [
+            ParticleBehaviorPreset::Physics,
+            ParticleBehaviorPreset::Starfield,
+            ParticleBehaviorPreset::Boids,
+            ParticleBehaviorPreset::OptimizedBoids,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParticleSystemComponent {
+    pub spawn_rate: f32,
+    #[serde(default)]
+    pub behavior: ParticleBehaviorPreset,
+}
+
+impl ParticleSystemComponent {
+    pub const fn new(spawn_rate: f32, behavior: ParticleBehaviorPreset) -> Self {
+        Self {
+            spawn_rate,
+            behavior,
+        }
+    }
 }
 
 // ============================================================================

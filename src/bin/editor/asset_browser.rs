@@ -33,10 +33,6 @@ impl AssetBrowserState {
         self.feedback = Some(Feedback::Info(message.into()));
     }
 
-    pub fn clear_feedback(&mut self) {
-        self.feedback = None;
-    }
-
     pub fn ui(&mut self, ui: &mut egui::Ui, content_root: Option<&Path>) {
         #[cfg(target_arch = "wasm32")]
         {
@@ -188,10 +184,7 @@ impl AssetBrowserState {
                         for dir in &directories {
                             if let Some(name) = dir.file_name().and_then(|name| name.to_str()) {
                                 let label = format!("📁 {name}");
-                                let selected = self
-                                    .selected_folder
-                                    .as_ref()
-                                    .map_or(false, |current| current == dir);
+                                let selected = self.selected_folder.as_ref() == Some(dir);
                                 if ui.selectable_label(selected, label).clicked() {
                                     self.selected_folder = Some(dir.clone());
                                     self.feedback = None;
@@ -245,7 +238,7 @@ impl AssetBrowserState {
         let is_selected = self
             .selected_folder
             .as_ref()
-            .map_or(false, |selected| selected == current);
+            .is_some_and(|selected| selected == current);
 
         let header_response = state.show_header(ui, |ui| {
             let response = ui.selectable_label(is_selected, label);
@@ -327,7 +320,7 @@ impl AssetBrowserState {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn sort_paths(paths: &mut Vec<PathBuf>) {
+fn sort_paths(paths: &mut [PathBuf]) {
     paths.sort_by(|a, b| {
         let a_name = a
             .file_name()

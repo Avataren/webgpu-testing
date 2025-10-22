@@ -15,7 +15,7 @@ pub mod transform;
 pub use assets::{
     SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity, SceneAssetEntityBuilder,
     SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset, SceneTreeAssetNode,
-    SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedRuneScript,
+    SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleSystem, SerializedRuneScript,
     SerializedRuneScriptSource, SerializedTransform,
 };
 pub use builder::EntityBuilder;
@@ -33,6 +33,6 @@ pub use transform::Transform;
 pub use components::{
     CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
     GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, OrbitAnimation,
-    Parent, PointLight, RotateAnimation, SelectedInEditor, SpotLight, TransformComponent, Visible,
-    WorldTransform,
+    Parent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight, RotateAnimation,
+    SelectedInEditor, SpotLight, TransformComponent, Visible, WorldTransform,
 };

@@ -124,6 +124,7 @@ impl SceneLoader {
         !times.is_empty() && values.len() >= times.len() * components_per_keyframe
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn load_node(
         node: &gltf::Node,
         parent: Option<hecs::Entity>,

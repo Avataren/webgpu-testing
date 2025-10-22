@@ -5,7 +5,8 @@ use super::animation::{
 use super::components::{
     CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
     GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
-    PointLight, SpotLight, TransformComponent, Visible,
+    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, TransformComponent,
+    Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -305,6 +306,10 @@ impl SceneAsset {
 
             if let Some(casts_shadow) = entity.casts_shadow {
                 builder.add(CanCastShadow(casts_shadow));
+            }
+
+            if let Some(particle_system) = &entity.particle_system {
+                builder.add(ParticleSystemComponent::from(particle_system.clone()));
             }
 
             if let Some(editor_id) = entity.editor_id {
@@ -657,6 +662,8 @@ pub struct SceneAssetEntity {
     pub casts_shadow: Option<bool>,
     #[serde(default)]
     pub editor_id: Option<u128>,
+    #[serde(default)]
+    pub particle_system: Option<SerializedParticleSystem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -742,6 +749,11 @@ impl SceneAssetEntity {
             .ok()
             .map(|m| SerializedMaterial::from(m.0));
 
+        let particle_system = world
+            .get::<&ParticleSystemComponent>(entity)
+            .ok()
+            .map(|component| SerializedParticleSystem::from(*component));
+
         let parent = world
             .get::<&Parent>(entity)
             .ok()
@@ -811,6 +823,7 @@ impl SceneAssetEntity {
             spot_light,
             casts_shadow,
             editor_id,
+            particle_system,
         }
     }
 }
@@ -834,6 +847,7 @@ pub struct SceneAssetEntityBuilder {
     spot_light: Option<SerializedSpotLight>,
     casts_shadow: Option<bool>,
     editor_id: Option<u128>,
+    particle_system: Option<SerializedParticleSystem>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -857,6 +871,7 @@ impl SceneAssetEntityBuilder {
             spot_light: None,
             casts_shadow: None,
             editor_id: None,
+            particle_system: None,
         }
     }
 
@@ -948,6 +963,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_particle_system(mut self, system: SerializedParticleSystem) -> Self {
+        self.particle_system = Some(system);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -968,7 +988,30 @@ impl SceneAssetEntityBuilder {
             spot_light: self.spot_light,
             casts_shadow: self.casts_shadow,
             editor_id: self.editor_id,
+            particle_system: self.particle_system,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedParticleSystem {
+    pub spawn_rate: f32,
+    #[serde(default)]
+    pub behavior: ParticleBehaviorPreset,
+}
+
+impl From<ParticleSystemComponent> for SerializedParticleSystem {
+    fn from(component: ParticleSystemComponent) -> Self {
+        Self {
+            spawn_rate: component.spawn_rate,
+            behavior: component.behavior,
+        }
+    }
+}
+
+impl From<SerializedParticleSystem> for ParticleSystemComponent {
+    fn from(serialized: SerializedParticleSystem) -> Self {
+        ParticleSystemComponent::new(serialized.spawn_rate, serialized.behavior)
     }
 }
 
@@ -1438,6 +1481,7 @@ mod tests {
                 spot_light: None,
                 casts_shadow: None,
                 editor_id: None,
+                particle_system: None,
             }],
             animations: Vec::new(),
             animation_states: Vec::new(),

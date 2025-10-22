@@ -1,7 +1,7 @@
 #[cfg(feature = "egui")]
 use crate::scene::{
     CanCastShadow, Children, DirectionalLight, MaterialComponent, MeshComponent, Name, Parent,
-    PointLight, Scene, SpotLight, Transform, TransformComponent,
+    ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -44,6 +44,7 @@ pub struct SceneEntityComponentsSummary {
     pub directional_light: Option<DirectionalLight>,
     pub spot_light: Option<SpotLight>,
     pub can_cast_shadow: Option<CanCastShadow>,
+    pub particle_system: Option<ParticleSystemComponent>,
 }
 
 #[cfg(feature = "egui")]
@@ -93,6 +94,9 @@ impl SceneHierarchySnapshot {
             let can_cast_shadow = entity_ref
                 .get::<&CanCastShadow>()
                 .map(|component| *component);
+            let particle_system = entity_ref
+                .get::<&ParticleSystemComponent>()
+                .map(|component| *component);
 
             nodes.insert(
                 entity,
@@ -115,6 +119,7 @@ impl SceneHierarchySnapshot {
                     directional_light,
                     spot_light,
                     can_cast_shadow,
+                    particle_system,
                 },
             );
         }

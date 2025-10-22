@@ -11,6 +11,7 @@ use std::sync::{OnceLock, RwLock};
 use thiserror::Error;
 
 pub const PROJECT_FILE_NAME: &str = "project.json";
+pub const SCENE_FILE_NAME: &str = "scene.json";
 pub const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
 
@@ -148,6 +149,12 @@ impl ProjectManifest {
 
         let json = serde_json::to_string_pretty(&manifest)?;
         fs::write(dir.join(PROJECT_FILE_NAME), json)?;
+
+        let scene_json = manifest
+            .scene
+            .to_json()
+            .map_err(ProjectError::Serialization)?;
+        fs::write(dir.join(SCENE_FILE_NAME), scene_json)?;
         Ok(())
     }
 
@@ -156,6 +163,13 @@ impl ProjectManifest {
         let json = fs::read_to_string(&manifest_path)?;
         let mut manifest: ProjectManifest = serde_json::from_str(&json)?;
         manifest.environment.resolve_paths(dir)?;
+
+        let scene_path = dir.join(SCENE_FILE_NAME);
+        if scene_path.exists() {
+            let scene_json = fs::read_to_string(scene_path)?;
+            manifest.scene =
+                SceneAsset::from_json(&scene_json).map_err(ProjectError::Serialization)?;
+        }
         Ok(manifest)
     }
 
