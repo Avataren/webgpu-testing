@@ -26,8 +26,8 @@ use wgpu_cube::renderer::primitives::{
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
 use wgpu_cube::scene::{
     CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent, MaterialComponent,
-    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
-    TransformComponent,MeshBounds,
+    MeshBounds, ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
+    TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
@@ -457,6 +457,49 @@ impl EditorApplication {
                     }
                 }
                 InspectorAction::UpdateEnvironment { entity, component } => {
+                    let previous = ctx
+                        .scene
+                        .main_world()
+                        .get::<&EnvironmentComponent>(entity)
+                        .ok()
+                        .map(|existing| existing.clone());
+
+                    let mut component = component;
+                    let should_enable_hdr = {
+                        let new_path = component
+                            .hdr
+                            .as_ref()
+                            .and_then(|hdr| hdr.path.as_ref())
+                            .map(|path| path.as_path());
+                        let previous_path = previous
+                            .as_ref()
+                            .and_then(|prev| prev.hdr.as_ref())
+                            .and_then(|hdr| hdr.path.as_ref())
+                            .map(|path| path.as_path());
+
+                        match (previous_path, new_path) {
+                            (Some(prev), Some(new)) => prev != new,
+                            (None, Some(_)) => true,
+                            _ => false,
+                        }
+                    };
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if let Err(err) =
+                            self.copy_environment_asset_if_needed(&mut component, previous.as_ref())
+                        {
+                            log::warn!("{err}");
+                            self.asset_browser.report_error(err);
+                        }
+                    }
+
+                    if let Some(hdr) = component.hdr.as_mut() {
+                        if should_enable_hdr && hdr.path.is_some() {
+                            hdr.enabled = true;
+                        }
+                    }
+
                     let mut updated = false;
                     {
                         let world = ctx.scene.main_world_mut();
@@ -751,5 +794,86 @@ impl EditorApplication {
         ctx.scene.set_environment(component.to_environment());
 
         Some(entity)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn copy_environment_asset_if_needed(
+        &mut self,
+        component: &mut EnvironmentComponent,
+        previous: Option<&EnvironmentComponent>,
+    ) -> Result<(), String> {
+        let Some(hdr) = component.hdr.as_mut() else {
+            return Ok(());
+        };
+        let Some(requested_path) = hdr.path.clone() else {
+            return Ok(());
+        };
+
+        let previous_path = previous
+            .and_then(|prev| prev.hdr.as_ref())
+            .and_then(|hdr| hdr.path.clone());
+
+        if previous_path.as_ref() == Some(&requested_path) {
+            return Ok(());
+        }
+
+        let Some(content_root) = self.project.content_root() else {
+            return Err(
+                "Open or create a project before assigning environment HDR files.".to_string(),
+            );
+        };
+
+        let absolute_source = if requested_path.is_absolute() {
+            requested_path
+        } else {
+            std::env::current_dir()
+                .map_err(|err| format!("Failed to resolve current directory: {err}"))?
+                .join(&requested_path)
+        };
+
+        if !absolute_source.exists() {
+            return Err(format!(
+                "Selected HDR file {:?} does not exist",
+                absolute_source
+            ));
+        }
+
+        let environment_dir = content_root.join("environment");
+        std::fs::create_dir_all(&environment_dir).map_err(|err| {
+            format!(
+                "Failed to create environment asset folder {:?}: {err}",
+                environment_dir
+            )
+        })?;
+
+        let file_name = absolute_source
+            .file_name()
+            .map(|name| name.to_owned())
+            .ok_or_else(|| {
+                format!(
+                    "HDR file {:?} is missing a valid file name",
+                    absolute_source
+                )
+            })?;
+
+        let destination = environment_dir.join(&file_name);
+
+        if destination != absolute_source {
+            std::fs::copy(&absolute_source, &destination).map_err(|err| {
+                format!(
+                    "Failed to copy HDR file from {:?} to {:?}: {err}",
+                    absolute_source, destination
+                )
+            })?;
+            self.asset_browser.report_info(format!(
+                "Copied environment HDR to {}",
+                destination.display()
+            ));
+        }
+
+        let resolved = destination.canonicalize().unwrap_or(destination);
+        hdr.path = Some(resolved);
+
+        Ok(())
     }
 }

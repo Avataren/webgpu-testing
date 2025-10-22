@@ -169,6 +169,30 @@ impl From<&HdrBackground> for EnvironmentHdrSettings {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn environment_component_round_trips_hdr_background() {
+        let mut component = EnvironmentComponent::default();
+        let hdr = component.hdr_settings_mut();
+        hdr.path = Some(Path::new("assets/test_environment.hdr").to_path_buf());
+        hdr.enabled = true;
+        hdr.intensity = 2.5;
+
+        let environment = component.to_environment();
+        let background = environment
+            .active_hdr_background()
+            .expect("HDR background should be active");
+
+        assert!(environment.is_hdr_enabled());
+        assert_eq!(background.path(), Path::new("assets/test_environment.hdr"));
+        assert!((background.intensity() - 2.5).abs() < f32::EPSILON);
+    }
+}
+
 // ============================================================================
 // Billboard Components
 // ============================================================================

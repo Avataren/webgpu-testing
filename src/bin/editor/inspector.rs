@@ -10,8 +10,8 @@ use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, EnvironmentComponent, ParticleBehaviorPreset,
-    ParticleSystemComponent, PointLight, SpotLight, Transform,
+    CanCastShadow, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshComponent,
+    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
 };
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
@@ -68,175 +68,192 @@ pub fn show_entity_inspector(
     ui.label(format!("Entity: {:?}", data.entity));
     ui.add_space(8.0);
 
-    show_transform_section(ui, data.entity, &data.components, &mut actions);
-    ui.add_space(6.0);
-    show_mesh_section(ui, &data.components);
-    ui.add_space(6.0);
-    show_material_section(ui, data.entity, &data.components, &mut actions);
-    ui.add_space(6.0);
-    show_light_sections(ui, data.entity, &data.components, &mut actions);
-    ui.add_space(6.0);
-    show_environment_section(ui, data.entity, &data.components, &mut actions);
-    ui.add_space(6.0);
-    show_particle_system_section(ui, data.entity, &data.components, &mut actions);
-    ui.add_space(6.0);
-    if let Some(action) = show_script_section(ui, data) {
-        actions.push(action);
+    let mut first_section = true;
+
+    if let Some(transform) = data.components.transform {
+        begin_section(ui, &mut first_section);
+        show_transform_section(ui, data.entity, transform, &mut actions);
+    }
+
+    if let Some(mesh) = data.components.mesh {
+        begin_section(ui, &mut first_section);
+        show_mesh_section(ui, mesh);
+    }
+
+    if let Some(material) = data.components.material {
+        begin_section(ui, &mut first_section);
+        show_material_section(ui, data.entity, material, &mut actions);
+    }
+
+    let has_light = data.components.point_light.is_some()
+        || data.components.directional_light.is_some()
+        || data.components.spot_light.is_some();
+    if has_light {
+        begin_section(ui, &mut first_section);
+        show_light_sections(ui, data.entity, &data.components, &mut actions);
+    }
+
+    if let Some(environment) = data.components.environment.clone() {
+        begin_section(ui, &mut first_section);
+        show_environment_section(ui, data.entity, environment, &mut actions);
+    }
+
+    if let Some(component) = data.components.particle_system {
+        begin_section(ui, &mut first_section);
+        show_particle_system_section(ui, data.entity, component, &mut actions);
+    }
+
+    if let Some(script) = data.components.script.clone() {
+        begin_section(ui, &mut first_section);
+        if let Some(action) = show_script_section(ui, data.entity, &script) {
+            actions.push(action);
+        }
     }
 
     actions
 }
 
+fn begin_section(ui: &mut egui::Ui, first_section: &mut bool) {
+    if *first_section {
+        *first_section = false;
+    } else {
+        ui.add_space(6.0);
+    }
+}
+
 fn show_transform_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    components: &SceneEntityComponentsSummary,
+    transform: Transform,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Transform", |ui| {
-        if let Some(transform) = components.transform {
-            let mut updated = transform;
-            let mut changed = false;
+        let mut updated = transform;
+        let mut changed = false;
 
-            Grid::new("transform_component_grid")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    if vec3_editor(ui, "Translation", &mut updated.translation) {
-                        changed = true;
-                    }
+        Grid::new("transform_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                if vec3_editor(ui, "Translation", &mut updated.translation) {
+                    changed = true;
+                }
 
-                    let (yaw, pitch, roll) = updated.rotation.to_euler(EulerRot::YXZ);
-                    let mut rotation_deg = Vec3::new(yaw, pitch, roll) * (180.0 / PI);
-                    if vec3_editor(ui, "Rotation (deg)", &mut rotation_deg) {
-                        let rotation_rad = rotation_deg * (PI / 180.0);
-                        updated.rotation = Quat::from_euler(
-                            EulerRot::YXZ,
-                            rotation_rad.x,
-                            rotation_rad.y,
-                            rotation_rad.z,
-                        );
-                        changed = true;
-                    }
+                let (yaw, pitch, roll) = updated.rotation.to_euler(EulerRot::YXZ);
+                let mut rotation_deg = Vec3::new(yaw, pitch, roll) * (180.0 / PI);
+                if vec3_editor(ui, "Rotation (deg)", &mut rotation_deg) {
+                    let rotation_rad = rotation_deg * (PI / 180.0);
+                    updated.rotation = Quat::from_euler(
+                        EulerRot::YXZ,
+                        rotation_rad.x,
+                        rotation_rad.y,
+                        rotation_rad.z,
+                    );
+                    changed = true;
+                }
 
-                    ui.label("Rotation (quat)");
-                    ui.monospace(format!(
-                        "{:.3}, {:.3}, {:.3}, {:.3}",
-                        updated.rotation.x,
-                        updated.rotation.y,
-                        updated.rotation.z,
-                        updated.rotation.w
-                    ));
-                    ui.end_row();
+                ui.label("Rotation (quat)");
+                ui.monospace(format!(
+                    "({:.3}, {:.3}, {:.3}, {:.3})",
+                    updated.rotation.x, updated.rotation.y, updated.rotation.z, updated.rotation.w
+                ));
+                ui.end_row();
 
-                    if vec3_editor(ui, "Scale", &mut updated.scale) {
-                        changed = true;
-                    }
-                });
+                if vec3_editor(ui, "Scale", &mut updated.scale) {
+                    changed = true;
+                }
+            });
 
-            if changed {
-                actions.push(InspectorAction::UpdateTransform {
-                    entity,
-                    transform: updated,
-                });
-            }
-        } else {
-            ui.label("No Transform component on this entity.");
+        if changed {
+            actions.push(InspectorAction::UpdateTransform {
+                entity,
+                transform: updated,
+            });
         }
     });
 }
 
-fn show_mesh_section(ui: &mut egui::Ui, components: &SceneEntityComponentsSummary) {
+fn show_mesh_section(ui: &mut egui::Ui, mesh: MeshComponent) {
     ui.collapsing("Mesh", |ui| {
-        if let Some(mesh) = components.mesh {
-            ui.label(format!("Handle index: {}", mesh.0.index()));
-        } else {
-            ui.label("No Mesh component on this entity.");
-        }
+        ui.label(format!("Handle index: {}", mesh.0.index()));
     });
 }
 
 fn show_material_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    components: &SceneEntityComponentsSummary,
+    material_component: MaterialComponent,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Material", |ui| {
-        if let Some(material_component) = components.material {
-            let mut material = material_component.0;
-            let mut changed = false;
+        let mut material = material_component.0;
+        let mut changed = false;
 
-            Grid::new("material_component_grid")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Base Color");
-                    let mut color = egui::Rgba::from_rgba_unmultiplied(
-                        material.base_color[0] as f32 / 255.0,
-                        material.base_color[1] as f32 / 255.0,
-                        material.base_color[2] as f32 / 255.0,
-                        material.base_color[3] as f32 / 255.0,
-                    );
-                    if color_edit_button_rgba(ui, &mut color, Alpha::BlendOrAdditive).changed() {
-                        let array = color.to_array();
-                        material.base_color = [
-                            (array[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-                            (array[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-                            (array[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-                            (array[3].clamp(0.0, 1.0) * 255.0).round() as u8,
-                        ];
-                        changed = true;
-                    }
-                    ui.end_row();
+        Grid::new("material_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Base Color");
+                let mut color = egui::Rgba::from_rgba_unmultiplied(
+                    material.base_color[0] as f32 / 255.0,
+                    material.base_color[1] as f32 / 255.0,
+                    material.base_color[2] as f32 / 255.0,
+                    material.base_color[3] as f32 / 255.0,
+                );
+                if color_edit_button_rgba(ui, &mut color, Alpha::BlendOrAdditive).changed() {
+                    let array = color.to_array();
+                    material.base_color = [
+                        (array[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+                        (array[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+                        (array[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+                        (array[3].clamp(0.0, 1.0) * 255.0).round() as u8,
+                    ];
+                    changed = true;
+                }
+                ui.end_row();
 
-                    changed |=
-                        material_float_editor(ui, "Metallic", material.metallic_factor, |value| {
-                            material.metallic_factor = value
-                        });
-                    changed |= material_float_editor(
-                        ui,
-                        "Roughness",
-                        material.roughness_factor,
-                        |value| material.roughness_factor = value,
-                    );
-                    changed |= material_float_editor(
-                        ui,
-                        "Emissive strength",
-                        material.emissive_strength,
-                        |value| material.emissive_strength = value,
-                    );
+                changed |=
+                    material_float_editor(ui, "Metallic", material.metallic_factor, |value| {
+                        material.metallic_factor = value
+                    });
+                changed |=
+                    material_float_editor(ui, "Roughness", material.roughness_factor, |value| {
+                        material.roughness_factor = value
+                    });
+                changed |= material_float_editor(
+                    ui,
+                    "Emissive strength",
+                    material.emissive_strength,
+                    |value| material.emissive_strength = value,
+                );
 
-                    ui.label("Flags");
-                    ui.monospace(format!("0x{:08X}", material.flags.bits()));
-                    ui.end_row();
+                ui.label("Flags");
+                ui.monospace(format!("0x{:08X}", material.flags.bits()));
+                ui.end_row();
 
-                    ui.label("Base color texture");
-                    ui.monospace(format!("{}", material.base_color_texture));
-                    ui.end_row();
+                ui.label("Base color texture");
+                ui.monospace(format!("{}", material.base_color_texture));
+                ui.end_row();
 
-                    ui.label("Metallic/Roughness texture");
-                    ui.monospace(format!("{}", material.metallic_roughness_texture));
-                    ui.end_row();
+                ui.label("Metallic/Roughness texture");
+                ui.monospace(format!("{}", material.metallic_roughness_texture));
+                ui.end_row();
 
-                    ui.label("Normal texture");
-                    ui.monospace(format!("{}", material.normal_texture));
-                    ui.end_row();
+                ui.label("Normal texture");
+                ui.monospace(format!("{}", material.normal_texture));
+                ui.end_row();
 
-                    ui.label("Emissive texture");
-                    ui.monospace(format!("{}", material.emissive_texture));
-                    ui.end_row();
+                ui.label("Emissive texture");
+                ui.monospace(format!("{}", material.emissive_texture));
+                ui.end_row();
 
-                    ui.label("Occlusion texture");
-                    ui.monospace(format!("{}", material.occlusion_texture));
-                    ui.end_row();
-                });
+                ui.label("Occlusion texture");
+                ui.monospace(format!("{}", material.occlusion_texture));
+                ui.end_row();
+            });
 
-            if changed {
-                actions.push(InspectorAction::UpdateMaterial { entity, material });
-            }
-        } else {
-            ui.label("No Material component on this entity.");
+        if changed {
+            actions.push(InspectorAction::UpdateMaterial { entity, material });
         }
     });
 }
@@ -244,56 +261,52 @@ fn show_material_section(
 fn show_particle_system_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    components: &SceneEntityComponentsSummary,
+    component: ParticleSystemComponent,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Particle System", |ui| {
-        if let Some(component) = components.particle_system {
-            let mut updated = component;
-            let mut changed = false;
+        let mut updated = component;
+        let mut changed = false;
 
-            Grid::new("particle_system_component_grid")
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Spawn rate");
-                    if ui
-                        .add(
-                            DragValue::new(&mut updated.spawn_rate)
-                                .range(0.0..=10_000.0)
-                                .speed(0.1),
-                        )
-                        .changed()
-                    {
-                        updated.spawn_rate = updated.spawn_rate.max(0.0);
-                        changed = true;
-                    }
-                    ui.end_row();
+        Grid::new("particle_system_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Spawn rate");
+                if ui
+                    .add(
+                        DragValue::new(&mut updated.spawn_rate)
+                            .range(0.0..=10_000.0)
+                            .speed(0.1),
+                    )
+                    .changed()
+                {
+                    updated.spawn_rate = updated.spawn_rate.max(0.0);
+                    changed = true;
+                }
+                ui.end_row();
 
-                    ui.label("Behavior");
-                    let mut behavior = updated.behavior;
-                    ComboBox::from_id_salt("particle_behavior_combo")
-                        .selected_text(behavior.display_name())
-                        .show_ui(ui, |ui| {
-                            for preset in ParticleBehaviorPreset::variants() {
-                                ui.selectable_value(&mut behavior, preset, preset.display_name());
-                            }
-                        });
-                    if behavior != updated.behavior {
-                        updated.behavior = behavior;
-                        changed = true;
-                    }
-                    ui.end_row();
-                });
+                ui.label("Behavior");
+                let mut behavior = updated.behavior;
+                ComboBox::from_id_salt("particle_behavior_combo")
+                    .selected_text(behavior.display_name())
+                    .show_ui(ui, |ui| {
+                        for preset in ParticleBehaviorPreset::variants() {
+                            ui.selectable_value(&mut behavior, preset, preset.display_name());
+                        }
+                    });
+                if behavior != updated.behavior {
+                    updated.behavior = behavior;
+                    changed = true;
+                }
+                ui.end_row();
+            });
 
-            if changed {
-                actions.push(InspectorAction::UpdateParticleSystem {
-                    entity,
-                    component: updated,
-                });
-            }
-        } else {
-            ui.label("No particle system component on this entity.");
+        if changed {
+            actions.push(InspectorAction::UpdateParticleSystem {
+                entity,
+                component: updated,
+            });
         }
     });
 }
@@ -322,15 +335,10 @@ fn show_light_sections(
 fn show_environment_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    components: &SceneEntityComponentsSummary,
+    component: EnvironmentComponent,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Environment", |ui| {
-        let Some(component) = components.environment.clone() else {
-            ui.label("No Environment component on this entity.");
-            return;
-        };
-
         let mut edited = component.clone();
         let mut changed = false;
 
@@ -580,29 +588,22 @@ fn show_spot_light_section(
 
 fn show_script_section(
     ui: &mut egui::Ui,
-    data: &SceneEntityInspectorData,
+    entity: Entity,
+    script: &RuneScriptComponent,
 ) -> Option<InspectorAction> {
     let mut action = None;
     ui.collapsing("Script", |ui| {
-        if let Some(script) = data.components.script.as_ref() {
-            let source_label = match script.source() {
-                RuneScriptSource::Inline { name, .. } => {
-                    format!("Inline script: {}", name)
-                }
-                RuneScriptSource::File { path } => {
-                    format!("File: {}", path.display())
-                }
-            };
-            ui.label(source_label);
+        let source_label = match script.source() {
+            RuneScriptSource::Inline { name, .. } => format!("Inline script: {}", name),
+            RuneScriptSource::File { path } => format!("File: {}", path.display()),
+        };
+        ui.label(source_label);
 
-            if ui.button("Edit").clicked() {
-                action = Some(InspectorAction::EditScript {
-                    entity: data.entity,
-                    component: script.clone(),
-                });
-            }
-        } else {
-            ui.label("No script component on this entity.");
+        if ui.button("Edit").clicked() {
+            action = Some(InspectorAction::EditScript {
+                entity,
+                component: script.clone(),
+            });
         }
     });
     action

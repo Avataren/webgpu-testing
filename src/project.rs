@@ -334,13 +334,18 @@ impl SerializedEnvironment {
             };
 
             let content_dir = project_dir.join(CONTENT_DIR);
-            fs::create_dir_all(&content_dir)?;
-            let target = content_dir.join(file_name);
+            let environment_dir = content_dir.join("environment");
+            fs::create_dir_all(&environment_dir)?;
+            let target = environment_dir.join(&file_name);
             if source != target {
                 fs::copy(&source, &target)?;
             }
 
-            hdr.image_path = Some(PathBuf::from(CONTENT_DIR).join(file_name));
+            hdr.image_path = Some(
+                PathBuf::from(CONTENT_DIR)
+                    .join("environment")
+                    .join(file_name),
+            );
         }
 
         Ok(())
@@ -451,6 +456,17 @@ mod tests {
 
         let mut serialized = SerializedEnvironment::from_environment(&environment);
         serialized.prepare_for_save(tmp_dir.path()).unwrap();
+        let stored_path = serialized
+            .hdr
+            .as_ref()
+            .and_then(|hdr| hdr.image_path.clone())
+            .expect("serialized environment should contain HDR path");
+        assert_eq!(
+            stored_path,
+            PathBuf::from(CONTENT_DIR)
+                .join("environment")
+                .join("env.hdr")
+        );
 
         let manifest_path = tmp_dir.path().join(PROJECT_FILE_NAME);
         let json = serde_json::to_string(&ProjectManifest {
