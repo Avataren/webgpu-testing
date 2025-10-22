@@ -3,10 +3,10 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
-    GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
-    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, TransformComponent,
-    Visible,
+    CanCastShadow, Children, DirectionalLight, EditorEntityId, EnvironmentComponent, GltfMaterial,
+    GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name,
+    Parent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight,
+    TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -314,6 +314,10 @@ impl SceneAsset {
 
             if let Some(editor_id) = entity.editor_id {
                 builder.add(EditorEntityId(editor_id));
+            }
+
+            if let Some(environment) = &entity.environment {
+                builder.add(environment.clone());
             }
 
             let entity_id = instance.world_mut().spawn(builder.build());
@@ -664,6 +668,8 @@ pub struct SceneAssetEntity {
     pub editor_id: Option<u128>,
     #[serde(default)]
     pub particle_system: Option<SerializedParticleSystem>,
+    #[serde(default)]
+    pub environment: Option<EnvironmentComponent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -803,6 +809,10 @@ impl SceneAssetEntity {
 
         let casts_shadow = world.get::<&CanCastShadow>(entity).ok().map(|flag| flag.0);
         let editor_id = world.get::<&EditorEntityId>(entity).ok().map(|id| id.0);
+        let environment = world
+            .get::<&EnvironmentComponent>(entity)
+            .ok()
+            .map(|component| (*component).clone());
 
         Self {
             name,
@@ -824,6 +834,7 @@ impl SceneAssetEntity {
             casts_shadow,
             editor_id,
             particle_system,
+            environment,
         }
     }
 }
@@ -848,6 +859,7 @@ pub struct SceneAssetEntityBuilder {
     casts_shadow: Option<bool>,
     editor_id: Option<u128>,
     particle_system: Option<SerializedParticleSystem>,
+    environment: Option<EnvironmentComponent>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -872,6 +884,7 @@ impl SceneAssetEntityBuilder {
             casts_shadow: None,
             editor_id: None,
             particle_system: None,
+            environment: None,
         }
     }
 
@@ -968,6 +981,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_environment(mut self, component: EnvironmentComponent) -> Self {
+        self.environment = Some(component);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -989,6 +1007,7 @@ impl SceneAssetEntityBuilder {
             casts_shadow: self.casts_shadow,
             editor_id: self.editor_id,
             particle_system: self.particle_system,
+            environment: self.environment,
         }
     }
 }
@@ -1482,6 +1501,7 @@ mod tests {
                 casts_shadow: None,
                 editor_id: None,
                 particle_system: None,
+                environment: None,
             }],
             animations: Vec::new(),
             animation_states: Vec::new(),

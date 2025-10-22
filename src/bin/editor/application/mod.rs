@@ -25,9 +25,9 @@ use wgpu_cube::renderer::primitives::{
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, EntityBuilder, MaterialComponent, MeshBounds,
+    CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent, MaterialComponent,
     ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
-    TransformComponent,
+    TransformComponent,MeshBounds,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
@@ -456,6 +456,32 @@ impl EditorApplication {
                         self.record_scene_change(ctx.scene);
                     }
                 }
+                InspectorAction::UpdateEnvironment { entity, component } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut EnvironmentComponent>(entity) {
+                            Ok(mut existing) => {
+                                if *existing != component {
+                                    *existing = component.clone();
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update environment for {:?}: {}",
+                                    entity,
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if updated {
+                        ctx.scene.set_environment(component.to_environment());
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
                 InspectorAction::UpdateParticleSystem { entity, component } => {
                     let mut updated = false;
                     {
@@ -558,6 +584,7 @@ impl EditorApplication {
                 SceneCreationAction::DirectionalLight => self.create_directional_light(ctx),
                 SceneCreationAction::SpotLight => self.create_spot_light(ctx),
                 SceneCreationAction::Camera => self.create_camera(ctx),
+                SceneCreationAction::Environment => self.create_environment(ctx),
             };
 
             if let Some(entity) = created {
@@ -710,6 +737,18 @@ impl EditorApplication {
         camera.target = target;
         camera.up = Vec3::Y;
         ctx.scene.set_camera(camera);
+
+        Some(entity)
+    }
+
+    fn create_environment(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let component = EnvironmentComponent::from_environment(ctx.scene.environment());
+        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+            .with_name("Environment")
+            .with_component(component.clone())
+            .spawn();
+
+        ctx.scene.set_environment(component.to_environment());
 
         Some(entity)
     }

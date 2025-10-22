@@ -1,6 +1,6 @@
 use egui::{
     color_picker::color_edit_button_rgb, color_picker::color_edit_button_rgba, color_picker::Alpha,
-    ComboBox, DragValue, Grid,
+    ComboBox, DragValue, Grid, Slider,
 };
 use glam::{EulerRot, Quat, Vec3};
 use std::f32::consts::PI;
@@ -10,11 +10,14 @@ use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
-    SpotLight, Transform,
+    CanCastShadow, DirectionalLight, EnvironmentComponent, ParticleBehaviorPreset,
+    ParticleSystemComponent, PointLight, SpotLight, Transform,
 };
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
+
+#[cfg(not(target_arch = "wasm32"))]
+use rfd::FileDialog;
 
 #[derive(Clone)]
 pub enum InspectorAction {
@@ -42,6 +45,10 @@ pub enum InspectorAction {
         entity: Entity,
         light: SpotLight,
     },
+    UpdateEnvironment {
+        entity: Entity,
+        component: EnvironmentComponent,
+    },
     SetCanCastShadow {
         entity: Entity,
         casts_shadow: bool,
@@ -68,6 +75,8 @@ pub fn show_entity_inspector(
     show_material_section(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
     show_light_sections(ui, data.entity, &data.components, &mut actions);
+    ui.add_space(6.0);
+    show_environment_section(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
     show_particle_system_section(ui, data.entity, &data.components, &mut actions);
     ui.add_space(6.0);
@@ -308,6 +317,132 @@ fn show_light_sections(
         ui.add_space(6.0);
         show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
     }
+}
+
+fn show_environment_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    components: &SceneEntityComponentsSummary,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.collapsing("Environment", |ui| {
+        let Some(component) = components.environment.clone() else {
+            ui.label("No Environment component on this entity.");
+            return;
+        };
+
+        let mut edited = component.clone();
+        let mut changed = false;
+
+        ui.horizontal(|ui| {
+            ui.label("Clear color");
+            let mut color = [
+                edited.clear_color[0].clamp(0.0, 1.0),
+                edited.clear_color[1].clamp(0.0, 1.0),
+                edited.clear_color[2].clamp(0.0, 1.0),
+            ];
+            if color_edit_button_rgb(ui, &mut color).changed() {
+                edited.clear_color[0] = color[0];
+                edited.clear_color[1] = color[1];
+                edited.clear_color[2] = color[2];
+                changed = true;
+            }
+        });
+
+        let mut hdr_settings = edited.hdr.clone().unwrap_or_default();
+        let mut hdr_enabled = hdr_settings.enabled;
+        let mut grading = edited.color_grading;
+
+        Grid::new("environment_component_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Ambient intensity");
+                changed |= ui
+                    .add(Slider::new(&mut edited.ambient_intensity, 0.0..=5.0))
+                    .changed();
+                ui.end_row();
+
+                ui.label("HDR enabled");
+                changed |= ui.checkbox(&mut hdr_enabled, "").changed();
+                ui.end_row();
+
+                ui.label("HDR intensity");
+                let intensity_response = ui.add_enabled(
+                    hdr_settings.path.is_some(),
+                    Slider::new(&mut hdr_settings.intensity, 0.0..=5.0),
+                );
+                if intensity_response.changed() {
+                    changed = true;
+                }
+                ui.end_row();
+
+                ui.label("HDR file");
+                ui.horizontal(|ui| {
+                    let path_text = hdr_settings
+                        .path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "None".to_string());
+                    ui.label(path_text);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        if ui.button("Select...").clicked() {
+                            if let Some(path) = FileDialog::new()
+                                .add_filter("HDR images", &["hdr"])
+                                .pick_file()
+                            {
+                                hdr_settings.path = Some(path);
+                                hdr_enabled = true;
+                                changed = true;
+                            }
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        ui.add_enabled(false, egui::Button::new("Select..."));
+                    }
+                    if ui.button("Clear").clicked() {
+                        hdr_settings.path = None;
+                        changed = true;
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Exposure");
+                changed |= ui
+                    .add(Slider::new(&mut grading.exposure, 0.0..=4.0))
+                    .changed();
+                ui.end_row();
+
+                ui.label("Saturation");
+                changed |= ui
+                    .add(Slider::new(&mut grading.saturation, 0.0..=2.0))
+                    .changed();
+                ui.end_row();
+
+                ui.label("Contrast");
+                changed |= ui
+                    .add(Slider::new(&mut grading.contrast, 0.0..=3.0))
+                    .changed();
+                ui.end_row();
+            });
+
+        hdr_settings.enabled = hdr_enabled;
+        if hdr_settings.path.is_some() || hdr_enabled {
+            edited.hdr = Some(hdr_settings);
+        } else {
+            edited.hdr = None;
+        }
+        edited.color_grading = grading;
+
+        if changed && edited != component {
+            actions.push(InspectorAction::UpdateEnvironment {
+                entity,
+                component: edited,
+            });
+        }
+    });
 }
 
 fn show_point_light_section(

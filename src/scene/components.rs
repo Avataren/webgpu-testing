@@ -3,11 +3,171 @@
 
 use crate::asset::Handle;
 use crate::asset::Mesh;
+use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::renderer::{Material, Vertex};
 use crate::scene::Transform;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use wgpu::Color;
+
+// ============================================================================
+// Environment Component
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnvironmentComponent {
+    pub clear_color: [f32; 4],
+    pub ambient_intensity: f32,
+    #[serde(default)]
+    pub color_grading: EnvironmentColorGrading,
+    #[serde(default)]
+    pub hdr: Option<EnvironmentHdrSettings>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EnvironmentColorGrading {
+    pub exposure: f32,
+    pub saturation: f32,
+    pub contrast: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnvironmentHdrSettings {
+    pub enabled: bool,
+    pub intensity: f32,
+    pub path: Option<PathBuf>,
+}
+
+impl EnvironmentComponent {
+    pub fn from_environment(environment: &Environment) -> Self {
+        let color = environment.clear_color();
+        let grading = environment.color_grading();
+        let hdr = environment
+            .hdr_background()
+            .map(EnvironmentHdrSettings::from);
+
+        Self {
+            clear_color: [
+                color.r as f32,
+                color.g as f32,
+                color.b as f32,
+                color.a as f32,
+            ],
+            ambient_intensity: environment.ambient_intensity(),
+            color_grading: EnvironmentColorGrading::from(grading),
+            hdr,
+        }
+    }
+
+    pub fn to_environment(&self) -> Environment {
+        let mut environment = Environment::new(Color {
+            r: self.clear_color[0] as f64,
+            g: self.clear_color[1] as f64,
+            b: self.clear_color[2] as f64,
+            a: self.clear_color[3] as f64,
+        });
+        environment.set_ambient_intensity(self.ambient_intensity);
+        environment.set_color_grading(self.color_grading.into());
+
+        match self
+            .hdr
+            .as_ref()
+            .and_then(EnvironmentHdrSettings::to_background)
+        {
+            Some(background) => environment.set_hdr_background(Some(background)),
+            None => environment.set_hdr_background(None),
+        }
+
+        environment
+    }
+
+    pub fn apply_to_environment(&self, environment: &mut Environment) {
+        *environment = self.to_environment();
+    }
+
+    pub fn update_from_environment(&mut self, environment: &Environment) {
+        *self = Self::from_environment(environment);
+    }
+
+    pub fn hdr_settings_mut(&mut self) -> &mut EnvironmentHdrSettings {
+        self.hdr.get_or_insert_with(EnvironmentHdrSettings::default)
+    }
+}
+
+impl Default for EnvironmentComponent {
+    fn default() -> Self {
+        Self::from_environment(&Environment::default())
+    }
+}
+
+impl EnvironmentColorGrading {
+    pub fn apply_to(&self, grading: &mut ColorGrading) {
+        grading.set_exposure(self.exposure);
+        grading.set_saturation(self.saturation);
+        grading.set_contrast(self.contrast);
+    }
+}
+
+impl Default for EnvironmentColorGrading {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            saturation: 1.0,
+            contrast: 1.0,
+        }
+    }
+}
+
+impl From<ColorGrading> for EnvironmentColorGrading {
+    fn from(grading: ColorGrading) -> Self {
+        Self {
+            exposure: grading.exposure(),
+            saturation: grading.saturation(),
+            contrast: grading.contrast(),
+        }
+    }
+}
+
+impl From<EnvironmentColorGrading> for ColorGrading {
+    fn from(settings: EnvironmentColorGrading) -> Self {
+        let mut grading = ColorGrading::default();
+        grading.set_exposure(settings.exposure);
+        grading.set_saturation(settings.saturation);
+        grading.set_contrast(settings.contrast);
+        grading
+    }
+}
+
+impl EnvironmentHdrSettings {
+    pub fn to_background(&self) -> Option<HdrBackground> {
+        let path = self.path.clone()?;
+        let mut background = HdrBackground::new(path);
+        background.set_enabled(self.enabled);
+        background.set_intensity(self.intensity);
+        Some(background)
+    }
+}
+
+impl Default for EnvironmentHdrSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            intensity: 1.0,
+            path: None,
+        }
+    }
+}
+
+impl From<&HdrBackground> for EnvironmentHdrSettings {
+    fn from(background: &HdrBackground) -> Self {
+        Self {
+            enabled: background.enabled(),
+            intensity: background.intensity(),
+            path: Some(background.path().to_path_buf()),
+        }
+    }
+}
 
 // ============================================================================
 // Billboard Components

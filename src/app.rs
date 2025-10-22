@@ -410,10 +410,9 @@ impl App {
     #[cfg(feature = "egui")]
     fn apply_environment_settings(handle: &EnvironmentSettingsHandle, scene: &mut Scene) {
         if let Ok(mut controls) = handle.lock() {
-            {
-                let environment = scene.environment_mut();
-                controls.apply_to_environment(environment);
-            }
+            let mut environment = scene.environment().clone();
+            controls.apply_to_environment(&mut environment);
+            scene.set_environment(environment);
             *controls = EnvironmentSettingsControls::from_environment(scene.environment());
         }
     }

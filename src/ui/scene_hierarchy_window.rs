@@ -1,8 +1,8 @@
 #[cfg(feature = "egui")]
 use crate::scene::{
-    CanCastShadow, Children, DirectionalLight, MaterialComponent, MeshComponent, Name, Parent,
-    ParticleBehaviorPreset, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
-    TransformComponent,
+    CanCastShadow, Children, DirectionalLight, EnvironmentComponent, MaterialComponent,
+    MeshComponent, Name, Parent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
+    Scene, SpotLight, Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -62,6 +62,7 @@ pub enum SceneCreationAction {
     DirectionalLight,
     SpotLight,
     Camera,
+    Environment,
 }
 
 #[cfg(feature = "egui")]
@@ -93,6 +94,7 @@ pub struct SceneEntityComponentsSummary {
     pub spot_light: Option<SpotLight>,
     pub can_cast_shadow: Option<CanCastShadow>,
     pub particle_system: Option<ParticleSystemComponent>,
+    pub environment: Option<EnvironmentComponent>,
 }
 
 #[cfg(feature = "egui")]
@@ -145,6 +147,9 @@ impl SceneHierarchySnapshot {
             let particle_system = entity_ref
                 .get::<&ParticleSystemComponent>()
                 .map(|component| *component);
+            let environment = entity_ref
+                .get::<&EnvironmentComponent>()
+                .map(|component| (*component).clone());
 
             nodes.insert(
                 entity,
@@ -168,6 +173,7 @@ impl SceneHierarchySnapshot {
                     spot_light,
                     can_cast_shadow,
                     particle_system,
+                    environment,
                 },
             );
         }
@@ -389,6 +395,11 @@ impl SceneHierarchyWindow {
 
                 if ui.button("Camera").clicked() {
                     creations.push(SceneCreationAction::Camera);
+                    close_top_menu = true;
+                    ui.close();
+                }
+                if ui.button("Environment").clicked() {
+                    creations.push(SceneCreationAction::Environment);
                     close_top_menu = true;
                     ui.close();
                 }

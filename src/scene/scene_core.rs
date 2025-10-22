@@ -9,13 +9,15 @@ use super::loader::SceneLoader;
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
-use crate::scene::components::{SelectedInEditor, TransformComponent, WorldTransform};
+use crate::scene::components::{
+    EnvironmentComponent, SelectedInEditor, TransformComponent, WorldTransform,
+};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::{PendingGltfImport, RuneScriptComponent, RuneScriptSource, ScriptingState};
 use crate::time::Instant;
 use glam::Vec3;
-use hecs::World;
+use hecs::{Entity, World};
 use log::{error, warn};
 use std::collections::HashMap;
 
@@ -212,6 +214,8 @@ impl SceneStateSnapshot {
 pub struct Scene {
     pub assets: Assets,
     environment: Environment,
+    environment_component_active: bool,
+    environment_dirty: bool,
     camera: Camera,
     time: f64,
     last_frame: Option<Instant>,
@@ -237,6 +241,8 @@ impl Scene {
         Self {
             assets: Assets::default(),
             environment: Environment::default(),
+            environment_component_active: false,
+            environment_dirty: false,
             camera: Camera::default(),
             time: 0.0,
             last_frame: None,
@@ -521,11 +527,66 @@ impl Scene {
     }
 
     pub fn environment_mut(&mut self) -> &mut Environment {
+        self.environment_dirty = true;
         &mut self.environment
     }
 
     pub fn set_environment(&mut self, environment: Environment) {
-        self.environment = environment;
+        self.environment = environment.clone();
+        self.environment_dirty = false;
+        self.write_environment_to_components(&environment);
+    }
+
+    fn environment_component_entities(&self) -> Vec<Entity> {
+        self.main_world()
+            .query::<&EnvironmentComponent>()
+            .iter()
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    fn write_environment_to_components(&mut self, environment: &Environment) {
+        let entities = self.environment_component_entities();
+        self.environment_component_active = !entities.is_empty();
+
+        if !self.environment_component_active {
+            return;
+        }
+
+        let component = EnvironmentComponent::from_environment(environment);
+        let world = self.main_world_mut();
+
+        for entity in entities {
+            if let Ok(mut existing) = world.get::<&mut EnvironmentComponent>(entity) {
+                *existing = component.clone();
+            }
+        }
+    }
+
+    pub(crate) fn refresh_environment_state(&mut self) {
+        if self.environment_dirty {
+            let environment = self.environment.clone();
+            self.write_environment_to_components(&environment);
+            self.environment_dirty = false;
+            return;
+        }
+
+        let component = {
+            let world = self.main_world();
+            world
+                .query::<&EnvironmentComponent>()
+                .iter()
+                .next()
+                .map(|(_, component)| component.clone())
+        };
+
+        if let Some(component) = component {
+            self.environment = component.to_environment();
+            self.environment_component_active = true;
+        } else if self.environment_component_active {
+            self.environment = Environment::default();
+            self.environment_component_active = false;
+        }
     }
 
     pub(crate) fn replace_assets(&mut self, assets: Assets) {
@@ -628,6 +689,7 @@ impl Scene {
     }
 
     pub fn update(&mut self, dt: f64) {
+        self.refresh_environment_state();
         self.time += dt;
 
         let absolute_time = self.time;
@@ -715,6 +777,7 @@ impl Scene {
         custom_render: &mut Option<CustomRenderRequest<'_>>,
         gizmos_enabled: bool,
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
+        self.refresh_environment_state();
         batcher.clear();
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);
         let gizmo_resources = if gizmos_enabled {
@@ -812,6 +875,7 @@ impl Scene {
                 instance.into_world(),
             );
             self.attach_imported_animations(animations, animation_states, &entity_map);
+            self.refresh_environment_state();
         }
     }
 
@@ -962,6 +1026,7 @@ impl Scene {
         }
         self.attach_node(id, parent_id);
         self.update_world_transforms();
+        self.refresh_environment_state();
         id
     }
 
