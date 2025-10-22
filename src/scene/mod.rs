@@ -21,7 +21,7 @@ pub use assets::{
 pub use builder::EntityBuilder;
 pub use camera::Camera;
 pub use graph::SceneNodeId;
-pub use loader::SceneLoader;
+pub use loader::{SceneImportDevice, SceneLoader};
 pub(crate) use scene_core::SceneSnapshot;
 pub use scene_core::{
     Scene, SceneStateSnapshot, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,

@@ -8,9 +8,10 @@ use super::components::{
     TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
+use super::loader::SceneImportDevice;
 use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::material::MaterialFlags;
-use crate::renderer::{Material, Renderer, Texture};
+use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
@@ -391,12 +392,12 @@ impl SceneAsset {
 
 #[derive(Debug, Default)]
 pub struct SceneAssetResources {
-    meshes: Vec<Mesh>,
+    meshes: Vec<(usize, Mesh)>,
     textures: Vec<(u32, Texture)>,
 }
 
 impl SceneAssetResources {
-    pub fn new(meshes: Vec<Mesh>, textures: Vec<(u32, Texture)>) -> Self {
+    pub fn new(meshes: Vec<(usize, Mesh)>, textures: Vec<(u32, Texture)>) -> Self {
         Self { meshes, textures }
     }
 
@@ -409,10 +410,15 @@ impl SceneAssetResources {
     }
 
     pub fn add_mesh(&mut self, mesh: Mesh) {
-        self.meshes.push(mesh);
+        let next_index = next_mesh_index(&self.meshes);
+        self.meshes.push((next_index, mesh));
     }
 
-    fn take_meshes(&mut self) -> Vec<Mesh> {
+    pub fn add_mesh_with_index(&mut self, index: usize, mesh: Mesh) {
+        self.meshes.push((index, mesh));
+    }
+
+    fn take_meshes(&mut self) -> Vec<(usize, Mesh)> {
         std::mem::take(&mut self.meshes)
     }
 
@@ -421,9 +427,17 @@ impl SceneAssetResources {
     }
 }
 
+fn next_mesh_index(meshes: &[(usize, Mesh)]) -> usize {
+    meshes
+        .iter()
+        .map(|(index, _)| *index)
+        .max()
+        .map_or(0, |index| index + 1)
+}
+
 #[derive(Debug, Default)]
 pub struct SceneAssetResourcesBuilder {
-    meshes: Vec<Mesh>,
+    meshes: Vec<(usize, Mesh)>,
     textures: Vec<(u32, Texture)>,
 }
 
@@ -433,7 +447,13 @@ impl SceneAssetResourcesBuilder {
     }
 
     pub fn with_mesh(mut self, mesh: Mesh) -> Self {
-        self.meshes.push(mesh);
+        let index = next_mesh_index(&self.meshes);
+        self.meshes.push((index, mesh));
+        self
+    }
+
+    pub fn with_mesh_at(mut self, index: usize, mesh: Mesh) -> Self {
+        self.meshes.push((index, mesh));
         self
     }
 
@@ -444,7 +464,12 @@ impl SceneAssetResourcesBuilder {
     }
 
     pub fn add_mesh(&mut self, mesh: Mesh) {
-        self.meshes.push(mesh);
+        let index = next_mesh_index(&self.meshes);
+        self.meshes.push((index, mesh));
+    }
+
+    pub fn add_mesh_with_index(&mut self, index: usize, mesh: Mesh) {
+        self.meshes.push((index, mesh));
     }
 
     pub fn add_texture(&mut self, texture: Texture) {
@@ -477,20 +502,24 @@ impl SceneAssetBundle {
         self.resources_registered
     }
 
-    pub fn register_resources(&mut self, renderer: &Renderer, assets: &mut Assets) -> bool {
+    pub fn register_resources<R: SceneImportDevice>(
+        &mut self,
+        renderer: &R,
+        assets: &mut Assets,
+    ) -> bool {
         if self.resources_registered {
             return false;
         }
 
         if self.resources.meshes.is_empty() && !self.asset.mesh_data.is_empty() {
-            for data in &self.asset.mesh_data {
-                let mesh = Mesh::from_data(renderer.get_device(), data.clone());
-                self.resources.add_mesh(mesh);
+            for (local_index, data) in self.asset.mesh_data.iter().cloned().enumerate() {
+                let mesh = Mesh::from_data(renderer.device(), data);
+                self.resources.add_mesh_with_index(local_index, mesh);
             }
         }
 
         let mut mesh_map = std::collections::HashMap::new();
-        for (local_index, mesh) in self.resources.take_meshes().into_iter().enumerate() {
+        for (local_index, mesh) in self.resources.take_meshes().into_iter() {
             let handle = assets.meshes.insert(mesh);
             mesh_map.insert(local_index, handle.index());
         }
@@ -524,8 +553,13 @@ impl SceneAssetBundle {
                 log::info!("Entity {}: mesh_handle={}", i, mesh_handle);
             }
             if let Some(material) = &entity.material {
-                log::info!("Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}", 
-            i, material.base_color_texture, material.metallic_roughness_texture, material.normal_texture);
+                log::info!(
+                    "Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}",
+                    i,
+                    material.base_color_texture,
+                    material.metallic_roughness_texture,
+                    material.normal_texture,
+                );
             }
         }
 
@@ -549,9 +583,15 @@ impl SceneAssetBundle {
         for (i, entity) in self.asset.entities.iter().enumerate() {
             if let Some(mesh) = entity.mesh_handle {
                 if let Some(mat) = &entity.material {
-                    log::info!("Entity {}: mesh={}, base_texture={}, metallic_texture={}, normal_texture={}, gltf_mat_idx={:?}", 
-                        i, mesh, mat.base_color_texture, mat.metallic_roughness_texture, 
-                        mat.normal_texture, entity.gltf_material);
+                    log::info!(
+                        "Entity {}: mesh={}, base_texture={}, metallic_texture={}, normal_texture={}, gltf_mat_idx={:?}",
+                        i,
+                        mesh,
+                        mat.base_color_texture,
+                        mat.metallic_roughness_texture,
+                        mat.normal_texture,
+                        entity.gltf_material,
+                    );
                 } else {
                     log::info!("Entity {}: mesh={}, NO MATERIAL", i, mesh);
                 }

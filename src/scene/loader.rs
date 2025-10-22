@@ -20,6 +20,26 @@ use std::io;
 
 pub struct SceneLoader;
 
+pub trait SceneImportDevice {
+    fn device(&self) -> &wgpu::Device;
+    fn queue(&self) -> &wgpu::Queue;
+    fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) -> Mesh;
+}
+
+impl SceneImportDevice for Renderer {
+    fn device(&self) -> &wgpu::Device {
+        self.get_device()
+    }
+
+    fn queue(&self) -> &wgpu::Queue {
+        self.get_queue()
+    }
+
+    fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) -> Mesh {
+        Renderer::create_mesh(self, vertices, indices)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MaterialPointerTarget {
     material_index: usize,
@@ -270,7 +290,7 @@ impl SceneLoader {
     pub fn load_gltf(
         path: impl AsRef<Path>,
         scene: &mut Scene,
-        renderer: &mut Renderer,
+        renderer: &mut impl SceneImportDevice,
         scale: f32,
     ) -> Result<(), String> {
         let path = path.as_ref();
@@ -401,7 +421,7 @@ impl SceneLoader {
 
     pub fn load_gltf_asset(
         path: impl AsRef<Path>,
-        renderer: &mut Renderer,
+        renderer: &mut impl SceneImportDevice,
         scale: f32,
     ) -> Result<SceneAssetBundle, String> {
         let mut temp_scene = Scene::new();
@@ -452,7 +472,15 @@ impl SceneLoader {
         log::info!("Texture index remap: {:?}", texture_index_remap);
 
         let assets = std::mem::take(&mut temp_scene.assets);
-        let meshes = assets.meshes.into_inner();
+        let mut mesh_resources: Vec<(usize, Mesh)> = asset
+            .mesh_data
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(local_index, data)| (local_index, Mesh::from_data(renderer.device(), data)))
+            .collect();
+        mesh_resources.sort_by_key(|(local_index, _)| *local_index);
+
         let mut textures: Vec<(u32, Texture)> = assets
             .textures
             .into_inner()
@@ -481,7 +509,7 @@ impl SceneLoader {
 
         Ok(SceneAssetBundle::new(
             asset,
-            SceneAssetResources::new(meshes, textures),
+            SceneAssetResources::new(mesh_resources, textures),
         ))
     }
 
@@ -1008,7 +1036,7 @@ impl SceneLoader {
         images: &[gltf::image::Data],
         base_dir: &Path,
         scene: &mut Scene,
-        renderer: &mut Renderer,
+        renderer: &mut impl SceneImportDevice,
     ) -> Result<Vec<u32>, String> {
         let mut handles = Vec::new();
 
@@ -1033,8 +1061,8 @@ impl SceneLoader {
                     for candidate in candidates {
                         log::debug!("  Loading texture from file: {:?}", candidate);
                         match Texture::from_path(
-                            renderer.get_device(),
-                            renderer.get_queue(),
+                            renderer.device(),
+                            renderer.queue(),
                             &candidate,
                             false,
                         ) {
@@ -1069,8 +1097,8 @@ impl SceneLoader {
                     );
 
                     Texture::from_bytes(
-                        renderer.get_device(),
-                        renderer.get_queue(),
+                        renderer.device(),
+                        renderer.queue(),
                         &img_data.pixels,
                         img_data.width,
                         img_data.height,
@@ -1295,7 +1323,7 @@ impl SceneLoader {
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
         scene: &mut Scene,
-        renderer: &mut Renderer,
+        renderer: &mut impl SceneImportDevice,
         scale_multiplier: f32,
         mesh_cache: &mut HashMap<Vec<u8>, (Handle<Mesh>, MeshBounds)>,
     ) -> Result<(Handle<Mesh>, MeshBounds), String> {
