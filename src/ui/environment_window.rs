@@ -18,6 +18,7 @@ pub struct EnvironmentSettingsControls {
     pub exposure: f32,
     pub saturation: f32,
     pub contrast: f32,
+    pub dirty: bool,
 }
 
 #[cfg(feature = "egui")]
@@ -39,6 +40,7 @@ impl EnvironmentSettingsControls {
             exposure: grading.exposure(),
             saturation: grading.saturation(),
             contrast: grading.contrast(),
+            dirty: false,
         }
     }
 
@@ -160,6 +162,7 @@ impl EnvironmentWindow {
         });
 
         if changed {
+            controls.dirty = true;
             if let Ok(mut guard) = self.handle.lock() {
                 *guard = controls;
             }
