@@ -54,7 +54,6 @@ impl RenderApplication for EditorApplication {
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        self.ensure_default_scene(ctx);
         self.initialize_history_state(ctx.scene);
     }
 
