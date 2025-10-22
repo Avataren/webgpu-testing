@@ -21,6 +21,7 @@ struct GridUniform {
     view_proj : mat4x4<f32>,
     view_proj_inv : mat4x4<f32>,
     camera_position : vec4<f32>,
+    camera_params : vec4<f32>,
     resolution : vec2<f32>,
     viewport_offset : vec2<f32>,
     viewport_scale : vec2<f32>,
@@ -51,6 +52,17 @@ fn reconstruct_world_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
     return world.xyz / world.w;
 }
 
+fn depth_to_view_z(depth : f32) -> f32 {
+    let params = grid_uniform.camera_params;
+    let near = params.x;
+    let far = params.y;
+    let far_minus_near = params.z;
+    let near_mul_far = params.w;
+    let denom = depth * far_minus_near - far;
+    let safe_denom = min(denom, -1e-6);
+    return -near_mul_far / safe_denom;
+}
+
 fn scene_occludes_grid(
     scene_uv : vec2<f32>,
     depth_center : f32,
@@ -68,17 +80,22 @@ fn scene_occludes_grid(
     let scene_vec = scene_pos - camera_pos;
     let scene_distance = length(scene_vec);
 
-    let depth_bias = max(3e-4, (1.0 - abs(dir.y)) * 2e-3);
-    if (depth_center <= grid_depth + depth_bias) {
+    let grid_view_depth = depth_to_view_z(grid_depth);
+    let scene_view_depth = depth_to_view_z(depth_center);
+
+    let angular_bias = (1.0 - abs(dir.y)) * grid_view_depth * 1e-3;
+    let depth_bias = max(2e-3, grid_view_depth * 5e-4);
+    let view_bias = max(depth_bias, angular_bias);
+    if (scene_view_depth <= grid_view_depth + view_bias) {
         return true;
     }
 
-    let distance_bias = max(1e-3, grid_distance * 5e-5);
+    let distance_bias = max(2e-3, grid_distance * 1e-4);
     if (scene_distance <= grid_distance + distance_bias) {
         return true;
     }
 
-    let height_bias = max(2e-3, grid_distance * 1e-4);
+    let height_bias = max(3e-3, grid_distance * 1.5e-4);
     if (scene_pos.y >= -height_bias) {
         return true;
     }

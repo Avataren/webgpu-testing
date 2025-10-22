@@ -18,6 +18,7 @@ struct GridUniform {
     view_proj: [[f32; 4]; 4],
     view_proj_inv: [[f32; 4]; 4],
     camera_position: [f32; 4],
+    camera_params: [f32; 4],
     resolution: [f32; 2],
     viewport_offset: [f32; 2],
     viewport_scale: [f32; 2],
@@ -32,11 +33,17 @@ impl GridUniform {
         resolution: Vec2,
         viewport_offset: Vec2,
         viewport_scale: Vec2,
+        camera_planes: Vec2,
     ) -> Self {
+        let camera_near = camera_planes.x;
+        let camera_far = camera_planes.y;
+        let far_minus_near = camera_far - camera_near;
+        let near_mul_far = camera_near * camera_far;
         Self {
             view_proj: view_proj.to_cols_array_2d(),
             view_proj_inv: view_proj_inv.to_cols_array_2d(),
             camera_position: [camera_position.x, camera_position.y, camera_position.z, 1.0],
+            camera_params: [camera_near, camera_far, far_minus_near, near_mul_far],
             resolution: [resolution.x, resolution.y],
             viewport_offset: [viewport_offset.x, viewport_offset.y],
             viewport_scale: [viewport_scale.x, viewport_scale.y],
@@ -263,6 +270,7 @@ impl ViewportGrid {
             safe_resolution,
             offset,
             scale,
+            Vec2::new(camera.near(), camera.far()),
         )
     }
 }
