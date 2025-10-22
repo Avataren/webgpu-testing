@@ -3,10 +3,10 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    CanCastShadow, Children, DirectionalLight, EditorEntityId, EnvironmentComponent, GltfMaterial,
-    GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name,
-    Parent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight,
-    TransformComponent, Visible,
+    CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
+    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
+    MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorPreset, ParticleSystemComponent,
+    PointLight, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -214,6 +214,8 @@ pub struct SceneAsset {
     pub animation_states: Vec<AnimationState>,
     #[serde(default)]
     pub mesh_data: Vec<MeshData>,
+    #[serde(default)]
+    pub active_camera: Option<usize>,
 }
 
 impl SceneAsset {
@@ -229,6 +231,7 @@ impl SceneAsset {
             animations: Vec::new(),
             animation_states: Vec::new(),
             mesh_data: Vec::new(),
+            active_camera: None,
         }
     }
 
@@ -308,6 +311,10 @@ impl SceneAsset {
                 builder.add(CanCastShadow(casts_shadow));
             }
 
+            if let Some(camera) = entity.camera {
+                builder.add(camera);
+            }
+
             if let Some(particle_system) = &entity.particle_system {
                 builder.add(ParticleSystemComponent::from(particle_system.clone()));
             }
@@ -340,6 +347,11 @@ impl SceneAsset {
                     .insert_one(entity_id, Children(children_entities));
             }
         }
+
+        let active_camera = self
+            .active_camera
+            .and_then(|index| entity_map.get(index).copied());
+        instance.set_active_camera(active_camera);
 
         let animations: Vec<_> = self
             .animations
@@ -670,6 +682,8 @@ pub struct SceneAssetEntity {
     pub particle_system: Option<SerializedParticleSystem>,
     #[serde(default)]
     pub environment: Option<EnvironmentComponent>,
+    #[serde(default)]
+    pub camera: Option<CameraComponent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -813,6 +827,10 @@ impl SceneAssetEntity {
             .get::<&EnvironmentComponent>(entity)
             .ok()
             .map(|component| (*component).clone());
+        let camera = world
+            .get::<&CameraComponent>(entity)
+            .ok()
+            .map(|component| *component);
 
         Self {
             name,
@@ -835,6 +853,7 @@ impl SceneAssetEntity {
             editor_id,
             particle_system,
             environment,
+            camera,
         }
     }
 }
@@ -860,6 +879,7 @@ pub struct SceneAssetEntityBuilder {
     editor_id: Option<u128>,
     particle_system: Option<SerializedParticleSystem>,
     environment: Option<EnvironmentComponent>,
+    camera: Option<CameraComponent>,
 }
 
 impl SceneAssetEntityBuilder {
@@ -885,6 +905,7 @@ impl SceneAssetEntityBuilder {
             editor_id: None,
             particle_system: None,
             environment: None,
+            camera: None,
         }
     }
 
@@ -986,6 +1007,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_camera(mut self, component: CameraComponent) -> Self {
+        self.camera = Some(component);
+        self
+    }
+
     pub fn build(self) -> SceneAssetEntity {
         SceneAssetEntity {
             name: self.name,
@@ -1008,6 +1034,7 @@ impl SceneAssetEntityBuilder {
             editor_id: self.editor_id,
             particle_system: self.particle_system,
             environment: self.environment,
+            camera: self.camera,
         }
     }
 }
@@ -1393,6 +1420,7 @@ pub struct SceneAssetBuilder {
     entities: Vec<SceneAssetEntity>,
     animations: Vec<SerializedAnimationClip>,
     animation_states: Vec<AnimationState>,
+    active_camera: Option<usize>,
 }
 
 impl SceneAssetBuilder {
@@ -1403,6 +1431,7 @@ impl SceneAssetBuilder {
             entities: Vec::new(),
             animations: Vec::new(),
             animation_states: Vec::new(),
+            active_camera: None,
         }
     }
 
@@ -1426,6 +1455,11 @@ impl SceneAssetBuilder {
         self
     }
 
+    pub fn with_active_camera(mut self, index: Option<usize>) -> Self {
+        self.active_camera = index;
+        self
+    }
+
     pub fn build(self) -> SceneAsset {
         SceneAsset {
             name: self.name,
@@ -1434,6 +1468,7 @@ impl SceneAssetBuilder {
             animations: self.animations,
             animation_states: self.animation_states,
             mesh_data: Vec::new(),
+            active_camera: self.active_camera,
         }
     }
 }
@@ -1502,10 +1537,12 @@ mod tests {
                 editor_id: None,
                 particle_system: None,
                 environment: None,
+                camera: None,
             }],
             animations: Vec::new(),
             animation_states: Vec::new(),
             mesh_data: Vec::new(),
+            active_camera: None,
         };
 
         let mut to_local = std::collections::HashMap::new();

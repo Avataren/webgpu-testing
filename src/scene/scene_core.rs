@@ -10,8 +10,9 @@ use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::components::{
-    EnvironmentComponent, SelectedInEditor, TransformComponent, WorldTransform,
+    CameraComponent, EnvironmentComponent, SelectedInEditor, TransformComponent, WorldTransform,
 };
+use crate::scene::internal::lights::safe_normalize;
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::{PendingGltfImport, RuneScriptComponent, RuneScriptSource, ScriptingState};
@@ -522,6 +523,20 @@ impl Scene {
         self.camera = camera;
     }
 
+    pub fn active_camera_entity(&self) -> Option<Entity> {
+        self.main_instance().active_camera()
+    }
+
+    pub fn set_active_camera_entity(&mut self, entity: Option<Entity>) {
+        let entity = match entity {
+            Some(candidate) if self.main_world().contains(candidate) => Some(candidate),
+            _ => None,
+        };
+
+        self.main_instance_mut().set_active_camera(entity);
+        self.refresh_active_camera();
+    }
+
     pub fn environment(&self) -> &Environment {
         &self.environment
     }
@@ -768,6 +783,66 @@ impl Scene {
         for node in self.nodes_iter_mut() {
             node.instance_mut().propagate_transforms();
         }
+
+        self.refresh_active_camera();
+    }
+
+    fn refresh_active_camera(&mut self) {
+        let active = self.active_camera_entity();
+        if let Some(entity) = active {
+            if !self.apply_camera_from_entity(entity) {
+                self.main_instance_mut().set_active_camera(None);
+            }
+        }
+    }
+
+    fn apply_camera_from_entity(&mut self, entity: Entity) -> bool {
+        let data = {
+            let world = self.main_world();
+            if !world.contains(entity) {
+                return false;
+            }
+
+            let projection = world
+                .get::<&CameraComponent>(entity)
+                .ok()
+                .map(|component| *component);
+            let transform = world
+                .get::<&WorldTransform>(entity)
+                .map(|component| component.0)
+                .ok()
+                .or_else(|| {
+                    world
+                        .get::<&TransformComponent>(entity)
+                        .map(|component| component.0)
+                        .ok()
+                });
+
+            Some((projection, transform))
+        };
+
+        let Some((projection, transform)) = data else {
+            return false;
+        };
+
+        let mut camera = *self.camera();
+
+        if let Some(component) = projection {
+            component.apply_to_camera(&mut camera);
+        }
+
+        if let Some(transform) = transform {
+            let eye = transform.translation;
+            let forward = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
+            let up = safe_normalize(transform.rotation * Vec3::Y, Vec3::Y);
+
+            camera.eye = eye;
+            camera.target = eye + forward;
+            camera.up = up;
+        }
+
+        self.camera = camera;
+        true
     }
 
     pub fn render(
@@ -1019,13 +1094,23 @@ impl Scene {
         let name = name.into();
         let parent_id = parent.unwrap_or(self.root);
         assert!(self.is_valid_node(parent_id), "Invalid parent node");
-        let id = self.allocate_node(name, asset.instantiate());
+        let instance = asset.instantiate();
+        let should_apply_camera = parent.is_none() && self.main_scene == self.root;
+        let active_camera_entity = if should_apply_camera {
+            instance.active_camera()
+        } else {
+            None
+        };
+        let id = self.allocate_node(name, instance);
         {
             let node = self.node_mut(id);
             node.set_local_transform(Transform::from(asset.root_transform.clone()));
         }
         self.attach_node(id, parent_id);
         self.update_world_transforms();
+        if should_apply_camera {
+            self.set_active_camera_entity(active_camera_entity);
+        }
         self.refresh_environment_state();
         id
     }
@@ -1207,6 +1292,24 @@ impl Scene {
              // The full asset pool is preserved separately in the snapshot
         }
 
+        let active_camera = if node == self.main_scene {
+            node_ref
+                .instance()
+                .active_camera()
+                .and_then(|entity| index_map.get(&entity).copied())
+                .or_else(|| {
+                    let target = CameraComponent::from(self.camera());
+                    entities.iter().enumerate().find_map(|(index, entity)| {
+                        entity
+                            .camera
+                            .as_ref()
+                            .and_then(|camera| (camera == &target).then_some(index))
+                    })
+                })
+        } else {
+            None
+        };
+
         Some(SceneAsset {
             name,
             root_transform: SerializedTransform::from(*node_ref.local_transform()),
@@ -1214,6 +1317,7 @@ impl Scene {
             animations,
             animation_states,
             mesh_data,
+            active_camera,
         })
     }
 

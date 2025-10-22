@@ -391,14 +391,11 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        if self.active_camera_entity.is_none() {
-                            self.active_camera_entity = Some(entity);
-                        }
-
-                        if self.active_camera_entity == Some(entity) {
-                            let mut camera = *ctx.scene.camera();
-                            component.apply_to_camera(&mut camera);
-                            ctx.scene.set_camera(camera);
+                        if self.active_camera_entity.is_none()
+                            || self.active_camera_entity == Some(entity)
+                        {
+                            ctx.scene.set_active_camera_entity(Some(entity));
+                            self.active_camera_entity = ctx.scene.active_camera_entity();
                         }
 
                         self.record_scene_change(ctx.scene);
@@ -641,22 +638,28 @@ impl EditorApplication {
         }
     }
 
-    fn resolve_active_camera_entity(&mut self, scene: &Scene) {
+    fn resolve_active_camera_entity(&mut self, scene: &mut Scene) {
         if let Some(entity) = self.active_camera_entity {
             if scene.main_world().contains(entity) {
                 return;
             }
-            self.active_camera_entity = None;
+            scene.set_active_camera_entity(None);
+            self.active_camera_entity = scene.active_camera_entity();
         }
 
         let target_projection = scene.camera().projection();
-        let world = scene.main_world();
-        if let Some((entity, component)) = world
-            .query::<&CameraComponent>()
-            .iter()
-            .find(|(_, component)| component.projection == target_projection)
-        {
-            self.active_camera_entity = Some(entity);
+        let candidate = {
+            let world = scene.main_world();
+            world
+                .query::<&CameraComponent>()
+                .iter()
+                .find(|(_, component)| component.projection == target_projection)
+                .map(|(entity, _)| entity)
+        };
+
+        if let Some(entity) = candidate {
+            scene.set_active_camera_entity(Some(entity));
+            self.active_camera_entity = scene.active_camera_entity();
         }
     }
 
@@ -829,13 +832,8 @@ impl EditorApplication {
             .with_component(camera_component)
             .spawn();
 
-        let mut camera = *ctx.scene.camera();
-        camera.eye = position;
-        camera.target = target;
-        camera.up = Vec3::Y;
-        ctx.scene.set_camera(camera);
-
-        self.active_camera_entity = Some(entity);
+        ctx.scene.set_active_camera_entity(Some(entity));
+        self.active_camera_entity = ctx.scene.active_camera_entity();
 
         Some(entity)
     }

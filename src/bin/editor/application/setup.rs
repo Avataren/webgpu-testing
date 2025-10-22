@@ -1,6 +1,5 @@
 use glam::Vec3;
 use log::error;
-use wgpu_cube::app::StartupContext;
 use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
 use wgpu_cube::scene::{EntityBuilder, Scene};
@@ -109,9 +108,5 @@ impl EditorApplication {
         camera.eye = Vec3::new(6.0, 4.0, 6.0);
         camera.target = Vec3::new(0.0, 0.5, 0.0);
         camera.up = Vec3::Y;
-    }
-
-    pub(super) fn ensure_default_scene(&mut self, ctx: &mut StartupContext) {
-        self.ensure_editor_scene_basics(ctx.scene, ctx.renderer);
     }
 }

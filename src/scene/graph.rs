@@ -2,7 +2,7 @@ use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, transforms};
 use crate::scene::components::TransformComponent;
 use crate::scene::transform::Transform;
-use hecs::World;
+use hecs::{Entity, World};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,6 +103,7 @@ pub(crate) struct SceneInstance {
     animations: Vec<AnimationClip>,
     animation_states: Vec<AnimationState>,
     rest_pose: Option<HashMap<hecs::Entity, Transform>>,
+    active_camera: Option<Entity>,
 }
 
 impl SceneInstance {
@@ -112,6 +113,7 @@ impl SceneInstance {
             animations: Vec::new(),
             animation_states: Vec::new(),
             rest_pose: None,
+            active_camera: None,
         }
     }
 
@@ -231,6 +233,14 @@ impl SceneInstance {
 
     pub(crate) fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    pub(crate) fn active_camera(&self) -> Option<Entity> {
+        self.active_camera
+    }
+
+    pub(crate) fn set_active_camera(&mut self, camera: Option<Entity>) {
+        self.active_camera = camera;
     }
 
     pub(crate) fn into_world(self) -> World {

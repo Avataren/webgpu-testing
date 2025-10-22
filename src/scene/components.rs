@@ -16,7 +16,7 @@ use wgpu::Color;
 // Camera Component
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub struct CameraComponent {
     pub projection: CameraProjection,
 }
@@ -44,14 +44,6 @@ impl CameraComponent {
 
     pub fn far(&self) -> f32 {
         self.projection.far()
-    }
-}
-
-impl Default for CameraComponent {
-    fn default() -> Self {
-        Self {
-            projection: CameraProjection::default(),
-        }
     }
 }
 

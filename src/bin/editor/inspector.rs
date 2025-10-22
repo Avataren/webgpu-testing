@@ -205,7 +205,7 @@ fn show_camera_section(
         };
         let previous_mode = mode;
 
-        ComboBox::from_id_source("camera_projection_mode")
+        ComboBox::from_id_salt("camera_projection_mode")
             .selected_text(match mode {
                 ProjectionMode::Perspective => "Perspective",
                 ProjectionMode::Orthographic => "Orthographic",
@@ -244,7 +244,7 @@ fn show_camera_section(
                         if ui
                             .add(
                                 DragValue::new(&mut fov_degrees)
-                                    .clamp_range(1.0..=179.0)
+                                    .range(1.0..=179.0)
                                     .speed(0.1),
                             )
                             .changed()
@@ -256,7 +256,7 @@ fn show_camera_section(
 
                         ui.label("Near");
                         if ui
-                            .add(DragValue::new(near).clamp_range(0.001..=1000.0).speed(0.01))
+                            .add(DragValue::new(near).range(0.001..=1000.0).speed(0.01))
                             .changed()
                         {
                             *near = near.max(0.001);
@@ -266,7 +266,7 @@ fn show_camera_section(
 
                         ui.label("Far");
                         if ui
-                            .add(DragValue::new(far).clamp_range(0.01..=10000.0).speed(0.1))
+                            .add(DragValue::new(far).range(0.01..=10000.0).speed(0.1))
                             .changed()
                         {
                             changed = true;

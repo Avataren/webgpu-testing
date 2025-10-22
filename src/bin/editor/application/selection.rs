@@ -32,7 +32,8 @@ impl EditorApplication {
             .active_camera_entity
             .is_some_and(|entity| removed_entities.contains(&entity))
         {
-            self.active_camera_entity = None;
+            ctx.scene.set_active_camera_entity(None);
+            self.active_camera_entity = ctx.scene.active_camera_entity();
         }
 
         if let Some(selected) = self.selection.selected() {

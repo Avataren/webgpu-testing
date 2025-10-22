@@ -368,7 +368,7 @@ impl SerializedEnvironment {
             let content_dir = project_dir.join(CONTENT_DIR);
             let environment_dir = content_dir.join("environment");
             fs::create_dir_all(&environment_dir)?;
-            let target = environment_dir.join(&file_name);
+            let target = environment_dir.join(file_name);
             if source != target {
                 fs::copy(&source, &target)?;
             }
