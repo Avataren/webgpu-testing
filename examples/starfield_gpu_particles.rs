@@ -68,14 +68,16 @@ impl RenderApplication for StarfieldGpuApp {
         });
         ctx.scene.environment_mut().disable_hdr_background();
 
-        ctx.scene.set_camera(wgpu_cube::scene::Camera {
-            eye: Vec3::ZERO,
-            target: Vec3::new(0.0, 0.0, -1.0),
-            up: Vec3::Y,
-            near: NEAR_PLANE,
-            far: FAR_PLANE,
-            ..Default::default()
-        });
+        let mut camera = wgpu_cube::scene::Camera::default();
+        camera.eye = Vec3::ZERO;
+        camera.target = Vec3::new(0.0, 0.0, -1.0);
+        camera.up = Vec3::Y;
+        camera.set_projection(wgpu_cube::scene::CameraProjection::perspective(
+            60f32.to_radians(),
+            NEAR_PLANE,
+            FAR_PLANE,
+        ));
+        ctx.scene.set_camera(camera);
 
         // Add directional light for better visibility
         let sun_direction = Vec3::new(0.3, -1.0, -0.5).normalize();

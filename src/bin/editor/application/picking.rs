@@ -80,7 +80,7 @@ impl EditorApplication {
             }
         }
 
-        let camera_view = CameraView::new(camera.eye, camera.up, camera.fov_y_radians);
+        let camera_view = CameraView::new(camera.eye, camera.up, camera.fov_y_radians());
         let ray = SceneRay::new(origin, direction);
         self.consider_light_picks(world, camera_view, ray, &mut best);
 

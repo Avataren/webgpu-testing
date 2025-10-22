@@ -8,7 +8,8 @@ use wgpu_cube::gpu_particles::{
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+    CameraProjection, MaterialComponent, MeshComponent, Name, Transform, TransformComponent,
+    Visible,
 };
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
@@ -89,14 +90,16 @@ impl RenderApplication for ParticleEffectsApp {
         });
         ctx.scene.environment_mut().disable_hdr_background();
 
-        ctx.scene.set_camera(wgpu_cube::scene::Camera {
-            eye: Vec3::new(0.0, 8.0, 25.0),
-            target: Vec3::new(0.0, 3.0, 0.0),
-            up: Vec3::Y,
-            fov_y_radians: 60f32.to_radians(),
-            near: 0.1,
-            far: 100.0,
-        });
+        let mut camera = wgpu_cube::scene::Camera::default();
+        camera.eye = Vec3::new(0.0, 8.0, 25.0);
+        camera.target = Vec3::new(0.0, 3.0, 0.0);
+        camera.up = Vec3::Y;
+        camera.set_projection(CameraProjection::perspective(
+            60f32.to_radians(),
+            0.1,
+            100.0,
+        ));
+        ctx.scene.set_camera(camera);
 
         // ====================================================================
         // LIGHTING with shadows

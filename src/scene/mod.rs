@@ -19,7 +19,7 @@ pub use assets::{
     SerializedRuneScriptSource, SerializedTransform,
 };
 pub use builder::EntityBuilder;
-pub use camera::Camera;
+pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub(crate) use scene_core::SceneSnapshot;
@@ -31,8 +31,9 @@ pub use transform::Transform;
 
 // Re-export all components
 pub use components::{
-    CanCastShadow, Children, DirectionalLight, EditorEntityId, EnvironmentComponent, GltfMaterial,
-    GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name,
-    OrbitAnimation, Parent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
-    RotateAnimation, SelectedInEditor, SpotLight, TransformComponent, Visible, WorldTransform,
+    CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
+    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
+    MeshBounds, MeshComponent, Name, OrbitAnimation, Parent, ParticleBehaviorPreset,
+    ParticleSystemComponent, PointLight, RotateAnimation, SelectedInEditor, SpotLight,
+    TransformComponent, Visible, WorldTransform,
 };

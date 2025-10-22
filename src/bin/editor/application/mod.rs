@@ -25,9 +25,9 @@ use wgpu_cube::renderer::primitives::{
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
 use wgpu_cube::scene::{
-    CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent, MaterialComponent,
-    MeshBounds, ParticleBehaviorPreset, ParticleSystemComponent, PointLight, SpotLight, Transform,
-    TransformComponent,
+    CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
+    MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
+    Scene, SpotLight, Transform, TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
@@ -347,6 +347,7 @@ impl EditorApplication {
             return;
         }
 
+        self.resolve_active_camera_entity(ctx.scene);
         let actions = std::mem::take(&mut self.pending_inspector_actions);
         let mut transforms_changed = false;
 
@@ -369,6 +370,37 @@ impl EditorApplication {
 
                     if updated {
                         transforms_changed = true;
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateCamera { entity, component } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut CameraComponent>(entity) {
+                            Ok(mut existing) => {
+                                if *existing != component {
+                                    *existing = component;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update camera for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if updated {
+                        if self.active_camera_entity.is_none() {
+                            self.active_camera_entity = Some(entity);
+                        }
+
+                        if self.active_camera_entity == Some(entity) {
+                            let mut camera = *ctx.scene.camera();
+                            component.apply_to_camera(&mut camera);
+                            ctx.scene.set_camera(camera);
+                        }
+
                         self.record_scene_change(ctx.scene);
                     }
                 }
@@ -609,6 +641,25 @@ impl EditorApplication {
         }
     }
 
+    fn resolve_active_camera_entity(&mut self, scene: &Scene) {
+        if let Some(entity) = self.active_camera_entity {
+            if scene.main_world().contains(entity) {
+                return;
+            }
+            self.active_camera_entity = None;
+        }
+
+        let target_projection = scene.camera().projection();
+        let world = scene.main_world();
+        if let Some((entity, component)) = world
+            .query::<&CameraComponent>()
+            .iter()
+            .find(|(_, component)| component.projection == target_projection)
+        {
+            self.active_camera_entity = Some(entity);
+        }
+    }
+
     fn apply_pending_scene_creations(&mut self, ctx: &mut GpuUpdateContext) {
         if self.pending_scene_creations.is_empty() {
             return;
@@ -770,9 +821,12 @@ impl EditorApplication {
         let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
         let transform = Transform::from_trs(position, rotation, Vec3::ONE);
 
+        let current_camera = *ctx.scene.camera();
+        let camera_component = CameraComponent::from(current_camera);
         let entity = EntityBuilder::new(ctx.scene.main_world_mut())
             .with_name("Camera")
             .with_transform(transform)
+            .with_component(camera_component)
             .spawn();
 
         let mut camera = *ctx.scene.camera();
@@ -780,6 +834,8 @@ impl EditorApplication {
         camera.target = target;
         camera.up = Vec3::Y;
         ctx.scene.set_camera(camera);
+
+        self.active_camera_entity = Some(entity);
 
         Some(entity)
     }

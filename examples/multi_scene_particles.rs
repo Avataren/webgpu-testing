@@ -232,14 +232,16 @@ impl RenderApplication for MultiSceneParticlesExample {
         {
             let scene = &mut *ctx.scene;
             scene.update(0.0);
-            scene.set_camera(wgpu_cube::scene::Camera {
-                eye: Vec3::new(0.0, CAMERA_HEIGHT, CAMERA_RADIUS),
-                target: Vec3::new(0.0, STAR_BASE_HEIGHT + STAR_HEIGHT_RANGE * 0.5, 0.0),
-                up: Vec3::Y,
-                near: NEAR_PLANE,
-                far: FAR_PLANE,
-                ..Default::default()
-            });
+            let mut camera = wgpu_cube::scene::Camera::default();
+            camera.eye = Vec3::new(0.0, CAMERA_HEIGHT, CAMERA_RADIUS);
+            camera.target = Vec3::new(0.0, STAR_BASE_HEIGHT + STAR_HEIGHT_RANGE * 0.5, 0.0);
+            camera.up = Vec3::Y;
+            camera.set_projection(wgpu_cube::scene::CameraProjection::perspective(
+                60f32.to_radians(),
+                NEAR_PLANE,
+                FAR_PLANE,
+            ));
+            scene.set_camera(camera);
         }
     }
 

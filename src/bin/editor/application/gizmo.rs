@@ -582,7 +582,7 @@ impl EditorApplication {
 
     pub(super) fn gizmo_screen_scale(camera: &wgpu_cube::scene::Camera, position: Vec3) -> f32 {
         let distance = (camera.eye - position).length().max(0.1);
-        let half_fov = (camera.fov_y_radians * 0.5).max(1e-4);
+        let half_fov = (camera.fov_y_radians() * 0.5).max(1e-4);
         if half_fov <= 1e-3 {
             1.0
         } else {

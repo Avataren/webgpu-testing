@@ -384,7 +384,7 @@ impl Scene {
             position: camera.eye,
             target: camera.target,
             up: camera.up,
-            fov_y: camera.fov_y_radians,
+            fov_y: camera.fov_y_radians(),
         };
 
         transform_gizmos::hit_test(

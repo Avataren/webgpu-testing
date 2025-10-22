@@ -28,6 +28,13 @@ impl EditorApplication {
             return;
         }
 
+        if self
+            .active_camera_entity
+            .is_some_and(|entity| removed_entities.contains(&entity))
+        {
+            self.active_camera_entity = None;
+        }
+
         if let Some(selected) = self.selection.selected() {
             if removed_entities.contains(&selected) {
                 self.selection.set_selected(None);

@@ -5,11 +5,71 @@ use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::renderer::{Material, Vertex};
+use crate::scene::camera::{Camera, CameraProjection};
 use crate::scene::Transform;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use wgpu::Color;
+
+// ============================================================================
+// Camera Component
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CameraComponent {
+    pub projection: CameraProjection,
+}
+
+impl CameraComponent {
+    pub fn perspective(fov_y_radians: f32, near: f32, far: f32) -> Self {
+        Self {
+            projection: CameraProjection::perspective(fov_y_radians, near, far),
+        }
+    }
+
+    pub fn orthographic(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Self {
+        Self {
+            projection: CameraProjection::orthographic(left, right, bottom, top, near, far),
+        }
+    }
+
+    pub fn apply_to_camera(&self, camera: &mut Camera) {
+        camera.set_projection(self.projection);
+    }
+
+    pub fn near(&self) -> f32 {
+        self.projection.near()
+    }
+
+    pub fn far(&self) -> f32 {
+        self.projection.far()
+    }
+}
+
+impl Default for CameraComponent {
+    fn default() -> Self {
+        Self {
+            projection: CameraProjection::default(),
+        }
+    }
+}
+
+impl From<Camera> for CameraComponent {
+    fn from(camera: Camera) -> Self {
+        Self {
+            projection: camera.projection(),
+        }
+    }
+}
+
+impl From<&Camera> for CameraComponent {
+    fn from(camera: &Camera) -> Self {
+        Self {
+            projection: camera.projection(),
+        }
+    }
+}
 
 // ============================================================================
 // Environment Component

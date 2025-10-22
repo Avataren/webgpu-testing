@@ -82,12 +82,11 @@ impl RenderApplication for ExampleApp {
 
         scene.update(0.0);
 
-        scene.set_camera(Camera {
-            eye: Vec3::new(0.0, 6.0, 12.0),
-            target: Vec3::ZERO,
-            up: Vec3::Y,
-            ..Camera::default()
-        });
+        let mut camera = Camera::default();
+        camera.eye = Vec3::new(0.0, 6.0, 12.0);
+        camera.target = Vec3::ZERO;
+        camera.up = Vec3::Y;
+        scene.set_camera(camera);
 
         self.root_node = Some(root);
     }

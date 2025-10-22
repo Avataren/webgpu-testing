@@ -33,12 +33,11 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
     match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, SCENE_SCALE) {
         Ok(_) => {
             scene.add_default_lighting();
-            scene.set_camera(Camera {
-                eye: Vec3::new(1.5, 2.5, 3.0),
-                target: Vec3::ZERO,
-                up: Vec3::Y,
-                ..Camera::default()
-            });
+            let mut camera = Camera::default();
+            camera.eye = Vec3::new(1.5, 2.5, 3.0);
+            camera.target = Vec3::ZERO;
+            camera.up = Vec3::Y;
+            scene.set_camera(camera);
             info!("glTF loaded: {} entities", scene.world().len());
         }
         Err(err) => {

@@ -371,7 +371,7 @@ impl SceneAsset {
             if let Some(mesh_handle) = &mut entity.mesh_handle {
                 if let Some(&new_index) = mesh_map.get(mesh_handle) {
                     *mesh_handle = new_index;
-                } else {
+                } else if entity.gltf_source.is_none() {
                     log::warn!(
                         "Mesh handle {} not found in mesh_map during resource mapping",
                         mesh_handle

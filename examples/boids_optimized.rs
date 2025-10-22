@@ -9,7 +9,7 @@ use wgpu_cube::gpu_particles::behaviors::OptimizedBoidsBehavior;
 use wgpu_cube::gpu_particles::{GpuParticleSystem, Particle};
 use wgpu_cube::renderer::{CustomRenderContext, Material};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
-use wgpu_cube::scene::{Name, Transform, TransformComponent};
+use wgpu_cube::scene::{CameraProjection, Name, Transform, TransformComponent};
 use wgpu_cube::{
     render_application::RenderApplication, run_application, AppBuilder, GpuUpdateContext,
     StartupContext, UpdateContext,
@@ -71,9 +71,25 @@ impl RenderApplication for BoidsOptimizedApp {
         ctx.scene.environment_mut().disable_hdr_background();
 
         // Camera setup
-        ctx.scene.camera_mut().eye = Vec3::new(0.0, 45.0, 130.0);
-        ctx.scene.camera_mut().target = Vec3::ZERO;
-        ctx.scene.camera_mut().far = 500.0;
+        let camera = ctx.scene.camera_mut();
+        camera.eye = Vec3::new(0.0, 45.0, 130.0);
+        camera.target = Vec3::ZERO;
+        let updated_projection = match camera.projection() {
+            CameraProjection::Perspective {
+                fov_y_radians,
+                near,
+                ..
+            } => CameraProjection::perspective(fov_y_radians, near, 500.0),
+            CameraProjection::Orthographic {
+                left,
+                right,
+                bottom,
+                top,
+                near,
+                ..
+            } => CameraProjection::orthographic(left, right, bottom, top, near, 500.0),
+        };
+        camera.set_projection(updated_projection);
 
         // Lighting setup
         let sun_direction = Vec3::new(0.4, -1.2, -0.5).normalize();

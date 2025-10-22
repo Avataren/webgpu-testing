@@ -9,7 +9,8 @@ use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
-    Camera, MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
+    Camera, CameraProjection, MaterialComponent, MeshComponent, Name, Transform,
+    TransformComponent, Visible,
 };
 
 const STAR_COUNT: usize = 100_000;
@@ -78,14 +79,16 @@ impl RenderApplication for StarfieldApp {
             a: 1.0,
         });
         ctx.scene.environment_mut().disable_hdr_background();
-        ctx.scene.set_camera(Camera {
-            eye: Vec3::ZERO,
-            target: Vec3::new(0.0, 0.0, -1.0),
-            up: Vec3::Y,
-            near: NEAR_PLANE,
-            far: FAR_PLANE,
-            ..Camera::default()
-        });
+        let mut camera = Camera::default();
+        camera.eye = Vec3::ZERO;
+        camera.target = Vec3::new(0.0, 0.0, -1.0);
+        camera.up = Vec3::Y;
+        camera.set_projection(CameraProjection::perspective(
+            60f32.to_radians(),
+            NEAR_PLANE,
+            FAR_PLANE,
+        ));
+        ctx.scene.set_camera(camera);
 
         let sun1_direction = Vec3::new(0.3, -1.0, -1.1).normalize();
         let sun1_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, sun1_direction);

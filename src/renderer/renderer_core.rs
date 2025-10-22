@@ -14,7 +14,7 @@ use crate::renderer::{
     CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
     Material, RenderBatcher, RenderPass, RenderRegion, Vertex,
 };
-use crate::scene::{Camera, Scene};
+use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
 
 use glam::Vec3;
@@ -68,6 +68,7 @@ pub struct Renderer {
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
+    camera_projection: CameraProjection,
     camera_fov_y: f32,
     camera_aspect: f32,
     settings: RenderSettings,
@@ -132,6 +133,7 @@ impl Renderer {
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
+            camera_projection: CameraProjection::default(),
             camera_fov_y: 60f32.to_radians(),
             camera_aspect: aspect,
             settings,
@@ -235,7 +237,8 @@ impl Renderer {
         self.camera_position = camera.position(); // Store it
         self.camera_target = camera.target;
         self.camera_up = camera.up;
-        self.camera_fov_y = camera.fov_y_radians;
+        self.camera_projection = camera.projection();
+        self.camera_fov_y = camera.fov_y_radians();
         self.camera_aspect = aspect;
         let view = camera.view();
         let view_inv = view.inverse();
@@ -255,8 +258,8 @@ impl Renderer {
                 view_proj: vp,
                 view_proj_inv: inv_vp,
                 position: camera.position(),
-                near: camera.near,
-                far: camera.far,
+                near: camera.near(),
+                far: camera.far(),
             },
         );
     }
@@ -271,6 +274,10 @@ impl Renderer {
 
     pub fn camera_up(&self) -> Vec3 {
         self.camera_up
+    }
+
+    pub fn camera_projection(&self) -> CameraProjection {
+        self.camera_projection
     }
 
     pub fn camera_fov_y(&self) -> f32 {

@@ -4,7 +4,7 @@ use crate::scene::{
     Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader, SerializedMaterial,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
@@ -122,12 +122,46 @@ impl ProjectManifest {
             .ok_or(ProjectError::EmptyScene)?;
         let environment = SerializedEnvironment::from_environment(scene.environment());
         let mut imports_set: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut primitive_mesh_indices: HashSet<usize> = HashSet::new();
+
         for entity in &asset.entities {
             if let Some(source) = &entity.gltf_source {
                 imports_set.insert(source.clone());
             }
+
+            if let Some(mesh_handle) = entity.mesh_handle {
+                if entity.gltf_source.is_none() {
+                    primitive_mesh_indices.insert(mesh_handle);
+                }
+            }
         }
-        asset.mesh_data.clear();
+
+        if !asset.mesh_data.is_empty() {
+            let original_mesh_data = std::mem::take(&mut asset.mesh_data);
+            let mut remap: HashMap<usize, usize> = HashMap::new();
+            let mut retained_meshes = Vec::with_capacity(primitive_mesh_indices.len());
+
+            for (index, data) in original_mesh_data.into_iter().enumerate() {
+                if primitive_mesh_indices.contains(&index) {
+                    let new_index = retained_meshes.len();
+                    remap.insert(index, new_index);
+                    retained_meshes.push(data);
+                }
+            }
+
+            asset.mesh_data = retained_meshes;
+
+            for entity in &mut asset.entities {
+                if let Some(mesh_handle) = entity.mesh_handle {
+                    if let Some(&new_index) = remap.get(&mesh_handle) {
+                        entity.mesh_handle = Some(new_index);
+                    } else if entity.gltf_source.is_some() {
+                        entity.mesh_handle = None;
+                    }
+                }
+            }
+        }
+
         let imports = imports_set
             .into_iter()
             .map(|path| ProjectImport { path })
@@ -268,8 +302,6 @@ impl ProjectManifest {
                 }
             }
         }
-
-        bundle.asset.mesh_data.clear();
 
         let registration = bundle.register_resources(renderer, &mut new_scene.assets);
         textures_changed |= registration.textures_changed;
