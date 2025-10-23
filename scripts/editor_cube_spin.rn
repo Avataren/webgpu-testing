@@ -1,14 +1,16 @@
 struct CubeState {
     angle,
+	frameCount,
 }
 
 pub fn on_created(self_entity) {
-    set_state(self_entity, "cube_state", CubeState { angle: 0.0 });
+    set_state(self_entity, "cube_state", CubeState { angle: 0.0, frameCount:0.0 });
 }
 
 pub fn update(self_entity, dt) {
-    let state = get_state(self_entity, "cube_state", CubeState { angle: 0.0 });
+    let state = get_state(self_entity, "cube_state", CubeState { angle: 0.0, frameCount:0.0 });
     let angle = state.angle + dt * 1.5;
+	let frameCount = state.frameCount + 1.0;
     set_rotation(self_entity, angle, 0.0, 0.0);
-    set_state(self_entity, "cube_state", CubeState { angle });
+    set_state(self_entity, "cube_state", CubeState { angle, frameCount });
 }

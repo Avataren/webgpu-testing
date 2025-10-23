@@ -12,7 +12,7 @@ use crate::scene::{Scene, SceneSnapshot};
 use crate::settings::RenderSettings;
 use crate::time::Instant;
 
-const DEFAULT_HDR_ENVIRONMENT: &str = "web/assets/hdr/kloppenheim_06_puresky_4k.hdr";
+//const DEFAULT_HDR_ENVIRONMENT: &str = "web/assets/hdr/kloppenheim_06_puresky_4k.hdr";
 
 pub struct StartupContext<'a> {
     pub scene: &'a mut Scene,
@@ -471,9 +471,9 @@ impl AppCore {
             return;
         }
 
-        self.scene
-            .environment_mut()
-            .enable_hdr_background(DEFAULT_HDR_ENVIRONMENT);
+        // self.scene
+        //     .environment_mut()
+        //     .enable_hdr_background(DEFAULT_HDR_ENVIRONMENT);
 
         if self.auto_init_default_textures && self.scene.assets.textures.is_empty() {
             self.init_default_textures(renderer);
