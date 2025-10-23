@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use std::any::Any;
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
     collections::BTreeSet,
@@ -18,16 +20,371 @@ use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_cube::io::percent_decode_uri;
 use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
-use wgpu_cube::scene::{EntityBuilder, Transform};
-
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_cube::scene::SerializedRuneScriptSource;
+use wgpu_cube::scene::{EntityBuilder, Transform};
 
 use super::core::EditorApplication;
-use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest};
+use super::system::{EditorContext, EditorSystem};
+use crate::project::{self, BuildPlatform, NewProjectRequest, ProjectBuildRequest};
 
 #[cfg(not(target_arch = "wasm32"))]
 use thiserror::Error;
+
+pub(super) struct ProjectSystem {
+    controller: project::ProjectController,
+    show_auxiliary_windows: bool,
+}
+
+impl ProjectSystem {
+    pub fn new(controller: project::ProjectController) -> Self {
+        Self {
+            controller,
+            show_auxiliary_windows: true,
+        }
+    }
+
+    pub fn is_startup_dialog_visible(&self) -> bool {
+        self.controller.is_startup_dialog_visible()
+    }
+
+    pub fn set_auxiliary_windows_visible(&mut self, visible: bool) {
+        self.show_auxiliary_windows = visible;
+    }
+
+    pub fn menu_contents(&mut self, ui: &mut egui::Ui) {
+        self.controller.menu_contents(ui);
+    }
+
+    pub fn build_menu_contents(&mut self, ui: &mut egui::Ui) {
+        self.controller.build_menu_contents(ui);
+    }
+
+    pub fn content_root(&self) -> Option<PathBuf> {
+        self.controller.content_root()
+    }
+
+    pub fn process_pending_imports(
+        &mut self,
+        app: &mut EditorApplication,
+        ctx: &mut UpdateContext,
+        pending: Vec<PathBuf>,
+    ) {
+        self.handle_pending_imports(app, ctx, pending);
+    }
+
+    fn handle_project_create(
+        &mut self,
+        app: &mut EditorApplication,
+        ctx: &mut GpuUpdateContext,
+        request: NewProjectRequest,
+    ) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            let _ = request;
+            warn!("Project creation is not supported when running inside the browser editor");
+            self.controller.report_startup_error(
+                "Project creation is not supported in WebAssembly builds of the editor.",
+            );
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = request.directory.clone();
+            match create_new_project(&request) {
+                Ok(()) => {
+                    info!("Created new project at {:?}", dir);
+                    self.handle_project_load(app, ctx, dir);
+                }
+                Err(err) => {
+                    error!("Failed to create project at {:?}: {err}", dir);
+                    self.controller.report_startup_error(err.to_string());
+                }
+            }
+        }
+    }
+
+    fn handle_pending_imports(
+        &mut self,
+        app: &mut EditorApplication,
+        ctx: &mut UpdateContext,
+        pending: Vec<PathBuf>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !pending.is_empty() {
+                warn!("glTF imports are not supported when running inside the browser editor");
+            }
+            let _ = ctx;
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(project_dir) = self.controller.current_dir().cloned() else {
+                app.asset_browser
+                    .report_error("Open or create a project before importing assets.");
+                warn!("Ignoring glTF import request: no project directory is active");
+                return;
+            };
+
+            let Some(content_root) = self.controller.content_root() else {
+                app.asset_browser
+                    .report_error("The project's content folder is unavailable.");
+                warn!("Ignoring glTF import request: project content folder missing");
+                return;
+            };
+
+            let destination_root = app.asset_browser.selected_folder(&content_root);
+            let mut any_spawned = false;
+
+            for source_path in pending {
+                match copy_gltf_into_project(
+                    &project_dir,
+                    &content_root,
+                    &destination_root,
+                    &source_path,
+                ) {
+                    Ok(result) => {
+                        let Some(script_source) =
+                            EditorApplication::create_import_script(&result.project_relative_gltf)
+                        else {
+                            error!(
+                                "Failed to build import script for {:?}; skipping entity spawn",
+                                result.project_relative_gltf
+                            );
+                            app.asset_browser
+                                .report_error("Failed to prepare glTF import script.");
+                            if let Some(folder) = result.absolute_gltf.parent() {
+                                let _ = fs::remove_dir_all(folder);
+                            }
+                            continue;
+                        };
+
+                        let entity_name = result
+                            .absolute_gltf
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or_else(|| "Imported glTF".to_string());
+
+                        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
+                            .with_name(format!("{entity_name} (glTF)"))
+                            .with_transform(Transform::default())
+                            .with_script(script_source);
+                        builder.spawn();
+                        any_spawned = true;
+
+                        let display_path =
+                            result.project_relative_gltf.to_string_lossy().to_string();
+                        app.asset_browser
+                            .report_info(format!("Imported asset to {display_path}"));
+                    }
+                    Err(err) => {
+                        error!("Failed to import glTF asset {:?}: {}", source_path, err);
+                        app.asset_browser.report_error(err.to_string());
+                    }
+                }
+            }
+
+            if matches!(ctx.runtime, RuntimeMode::Editor) {
+                ctx.scene.set_animation_playback(false);
+                ctx.scene.update(0.0);
+            }
+
+            if any_spawned {
+                app.record_scene_change(ctx.scene);
+            }
+        }
+    }
+
+    fn handle_project_save(&mut self, ctx: &mut GpuUpdateContext, dir: PathBuf) {
+        match ProjectManifest::capture(ctx.scene, self.controller.metadata().clone()) {
+            Ok(manifest) => {
+                if let Err(err) = manifest.save_to_dir(&dir) {
+                    error!("Failed to save project to {:?}: {err}", dir);
+                } else {
+                    self.controller.set_current_dir(dir);
+                }
+            }
+            Err(ProjectError::EmptyScene) => {
+                warn!("Skipping project save: no exportable scene data available");
+            }
+            Err(err) => {
+                error!("Failed to prepare project for saving: {err}");
+            }
+        }
+    }
+
+    fn handle_project_load(
+        &mut self,
+        app: &mut EditorApplication,
+        ctx: &mut GpuUpdateContext,
+        dir: PathBuf,
+    ) {
+        match ProjectManifest::load_from_dir(&dir) {
+            Ok(manifest) => {
+                let metadata = manifest.metadata.clone();
+                match manifest.instantiate_into(ctx.scene, ctx.renderer, &dir) {
+                    Ok(textures_changed) => {
+                        app.ensure_editor_scene_basics(ctx.scene, ctx.renderer);
+                        if textures_changed {
+                            ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
+                        }
+
+                        self.controller.set_current_dir(dir);
+                        self.controller.set_metadata(metadata);
+                        app.commands.clear();
+                        {
+                            let selection = app.selection_system_mut();
+                            selection.set_selected(None);
+                            selection.set_highlighted(None);
+                            selection.clear_pending_pick();
+                            selection.request_override(None);
+                        }
+                        app.history_system_mut().reset();
+                        app.initialize_history_state(ctx.scene);
+                        app.runtime_state.request_mode(RuntimeMode::Editor);
+                    }
+                    Err(err) => {
+                        error!("Failed to instantiate project scene: {err}");
+                    }
+                }
+            }
+            Err(err) => {
+                error!("Failed to load project from {:?}: {err}", dir);
+            }
+        }
+    }
+
+    fn handle_project_build(&mut self, ctx: &mut GpuUpdateContext, request: ProjectBuildRequest) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            let _ = request;
+            warn!("Project builds are not supported when running inside the browser editor");
+            return;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Err(err) = fs::create_dir_all(&request.output_dir) {
+                error!(
+                    "Failed to prepare build output directory {:?}: {err}",
+                    request.output_dir
+                );
+                return;
+            }
+
+            let content_dir = request.output_dir.join("content");
+            if content_dir.exists() {
+                if let Err(err) = fs::remove_dir_all(&content_dir) {
+                    error!(
+                        "Failed to clean previous content directory {:?}: {err}",
+                        content_dir
+                    );
+                    return;
+                }
+            }
+
+            match ProjectManifest::capture(ctx.scene, self.controller.metadata().clone()) {
+                Ok(manifest) => {
+                    if let Err(err) = manifest.save_to_dir(&request.output_dir) {
+                        error!(
+                            "Failed to save project manifest to {:?}: {err}",
+                            request.output_dir
+                        );
+                        return;
+                    }
+
+                    let build_result = match request.platform {
+                        BuildPlatform::Desktop => {
+                            build_desktop_artifacts(&manifest, &request.output_dir)
+                        }
+                        BuildPlatform::Web => build_web_artifacts(&manifest, &request.output_dir),
+                    };
+
+                    match build_result {
+                        Ok(()) => {
+                            info!(
+                                "Project build for {:?} completed at {:?}",
+                                request.platform, request.output_dir
+                            );
+                        }
+                        Err(err) => {
+                            error!("Failed to build project for {:?}: {err}", request.platform);
+                        }
+                    }
+                }
+                Err(ProjectError::EmptyScene) => {
+                    warn!(
+                        "Skipping project build: no exportable scene data available for {:?}",
+                        request.platform
+                    );
+                }
+                Err(err) => {
+                    error!("Failed to prepare project for building: {err}");
+                }
+            }
+        }
+    }
+}
+
+impl EditorSystem for ProjectSystem {
+    fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
+        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
+            if let Some(request) = self.controller.take_pending_create() {
+                self.handle_project_create(app, gpu_ctx, request);
+            }
+
+            if let Some(dir) = self.controller.take_pending_load() {
+                self.handle_project_load(app, gpu_ctx, dir);
+            }
+
+            if let Some(dir) = self.controller.take_pending_save() {
+                self.handle_project_save(gpu_ctx, dir);
+            }
+
+            if let Some(request) = self.controller.take_pending_build() {
+                self.handle_project_build(gpu_ctx, request);
+            }
+
+            gpu_ctx.scene.process_pending_gltf_imports(gpu_ctx.renderer);
+        }) else {
+            return;
+        };
+    }
+
+    fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
+        let Some(()) = ctx.with_ui(|_, mut ui_ctx| {
+            let egui_ctx = ui_ctx.egui();
+            self.controller.show_startup_dialog(egui_ctx);
+            if self.controller.is_startup_dialog_visible() {
+                return;
+            }
+
+            if self.show_auxiliary_windows {
+                self.controller.show_settings_window(egui_ctx);
+                self.controller.show_build_window(egui_ctx);
+            }
+        }) else {
+            return;
+        };
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Error)]
@@ -520,41 +877,51 @@ fn build_web_index(title: &str) -> String {
         background: #141414;
         color: #e0e0e0;
         display: flex;
+        flex-direction: column;
+        min-height: 100vh;
         align-items: center;
         justify-content: center;
-        min-height: 100vh;
       }}
 
-      #status {{
-        font-size: 1rem;
-        opacity: 0.85;
+      canvas {{
+        width: min(960px, 90vw);
+        height: min(540px, 60vh);
+        border-radius: 12px;
+        box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+      }}
+
+      .status {{
+        margin-top: 16px;
+        font-size: 16px;
+        color: #a0a0a0;
       }}
     </style>
   </head>
   <body>
-    <div id="status">Loading {title}…</div>
+    <canvas id="game"></canvas>
+    <div class="status" id="status">Initializing...</div>
     <script type="module">
-      async function init() {{
+      import init from "./pkg/player.js";
+
+      const status = document.getElementById("status");
+      function updateStatus(message) {{
+        status.textContent = message;
+      }}
+
+      async function run() {{
         try {{
-          const wasm = await import("./pkg/player.js");
-          if (typeof wasm.default === "function") {{
-            await wasm.default();
-          }}
-          wasm.start_app();
-          const status = document.getElementById("status");
-          if (status) {{
-            status.textContent = "";
-          }}
+          updateStatus("Loading...");
+          const wasm = await init();
+          updateStatus("Starting game...");
+          await wasm.start("game");
+          updateStatus("Running");
         }} catch (err) {{
-          console.error("Failed to start project", err);
-          const status = document.getElementById("status");
-          if (status) {{
-            status.textContent = "Failed to start project: " + err;
-          }}
+          console.error(err);
+          updateStatus("Failed to start: " + err);
         }}
       }}
 
-      init();
+      run();
     </script>
   </body>
 </html>
@@ -589,264 +956,4 @@ fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError
     manifest.save_to_dir(dir)?;
 
     Ok(())
-}
-
-impl EditorApplication {
-    pub(super) fn handle_project_create(
-        &mut self,
-        ctx: &mut GpuUpdateContext,
-        request: NewProjectRequest,
-    ) {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = ctx;
-            let _ = request;
-            warn!("Project creation is not supported when running inside the browser editor");
-            self.project.report_startup_error(
-                "Project creation is not supported in WebAssembly builds of the editor.",
-            );
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let dir = request.directory.clone();
-            match create_new_project(&request) {
-                Ok(()) => {
-                    info!("Created new project at {:?}", dir);
-                    self.handle_project_load(ctx, dir);
-                }
-                Err(err) => {
-                    error!("Failed to create project at {:?}: {err}", dir);
-                    self.project.report_startup_error(err.to_string());
-                }
-            }
-        }
-    }
-
-    pub(super) fn process_pending_imports(
-        &mut self,
-        ctx: &mut UpdateContext,
-        pending: Vec<PathBuf>,
-    ) {
-        if pending.is_empty() {
-            return;
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            if !pending.is_empty() {
-                warn!("glTF imports are not supported when running inside the browser editor");
-            }
-            let _ = ctx;
-            return;
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let Some(project_dir) = self.project.current_dir().cloned() else {
-                self.asset_browser
-                    .report_error("Open or create a project before importing assets.");
-                warn!("Ignoring glTF import request: no project directory is active");
-                return;
-            };
-
-            let Some(content_root) = self.project.content_root() else {
-                self.asset_browser
-                    .report_error("The project's content folder is unavailable.");
-                warn!("Ignoring glTF import request: project content folder missing");
-                return;
-            };
-
-            let destination_root = self.asset_browser.selected_folder(&content_root);
-            let mut any_spawned = false;
-
-            for source_path in pending {
-                match copy_gltf_into_project(
-                    &project_dir,
-                    &content_root,
-                    &destination_root,
-                    &source_path,
-                ) {
-                    Ok(result) => {
-                        let Some(script_source) =
-                            Self::create_import_script(&result.project_relative_gltf)
-                        else {
-                            error!(
-                                "Failed to build import script for {:?}; skipping entity spawn",
-                                result.project_relative_gltf
-                            );
-                            self.asset_browser
-                                .report_error("Failed to prepare glTF import script.");
-                            if let Some(folder) = result.absolute_gltf.parent() {
-                                let _ = fs::remove_dir_all(folder);
-                            }
-                            continue;
-                        };
-
-                        let entity_name = result
-                            .absolute_gltf
-                            .file_stem()
-                            .map(|stem| stem.to_string_lossy().into_owned())
-                            .filter(|name| !name.is_empty())
-                            .unwrap_or_else(|| "Imported glTF".to_string());
-
-                        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
-                            .with_name(format!("{entity_name} (glTF)"))
-                            .with_transform(Transform::default())
-                            .with_script(script_source);
-                        builder.spawn();
-                        any_spawned = true;
-
-                        let display_path =
-                            result.project_relative_gltf.to_string_lossy().to_string();
-                        self.asset_browser
-                            .report_info(format!("Imported asset to {display_path}"));
-                    }
-                    Err(err) => {
-                        error!("Failed to import glTF asset {:?}: {}", source_path, err);
-                        self.asset_browser.report_error(err.to_string());
-                    }
-                }
-            }
-
-            if matches!(ctx.runtime, RuntimeMode::Editor) {
-                ctx.scene.set_animation_playback(false);
-                ctx.scene.update(0.0);
-            }
-
-            if any_spawned {
-                self.record_scene_change(ctx.scene);
-            }
-        }
-    }
-
-    pub(super) fn handle_project_save(&mut self, ctx: &mut GpuUpdateContext, dir: PathBuf) {
-        match ProjectManifest::capture(ctx.scene, self.project.metadata().clone()) {
-            Ok(manifest) => {
-                if let Err(err) = manifest.save_to_dir(&dir) {
-                    error!("Failed to save project to {:?}: {err}", dir);
-                } else {
-                    self.project.set_current_dir(dir);
-                }
-            }
-            Err(ProjectError::EmptyScene) => {
-                warn!("Skipping project save: no exportable scene data available");
-            }
-            Err(err) => {
-                error!("Failed to prepare project for saving: {err}");
-            }
-        }
-    }
-
-    pub(super) fn handle_project_load(&mut self, ctx: &mut GpuUpdateContext, dir: PathBuf) {
-        match ProjectManifest::load_from_dir(&dir) {
-            Ok(manifest) => {
-                let metadata = manifest.metadata.clone();
-                match manifest.instantiate_into(ctx.scene, ctx.renderer, &dir) {
-                    Ok(textures_changed) => {
-                        self.ensure_editor_scene_basics(ctx.scene, ctx.renderer);
-                        if textures_changed {
-                            ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
-                        }
-
-                        self.project.set_current_dir(dir);
-                        self.project.set_metadata(metadata);
-                        self.commands.clear();
-                        {
-                            let selection = self.selection_system_mut();
-                            selection.set_selected(None);
-                            selection.set_highlighted(None);
-                            selection.clear_pending_pick();
-                            selection.request_override(None);
-                        }
-                        self.history_system_mut().reset();
-                        self.initialize_history_state(ctx.scene);
-                        self.runtime_state.request_mode(RuntimeMode::Editor);
-                    }
-                    Err(err) => {
-                        error!("Failed to instantiate project scene: {err}");
-                    }
-                }
-            }
-            Err(err) => {
-                error!("Failed to load project from {:?}: {err}", dir);
-            }
-        }
-    }
-
-    pub(super) fn handle_project_build(
-        &mut self,
-        ctx: &mut GpuUpdateContext,
-        request: ProjectBuildRequest,
-    ) {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = ctx;
-            let _ = request;
-            warn!("Project builds are not supported when running inside the browser editor");
-            return;
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Err(err) = fs::create_dir_all(&request.output_dir) {
-                error!(
-                    "Failed to prepare build output directory {:?}: {err}",
-                    request.output_dir
-                );
-                return;
-            }
-
-            let content_dir = request.output_dir.join("content");
-            if content_dir.exists() {
-                if let Err(err) = fs::remove_dir_all(&content_dir) {
-                    error!(
-                        "Failed to clean previous content directory {:?}: {err}",
-                        content_dir
-                    );
-                    return;
-                }
-            }
-
-            match ProjectManifest::capture(ctx.scene, self.project.metadata().clone()) {
-                Ok(manifest) => {
-                    if let Err(err) = manifest.save_to_dir(&request.output_dir) {
-                        error!(
-                            "Failed to save project manifest to {:?}: {err}",
-                            request.output_dir
-                        );
-                        return;
-                    }
-
-                    let build_result = match request.platform {
-                        BuildPlatform::Desktop => {
-                            build_desktop_artifacts(&manifest, &request.output_dir)
-                        }
-                        BuildPlatform::Web => build_web_artifacts(&manifest, &request.output_dir),
-                    };
-
-                    match build_result {
-                        Ok(()) => {
-                            info!(
-                                "Project build for {:?} completed at {:?}",
-                                request.platform, request.output_dir
-                            );
-                        }
-                        Err(err) => {
-                            error!("Failed to build project for {:?}: {err}", request.platform);
-                        }
-                    }
-                }
-                Err(ProjectError::EmptyScene) => {
-                    warn!(
-                        "Skipping project build: no exportable scene data available for {:?}",
-                        request.platform
-                    );
-                }
-                Err(err) => {
-                    error!("Failed to prepare project for building: {err}");
-                }
-            }
-        }
-    }
 }

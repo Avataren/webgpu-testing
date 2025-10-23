@@ -9,7 +9,7 @@ impl EditorApplication {
         egui::TopBottomPanel::top("editor_top_bar").show(ctx, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    self.project.menu_contents(ui);
+                    self.project_system_mut().menu_contents(ui);
 
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -36,7 +36,7 @@ impl EditorApplication {
                 });
 
                 ui.menu_button("Build", |ui| {
-                    self.project.build_menu_contents(ui);
+                    self.project_system_mut().build_menu_contents(ui);
                 });
 
                 ui.menu_button("Window", |ui| {

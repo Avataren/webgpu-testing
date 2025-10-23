@@ -5,7 +5,7 @@ mod core;
 mod history_system;
 mod input;
 mod picking;
-mod project_io;
+mod project_system;
 mod runtime_mode;
 mod scripts;
 mod selection_system;
@@ -118,32 +118,15 @@ impl EditorApplication {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
         self.drain_gpu_commands(ctx);
-
-        if let Some(request) = self.project.take_pending_create() {
-            self.handle_project_create(ctx, request);
-        }
-
-        if let Some(dir) = self.project.take_pending_load() {
-            self.handle_project_load(ctx, dir);
-        }
-
-        if let Some(dir) = self.project.take_pending_save() {
-            self.handle_project_save(ctx, dir);
-        }
-
-        if let Some(request) = self.project.take_pending_build() {
-            self.handle_project_build(ctx, request);
-        }
-
-        ctx.scene.process_pending_gltf_imports(ctx.renderer);
+        self.run_system_gpu_updates(ctx);
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         self.viewports.scene_viewport.clear();
         self.viewports.game_viewport.clear();
 
-        self.project.show_startup_dialog(ctx);
-        if self.project.is_startup_dialog_visible() {
+        if self.project_system().is_startup_dialog_visible() {
+            self.run_system_ui_at(self.project_system_index, ctx, default_ui);
             return;
         }
 
@@ -159,11 +142,15 @@ impl EditorApplication {
 
         if !show_fullscreen_game {
             self.windows.show(ctx, default_ui);
-            self.project.show_settings_window(ctx);
-            self.project.show_build_window(ctx);
         }
 
-        let content_root = self.project.content_root();
+        {
+            let show_auxiliary = !show_fullscreen_game;
+            self.project_system_mut()
+                .set_auxiliary_windows_visible(show_auxiliary);
+        }
+
+        let content_root = self.project_system().content_root();
         let override_selection = { self.selection_system_mut().take_override() };
         let dock_tree = &mut self.dock_tree;
         let scene_viewport = &mut self.viewports.scene_viewport;
@@ -839,7 +826,7 @@ impl EditorApplication {
             return Ok(());
         }
 
-        let Some(content_root) = self.project.content_root() else {
+        let Some(content_root) = self.project_system().content_root() else {
             return Err(
                 "Open or create a project before assigning environment HDR files.".to_string(),
             );
