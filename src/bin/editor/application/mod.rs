@@ -222,11 +222,19 @@ impl RenderApplication for EditorApplication {
             .map(|id| self.dock_tree.active_tiles().contains(&id))
             .unwrap_or(false);
 
-        if is_playing && !show_fullscreen_game && !game_tile_active && scene_tile_active {
+        let has_pending_transition = self.pending_mode_transition.is_some();
+
+        if !has_pending_transition
+            && is_playing
+            && !show_fullscreen_game
+            && !game_tile_active
+            && scene_tile_active
+        {
             self.runtime_state.request_mode(RuntimeMode::Editor);
         }
 
-        if !is_playing
+        if !has_pending_transition
+            && !is_playing
             && !matches!(self.runtime_state.desired_mode(), RuntimeMode::Playing)
             && game_tile_active
         {
