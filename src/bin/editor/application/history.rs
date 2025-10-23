@@ -3,6 +3,7 @@ use wgpu_cube::app::UpdateContext;
 use wgpu_cube::scene::{EditorEntityId, Scene};
 
 use super::core::EditorApplication;
+use super::EditorCommand;
 use crate::history::HistorySelection;
 
 impl EditorApplication {
@@ -109,7 +110,8 @@ impl EditorApplication {
 
     pub(super) fn perform_undo(&mut self, ctx: &mut UpdateContext) {
         self.transform_tool.gizmo_drag = None;
-        self.pending_entity_deletions.clear();
+        self.commands
+            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
         if let Some(selection) = self.history.undo(ctx.scene) {
             self.refresh_next_editor_entity_id(ctx.scene);
             self.apply_history_selection(ctx.scene, selection);
@@ -121,7 +123,8 @@ impl EditorApplication {
 
     pub(super) fn perform_redo(&mut self, ctx: &mut UpdateContext) {
         self.transform_tool.gizmo_drag = None;
-        self.pending_entity_deletions.clear();
+        self.commands
+            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
         if let Some(selection) = self.history.redo(ctx.scene) {
             self.refresh_next_editor_entity_id(ctx.scene);
             self.apply_history_selection(ctx.scene, selection);

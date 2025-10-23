@@ -624,17 +624,20 @@ impl EditorApplication {
         }
     }
 
-    pub(super) fn process_pending_imports(&mut self, ctx: &mut UpdateContext) {
-        if self.pending_imports.is_empty() {
+    pub(super) fn process_pending_imports(
+        &mut self,
+        ctx: &mut UpdateContext,
+        pending: Vec<PathBuf>,
+    ) {
+        if pending.is_empty() {
             return;
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            if !self.pending_imports.is_empty() {
+            if !pending.is_empty() {
                 warn!("glTF imports are not supported when running inside the browser editor");
             }
-            self.pending_imports.clear();
             let _ = ctx;
             return;
         }
@@ -645,7 +648,6 @@ impl EditorApplication {
                 self.asset_browser
                     .report_error("Open or create a project before importing assets.");
                 warn!("Ignoring glTF import request: no project directory is active");
-                self.pending_imports.clear();
                 return;
             };
 
@@ -653,14 +655,13 @@ impl EditorApplication {
                 self.asset_browser
                     .report_error("The project's content folder is unavailable.");
                 warn!("Ignoring glTF import request: project content folder missing");
-                self.pending_imports.clear();
                 return;
             };
 
             let destination_root = self.asset_browser.selected_folder(&content_root);
             let mut any_spawned = false;
 
-            for source_path in std::mem::take(&mut self.pending_imports) {
+            for source_path in pending {
                 match copy_gltf_into_project(
                     &project_dir,
                     &content_root,
@@ -751,8 +752,7 @@ impl EditorApplication {
 
                         self.project.set_current_dir(dir);
                         self.project.set_metadata(metadata);
-                        self.pending_imports.clear();
-                        self.pending_entity_deletions.clear();
+                        self.commands.clear();
                         self.selection.set_selected(None);
                         self.selection.set_highlighted(None);
                         self.selection.clear_pending_pick();

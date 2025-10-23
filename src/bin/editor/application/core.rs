@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::path::PathBuf;
 
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
@@ -9,7 +8,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     Transform, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
-use wgpu_cube::{SceneCreationAction, SceneHierarchyHandle};
+use wgpu_cube::SceneHierarchyHandle;
 
 use super::{EditorCommand, EditorContext, EditorEvent};
 use egui::Context as EguiContext;
@@ -18,7 +17,6 @@ use wgpu_cube::DefaultUI;
 use crate::asset_browser::AssetBrowserState;
 use crate::camera::EditorCameraController;
 use crate::history::EditorHistory;
-use crate::inspector::InspectorAction;
 use crate::layout::{create_editor_layout, EditorPane, ViewportState};
 use crate::postprocess::ViewportGrid;
 use crate::project;
@@ -34,10 +32,6 @@ pub struct EditorApplication {
     pub(super) dock_tree: Tree<EditorPane>,
     pub(super) viewports: ViewportSystem,
     pub(super) camera_controller: EditorCameraController,
-    pub(super) pending_imports: Vec<PathBuf>,
-    pub(super) pending_entity_deletions: Vec<Entity>,
-    pub(super) pending_inspector_actions: Vec<InspectorAction>,
-    pub(super) pending_scene_creations: Vec<SceneCreationAction>,
     pub(super) windows: WindowToggles,
     pub(super) selection: SelectionSystem,
     pub(super) active_camera_entity: Option<Entity>,
@@ -50,11 +44,11 @@ pub struct EditorApplication {
     pub(super) project: project::ProjectController,
     pub(super) asset_browser: AssetBrowserState,
     pub(super) script_editor: Option<ScriptEditorState>,
-    pub(super) pending_script_actions: Vec<PendingScriptAction>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
     pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
     pub(super) commands: VecDeque<EditorCommand>,
+    #[allow(dead_code)]
     pub(super) events: Vec<EditorEvent>,
 }
 
@@ -203,10 +197,6 @@ impl EditorApplicationBuilder {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
             viewports,
             camera_controller: self.camera_controller.unwrap_or_default(),
-            pending_imports: Vec::new(),
-            pending_entity_deletions: Vec::new(),
-            pending_inspector_actions: Vec::new(),
-            pending_scene_creations: Vec::new(),
             windows: self.windows.unwrap_or_else(WindowToggles::new),
             selection: self.selection.unwrap_or_default(),
             active_camera_entity: None,
@@ -219,7 +209,6 @@ impl EditorApplicationBuilder {
             project: self.project.unwrap_or_else(project::ProjectController::new),
             asset_browser: self.asset_browser.unwrap_or_default(),
             script_editor: None,
-            pending_script_actions: Vec::new(),
             pending_mode_transition: None,
             editor_scene_snapshot: None,
             scene_hierarchy_handle: None,
@@ -264,6 +253,70 @@ impl EditorApplication {
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         EditorContext::for_gpu(self, ctx)
+    }
+
+    pub(super) fn enqueue_command(&mut self, command: EditorCommand) {
+        self.commands.push_back(command);
+    }
+
+    pub(super) fn drain_update_commands(&mut self, ctx: &mut UpdateContext) {
+        use EditorCommand::*;
+
+        let mut queue = std::mem::take(&mut self.commands);
+        let mut remaining = VecDeque::new();
+        let mut pending_imports = Vec::new();
+        let mut pending_deletions = Vec::new();
+        let mut pending_inspector = Vec::new();
+        let mut pending_scripts = Vec::new();
+
+        while let Some(command) = queue.pop_front() {
+            match command {
+                ImportPath(path) => pending_imports.push(path),
+                DeleteEntity(entity) => pending_deletions.push(entity),
+                Inspector(action) => pending_inspector.push(action),
+                Script(action) => pending_scripts.push(action),
+                CreateScene(action) => remaining.push_back(CreateScene(action)),
+            }
+        }
+
+        if !pending_scripts.is_empty() {
+            self.apply_pending_script_actions(ctx, pending_scripts);
+        }
+
+        if !pending_inspector.is_empty() {
+            self.apply_pending_inspector_actions(ctx, pending_inspector);
+        }
+
+        if !pending_imports.is_empty() {
+            self.process_pending_imports(ctx, pending_imports);
+        }
+
+        if !pending_deletions.is_empty() {
+            self.process_pending_entity_deletions(ctx, pending_deletions);
+        }
+
+        remaining.append(&mut self.commands);
+        self.commands = remaining;
+    }
+
+    pub(super) fn drain_gpu_commands(&mut self, ctx: &mut GpuUpdateContext) {
+        let mut queue = std::mem::take(&mut self.commands);
+        let mut remaining = VecDeque::new();
+        let mut creations = Vec::new();
+
+        while let Some(command) = queue.pop_front() {
+            match command {
+                EditorCommand::CreateScene(action) => creations.push(action),
+                other => remaining.push_back(other),
+            }
+        }
+
+        if !creations.is_empty() {
+            self.apply_pending_scene_creations(ctx, creations);
+        }
+
+        remaining.append(&mut self.commands);
+        self.commands = remaining;
     }
 
     pub(super) fn make_ui_context<'app, 'ctx>(

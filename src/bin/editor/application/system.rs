@@ -1,18 +1,27 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
-use super::core::EditorApplication;
+use super::core::{EditorApplication, PendingScriptAction};
 use crate::asset_browser::AssetBrowserState;
 use crate::history::EditorHistory;
+use crate::inspector::InspectorAction;
 use egui::Context as EguiContext;
+use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::scene::Scene;
 use wgpu_cube::DefaultUI;
+use wgpu_cube::SceneCreationAction;
+
+pub(super) enum EditorCommand {
+    ImportPath(PathBuf),
+    DeleteEntity(Entity),
+    Inspector(InspectorAction),
+    CreateScene(SceneCreationAction),
+    Script(PendingScriptAction),
+}
 
 #[derive(Debug)]
-pub enum EditorCommand {}
-
-#[derive(Debug)]
-pub enum EditorEvent {}
+pub(super) enum EditorEvent {}
 
 pub struct EditorContext<'app, 'ctx, 'scene> {
     application: &'app mut EditorApplication,
@@ -41,6 +50,7 @@ impl<'ctx> EditorUiContextMut<'ctx> {
     }
 }
 
+#[allow(dead_code)]
 impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     pub(crate) fn for_update(
         application: &'app mut EditorApplication,
@@ -100,11 +110,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         &mut self.application.history
     }
 
-    pub fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
+    pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
         &mut self.application.commands
     }
 
-    pub fn events(&mut self) -> &mut Vec<EditorEvent> {
+    pub(super) fn events(&mut self) -> &mut Vec<EditorEvent> {
         &mut self.application.events
     }
 
@@ -127,6 +137,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 }
 
+#[allow(dead_code)]
 impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx>
 where
     'app: 'ctx,
@@ -171,6 +182,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub trait EditorSystem {
     fn update(&mut self, _ctx: &mut EditorContext<'_, '_, '_>) {}
 

@@ -55,12 +55,15 @@ impl EditorApplication {
         ))
     }
 
-    pub(super) fn apply_pending_script_actions(&mut self, ctx: &mut UpdateContext) {
-        if self.pending_script_actions.is_empty() {
+    pub(super) fn apply_pending_script_actions(
+        &mut self,
+        ctx: &mut UpdateContext,
+        actions: Vec<PendingScriptAction>,
+    ) {
+        if actions.is_empty() {
             return;
         }
 
-        let actions = std::mem::take(&mut self.pending_script_actions);
         let mut reload_runtime = false;
         let mut notifications = Vec::new();
 

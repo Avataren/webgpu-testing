@@ -3,6 +3,7 @@ use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::scene::TransformGizmoMode;
 
 use super::core::{EditorApplication, ViewportPick};
+use super::EditorCommand;
 
 impl EditorApplication {
     pub(super) fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
@@ -88,7 +89,7 @@ impl EditorApplication {
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
                 if let Some(entity) = self.selection.selected() {
-                    self.pending_entity_deletions.push(entity);
+                    self.enqueue_command(EditorCommand::DeleteEntity(entity));
                     self.transform_tool.gizmo_drag = None;
                 }
             }

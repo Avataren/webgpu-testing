@@ -2,6 +2,7 @@ use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::scene::TransformGizmoSpace;
 
 use super::core::{EditorApplication, GameViewDisplayMode};
+use super::EditorCommand;
 
 impl EditorApplication {
     pub(super) fn show_menu_bar(&mut self, ctx: &egui::Context) {
@@ -18,7 +19,7 @@ impl EditorApplication {
                                 .add_filter("glTF", &["gltf", "glb"])
                                 .pick_file()
                             {
-                                self.pending_imports.push(path);
+                                self.enqueue_command(EditorCommand::ImportPath(path));
                             }
                         }
                     }

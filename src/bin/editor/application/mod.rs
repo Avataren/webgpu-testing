@@ -113,8 +113,7 @@ impl EditorApplication {
             self.camera_controller.update_camera(ctx);
         }
         self.ensure_editor_entity_ids(ctx.scene);
-        self.apply_pending_script_actions(ctx);
-        self.apply_pending_inspector_actions(ctx);
+        self.drain_update_commands(ctx);
 
         if self.undo_redo.take_undo() {
             self.undo_redo.clear_redo();
@@ -127,8 +126,6 @@ impl EditorApplication {
             .set_transform_gizmo_mode(self.transform_tool.gizmo_mode);
         ctx.scene
             .set_transform_gizmo_space(self.transform_tool.gizmo_space);
-        self.process_pending_imports(ctx);
-        self.process_pending_entity_deletions(ctx);
         self.process_viewport_pick(ctx);
         self.sync_selection_component(ctx);
         self.update_gizmo_drag(ctx);
@@ -159,7 +156,7 @@ impl EditorApplication {
     fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
-        self.apply_pending_scene_creations(ctx);
+        self.drain_gpu_commands(ctx);
 
         if let Some(request) = self.project.take_pending_create() {
             self.handle_project_create(ctx, request);
@@ -286,13 +283,13 @@ impl EditorApplication {
                     self.script_editor = Some(ScriptEditorState::new(entity, component));
                 }
                 other => {
-                    self.pending_inspector_actions.push(other);
+                    self.enqueue_command(EditorCommand::Inspector(other));
                 }
             }
         }
 
-        if !creation_actions.is_empty() {
-            self.pending_scene_creations.extend(creation_actions);
+        for action in creation_actions {
+            self.enqueue_command(EditorCommand::CreateScene(action));
         }
 
         if is_playing {
@@ -333,17 +330,18 @@ impl EditorApplication {
                 contents,
                 message,
             } => {
-                self.pending_script_actions
-                    .push(PendingScriptAction::SaveInline {
-                        entity,
-                        name,
-                        contents,
-                        message,
-                    });
+                self.enqueue_command(EditorCommand::Script(PendingScriptAction::SaveInline {
+                    entity,
+                    name,
+                    contents,
+                    message,
+                }));
             }
             ScriptEditorEvent::SaveFile { entity, message } => {
-                self.pending_script_actions
-                    .push(PendingScriptAction::ReloadRuntime { entity, message });
+                self.enqueue_command(EditorCommand::Script(PendingScriptAction::ReloadRuntime {
+                    entity,
+                    message,
+                }));
             }
         }
 
@@ -372,13 +370,16 @@ impl EditorApplication {
 }
 
 impl EditorApplication {
-    fn apply_pending_inspector_actions(&mut self, ctx: &mut UpdateContext) {
-        if self.pending_inspector_actions.is_empty() {
+    fn apply_pending_inspector_actions(
+        &mut self,
+        ctx: &mut UpdateContext,
+        actions: Vec<InspectorAction>,
+    ) {
+        if actions.is_empty() {
             return;
         }
 
         self.resolve_active_camera_entity(ctx.scene);
-        let actions = std::mem::take(&mut self.pending_inspector_actions);
         let mut transforms_changed = false;
 
         for action in actions {
@@ -693,12 +694,15 @@ impl EditorApplication {
         }
     }
 
-    fn apply_pending_scene_creations(&mut self, ctx: &mut GpuUpdateContext) {
-        if self.pending_scene_creations.is_empty() {
+    fn apply_pending_scene_creations(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        actions: Vec<SceneCreationAction>,
+    ) {
+        if actions.is_empty() {
             return;
         }
 
-        let actions = std::mem::take(&mut self.pending_scene_creations);
         let mut last_created = None;
 
         for action in actions {

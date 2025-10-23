@@ -7,12 +7,15 @@ use wgpu_cube::scene::{Children, Parent};
 use super::core::EditorApplication;
 
 impl EditorApplication {
-    pub(super) fn process_pending_entity_deletions(&mut self, ctx: &mut UpdateContext) {
-        if self.pending_entity_deletions.is_empty() {
+    pub(super) fn process_pending_entity_deletions(
+        &mut self,
+        ctx: &mut UpdateContext,
+        pending: Vec<Entity>,
+    ) {
+        if pending.is_empty() {
             return;
         }
 
-        let pending = std::mem::take(&mut self.pending_entity_deletions);
         let mut removed_entities = Vec::new();
 
         {
