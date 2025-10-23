@@ -1,6 +1,6 @@
 use glam::{Vec2, Vec3, Vec4};
 use hecs::Entity;
-use wgpu_cube::app::{RuntimeMode, UpdateContext};
+use wgpu_cube::app::UpdateContext;
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{DirectionalLight, PointLight, SpotLight};
 use wgpu_cube::scene::{MeshBounds, Transform, TransformComponent, Visible, WorldTransform};
@@ -13,29 +13,6 @@ const LIGHT_ICON_ORTHO_WORLD_SIZE: f32 = 0.65;
 const LIGHT_ICON_PICK_PADDING: f32 = 0.15;
 
 impl EditorApplication {
-    pub(super) fn process_viewport_pick(&mut self, ctx: &mut UpdateContext) {
-        if !matches!(ctx.runtime, RuntimeMode::Editor) {
-            self.selection.clear_pending_pick();
-            return;
-        };
-
-        let Some(request) = self.selection.take_pending_pick() else {
-            return;
-        };
-
-        let Some(region) = self.viewports.scene_viewport.region() else {
-            self.selection.set_selected(None);
-            self.selection.request_override(None);
-            self.update_history_selection(ctx.scene);
-            return;
-        };
-
-        let picked = self.pick_entity(ctx, request.uv, region);
-        self.selection.set_selected(picked);
-        self.selection.request_override(picked);
-        self.update_history_selection(ctx.scene);
-    }
-
     pub(super) fn pick_entity(
         &self,
         ctx: &UpdateContext,

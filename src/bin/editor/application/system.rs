@@ -1,5 +1,8 @@
+use std::any::Any;
 use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::ptr::NonNull;
 
 use super::core::{EditorApplication, PendingScriptAction};
 use crate::asset_browser::AssetBrowserState;
@@ -24,10 +27,11 @@ pub(super) enum EditorCommand {
 pub(super) enum EditorEvent {}
 
 pub struct EditorContext<'app, 'ctx, 'scene> {
-    application: &'app mut EditorApplication,
+    application: NonNull<EditorApplication>,
     update: Option<&'ctx mut UpdateContext<'scene>>,
     gpu: Option<&'ctx mut GpuUpdateContext<'scene>>,
     ui: Option<EditorUiContext<'ctx>>,
+    _marker: PhantomData<&'app mut EditorApplication>,
 }
 
 struct EditorUiContext<'ctx> {
@@ -35,13 +39,13 @@ struct EditorUiContext<'ctx> {
     default_ui: &'ctx mut DefaultUI,
 }
 
-pub struct EditorUiContextMut<'ctx> {
-    egui: &'ctx EguiContext,
-    default_ui: &'ctx mut DefaultUI,
+pub struct EditorUiContextMut<'a> {
+    egui: &'a EguiContext,
+    default_ui: &'a mut DefaultUI,
 }
 
-impl<'ctx> EditorUiContextMut<'ctx> {
-    pub fn egui(&self) -> &'ctx EguiContext {
+impl<'a> EditorUiContextMut<'a> {
+    pub fn egui(&self) -> &'a EguiContext {
         self.egui
     }
 
@@ -57,10 +61,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut UpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            application,
+            application: NonNull::from(application),
             update: Some(ctx),
             gpu: None,
             ui: None,
+            _marker: PhantomData,
         }
     }
 
@@ -69,15 +74,16 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            application,
+            application: NonNull::from(application),
             update: None,
             gpu: Some(ctx),
             ui: None,
+            _marker: PhantomData,
         }
     }
 
     pub fn application_mut(&mut self) -> &mut EditorApplication {
-        self.application
+        unsafe { self.application.as_mut() }
     }
 
     pub fn update_context_mut(&mut self) -> Option<&mut UpdateContext<'scene>> {
@@ -89,7 +95,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {
-        self.application.runtime_state.clone()
+        unsafe { self.application.as_ref().runtime_state.clone() }
     }
 
     pub fn scene(&mut self) -> Option<&mut Scene> {
@@ -103,19 +109,19 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn asset_browser(&mut self) -> &mut AssetBrowserState {
-        &mut self.application.asset_browser
+        unsafe { &mut self.application.as_mut().asset_browser }
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {
-        &mut self.application.history
+        unsafe { &mut self.application.as_mut().history }
     }
 
     pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
-        &mut self.application.commands
+        unsafe { &mut self.application.as_mut().commands }
     }
 
     pub(super) fn events(&mut self) -> &mut Vec<EditorEvent> {
-        &mut self.application.events
+        unsafe { &mut self.application.as_mut().events }
     }
 
     pub fn with_update<R, F>(&mut self, f: F) -> Option<R>
@@ -123,7 +129,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorApplication, &mut UpdateContext<'scene>) -> R,
     {
         let update = self.update.as_deref_mut()?;
-        let app = &mut *self.application;
+        let app = unsafe { self.application.as_mut() };
         Some(f(app, update))
     }
 
@@ -132,61 +138,60 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorApplication, &mut GpuUpdateContext<'scene>) -> R,
     {
         let gpu = self.gpu.as_deref_mut()?;
-        let app = &mut *self.application;
+        let app = unsafe { self.application.as_mut() };
         Some(f(app, gpu))
     }
 }
 
 #[allow(dead_code)]
-impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx>
-where
-    'app: 'ctx,
-{
+impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
     pub(crate) fn for_ui(
         application: &'app mut EditorApplication,
         ctx: &'ctx EguiContext,
         default_ui: &'ctx mut DefaultUI,
     ) -> EditorContext<'app, 'ctx, 'ctx> {
         Self {
-            application,
+            application: NonNull::from(application),
             update: None,
             gpu: None,
             ui: Some(EditorUiContext {
                 egui: ctx,
                 default_ui,
             }),
+            _marker: PhantomData,
         }
     }
 
-    pub fn ui_context(&'ctx mut self) -> Option<EditorUiContextMut<'ctx>> {
-        self.ui.as_mut().map(move |ui| EditorUiContextMut {
+    pub fn ui_context(&mut self) -> Option<EditorUiContextMut<'_>> {
+        self.ui.as_mut().map(|ui| EditorUiContextMut {
             egui: ui.egui,
-            default_ui: ui.default_ui,
+            default_ui: &mut *ui.default_ui,
         })
     }
 
-    pub fn with_ui<R, F>(&'ctx mut self, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut EditorApplication, EditorUiContextMut<'ctx>) -> R,
-    {
+    pub fn with_ui<R>(
+        &mut self,
+        f: impl FnOnce(&mut EditorApplication, EditorUiContextMut<'_>) -> R,
+    ) -> Option<R> {
         let ui = self.ui.as_mut()?;
         let ui_ctx = EditorUiContextMut {
             egui: ui.egui,
-            default_ui: ui.default_ui,
+            default_ui: &mut *ui.default_ui,
         };
-        let result = {
-            let app = &mut *self.application;
-            f(app, ui_ctx)
-        };
-        Some(result)
+        let app = unsafe { self.application.as_mut() };
+        Some(f(app, ui_ctx))
     }
 }
 
 #[allow(dead_code)]
-pub trait EditorSystem {
-    fn update(&mut self, _ctx: &mut EditorContext<'_, '_, '_>) {}
+pub trait EditorSystem: Any {
+    fn update<'app, 'ctx, 'scene>(&mut self, _ctx: &mut EditorContext<'app, 'ctx, 'scene>) {}
 
-    fn gpu_update(&mut self, _ctx: &mut EditorContext<'_, '_, '_>) {}
+    fn gpu_update<'app, 'ctx, 'scene>(&mut self, _ctx: &mut EditorContext<'app, 'ctx, 'scene>) {}
 
-    fn ui(&mut self, _ctx: &mut EditorContext<'_, '_, '_>) {}
+    fn ui<'app, 'ctx>(&mut self, _ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {}
+
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }

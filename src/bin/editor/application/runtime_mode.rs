@@ -37,7 +37,7 @@ impl EditorApplication {
             });
 
             self.transform_tool.gizmo_drag = None;
-            self.selection.clear_pending_pick();
+            self.selection_system_mut().clear_pending_pick();
         }
 
         // Exiting play mode to editor
@@ -64,9 +64,10 @@ impl EditorApplication {
         self.refresh_next_editor_entity_id(ctx.scene);
         self.initialize_history_state(ctx.scene);
 
-        self.selection.set_selected(None);
-        self.selection.set_highlighted(None);
-        self.selection.request_override(None);
+        let selection = self.selection_system_mut();
+        selection.set_selected(None);
+        selection.set_highlighted(None);
+        selection.request_override(None);
 
         self.ensure_viewport_tab_for_mode(RuntimeMode::Editor);
 

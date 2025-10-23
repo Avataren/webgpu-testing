@@ -7,18 +7,23 @@ use wgpu_cube::scene::{
 };
 
 use super::core::{EditorApplication, GizmoDragKind, GizmoDragState};
+use super::selection_system::SelectionSystem;
 
 impl EditorApplication {
-    pub(super) fn update_gizmo_drag(&mut self, ctx: &mut UpdateContext) {
+    pub(super) fn update_gizmo_drag(
+        &mut self,
+        selection: &mut SelectionSystem,
+        ctx: &mut UpdateContext,
+    ) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
             self.transform_tool.gizmo_drag = None;
-            self.selection.pointer.press_uv = None;
+            selection.set_pointer_press_uv(None);
             return;
         }
 
-        if let Some(uv) = self.selection.pointer.press_uv.take() {
-            if self.try_begin_gizmo_drag(ctx, uv) {
-                self.selection.pointer.selection_press_uv = None;
+        if let Some(uv) = selection.take_pointer_press_uv() {
+            if self.try_begin_gizmo_drag(selection, ctx, uv) {
+                selection.set_selection_press_uv(None);
             }
         }
 
@@ -26,7 +31,7 @@ impl EditorApplication {
         let mut end_drag = false;
 
         if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
-            if !self.selection.pointer.primary_down {
+            if !selection.pointer_primary_down() {
                 end_drag = true;
             } else if let Some(region) = self.viewports.scene_viewport.region() {
                 let width = region.width().max(1) as f32;
@@ -34,10 +39,8 @@ impl EditorApplication {
                 if width > 0.0 && height > 0.0 {
                     let aspect = width / height;
                     let camera = ctx.scene.camera();
-                    let uv = self
-                        .selection
-                        .pointer
-                        .scene_uv
+                    let uv = selection
+                        .pointer_scene_uv()
                         .filter(|uv| uv.is_finite())
                         .unwrap_or(drag.last_pointer_uv);
                     let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
@@ -73,8 +76,13 @@ impl EditorApplication {
         }
     }
 
-    pub(super) fn try_begin_gizmo_drag(&mut self, ctx: &mut UpdateContext, press_uv: Vec2) -> bool {
-        let Some(entity) = self.selection.selected() else {
+    pub(super) fn try_begin_gizmo_drag(
+        &mut self,
+        selection: &SelectionSystem,
+        ctx: &mut UpdateContext,
+        press_uv: Vec2,
+    ) -> bool {
+        let Some(entity) = selection.selected() else {
             return false;
         };
 

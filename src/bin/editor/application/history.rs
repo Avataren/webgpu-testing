@@ -63,12 +63,11 @@ impl EditorApplication {
         &self,
         scene: &Scene,
     ) -> (Option<EditorEntityId>, Option<EditorEntityId>) {
-        let selected = self
-            .selection
+        let selection = self.selection_system();
+        let selected = selection
             .selected()
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
-        let highlighted = self
-            .selection
+        let highlighted = selection
             .highlighted()
             .and_then(|entity| Self::editor_id_for_entity(scene, entity));
         (selected, highlighted)
@@ -103,9 +102,10 @@ impl EditorApplication {
             .highlighted
             .and_then(|id| Self::entity_by_editor_id(scene, id))
             .or(selected);
-        self.selection.set_selected(selected);
-        self.selection.set_highlighted(highlighted);
-        self.selection.request_override(selected);
+        let selection_system = self.selection_system_mut();
+        selection_system.set_selected(selected);
+        selection_system.set_highlighted(highlighted);
+        selection_system.request_override(selected);
     }
 
     pub(super) fn perform_undo(&mut self, ctx: &mut UpdateContext) {
@@ -116,7 +116,10 @@ impl EditorApplication {
             self.refresh_next_editor_entity_id(ctx.scene);
             self.apply_history_selection(ctx.scene, selection);
             ctx.scene.propagate_transforms();
-            self.sync_selection_component(ctx);
+            {
+                let selection = self.selection_system_mut();
+                let _ = selection.sync_selection_component(ctx);
+            }
             self.update_history_selection(ctx.scene);
         }
     }
@@ -129,7 +132,10 @@ impl EditorApplication {
             self.refresh_next_editor_entity_id(ctx.scene);
             self.apply_history_selection(ctx.scene, selection);
             ctx.scene.propagate_transforms();
-            self.sync_selection_component(ctx);
+            {
+                let selection = self.selection_system_mut();
+                let _ = selection.sync_selection_component(ctx);
+            }
             self.update_history_selection(ctx.scene);
         }
     }

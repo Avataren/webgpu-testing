@@ -1,5 +1,6 @@
 mod system;
 pub(crate) use system::*;
+mod camera_system;
 mod core;
 mod gizmo;
 mod history;
@@ -8,7 +9,7 @@ mod picking;
 mod project_io;
 mod runtime_mode;
 mod scripts;
-mod selection;
+mod selection_system;
 mod setup;
 mod ui;
 
@@ -17,7 +18,7 @@ pub use self::core::EditorApplication;
 pub use self::core::EditorApplicationBuilder;
 use self::core::{GameViewDisplayMode, PendingScriptAction};
 
-use glam::{Quat, Vec2, Vec3};
+use glam::{Quat, Vec3};
 use hecs::Entity;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
@@ -109,9 +110,6 @@ impl EditorApplication {
         }
 
         // Regular editor updates
-        if matches!(ctx.runtime, RuntimeMode::Editor) {
-            self.camera_controller.update_camera(ctx);
-        }
         self.ensure_editor_entity_ids(ctx.scene);
         self.drain_update_commands(ctx);
 
@@ -126,30 +124,7 @@ impl EditorApplication {
             .set_transform_gizmo_mode(self.transform_tool.gizmo_mode);
         ctx.scene
             .set_transform_gizmo_space(self.transform_tool.gizmo_space);
-        self.process_viewport_pick(ctx);
-        self.sync_selection_component(ctx);
-        self.update_gizmo_drag(ctx);
-
-        let hovered_handle = if let Some(drag) = self.transform_tool.gizmo_drag.as_ref() {
-            Some(drag.handle)
-        } else if matches!(ctx.runtime, RuntimeMode::Editor) {
-            if let (Some(uv), Some(region)) = (
-                self.selection.pointer.scene_uv,
-                self.viewports.scene_viewport.region(),
-            ) {
-                let width = region.width().max(1) as f32;
-                let height = region.height().max(1) as f32;
-                let aspect = width / height;
-                let camera = ctx.scene.camera();
-                let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
-                ctx.scene.transform_gizmo_hit(origin, direction)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        ctx.scene.set_transform_gizmo_hover(hovered_handle);
+        self.run_system_updates(ctx);
         self.ensure_script_editor_target_valid(ctx.scene);
     }
 
@@ -203,11 +178,12 @@ impl EditorApplication {
         }
 
         let content_root = self.project.content_root();
+        let override_selection = { self.selection_system_mut().take_override() };
         let dock_tree = &mut self.dock_tree;
         let scene_viewport = &mut self.viewports.scene_viewport;
         let game_viewport = &mut self.viewports.game_viewport;
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
-        if let Some(selection) = self.selection.take_override() {
+        if let Some(selection) = override_selection {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
@@ -268,7 +244,7 @@ impl EditorApplication {
             self.runtime_state.request_mode(RuntimeMode::Playing);
         }
 
-        self.selection
+        self.selection_system_mut()
             .set_selected(scene_hierarchy_window.selected_entity());
 
         for action in inspector_actions {
@@ -292,21 +268,13 @@ impl EditorApplication {
             self.enqueue_command(EditorCommand::CreateScene(action));
         }
 
-        if is_playing {
-            self.camera_controller.set_viewport_rect(None);
-        } else {
-            self.camera_controller
-                .set_viewport_rect(self.viewports.scene_viewport.rect());
-        }
-
-        self.camera_controller.capture_input(ctx);
         if !is_playing {
             self.capture_viewport_pick_input(ctx);
             self.handle_history_shortcuts(ctx);
             self.handle_gizmo_shortcuts(ctx);
             self.handle_general_shortcuts(ctx);
         } else {
-            self.selection.clear_pending_pick();
+            self.selection_system_mut().clear_pending_pick();
         }
 
         let script_event = if !show_fullscreen_game {
@@ -344,28 +312,7 @@ impl EditorApplication {
                 }));
             }
         }
-
-        let pointer_uv = if !is_playing && !self.camera_controller.is_looking() {
-            self.viewports.scene_viewport.rect().and_then(|rect| {
-                ctx.input(|input| input.pointer.hover_pos())
-                    .and_then(|pos| {
-                        if rect.contains(pos) {
-                            let local_x = (pos.x - rect.min.x) / rect.width();
-                            let local_y = (pos.y - rect.min.y) / rect.height();
-                            if local_x.is_finite() && local_y.is_finite() {
-                                Some(Vec2::new(local_x.clamp(0.0, 1.0), local_y.clamp(0.0, 1.0)))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
-            })
-        } else {
-            None
-        };
-        self.selection.pointer.set_scene_uv(pointer_uv);
+        self.run_system_ui(ctx, default_ui);
     }
 }
 
@@ -724,9 +671,10 @@ impl EditorApplication {
         }
 
         if let Some(entity) = last_created {
-            self.selection.set_selected(Some(entity));
-            self.selection.set_highlighted(Some(entity));
-            self.selection.request_override(Some(entity));
+            let selection = self.selection_system_mut();
+            selection.set_selected(Some(entity));
+            selection.set_highlighted(Some(entity));
+            selection.request_override(Some(entity));
             self.record_scene_change(ctx.scene);
             self.undo_redo.clear_redo();
 

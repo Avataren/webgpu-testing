@@ -8,22 +8,23 @@ use super::EditorCommand;
 impl EditorApplication {
     pub(super) fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
         if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
-            self.selection.clear_pending_pick();
-            self.selection.pointer.reset_press();
+            let selection = self.selection_system_mut();
+            selection.clear_pending_pick();
+            selection.reset_pointer_press();
             return;
         }
 
-        if self.camera_controller.is_looking() {
-            self.selection.pointer.reset_press();
+        if self.camera_system().is_looking() {
+            self.selection_system_mut().reset_pointer_press();
             return;
         }
 
         let Some(rect) = self.viewports.scene_viewport.rect() else {
-            self.selection.pointer.reset_press();
+            self.selection_system_mut().reset_pointer_press();
             return;
         };
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
-            self.selection.pointer.reset_press();
+            self.selection_system_mut().reset_pointer_press();
             return;
         }
 
@@ -57,26 +58,26 @@ impl EditorApplication {
             }
         });
 
-        self.selection.pointer.primary_down = pointer_down;
+        let gizmo_idle = self.transform_tool.gizmo_drag.is_none();
+        let selection = self.selection_system_mut();
+        selection.set_pointer_primary_down(pointer_down);
 
         if let Some(uv) = pressed_uv {
-            self.selection.pointer.press_uv = Some(uv);
-            self.selection.pointer.selection_press_uv = Some(uv);
+            selection.set_pointer_press_uv(Some(uv));
+            selection.set_selection_press_uv(Some(uv));
         }
 
         if let Some(uv) = released_uv {
-            if self.transform_tool.gizmo_drag.is_none()
-                && self.selection.pointer.selection_press_uv.take().is_some()
-            {
-                self.selection.set_pending_pick(ViewportPick { uv });
+            if gizmo_idle && selection.take_selection_press_uv().is_some() {
+                selection.set_pending_pick(ViewportPick { uv });
             }
-        } else if !self.selection.pointer.primary_down {
-            self.selection.pointer.selection_press_uv = None;
+        } else if !selection.pointer_primary_down() {
+            selection.set_selection_press_uv(None);
         }
     }
 
     pub(super) fn handle_gizmo_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_controller.is_looking() {
+        if self.camera_system().is_looking() {
             return;
         }
         ctx.input_mut(|input| {
@@ -88,7 +89,7 @@ impl EditorApplication {
                 self.transform_tool.gizmo_mode = TransformGizmoMode::Scale;
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
-                if let Some(entity) = self.selection.selected() {
+                if let Some(entity) = self.selection_system().selected() {
                     self.enqueue_command(EditorCommand::DeleteEntity(entity));
                     self.transform_tool.gizmo_drag = None;
                 }
@@ -97,19 +98,19 @@ impl EditorApplication {
     }
 
     pub(super) fn handle_general_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_controller.is_looking() {
+        if self.camera_system().is_looking() {
             return;
         }
 
         ctx.input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
-                self.clear_selection();
+                self.selection_system_mut().clear_selection();
             }
         });
     }
 
     pub(super) fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_controller.is_looking() {
+        if self.camera_system().is_looking() {
             return;
         }
 

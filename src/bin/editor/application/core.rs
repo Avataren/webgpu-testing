@@ -10,6 +10,9 @@ use wgpu_cube::scene::{
 };
 use wgpu_cube::SceneHierarchyHandle;
 
+use super::camera_system::CameraSystem;
+use super::selection_system::SelectionSystem;
+use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent};
 use egui::Context as EguiContext;
 use wgpu_cube::DefaultUI;
@@ -31,9 +34,10 @@ pub(super) struct RuntimeModeTransition {
 pub struct EditorApplication {
     pub(super) dock_tree: Tree<EditorPane>,
     pub(super) viewports: ViewportSystem,
-    pub(super) camera_controller: EditorCameraController,
     pub(super) windows: WindowToggles,
-    pub(super) selection: SelectionSystem,
+    pub(super) systems: Vec<Box<dyn EditorSystem>>,
+    pub(super) camera_system_index: usize,
+    pub(super) selection_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
@@ -60,57 +64,6 @@ pub struct ViewportSystem {
     pub(super) grid_postprocess: Option<ViewportGrid>,
 }
 
-#[derive(Default)]
-pub struct SelectionSystem {
-    state: SelectionState,
-    pub(super) pointer: PointerState,
-    pending_pick: Option<ViewportPick>,
-}
-
-impl SelectionSystem {
-    pub(super) fn selected(&self) -> Option<Entity> {
-        self.state.selected
-    }
-
-    pub(super) fn set_selected(&mut self, entity: Option<Entity>) {
-        self.state.set_selected(entity);
-    }
-
-    pub(super) fn highlighted(&self) -> Option<Entity> {
-        self.state.highlighted
-    }
-
-    pub(super) fn set_highlighted(&mut self, entity: Option<Entity>) {
-        self.state.set_highlighted(entity);
-    }
-
-    pub(super) fn take_highlighted(&mut self) -> Option<Entity> {
-        let current = self.state.highlighted;
-        self.state.highlighted = None;
-        current
-    }
-
-    pub(super) fn request_override(&mut self, entity: Option<Entity>) {
-        self.state.request_override(entity);
-    }
-
-    pub(super) fn take_override(&mut self) -> Option<Option<Entity>> {
-        self.state.take_override()
-    }
-
-    pub(super) fn clear_pending_pick(&mut self) {
-        self.pending_pick = None;
-    }
-
-    pub(super) fn set_pending_pick(&mut self, pick: ViewportPick) {
-        self.pending_pick = Some(pick);
-    }
-
-    pub(super) fn take_pending_pick(&mut self) -> Option<ViewportPick> {
-        self.pending_pick.take()
-    }
-}
-
 pub struct TransformToolSystem {
     pub(super) gizmo_mode: TransformGizmoMode,
     pub(super) gizmo_space: TransformGizmoSpace,
@@ -130,12 +83,12 @@ impl Default for TransformToolSystem {
 #[derive(Default)]
 pub struct EditorApplicationBuilder {
     dock_tree: Option<Tree<EditorPane>>,
-    camera_controller: Option<EditorCameraController>,
+    camera_system: Option<CameraSystem>,
     windows: Option<WindowToggles>,
     project: Option<project::ProjectController>,
     history: Option<EditorHistory>,
     viewports: Option<ViewportSystem>,
-    selection: Option<SelectionSystem>,
+    selection_system: Option<SelectionSystem>,
     transform_tool: Option<TransformToolSystem>,
     asset_browser: Option<AssetBrowserState>,
 }
@@ -151,7 +104,7 @@ impl EditorApplicationBuilder {
     }
 
     pub fn with_camera_controller(mut self, controller: EditorCameraController) -> Self {
-        self.camera_controller = Some(controller);
+        self.camera_system = Some(CameraSystem::new(controller));
         self
     }
 
@@ -176,7 +129,7 @@ impl EditorApplicationBuilder {
     }
 
     pub fn with_selection(mut self, selection: SelectionSystem) -> Self {
-        self.selection = Some(selection);
+        self.selection_system = Some(selection);
         self
     }
 
@@ -193,12 +146,27 @@ impl EditorApplicationBuilder {
     pub fn build(self) -> EditorApplication {
         let viewports = self.viewports.unwrap_or_default();
 
+        let mut systems: Vec<Box<dyn EditorSystem>> = Vec::new();
+        let selection_system_index = {
+            let system = self.selection_system.unwrap_or_default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
+        let camera_system_index = {
+            let system = self.camera_system.unwrap_or_default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
+
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
             viewports,
-            camera_controller: self.camera_controller.unwrap_or_default(),
             windows: self.windows.unwrap_or_else(WindowToggles::new),
-            selection: self.selection.unwrap_or_default(),
+            systems,
+            camera_system_index,
+            selection_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
@@ -241,6 +209,27 @@ impl EditorApplication {
         self.runtime_state = handle;
     }
 
+    pub(super) fn selection_system(&self) -> &SelectionSystem {
+        self.systems[self.selection_system_index]
+            .as_any()
+            .downcast_ref::<SelectionSystem>()
+            .expect("selection system registered")
+    }
+
+    pub(super) fn selection_system_mut(&mut self) -> &mut SelectionSystem {
+        self.systems[self.selection_system_index]
+            .as_any_mut()
+            .downcast_mut::<SelectionSystem>()
+            .expect("selection system registered")
+    }
+
+    pub(super) fn camera_system(&self) -> &CameraSystem {
+        self.systems[self.camera_system_index]
+            .as_any()
+            .downcast_ref::<CameraSystem>()
+            .expect("camera system registered")
+    }
+
     pub(super) fn make_update_context<'app, 'ctx, 'scene>(
         &'app mut self,
         ctx: &'ctx mut UpdateContext<'scene>,
@@ -248,11 +237,39 @@ impl EditorApplication {
         EditorContext::for_update(self, ctx)
     }
 
+    pub(super) fn run_system_updates(&mut self, ctx: &mut UpdateContext) {
+        let len = self.systems.len();
+        let systems_ptr = self.systems.as_mut_ptr();
+        for index in 0..len {
+            let mut editor_ctx = self.make_update_context(ctx);
+            // SAFETY: `systems_ptr` points into `self.systems`, which is not reallocated or
+            // mutated within this loop body. Each iteration exclusively reborrows the element
+            // at `index` to invoke the system while `editor_ctx` holds a raw pointer back to
+            // the parent application.
+            unsafe {
+                (&mut *systems_ptr.add(index)).update(&mut editor_ctx);
+            }
+        }
+    }
+
     pub(super) fn make_gpu_update_context<'app, 'ctx, 'scene>(
         &'app mut self,
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         EditorContext::for_gpu(self, ctx)
+    }
+
+    pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+        let len = self.systems.len();
+        let systems_ptr = self.systems.as_mut_ptr();
+        for index in 0..len {
+            let mut editor_ctx = self.make_ui_context(ctx, default_ui);
+            // SAFETY: See comment above in `run_system_updates`; the systems vector is left
+            // untouched while we temporarily reborrow each element to run its UI pass.
+            unsafe {
+                (&mut *systems_ptr.add(index)).ui(&mut editor_ctx);
+            }
+        }
     }
 
     pub(super) fn enqueue_command(&mut self, command: EditorCommand) {
@@ -292,7 +309,38 @@ impl EditorApplication {
         }
 
         if !pending_deletions.is_empty() {
-            self.process_pending_entity_deletions(ctx, pending_deletions);
+            let active_camera = self.active_camera_entity;
+            let gizmo_drag_entity = self
+                .transform_tool
+                .gizmo_drag
+                .as_ref()
+                .map(|drag| drag.entity);
+
+            let result = {
+                let selection = self.selection_system_mut();
+                selection.process_pending_entity_deletions(
+                    ctx,
+                    pending_deletions,
+                    active_camera,
+                    gizmo_drag_entity,
+                )
+            };
+
+            if let Some(outcome) = result {
+                if outcome.active_camera_removed {
+                    self.active_camera_entity = ctx.scene.active_camera_entity();
+                }
+
+                if outcome.clear_gizmo_drag {
+                    self.transform_tool.gizmo_drag = None;
+                }
+
+                if outcome.selection_changed {
+                    self.update_history_selection(ctx.scene);
+                }
+
+                self.record_scene_change(ctx.scene);
+            }
         }
 
         remaining.append(&mut self.commands);
@@ -323,10 +371,7 @@ impl EditorApplication {
         &'app mut self,
         ctx: &'ctx EguiContext,
         default_ui: &'ctx mut DefaultUI,
-    ) -> EditorContext<'app, 'ctx, 'ctx>
-    where
-        'app: 'ctx,
-    {
+    ) -> EditorContext<'app, 'ctx, 'ctx> {
         EditorContext::for_ui(self, ctx, default_ui)
     }
 
@@ -424,51 +469,6 @@ pub(super) enum GizmoDragKind {
         base_scale: f32,
         initial_scale: Vec3,
     },
-}
-
-#[derive(Default)]
-pub(super) struct SelectionState {
-    pub(super) selected: Option<Entity>,
-    pub(super) highlighted: Option<Entity>,
-    pub(super) override_request: Option<Option<Entity>>,
-}
-
-impl SelectionState {
-    pub(super) fn set_selected(&mut self, entity: Option<Entity>) {
-        self.selected = entity;
-    }
-
-    pub(super) fn set_highlighted(&mut self, entity: Option<Entity>) {
-        self.highlighted = entity;
-    }
-
-    pub(super) fn request_override(&mut self, entity: Option<Entity>) {
-        self.override_request = Some(entity);
-    }
-
-    pub(super) fn take_override(&mut self) -> Option<Option<Entity>> {
-        self.override_request.take()
-    }
-}
-
-#[derive(Default)]
-pub(super) struct PointerState {
-    pub(super) scene_uv: Option<Vec2>,
-    pub(super) primary_down: bool,
-    pub(super) press_uv: Option<Vec2>,
-    pub(super) selection_press_uv: Option<Vec2>,
-}
-
-impl PointerState {
-    pub(super) fn reset_press(&mut self) {
-        self.primary_down = false;
-        self.press_uv = None;
-        self.selection_press_uv = None;
-    }
-
-    pub(super) fn set_scene_uv(&mut self, uv: Option<Vec2>) {
-        self.scene_uv = uv;
-    }
 }
 
 #[derive(Default)]

@@ -753,13 +753,16 @@ impl EditorApplication {
                         self.project.set_current_dir(dir);
                         self.project.set_metadata(metadata);
                         self.commands.clear();
-                        self.selection.set_selected(None);
-                        self.selection.set_highlighted(None);
-                        self.selection.clear_pending_pick();
+                        {
+                            let selection = self.selection_system_mut();
+                            selection.set_selected(None);
+                            selection.set_highlighted(None);
+                            selection.clear_pending_pick();
+                            selection.request_override(None);
+                        }
                         self.undo_redo = UndoRedoState::default();
                         self.history = EditorHistory::new();
                         self.initialize_history_state(ctx.scene);
-                        self.selection.request_override(None);
                         self.runtime_state.request_mode(RuntimeMode::Editor);
                     }
                     Err(err) => {
