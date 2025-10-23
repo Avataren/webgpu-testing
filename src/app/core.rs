@@ -92,7 +92,6 @@ pub trait Plugin {
     fn build(&self, app: &mut AppBuilder);
 }
 
-#[derive(Default)]
 pub struct AppBuilder {
     startup_systems: Vec<StartupSystem>,
     update_systems: Vec<UpdateSystem>,
@@ -102,6 +101,21 @@ pub struct AppBuilder {
     skip_initial_frames: Option<u32>,
     settings: RenderSettings,
     exit_on_escape: bool,
+}
+
+impl Default for AppBuilder {
+    fn default() -> Self {
+        Self {
+            startup_systems: Vec::new(),
+            update_systems: Vec::new(),
+            gpu_systems: Vec::new(),
+            auto_init_default_textures: true,
+            auto_add_default_lighting: true,
+            skip_initial_frames: None,
+            settings: RenderSettings::load(),
+            exit_on_escape: true,
+        }
+    }
 }
 
 impl AppBuilder {
