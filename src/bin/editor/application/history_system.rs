@@ -35,20 +35,12 @@ impl HistorySystem {
         &mut self.history
     }
 
-    pub(crate) fn transform_tool(&self) -> &TransformToolSystem {
-        &self.transform_tool
-    }
-
     pub(crate) fn transform_tool_mut(&mut self) -> &mut TransformToolSystem {
         &mut self.transform_tool
     }
 
     pub(crate) fn gizmo_drag(&self) -> Option<&GizmoDragState> {
         self.transform_tool.gizmo_drag.as_ref()
-    }
-
-    pub(crate) fn gizmo_drag_mut(&mut self) -> Option<&mut GizmoDragState> {
-        self.transform_tool.gizmo_drag.as_mut()
     }
 
     pub(crate) fn clear_gizmo_drag(&mut self) {

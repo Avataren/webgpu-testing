@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
@@ -10,6 +11,7 @@ use wgpu_cube::SceneHierarchyHandle;
 
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
+use super::project_system::ProjectSystem;
 use super::selection_system::SelectionSystem;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent};
@@ -38,10 +40,10 @@ pub struct EditorApplication {
     pub(super) camera_system_index: usize,
     pub(super) selection_system_index: usize,
     pub(super) history_system_index: usize,
+    pub(super) project_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
-    pub(super) project: project::ProjectController,
     pub(super) asset_browser: AssetBrowserState,
     pub(super) script_editor: Option<ScriptEditorState>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
@@ -147,6 +149,13 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let project_system_index = {
+            let controller = self.project.unwrap_or_else(project::ProjectController::new);
+            let system = ProjectSystem::new(controller);
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
 
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
@@ -156,10 +165,10 @@ impl EditorApplicationBuilder {
             camera_system_index,
             selection_system_index,
             history_system_index,
+            project_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
-            project: self.project.unwrap_or_else(project::ProjectController::new),
             asset_browser: self.asset_browser.unwrap_or_default(),
             script_editor: None,
             pending_mode_transition: None,
@@ -229,20 +238,26 @@ impl EditorApplication {
             .expect("history system registered")
     }
 
+    pub(super) fn project_system(&self) -> &ProjectSystem {
+        self.systems[self.project_system_index]
+            .as_any()
+            .downcast_ref::<ProjectSystem>()
+            .expect("project system registered")
+    }
+
+    pub(super) fn project_system_mut(&mut self) -> &mut ProjectSystem {
+        self.systems[self.project_system_index]
+            .as_any_mut()
+            .downcast_mut::<ProjectSystem>()
+            .expect("project system registered")
+    }
+
     pub(super) fn history(&self) -> &EditorHistory {
         self.history_system().history()
     }
 
     pub(super) fn history_mut(&mut self) -> &mut EditorHistory {
         self.history_system_mut().history_mut()
-    }
-
-    pub(super) fn transform_tool(&self) -> &TransformToolSystem {
-        self.history_system().transform_tool()
-    }
-
-    pub(super) fn transform_tool_mut(&mut self) -> &mut TransformToolSystem {
-        self.history_system_mut().transform_tool_mut()
     }
 
     pub(super) fn selection_entities(&self) -> (Option<Entity>, Option<Entity>) {
@@ -295,6 +310,19 @@ impl EditorApplication {
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         EditorContext::for_gpu(self, ctx)
+    }
+
+    pub(super) fn run_system_gpu_updates(&mut self, ctx: &mut GpuUpdateContext) {
+        let len = self.systems.len();
+        let systems_ptr = self.systems.as_mut_ptr();
+        for index in 0..len {
+            let mut editor_ctx = self.make_gpu_update_context(ctx);
+            // SAFETY: Same reasoning as `run_system_updates`; the systems vector is stable
+            // while we temporarily reborrow each system for GPU updates.
+            unsafe {
+                (&mut *systems_ptr.add(index)).gpu_update(&mut editor_ctx);
+            }
+        }
     }
 
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
@@ -382,6 +410,28 @@ impl EditorApplication {
 
         remaining.append(&mut self.commands);
         self.commands = remaining;
+    }
+
+    pub(super) fn process_pending_imports(
+        &mut self,
+        ctx: &mut UpdateContext,
+        pending: Vec<PathBuf>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        let index = self.project_system_index;
+        let systems_ptr = self.systems.as_mut_ptr();
+        let mut editor_ctx = self.make_update_context(ctx);
+        unsafe {
+            let system = &mut *systems_ptr.add(index);
+            system
+                .as_any_mut()
+                .downcast_mut::<ProjectSystem>()
+                .expect("project system registered")
+                .process_pending_imports(&mut editor_ctx, pending);
+        }
     }
 
     pub(super) fn drain_gpu_commands(&mut self, ctx: &mut GpuUpdateContext) {
