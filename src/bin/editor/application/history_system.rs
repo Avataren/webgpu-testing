@@ -116,36 +116,32 @@ impl HistorySystem {
         };
 
         let mut remaining = VecDeque::new();
-        let mut undo_requested = false;
-        let mut redo_requested = false;
-        let mut commit_requested = false;
+        let mut undo_or_redo_occurred = false;
 
         while let Some(command) = queue.pop_front() {
             match command {
-                HistoryUndo => undo_requested = true,
-                HistoryRedo => redo_requested = true,
-                HistoryCommitTransforms => commit_requested = true,
+                HistoryUndo => {
+                    self.perform_undo(ctx);
+                    undo_or_redo_occurred = true;
+                }
+                HistoryRedo => {
+                    self.perform_redo(ctx);
+                    undo_or_redo_occurred = true;
+                }
+                HistoryCommitTransforms => {
+                    self.commit_transform_snapshot(ctx);
+                }
                 other => remaining.push_back(other),
             }
         }
 
-        if undo_requested || redo_requested {
+        if undo_or_redo_occurred {
             remaining.retain(|command| !matches!(command, DeleteEntity(_)));
         }
 
         {
             let queue_ref = ctx.command_queue();
             queue_ref.extend(remaining);
-        }
-
-        if undo_requested {
-            self.perform_undo(ctx);
-        } else if redo_requested {
-            self.perform_redo(ctx);
-        }
-
-        if commit_requested {
-            self.commit_transform_snapshot(ctx);
         }
     }
 
