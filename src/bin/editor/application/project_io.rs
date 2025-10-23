@@ -23,8 +23,7 @@ use wgpu_cube::scene::{EntityBuilder, Transform};
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_cube::scene::SerializedRuneScriptSource;
 
-use super::core::{EditorApplication, UndoRedoState};
-use crate::history::EditorHistory;
+use super::core::EditorApplication;
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -760,8 +759,7 @@ impl EditorApplication {
                             selection.clear_pending_pick();
                             selection.request_override(None);
                         }
-                        self.undo_redo = UndoRedoState::default();
-                        self.history = EditorHistory::new();
+                        self.history_system_mut().reset();
                         self.initialize_history_state(ctx.scene);
                         self.runtime_state.request_mode(RuntimeMode::Editor);
                     }

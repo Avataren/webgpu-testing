@@ -113,7 +113,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {
-        unsafe { &mut self.application.as_mut().history }
+        unsafe { self.application.as_mut().history_mut() }
     }
 
     pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {

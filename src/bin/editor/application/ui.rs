@@ -85,16 +85,19 @@ impl EditorApplication {
 
                 ui.separator();
                 ui.label("Space:");
-                ui.selectable_value(
-                    &mut self.transform_tool.gizmo_space,
-                    TransformGizmoSpace::Local,
-                    "Local",
-                );
-                ui.selectable_value(
-                    &mut self.transform_tool.gizmo_space,
-                    TransformGizmoSpace::World,
-                    "World",
-                );
+                {
+                    let transform_tool = self.history_system_mut().transform_tool_mut();
+                    ui.selectable_value(
+                        &mut transform_tool.gizmo_space,
+                        TransformGizmoSpace::Local,
+                        "Local",
+                    );
+                    ui.selectable_value(
+                        &mut transform_tool.gizmo_space,
+                        TransformGizmoSpace::World,
+                        "World",
+                    );
+                }
 
                 ui.separator();
                 ui.label("Game View:");

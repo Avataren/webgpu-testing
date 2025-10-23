@@ -1,92 +1,339 @@
 use glam::{Quat, Vec2, Vec3};
+use hecs::Entity;
 use log::warn;
 use wgpu_cube::app::{RuntimeMode, UpdateContext};
 use wgpu_cube::scene::{
-    Parent, Transform, TransformComponent, TransformGizmoAxis, TransformGizmoHandle,
-    TransformGizmoSpace, WorldTransform,
+    EditorEntityId, Parent, Scene, Transform, TransformComponent, TransformGizmoAxis,
+    TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace, WorldTransform,
 };
 
-use super::core::{EditorApplication, GizmoDragKind, GizmoDragState};
-use super::selection_system::SelectionSystem;
+use super::core::EditorApplication;
+use super::system::{EditorCommand, EditorContext, EditorSystem};
+use crate::history::{EditorHistory, HistorySelection};
 
-impl EditorApplication {
-    pub(super) fn update_gizmo_drag(
+pub(crate) struct HistorySystem {
+    history: EditorHistory,
+    next_editor_entity_id: u128,
+    transform_tool: TransformToolSystem,
+    undo_redo: UndoRedoState,
+}
+
+impl HistorySystem {
+    pub(crate) fn new(history: EditorHistory, transform_tool: TransformToolSystem) -> Self {
+        Self {
+            history,
+            next_editor_entity_id: 1,
+            transform_tool,
+            undo_redo: UndoRedoState::default(),
+        }
+    }
+
+    pub(crate) fn history(&self) -> &EditorHistory {
+        &self.history
+    }
+
+    pub(crate) fn history_mut(&mut self) -> &mut EditorHistory {
+        &mut self.history
+    }
+
+    pub(crate) fn transform_tool(&self) -> &TransformToolSystem {
+        &self.transform_tool
+    }
+
+    pub(crate) fn transform_tool_mut(&mut self) -> &mut TransformToolSystem {
+        &mut self.transform_tool
+    }
+
+    pub(crate) fn gizmo_drag(&self) -> Option<&GizmoDragState> {
+        self.transform_tool.gizmo_drag.as_ref()
+    }
+
+    pub(crate) fn gizmo_drag_mut(&mut self) -> Option<&mut GizmoDragState> {
+        self.transform_tool.gizmo_drag.as_mut()
+    }
+
+    pub(crate) fn clear_gizmo_drag(&mut self) {
+        self.transform_tool.gizmo_drag = None;
+    }
+
+    pub(crate) fn request_undo(&mut self) {
+        self.undo_redo.request_undo();
+    }
+
+    pub(crate) fn request_redo(&mut self) {
+        self.undo_redo.request_redo();
+    }
+
+    pub(crate) fn clear_redo(&mut self) {
+        self.undo_redo.clear_redo();
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.history = EditorHistory::new();
+        self.undo_redo = UndoRedoState::default();
+        self.next_editor_entity_id = 1;
+        self.clear_gizmo_drag();
+    }
+
+    pub(crate) fn initialize_state(
         &mut self,
-        selection: &mut SelectionSystem,
-        ctx: &mut UpdateContext,
+        scene: &mut Scene,
+        selected: Option<Entity>,
+        highlighted: Option<Entity>,
     ) {
-        if !matches!(ctx.runtime, RuntimeMode::Editor) {
-            self.transform_tool.gizmo_drag = None;
-            selection.set_pointer_press_uv(None);
+        self.ensure_editor_entity_ids(scene);
+        self.refresh_next_editor_entity_id(scene);
+        let (selected_id, highlighted_id) =
+            self.current_selection_ids(scene, selected, highlighted);
+        self.history.initialize(scene, selected_id, highlighted_id);
+    }
+
+    pub(crate) fn record_scene_change(
+        &mut self,
+        scene: &mut Scene,
+        selected: Option<Entity>,
+        highlighted: Option<Entity>,
+    ) {
+        self.ensure_editor_entity_ids(scene);
+        let (selected_id, highlighted_id) =
+            self.current_selection_ids(scene, selected, highlighted);
+        self.history
+            .record_change(scene, selected_id, highlighted_id);
+    }
+
+    pub(crate) fn update_history_selection(
+        &mut self,
+        scene: &Scene,
+        selected: Option<Entity>,
+        highlighted: Option<Entity>,
+    ) {
+        if !self.history.is_initialized() {
+            return;
+        }
+        let (selected_id, highlighted_id) =
+            self.current_selection_ids(scene, selected, highlighted);
+        self.history.update_selection(selected_id, highlighted_id);
+    }
+
+    fn ensure_editor_entity_ids(&mut self, scene: &mut Scene) {
+        let missing: Vec<Entity> = {
+            let world = scene.main_world();
+            world
+                .iter()
+                .filter(|entity_ref| entity_ref.get::<&EditorEntityId>().is_none())
+                .map(|entity_ref| entity_ref.entity())
+                .collect()
+        };
+
+        if missing.is_empty() {
             return;
         }
 
-        if let Some(uv) = selection.take_pointer_press_uv() {
-            if self.try_begin_gizmo_drag(selection, ctx, uv) {
-                selection.set_selection_press_uv(None);
-            }
+        let world = scene.main_world_mut();
+        for entity in missing {
+            let id = self.allocate_editor_entity_id();
+            let _ = world.insert_one(entity, EditorEntityId(id));
         }
+    }
 
-        let mut transforms_dirty = false;
-        let mut end_drag = false;
+    fn allocate_editor_entity_id(&mut self) -> u128 {
+        let id = self.next_editor_entity_id.max(1);
+        self.next_editor_entity_id = id.saturating_add(1);
+        id
+    }
 
-        if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
-            if !selection.pointer_primary_down() {
-                end_drag = true;
-            } else if let Some(region) = self.viewports.scene_viewport.region() {
-                let width = region.width().max(1) as f32;
-                let height = region.height().max(1) as f32;
-                if width > 0.0 && height > 0.0 {
-                    let aspect = width / height;
-                    let camera = ctx.scene.camera();
-                    let uv = selection
-                        .pointer_scene_uv()
-                        .filter(|uv| uv.is_finite())
-                        .unwrap_or(drag.last_pointer_uv);
-                    let (origin, direction) = Self::ray_from_uv(camera, uv, aspect);
-                    match Self::apply_gizmo_drag(ctx, drag, origin, direction) {
-                        Ok(updated) => {
-                            if updated {
-                                drag.last_pointer_uv = uv;
-                                drag.any_change = true;
-                                transforms_dirty = true;
+    fn refresh_next_editor_entity_id(&mut self, scene: &Scene) {
+        let world = scene.main_world();
+        let mut max_seen = 0u128;
+        for (_, editor_id) in world.query::<&EditorEntityId>().iter() {
+            max_seen = max_seen.max(editor_id.0);
+        }
+        self.next_editor_entity_id = max_seen.saturating_add(1).max(1);
+    }
+
+    fn current_selection_ids(
+        &self,
+        scene: &Scene,
+        selected: Option<Entity>,
+        highlighted: Option<Entity>,
+    ) -> (Option<EditorEntityId>, Option<EditorEntityId>) {
+        let selected = selected.and_then(|entity| Self::editor_id_for_entity(scene, entity));
+        let highlighted = highlighted.and_then(|entity| Self::editor_id_for_entity(scene, entity));
+        (selected, highlighted)
+    }
+
+    fn apply_history_selection(
+        &mut self,
+        app: &mut EditorApplication,
+        scene: &Scene,
+        selection: HistorySelection,
+    ) {
+        let selected = selection
+            .selected
+            .and_then(|id| Self::entity_by_editor_id(scene, id));
+        let highlighted = selection
+            .highlighted
+            .and_then(|id| Self::entity_by_editor_id(scene, id))
+            .or(selected);
+        let selection_system = app.selection_system_mut();
+        selection_system.set_selected(selected);
+        selection_system.set_highlighted(highlighted);
+        selection_system.request_override(selected);
+    }
+
+    fn editor_id_for_entity(scene: &Scene, entity: Entity) -> Option<EditorEntityId> {
+        let world = scene.main_world();
+        if !world.contains(entity) {
+            return None;
+        }
+        world.get::<&EditorEntityId>(entity).ok().map(|id| *id)
+    }
+
+    fn entity_by_editor_id(scene: &Scene, target: EditorEntityId) -> Option<Entity> {
+        scene
+            .main_world()
+            .query::<&EditorEntityId>()
+            .iter()
+            .find_map(|(entity, id)| (id.0 == target.0).then_some(entity))
+    }
+
+    fn perform_undo(&mut self, ctx: &mut EditorContext) {
+        self.clear_gizmo_drag();
+        ctx.command_queue()
+            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
+
+        let Some(()) = ctx.with_update(|app, update_ctx| {
+            if let Some(selection) = self.history.undo(update_ctx.scene) {
+                self.refresh_next_editor_entity_id(update_ctx.scene);
+                self.apply_history_selection(app, update_ctx.scene, selection);
+                update_ctx.scene.propagate_transforms();
+                {
+                    let selection = app.selection_system_mut();
+                    let _ = selection.sync_selection_component(update_ctx);
+                }
+                let (selected, highlighted) = {
+                    let selection = app.selection_system();
+                    (selection.selected(), selection.highlighted())
+                };
+                self.update_history_selection(update_ctx.scene, selected, highlighted);
+            }
+        }) else {
+            return;
+        };
+    }
+
+    fn perform_redo(&mut self, ctx: &mut EditorContext) {
+        self.clear_gizmo_drag();
+        ctx.command_queue()
+            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
+
+        let Some(()) = ctx.with_update(|app, update_ctx| {
+            if let Some(selection) = self.history.redo(update_ctx.scene) {
+                self.refresh_next_editor_entity_id(update_ctx.scene);
+                self.apply_history_selection(app, update_ctx.scene, selection);
+                update_ctx.scene.propagate_transforms();
+                {
+                    let selection = app.selection_system_mut();
+                    let _ = selection.sync_selection_component(update_ctx);
+                }
+                let (selected, highlighted) = {
+                    let selection = app.selection_system();
+                    (selection.selected(), selection.highlighted())
+                };
+                self.update_history_selection(update_ctx.scene, selected, highlighted);
+            }
+        }) else {
+            return;
+        };
+    }
+
+    fn update_gizmo_drag(&mut self, ctx: &mut EditorContext) {
+        let Some(()) = ctx.with_update(|app, update_ctx| {
+            if !matches!(update_ctx.runtime, RuntimeMode::Editor) {
+                self.transform_tool.gizmo_drag = None;
+                app.selection_system_mut().set_pointer_press_uv(None);
+                return;
+            }
+
+            let (press_uv, pointer_down, pointer_uv, selected_entity) = {
+                let selection = app.selection_system_mut();
+                let press_uv = selection.take_pointer_press_uv();
+                let pointer_down = selection.pointer_primary_down();
+                let pointer_uv = selection.pointer_scene_uv();
+                let selected = selection.selected();
+                (press_uv, pointer_down, pointer_uv, selected)
+            };
+
+            if let (Some(press_uv), Some(entity)) = (press_uv, selected_entity) {
+                if self.try_begin_gizmo_drag(app, entity, update_ctx, press_uv) {
+                    app.selection_system_mut().set_selection_press_uv(None);
+                }
+            }
+
+            let mut transforms_dirty = false;
+            let mut end_drag = false;
+
+            if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
+                if !pointer_down {
+                    end_drag = true;
+                } else if let Some(region) = app.viewports.scene_viewport.region() {
+                    let width = region.width().max(1) as f32;
+                    let height = region.height().max(1) as f32;
+                    if width > 0.0 && height > 0.0 {
+                        let aspect = width / height;
+                        let camera = update_ctx.scene.camera();
+                        let uv = pointer_uv
+                            .filter(|uv| uv.is_finite())
+                            .unwrap_or(drag.last_pointer_uv);
+                        let (origin, direction) =
+                            EditorApplication::ray_from_uv(camera, uv, aspect);
+                        match Self::apply_gizmo_drag(update_ctx, drag, origin, direction) {
+                            Ok(updated) => {
+                                if updated {
+                                    drag.last_pointer_uv = uv;
+                                    drag.any_change = true;
+                                    transforms_dirty = true;
+                                }
                             }
-                        }
-                        Err(_) => {
-                            end_drag = true;
+                            Err(_) => {
+                                end_drag = true;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if transforms_dirty {
-            ctx.scene.propagate_transforms();
-        }
-
-        let mut record_history = false;
-        if end_drag {
-            if let Some(drag) = self.transform_tool.gizmo_drag.take() {
-                record_history = drag.any_change;
+            if transforms_dirty {
+                update_ctx.scene.propagate_transforms();
             }
-        }
 
-        if record_history {
-            self.record_scene_change(ctx.scene);
-        }
+            let mut record_history = false;
+            if end_drag {
+                if let Some(drag) = self.transform_tool.gizmo_drag.take() {
+                    record_history = drag.any_change;
+                }
+            }
+
+            if record_history {
+                let (selected, highlighted) = {
+                    let selection = app.selection_system();
+                    (selection.selected(), selection.highlighted())
+                };
+                self.record_scene_change(update_ctx.scene, selected, highlighted);
+            }
+        }) else {
+            return;
+        };
     }
 
-    pub(super) fn try_begin_gizmo_drag(
+    fn try_begin_gizmo_drag(
         &mut self,
-        selection: &SelectionSystem,
+        app: &EditorApplication,
+        entity: Entity,
         ctx: &mut UpdateContext,
         press_uv: Vec2,
     ) -> bool {
-        let Some(entity) = selection.selected() else {
-            return false;
-        };
-
-        let Some(region) = self.viewports.scene_viewport.region() else {
+        let Some(region) = app.viewports.scene_viewport.region() else {
             return false;
         };
         let width = region.width().max(1) as f32;
@@ -94,10 +341,11 @@ impl EditorApplication {
         if width <= 0.0 || height <= 0.0 {
             return false;
         }
+
         let aspect = width / height;
 
         let camera = *ctx.scene.camera();
-        let (origin, direction) = Self::ray_from_uv(&camera, press_uv, aspect);
+        let (origin, direction) = EditorApplication::ray_from_uv(&camera, press_uv, aspect);
         let Some(handle) = ctx.scene.transform_gizmo_hit(origin, direction) else {
             return false;
         };
@@ -311,7 +559,7 @@ impl EditorApplication {
         true
     }
 
-    pub(super) fn apply_gizmo_drag(
+    fn apply_gizmo_drag(
         ctx: &mut UpdateContext,
         drag: &mut GizmoDragState,
         ray_origin: Vec3,
@@ -475,7 +723,15 @@ impl EditorApplication {
         Ok(true)
     }
 
-    pub(super) fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
+    pub(crate) fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
+        if vec.length_squared() < 1e-6 {
+            fallback
+        } else {
+            vec.normalize()
+        }
+    }
+
+    pub(crate) fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
         let mut right = up_hint.cross(forward);
         if right.length_squared() < 1e-6 {
             right = Vec3::X;
@@ -493,15 +749,7 @@ impl EditorApplication {
         (right, up)
     }
 
-    pub(super) fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
-        if vec.length_squared() < 1e-6 {
-            fallback
-        } else {
-            vec.normalize()
-        }
-    }
-
-    pub(super) fn axis_basis(axis: TransformGizmoAxis) -> Vec3 {
+    fn axis_basis(axis: TransformGizmoAxis) -> Vec3 {
         match axis {
             TransformGizmoAxis::X => Vec3::X,
             TransformGizmoAxis::Y => Vec3::Y,
@@ -509,7 +757,7 @@ impl EditorApplication {
         }
     }
 
-    pub(super) fn axis_direction(rotation: Quat, axis: TransformGizmoAxis) -> Vec3 {
+    fn axis_direction(rotation: Quat, axis: TransformGizmoAxis) -> Vec3 {
         let dir = rotation * Self::axis_basis(axis);
         if dir.length_squared() < 1e-6 {
             Self::axis_basis(axis)
@@ -518,11 +766,7 @@ impl EditorApplication {
         }
     }
 
-    pub(super) fn translation_plane_normal(
-        axis_dir: Vec3,
-        view_dir: Vec3,
-        view_up: Vec3,
-    ) -> Option<Vec3> {
+    fn translation_plane_normal(axis_dir: Vec3, view_dir: Vec3, view_up: Vec3) -> Option<Vec3> {
         let mut normal = axis_dir * axis_dir.dot(view_dir) - view_dir;
         if normal.length_squared() < 1e-6 {
             normal = axis_dir.cross(view_up);
@@ -544,7 +788,7 @@ impl EditorApplication {
         Some(normal.normalize())
     }
 
-    pub(super) fn ray_plane_intersection(
+    fn ray_plane_intersection(
         ray_origin: Vec3,
         ray_dir: Vec3,
         plane_origin: Vec3,
@@ -561,7 +805,7 @@ impl EditorApplication {
         Some(ray_origin + ray_dir * t)
     }
 
-    pub(super) fn ray_axis_parameter(
+    fn ray_axis_parameter(
         ray_origin: Vec3,
         ray_dir: Vec3,
         axis_origin: Vec3,
@@ -588,7 +832,7 @@ impl EditorApplication {
         t.is_finite().then_some(t)
     }
 
-    pub(super) fn gizmo_screen_scale(camera: &wgpu_cube::scene::Camera, position: Vec3) -> f32 {
+    fn gizmo_screen_scale(camera: &wgpu_cube::scene::Camera, position: Vec3) -> f32 {
         let distance = (camera.eye - position).length().max(0.1);
         let half_fov = (camera.fov_y_radians() * 0.5).max(1e-4);
         if half_fov <= 1e-3 {
@@ -598,7 +842,7 @@ impl EditorApplication {
         }
     }
 
-    pub(super) fn signed_angle(start: Vec3, current: Vec3, axis: Vec3) -> Option<f32> {
+    fn signed_angle(start: Vec3, current: Vec3, axis: Vec3) -> Option<f32> {
         if start.length_squared() < 1e-6
             || current.length_squared() < 1e-6
             || axis.length_squared() < 1e-6
@@ -616,12 +860,145 @@ impl EditorApplication {
         Some(sin.atan2(cos))
     }
 
-    pub(super) fn world_to_local(parent_world: Transform, world: Transform) -> Transform {
+    fn world_to_local(parent_world: Transform, world: Transform) -> Transform {
         let parent_matrix = parent_world.matrix();
         let parent_inverse = parent_matrix.inverse();
         let world_matrix = world.matrix();
         let local_matrix = parent_inverse * world_matrix;
         let (scale, rotation, translation) = local_matrix.to_scale_rotation_translation();
         Transform::from_trs(translation, rotation, scale)
+    }
+}
+
+impl Default for HistorySystem {
+    fn default() -> Self {
+        Self::new(EditorHistory::new(), TransformToolSystem::default())
+    }
+}
+
+impl EditorSystem for HistorySystem {
+    fn update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
+        if ctx.update_context_mut().is_none() {
+            return;
+        }
+
+        if self.undo_redo.take_undo() {
+            self.undo_redo.clear_redo();
+            self.perform_undo(ctx);
+        } else if self.undo_redo.take_redo() {
+            self.perform_redo(ctx);
+        }
+
+        let _ = ctx.with_update(|app, update_ctx| {
+            self.ensure_editor_entity_ids(update_ctx.scene);
+            update_ctx
+                .scene
+                .set_transform_gizmo_mode(self.transform_tool.gizmo_mode);
+            update_ctx
+                .scene
+                .set_transform_gizmo_space(self.transform_tool.gizmo_space);
+            let (selected, highlighted) = {
+                let selection = app.selection_system();
+                (selection.selected(), selection.highlighted())
+            };
+            self.update_history_selection(update_ctx.scene, selected, highlighted);
+        });
+
+        self.update_gizmo_drag(ctx);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+pub(crate) struct TransformToolSystem {
+    pub(crate) gizmo_mode: TransformGizmoMode,
+    pub(crate) gizmo_space: TransformGizmoSpace,
+    pub(crate) gizmo_drag: Option<GizmoDragState>,
+}
+
+impl Default for TransformToolSystem {
+    fn default() -> Self {
+        Self {
+            gizmo_mode: TransformGizmoMode::Translate,
+            gizmo_space: TransformGizmoSpace::Local,
+            gizmo_drag: None,
+        }
+    }
+}
+
+pub(crate) struct GizmoDragState {
+    pub(crate) entity: Entity,
+    pub(crate) handle: TransformGizmoHandle,
+    pub(crate) parent_world: Transform,
+    pub(crate) initial_world: Transform,
+    pub(crate) last_pointer_uv: Vec2,
+    pub(crate) any_change: bool,
+    pub(crate) kind: GizmoDragKind,
+}
+
+pub(crate) enum GizmoDragKind {
+    TranslateAxis {
+        axis_dir: Vec3,
+        origin: Vec3,
+        start_param: f32,
+    },
+    TranslatePlane {
+        plane_normal: Vec3,
+        origin: Vec3,
+        start_point: Vec3,
+    },
+    Rotate {
+        axis_dir: Vec3,
+        origin: Vec3,
+        start_vector: Vec3,
+    },
+    ScaleAxis {
+        axis: TransformGizmoAxis,
+        axis_dir: Vec3,
+        origin: Vec3,
+        start_param: f32,
+        initial_scale: Vec3,
+    },
+    ScaleUniform {
+        plane_normal: Vec3,
+        origin: Vec3,
+        right: Vec3,
+        up: Vec3,
+        base_scale: f32,
+        initial_scale: Vec3,
+    },
+}
+
+#[derive(Default)]
+pub(crate) struct UndoRedoState {
+    pending_undo: bool,
+    pending_redo: bool,
+}
+
+impl UndoRedoState {
+    fn request_undo(&mut self) {
+        self.pending_undo = true;
+    }
+
+    fn request_redo(&mut self) {
+        self.pending_redo = true;
+    }
+
+    fn take_undo(&mut self) -> bool {
+        std::mem::take(&mut self.pending_undo)
+    }
+
+    fn take_redo(&mut self) -> bool {
+        std::mem::take(&mut self.pending_redo)
+    }
+
+    fn clear_redo(&mut self) {
+        self.pending_redo = false;
     }
 }

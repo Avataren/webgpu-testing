@@ -334,7 +334,6 @@ impl EditorSystem for SelectionSystem {
             if history_changed {
                 app.update_history_selection(update_ctx.scene);
             }
-            app.update_gizmo_drag(self, update_ctx);
         }) else {
             return;
         };

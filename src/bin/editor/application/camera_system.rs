@@ -26,7 +26,7 @@ impl EditorSystem for CameraSystem {
                 self.controller.update_camera(update_ctx);
             }
 
-            let hovered_handle = if let Some(drag) = app.transform_tool.gizmo_drag.as_ref() {
+            let hovered_handle = if let Some(drag) = app.history_system().gizmo_drag() {
                 Some(drag.handle)
             } else if matches!(update_ctx.runtime, RuntimeMode::Editor) {
                 let selection = app.selection_system();

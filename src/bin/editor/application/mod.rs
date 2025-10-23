@@ -2,8 +2,7 @@ mod system;
 pub(crate) use system::*;
 mod camera_system;
 mod core;
-mod gizmo;
-mod history;
+mod history_system;
 mod input;
 mod picking;
 mod project_io;
@@ -110,20 +109,7 @@ impl EditorApplication {
         }
 
         // Regular editor updates
-        self.ensure_editor_entity_ids(ctx.scene);
         self.drain_update_commands(ctx);
-
-        if self.undo_redo.take_undo() {
-            self.undo_redo.clear_redo();
-            self.perform_undo(ctx);
-        } else if self.undo_redo.take_redo() {
-            self.perform_redo(ctx);
-        }
-
-        ctx.scene
-            .set_transform_gizmo_mode(self.transform_tool.gizmo_mode);
-        ctx.scene
-            .set_transform_gizmo_space(self.transform_tool.gizmo_space);
         self.run_system_updates(ctx);
         self.ensure_script_editor_target_valid(ctx.scene);
     }
@@ -676,7 +662,7 @@ impl EditorApplication {
             selection.set_highlighted(Some(entity));
             selection.request_override(Some(entity));
             self.record_scene_change(ctx.scene);
-            self.undo_redo.clear_redo();
+            self.history_system_mut().clear_redo();
 
             if let Some(handle) = self.scene_hierarchy_handle.clone() {
                 if let Ok(mut state) = handle.lock() {

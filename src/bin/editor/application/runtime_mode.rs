@@ -36,7 +36,7 @@ impl EditorApplication {
                 to: new_mode,
             });
 
-            self.transform_tool.gizmo_drag = None;
+            self.history_system_mut().clear_gizmo_drag();
             self.selection_system_mut().clear_pending_pick();
         }
 
@@ -61,8 +61,10 @@ impl EditorApplication {
         }
 
         // Reinitialize editor state
-        self.refresh_next_editor_entity_id(ctx.scene);
-        self.initialize_history_state(ctx.scene);
+        {
+            self.history_system_mut()
+                .initialize_state(ctx.scene, None, None);
+        }
 
         let selection = self.selection_system_mut();
         selection.set_selected(None);

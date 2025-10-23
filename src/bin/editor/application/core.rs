@@ -5,12 +5,11 @@ use glam::{Vec2, Vec3};
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::scene::{
-    Transform, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
-};
+use wgpu_cube::scene::Scene;
 use wgpu_cube::SceneHierarchyHandle;
 
 use super::camera_system::CameraSystem;
+use super::history_system::{HistorySystem, TransformToolSystem};
 use super::selection_system::SelectionSystem;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent};
@@ -38,13 +37,10 @@ pub struct EditorApplication {
     pub(super) systems: Vec<Box<dyn EditorSystem>>,
     pub(super) camera_system_index: usize,
     pub(super) selection_system_index: usize,
+    pub(super) history_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
-    pub(super) transform_tool: TransformToolSystem,
-    pub(super) history: EditorHistory,
-    pub(super) next_editor_entity_id: u128,
-    pub(super) undo_redo: UndoRedoState,
     pub(super) project: project::ProjectController,
     pub(super) asset_browser: AssetBrowserState,
     pub(super) script_editor: Option<ScriptEditorState>,
@@ -62,22 +58,6 @@ pub struct ViewportSystem {
     pub(super) game_viewport: ViewportState,
     pub(super) game_view_display: GameViewDisplayMode,
     pub(super) grid_postprocess: Option<ViewportGrid>,
-}
-
-pub struct TransformToolSystem {
-    pub(super) gizmo_mode: TransformGizmoMode,
-    pub(super) gizmo_space: TransformGizmoSpace,
-    pub(super) gizmo_drag: Option<GizmoDragState>,
-}
-
-impl Default for TransformToolSystem {
-    fn default() -> Self {
-        Self {
-            gizmo_mode: TransformGizmoMode::Translate,
-            gizmo_space: TransformGizmoSpace::Local,
-            gizmo_drag: None,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -159,6 +139,14 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let history_system_index = {
+            let history = self.history.unwrap_or_else(EditorHistory::new);
+            let transform_tool = self.transform_tool.unwrap_or_default();
+            let system = HistorySystem::new(history, transform_tool);
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
 
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
@@ -167,13 +155,10 @@ impl EditorApplicationBuilder {
             systems,
             camera_system_index,
             selection_system_index,
+            history_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
-            transform_tool: self.transform_tool.unwrap_or_default(),
-            history: self.history.unwrap_or_else(EditorHistory::new),
-            next_editor_entity_id: 1,
-            undo_redo: UndoRedoState::default(),
             project: self.project.unwrap_or_else(project::ProjectController::new),
             asset_browser: self.asset_browser.unwrap_or_default(),
             script_editor: None,
@@ -228,6 +213,59 @@ impl EditorApplication {
             .as_any()
             .downcast_ref::<CameraSystem>()
             .expect("camera system registered")
+    }
+
+    pub(super) fn history_system(&self) -> &HistorySystem {
+        self.systems[self.history_system_index]
+            .as_any()
+            .downcast_ref::<HistorySystem>()
+            .expect("history system registered")
+    }
+
+    pub(super) fn history_system_mut(&mut self) -> &mut HistorySystem {
+        self.systems[self.history_system_index]
+            .as_any_mut()
+            .downcast_mut::<HistorySystem>()
+            .expect("history system registered")
+    }
+
+    pub(super) fn history(&self) -> &EditorHistory {
+        self.history_system().history()
+    }
+
+    pub(super) fn history_mut(&mut self) -> &mut EditorHistory {
+        self.history_system_mut().history_mut()
+    }
+
+    pub(super) fn transform_tool(&self) -> &TransformToolSystem {
+        self.history_system().transform_tool()
+    }
+
+    pub(super) fn transform_tool_mut(&mut self) -> &mut TransformToolSystem {
+        self.history_system_mut().transform_tool_mut()
+    }
+
+    pub(super) fn selection_entities(&self) -> (Option<Entity>, Option<Entity>) {
+        let selection = self.selection_system();
+        (selection.selected(), selection.highlighted())
+    }
+
+    pub(super) fn initialize_history_state(&mut self, scene: &mut Scene) {
+        let (selected, highlighted) = self.selection_entities();
+        self.history_system_mut()
+            .initialize_state(scene, selected, highlighted);
+    }
+
+    pub(super) fn record_scene_change(&mut self, scene: &mut Scene) {
+        let (selected, highlighted) = self.selection_entities();
+        self.history_system_mut()
+            .record_scene_change(scene, selected, highlighted);
+    }
+
+    pub(super) fn update_history_selection(&mut self, scene: &Scene) {
+        let (selected, highlighted) = self.selection_entities();
+        self.history_system_mut()
+            .update_history_selection(scene, selected, highlighted);
     }
 
     pub(super) fn make_update_context<'app, 'ctx, 'scene>(
@@ -310,11 +348,7 @@ impl EditorApplication {
 
         if !pending_deletions.is_empty() {
             let active_camera = self.active_camera_entity;
-            let gizmo_drag_entity = self
-                .transform_tool
-                .gizmo_drag
-                .as_ref()
-                .map(|drag| drag.entity);
+            let gizmo_drag_entity = self.history_system().gizmo_drag().map(|drag| drag.entity);
 
             let result = {
                 let selection = self.selection_system_mut();
@@ -332,7 +366,7 @@ impl EditorApplication {
                 }
 
                 if outcome.clear_gizmo_drag {
-                    self.transform_tool.gizmo_drag = None;
+                    self.history_system_mut().clear_gizmo_drag();
                 }
 
                 if outcome.selection_changed {
@@ -426,77 +460,6 @@ pub(super) enum PendingScriptAction {
 
 pub(super) struct ViewportPick {
     pub(super) uv: Vec2,
-}
-
-pub(super) struct GizmoDragState {
-    pub(super) entity: Entity,
-    pub(super) handle: TransformGizmoHandle,
-    pub(super) parent_world: Transform,
-    pub(super) initial_world: Transform,
-    pub(super) last_pointer_uv: Vec2,
-    pub(super) any_change: bool,
-    pub(super) kind: GizmoDragKind,
-}
-
-pub(super) enum GizmoDragKind {
-    TranslateAxis {
-        axis_dir: Vec3,
-        origin: Vec3,
-        start_param: f32,
-    },
-    TranslatePlane {
-        plane_normal: Vec3,
-        origin: Vec3,
-        start_point: Vec3,
-    },
-    Rotate {
-        axis_dir: Vec3,
-        origin: Vec3,
-        start_vector: Vec3,
-    },
-    ScaleAxis {
-        axis: TransformGizmoAxis,
-        axis_dir: Vec3,
-        origin: Vec3,
-        start_param: f32,
-        initial_scale: Vec3,
-    },
-    ScaleUniform {
-        plane_normal: Vec3,
-        origin: Vec3,
-        right: Vec3,
-        up: Vec3,
-        base_scale: f32,
-        initial_scale: Vec3,
-    },
-}
-
-#[derive(Default)]
-pub(super) struct UndoRedoState {
-    pending_undo: bool,
-    pending_redo: bool,
-}
-
-impl UndoRedoState {
-    pub(super) fn request_undo(&mut self) {
-        self.pending_undo = true;
-    }
-
-    pub(super) fn request_redo(&mut self) {
-        self.pending_redo = true;
-    }
-
-    pub(super) fn take_undo(&mut self) -> bool {
-        std::mem::take(&mut self.pending_undo)
-    }
-
-    pub(super) fn take_redo(&mut self) -> bool {
-        std::mem::take(&mut self.pending_redo)
-    }
-
-    pub(super) fn clear_redo(&mut self) {
-        self.pending_redo = false;
-    }
 }
 
 #[derive(Clone, Copy)]

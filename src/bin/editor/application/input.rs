@@ -58,7 +58,7 @@ impl EditorApplication {
             }
         });
 
-        let gizmo_idle = self.transform_tool.gizmo_drag.is_none();
+        let gizmo_idle = self.history_system().gizmo_drag().is_none();
         let selection = self.selection_system_mut();
         selection.set_pointer_primary_down(pointer_down);
 
@@ -82,16 +82,19 @@ impl EditorApplication {
         }
         ctx.input_mut(|input| {
             if input.consume_key(egui::Modifiers::NONE, egui::Key::W) {
-                self.transform_tool.gizmo_mode = TransformGizmoMode::Translate;
+                self.history_system_mut().transform_tool_mut().gizmo_mode =
+                    TransformGizmoMode::Translate;
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::E) {
-                self.transform_tool.gizmo_mode = TransformGizmoMode::Rotate;
+                self.history_system_mut().transform_tool_mut().gizmo_mode =
+                    TransformGizmoMode::Rotate;
             } else if input.consume_key(egui::Modifiers::NONE, egui::Key::R) {
-                self.transform_tool.gizmo_mode = TransformGizmoMode::Scale;
+                self.history_system_mut().transform_tool_mut().gizmo_mode =
+                    TransformGizmoMode::Scale;
             }
             if input.consume_key(egui::Modifiers::NONE, egui::Key::Delete) {
                 if let Some(entity) = self.selection_system().selected() {
                     self.enqueue_command(EditorCommand::DeleteEntity(entity));
-                    self.transform_tool.gizmo_drag = None;
+                    self.history_system_mut().clear_gizmo_drag();
                 }
             }
         });
@@ -116,8 +119,8 @@ impl EditorApplication {
 
         ctx.input_mut(|input| {
             let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-            if input.consume_shortcut(&undo_shortcut) && self.history.can_undo() {
-                self.undo_redo.request_undo();
+            if input.consume_shortcut(&undo_shortcut) && self.history().can_undo() {
+                self.history_system_mut().request_undo();
             }
 
             let mut redo_mods = egui::Modifiers::COMMAND;
@@ -130,9 +133,9 @@ impl EditorApplication {
             if redo_variants
                 .iter()
                 .any(|shortcut| input.consume_shortcut(shortcut))
-                && self.history.can_redo()
+                && self.history().can_redo()
             {
-                self.undo_redo.request_redo();
+                self.history_system_mut().request_redo();
             }
         });
     }

@@ -6,6 +6,7 @@ use wgpu_cube::scene::components::{DirectionalLight, PointLight, SpotLight};
 use wgpu_cube::scene::{MeshBounds, Transform, TransformComponent, Visible, WorldTransform};
 
 use super::core::{CameraView, EditorApplication, SceneRay};
+use super::history_system::HistorySystem;
 
 const LIGHT_ICON_SCREEN_FRACTION: f32 = 0.055;
 const LIGHT_ICON_MIN_DISTANCE: f32 = 0.1;
@@ -283,9 +284,9 @@ impl EditorApplication {
         ray_dir: Vec3,
     ) -> Option<f32> {
         let icon_scale = Self::light_icon_world_scale(camera_eye, camera_fov_y, position);
-        let forward = Self::safe_normalize(camera_eye - position, Vec3::Z);
-        let up_hint = Self::safe_normalize(camera_up, Vec3::Y);
-        let (right, up) = Self::basis_from_up_forward(up_hint, forward);
+        let forward = HistorySystem::safe_normalize(camera_eye - position, Vec3::Z);
+        let up_hint = HistorySystem::safe_normalize(camera_up, Vec3::Y);
+        let (right, up) = HistorySystem::basis_from_up_forward(up_hint, forward);
         let normal = forward;
         let denom = ray_dir.dot(normal);
         if denom.abs() < 1e-6 {
