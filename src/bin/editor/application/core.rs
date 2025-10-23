@@ -1,14 +1,19 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
 use hecs::Entity;
-use wgpu_cube::app::{RuntimeMode, RuntimeStateHandle};
+use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     Transform, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
 use wgpu_cube::{SceneCreationAction, SceneHierarchyHandle};
+
+use super::{EditorCommand, EditorContext, EditorEvent};
+use egui::Context as EguiContext;
+use wgpu_cube::DefaultUI;
 
 use crate::asset_browser::AssetBrowserState;
 use crate::camera::EditorCameraController;
@@ -49,6 +54,8 @@ pub struct EditorApplication {
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
     pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
+    pub(super) commands: VecDeque<EditorCommand>,
+    pub(super) events: Vec<EditorEvent>,
 }
 
 #[derive(Default)]
@@ -216,6 +223,8 @@ impl EditorApplicationBuilder {
             pending_mode_transition: None,
             editor_scene_snapshot: None,
             scene_hierarchy_handle: None,
+            commands: VecDeque::new(),
+            events: Vec::new(),
         }
     }
 }
@@ -241,6 +250,31 @@ impl EditorApplication {
 
     pub fn set_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
         self.runtime_state = handle;
+    }
+
+    pub(super) fn make_update_context<'app, 'ctx, 'scene>(
+        &'app mut self,
+        ctx: &'ctx mut UpdateContext<'scene>,
+    ) -> EditorContext<'app, 'ctx, 'scene> {
+        EditorContext::for_update(self, ctx)
+    }
+
+    pub(super) fn make_gpu_update_context<'app, 'ctx, 'scene>(
+        &'app mut self,
+        ctx: &'ctx mut GpuUpdateContext<'scene>,
+    ) -> EditorContext<'app, 'ctx, 'scene> {
+        EditorContext::for_gpu(self, ctx)
+    }
+
+    pub(super) fn make_ui_context<'app, 'ctx>(
+        &'app mut self,
+        ctx: &'ctx EguiContext,
+        default_ui: &'ctx mut DefaultUI,
+    ) -> EditorContext<'app, 'ctx, 'ctx>
+    where
+        'app: 'ctx,
+    {
+        EditorContext::for_ui(self, ctx, default_ui)
     }
 
     pub(super) fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {
