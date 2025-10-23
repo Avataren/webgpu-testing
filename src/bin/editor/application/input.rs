@@ -120,7 +120,7 @@ impl EditorApplication {
         ctx.input_mut(|input| {
             let undo_shortcut = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
             if input.consume_shortcut(&undo_shortcut) && self.history().can_undo() {
-                self.history_system_mut().request_undo();
+                self.enqueue_command(EditorCommand::HistoryUndo);
             }
 
             let mut redo_mods = egui::Modifiers::COMMAND;
@@ -135,7 +135,7 @@ impl EditorApplication {
                 .any(|shortcut| input.consume_shortcut(shortcut))
                 && self.history().can_redo()
             {
-                self.history_system_mut().request_redo();
+                self.enqueue_command(EditorCommand::HistoryRedo);
             }
         });
     }

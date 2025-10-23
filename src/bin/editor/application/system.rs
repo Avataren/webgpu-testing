@@ -21,6 +21,9 @@ pub(super) enum EditorCommand {
     Inspector(InspectorAction),
     CreateScene(SceneCreationAction),
     Script(PendingScriptAction),
+    HistoryUndo,
+    HistoryRedo,
+    HistoryCommitTransforms,
 }
 
 #[derive(Debug)]

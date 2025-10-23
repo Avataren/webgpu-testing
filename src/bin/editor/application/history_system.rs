@@ -1,6 +1,7 @@
 use glam::{Quat, Vec2, Vec3};
 use hecs::Entity;
 use log::warn;
+use std::collections::VecDeque;
 use wgpu_cube::app::{RuntimeMode, UpdateContext};
 use wgpu_cube::scene::{
     EditorEntityId, Parent, Scene, Transform, TransformComponent, TransformGizmoAxis,
@@ -15,7 +16,6 @@ pub(crate) struct HistorySystem {
     history: EditorHistory,
     next_editor_entity_id: u128,
     transform_tool: TransformToolSystem,
-    undo_redo: UndoRedoState,
 }
 
 impl HistorySystem {
@@ -24,7 +24,6 @@ impl HistorySystem {
             history,
             next_editor_entity_id: 1,
             transform_tool,
-            undo_redo: UndoRedoState::default(),
         }
     }
 
@@ -56,21 +55,14 @@ impl HistorySystem {
         self.transform_tool.gizmo_drag = None;
     }
 
-    pub(crate) fn request_undo(&mut self) {
-        self.undo_redo.request_undo();
-    }
-
-    pub(crate) fn request_redo(&mut self) {
-        self.undo_redo.request_redo();
-    }
-
     pub(crate) fn clear_redo(&mut self) {
-        self.undo_redo.clear_redo();
+        // Retained for compatibility; redo requests are routed through explicit
+        // command variants and are processed immediately, so there is no
+        // deferred redo state to clear here.
     }
 
     pub(crate) fn reset(&mut self) {
         self.history = EditorHistory::new();
-        self.undo_redo = UndoRedoState::default();
         self.next_editor_entity_id = 1;
         self.clear_gizmo_drag();
     }
@@ -113,6 +105,60 @@ impl HistorySystem {
         let (selected_id, highlighted_id) =
             self.current_selection_ids(scene, selected, highlighted);
         self.history.update_selection(selected_id, highlighted_id);
+    }
+
+    fn process_history_commands(&mut self, ctx: &mut EditorContext) {
+        use EditorCommand::{DeleteEntity, HistoryCommitTransforms, HistoryRedo, HistoryUndo};
+
+        let mut queue = {
+            let queue_ref = ctx.command_queue();
+            std::mem::take(queue_ref)
+        };
+
+        let mut remaining = VecDeque::new();
+        let mut undo_requested = false;
+        let mut redo_requested = false;
+        let mut commit_requested = false;
+
+        while let Some(command) = queue.pop_front() {
+            match command {
+                HistoryUndo => undo_requested = true,
+                HistoryRedo => redo_requested = true,
+                HistoryCommitTransforms => commit_requested = true,
+                other => remaining.push_back(other),
+            }
+        }
+
+        if undo_requested || redo_requested {
+            remaining.retain(|command| !matches!(command, DeleteEntity(_)));
+        }
+
+        {
+            let queue_ref = ctx.command_queue();
+            queue_ref.extend(remaining);
+        }
+
+        if undo_requested {
+            self.perform_undo(ctx);
+        } else if redo_requested {
+            self.perform_redo(ctx);
+        }
+
+        if commit_requested {
+            self.commit_transform_snapshot(ctx);
+        }
+    }
+
+    fn commit_transform_snapshot(&mut self, ctx: &mut EditorContext) {
+        let Some(()) = ctx.with_update(|app, update_ctx| {
+            let (selected, highlighted) = {
+                let selection = app.selection_system();
+                (selection.selected(), selection.highlighted())
+            };
+            self.record_scene_change(update_ctx.scene, selected, highlighted);
+        }) else {
+            return;
+        };
     }
 
     fn ensure_editor_entity_ids(&mut self, scene: &mut Scene) {
@@ -199,8 +245,6 @@ impl HistorySystem {
 
     fn perform_undo(&mut self, ctx: &mut EditorContext) {
         self.clear_gizmo_drag();
-        ctx.command_queue()
-            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
 
         let Some(()) = ctx.with_update(|app, update_ctx| {
             if let Some(selection) = self.history.undo(update_ctx.scene) {
@@ -224,8 +268,6 @@ impl HistorySystem {
 
     fn perform_redo(&mut self, ctx: &mut EditorContext) {
         self.clear_gizmo_drag();
-        ctx.command_queue()
-            .retain(|command| !matches!(command, EditorCommand::DeleteEntity(_)));
 
         let Some(()) = ctx.with_update(|app, update_ctx| {
             if let Some(selection) = self.history.redo(update_ctx.scene) {
@@ -248,6 +290,7 @@ impl HistorySystem {
     }
 
     fn update_gizmo_drag(&mut self, ctx: &mut EditorContext) {
+        let mut record_history = false;
         let Some(()) = ctx.with_update(|app, update_ctx| {
             if !matches!(update_ctx.runtime, RuntimeMode::Editor) {
                 self.transform_tool.gizmo_drag = None;
@@ -307,23 +350,19 @@ impl HistorySystem {
                 update_ctx.scene.propagate_transforms();
             }
 
-            let mut record_history = false;
             if end_drag {
                 if let Some(drag) = self.transform_tool.gizmo_drag.take() {
                     record_history = drag.any_change;
                 }
             }
-
-            if record_history {
-                let (selected, highlighted) = {
-                    let selection = app.selection_system();
-                    (selection.selected(), selection.highlighted())
-                };
-                self.record_scene_change(update_ctx.scene, selected, highlighted);
-            }
         }) else {
             return;
         };
+
+        if record_history {
+            ctx.command_queue()
+                .push_back(EditorCommand::HistoryCommitTransforms);
+        }
     }
 
     fn try_begin_gizmo_drag(
@@ -882,12 +921,7 @@ impl EditorSystem for HistorySystem {
             return;
         }
 
-        if self.undo_redo.take_undo() {
-            self.undo_redo.clear_redo();
-            self.perform_undo(ctx);
-        } else if self.undo_redo.take_redo() {
-            self.perform_redo(ctx);
-        }
+        self.process_history_commands(ctx);
 
         let _ = ctx.with_update(|app, update_ctx| {
             self.ensure_editor_entity_ids(update_ctx.scene);
@@ -905,6 +939,8 @@ impl EditorSystem for HistorySystem {
         });
 
         self.update_gizmo_drag(ctx);
+
+        self.process_history_commands(ctx);
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -973,32 +1009,4 @@ pub(crate) enum GizmoDragKind {
         base_scale: f32,
         initial_scale: Vec3,
     },
-}
-
-#[derive(Default)]
-pub(crate) struct UndoRedoState {
-    pending_undo: bool,
-    pending_redo: bool,
-}
-
-impl UndoRedoState {
-    fn request_undo(&mut self) {
-        self.pending_undo = true;
-    }
-
-    fn request_redo(&mut self) {
-        self.pending_redo = true;
-    }
-
-    fn take_undo(&mut self) -> bool {
-        std::mem::take(&mut self.pending_undo)
-    }
-
-    fn take_redo(&mut self) -> bool {
-        std::mem::take(&mut self.pending_redo)
-    }
-
-    fn clear_redo(&mut self) {
-        self.pending_redo = false;
-    }
 }

@@ -331,6 +331,9 @@ impl EditorApplication {
                 Inspector(action) => pending_inspector.push(action),
                 Script(action) => pending_scripts.push(action),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
+                HistoryUndo => remaining.push_back(HistoryUndo),
+                HistoryRedo => remaining.push_back(HistoryRedo),
+                HistoryCommitTransforms => remaining.push_back(HistoryCommitTransforms),
             }
         }
 
