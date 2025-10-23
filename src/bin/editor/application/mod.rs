@@ -1,5 +1,3 @@
-mod system;
-pub(crate) use system::*;
 mod core;
 mod gizmo;
 mod history;
@@ -60,55 +58,6 @@ impl RenderApplication for EditorApplication {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        let mut ctx = self.make_update_context(ctx);
-        let app = ctx.application_mut();
-        let update_ctx = ctx
-            .update_context_mut()
-            .expect("update context is available");
-        app.run_update_impl(update_ctx);
-    }
-
-    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
-        let mut ctx = self.make_gpu_update_context(ctx);
-        let app = ctx.application_mut();
-        let gpu_ctx = ctx
-            .gpu_context_mut()
-            .expect("gpu update context is available");
-        app.run_gpu_update_impl(gpu_ctx);
-    }
-
-    fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
-        if matches!(self.runtime_state.active_mode(), RuntimeMode::Editor) {
-            let grid = self
-                .viewports
-                .grid_postprocess
-                .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
-            grid.render(ctx);
-        }
-    }
-
-    fn custom_render_stage(&self) -> CustomRenderStage {
-        CustomRenderStage::AfterPostprocess
-    }
-
-    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        let mut ctx = self.make_ui_context(ctx, default_ui);
-        let app = ctx.application_mut();
-        let mut ui_ctx = ctx.ui_context().expect("ui context is available");
-        app.run_ui_impl(ui_ctx.egui(), ui_ctx.default_ui());
-    }
-
-    fn show_default_ui(&self) -> bool {
-        false
-    }
-
-    fn render_region(&self) -> Option<RenderRegion> {
-        self.render_region_for_mode(self.runtime_state.active_mode())
-    }
-}
-
-impl EditorApplication {
-    fn run_update_impl(&mut self, ctx: &mut UpdateContext) {
         // DETECT MODE CHANGES FIRST - saves state BEFORE any animation changes
         let current_mode = ctx.runtime;
         if current_mode != self.last_runtime_mode {
@@ -163,7 +112,7 @@ impl EditorApplication {
         self.ensure_script_editor_target_valid(ctx.scene);
     }
 
-    fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
+    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
         self.apply_pending_scene_creations(ctx);
@@ -187,7 +136,21 @@ impl EditorApplication {
         ctx.scene.process_pending_gltf_imports(ctx.renderer);
     }
 
-    fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+    fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
+        if matches!(self.runtime_state.active_mode(), RuntimeMode::Editor) {
+            let grid = self
+                .viewports
+                .grid_postprocess
+                .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
+            grid.render(ctx);
+        }
+    }
+
+    fn custom_render_stage(&self) -> CustomRenderStage {
+        CustomRenderStage::AfterPostprocess
+    }
+
+    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         self.viewports.scene_viewport.clear();
         self.viewports.game_viewport.clear();
 
@@ -375,6 +338,14 @@ impl EditorApplication {
             None
         };
         self.selection.pointer.set_scene_uv(pointer_uv);
+    }
+
+    fn show_default_ui(&self) -> bool {
+        false
+    }
+
+    fn render_region(&self) -> Option<RenderRegion> {
+        self.render_region_for_mode(self.runtime_state.active_mode())
     }
 }
 
