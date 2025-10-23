@@ -216,7 +216,8 @@ where
         });
     }
 
-    let mut app = builder.build();
+    let core = builder.build();
+    let mut app = crate::app::WinitApp::from_core(core);
 
     #[cfg(feature = "egui")]
     {
@@ -329,7 +330,9 @@ where
     }
 
     #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
-    let mut app = builder.build();
+    let core = builder.build();
+    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
+    let mut app = crate::app::WinitApp::from_core(core);
 
     #[cfg(feature = "egui")]
     {

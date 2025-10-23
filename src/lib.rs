@@ -58,7 +58,8 @@ fn init_logging() {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(builder: AppBuilder) -> Result<(), winit::error::EventLoopError> {
-    run_with_app(builder.build())
+    let core = builder.build();
+    run_with_app(app::WinitApp::from_core(core))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -81,7 +82,8 @@ pub fn run_with_app(mut app: App) -> Result<(), winit::error::EventLoopError> {
 
 #[cfg(target_arch = "wasm32")]
 pub fn run(builder: AppBuilder) -> Result<(), JsValue> {
-    run_with_app(builder.build())
+    let core = builder.build();
+    run_with_app(app::WinitApp::from_core(core))
 }
 
 #[cfg(target_arch = "wasm32")]
