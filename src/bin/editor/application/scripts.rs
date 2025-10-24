@@ -1,13 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use hecs::Entity;
-use log::{error, warn};
-use wgpu_cube::app::UpdateContext;
-use wgpu_cube::scripting::RuneScriptComponent;
+use log::error;
 use wgpu_cube::scripting::RuneScriptSource;
 
-use super::core::{EditorApplication, PendingScriptAction};
+use super::core::EditorApplication;
 
 impl EditorApplication {
     pub(super) fn load_script_text(path: &str) -> Option<String> {
@@ -53,104 +50,5 @@ impl EditorApplication {
             format!("editor_import_gltf::{script_name}"),
             script_source,
         ))
-    }
-
-    pub(super) fn apply_pending_script_actions(
-        &mut self,
-        ctx: &mut UpdateContext,
-        actions: Vec<PendingScriptAction>,
-    ) {
-        if actions.is_empty() {
-            return;
-        }
-
-        let mut reload_runtime = false;
-        let mut notifications = Vec::new();
-
-        for action in actions {
-            match action {
-                PendingScriptAction::SaveInline {
-                    entity,
-                    name,
-                    contents,
-                    message,
-                } => {
-                    let mut updated = false;
-                    let mut error_message = None;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut RuneScriptComponent>(entity) {
-                            Ok(mut component) => {
-                                *component = RuneScriptComponent::new_inline(name, contents);
-                                updated = true;
-                            }
-                            Err(err) => {
-                                error_message =
-                                    Some(format!("Failed to update inline script: {err}"));
-                                warn!("Failed to update inline script for {:?}: {err}", entity);
-                            }
-                        }
-                    }
-
-                    if let Some(message) = error_message {
-                        self.notify_script_editor_error(entity, message);
-                    }
-
-                    if updated {
-                        reload_runtime = true;
-                        notifications.push((entity, message));
-                        self.record_scene_change(ctx.scene);
-                    }
-                }
-                PendingScriptAction::ReloadRuntime { entity, message } => {
-                    reload_runtime = true;
-                    notifications.push((entity, message));
-                }
-            }
-        }
-
-        if reload_runtime {
-            ctx.scene.reset_script_runtime();
-            for (entity, message) in notifications {
-                self.notify_script_editor_saved(entity, message);
-            }
-        }
-    }
-
-    fn notify_script_editor_saved(&mut self, entity: Entity, message: impl Into<String>) {
-        if let Some(editor) = self.script_editor.as_mut() {
-            if editor.entity() == entity {
-                editor.finish_save(message);
-            }
-        }
-    }
-
-    fn notify_script_editor_error(&mut self, entity: Entity, message: impl Into<String>) {
-        if let Some(editor) = self.script_editor.as_mut() {
-            if editor.entity() == entity {
-                editor.fail_save(message);
-            }
-        }
-    }
-
-    pub(super) fn ensure_script_editor_target_valid(&mut self, scene: &wgpu_cube::scene::Scene) {
-        if let Some(editor) = self.script_editor.as_mut() {
-            let world = scene.main_world();
-            if !world.contains(editor.entity()) {
-                editor.mark_target_missing("Entity has been removed.");
-                return;
-            }
-
-            match world.get::<&RuneScriptComponent>(editor.entity()) {
-                Ok(component) => {
-                    editor.clear_target_missing();
-                    let component_ref: &RuneScriptComponent = &component;
-                    editor.sync_with_component(component_ref);
-                }
-                Err(_) => {
-                    editor.mark_target_missing("Script component removed from entity.");
-                }
-            }
-        }
     }
 }

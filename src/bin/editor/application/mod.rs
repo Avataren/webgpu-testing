@@ -7,6 +7,7 @@ mod input;
 mod picking;
 mod project_system;
 mod runtime_mode;
+mod script_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
@@ -15,7 +16,7 @@ mod ui;
 pub use self::core::EditorApplication;
 #[allow(unused_imports)]
 pub use self::core::EditorApplicationBuilder;
-use self::core::{GameViewDisplayMode, PendingScriptAction};
+use self::core::GameViewDisplayMode;
 
 use glam::{Quat, Vec3};
 use hecs::Entity;
@@ -37,7 +38,6 @@ use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitiv
 use crate::inspector::InspectorAction;
 use crate::layout::{EditorBehavior, EditorPane};
 use crate::postprocess::ViewportGrid;
-use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
 
 impl RenderApplication for EditorApplication {
     fn name(&self) -> &str {
@@ -111,7 +111,6 @@ impl EditorApplication {
         // Regular editor updates
         self.drain_update_commands(ctx);
         self.run_system_updates(ctx);
-        self.ensure_script_editor_target_valid(ctx.scene);
     }
 
     fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
@@ -222,13 +221,8 @@ impl EditorApplication {
         for action in inspector_actions {
             match action {
                 InspectorAction::EditScript { entity, component } => {
-                    if let Some(editor) = self.script_editor.as_mut() {
-                        if editor.entity() == entity {
-                            editor.sync_with_component(&component);
-                            continue;
-                        }
-                    }
-                    self.script_editor = Some(ScriptEditorState::new(entity, component));
+                    self.script_editor_system_mut()
+                        .open_script_editor(entity, component);
                 }
                 other => {
                     self.enqueue_command(EditorCommand::Inspector(other));
@@ -249,41 +243,8 @@ impl EditorApplication {
             self.selection_system_mut().clear_pending_pick();
         }
 
-        let script_event = if !show_fullscreen_game {
-            if let Some(editor) = self.script_editor.as_mut() {
-                editor.show(ctx)
-            } else {
-                ScriptEditorEvent::None
-            }
-        } else {
-            ScriptEditorEvent::None
-        };
-
-        match script_event {
-            ScriptEditorEvent::None => {}
-            ScriptEditorEvent::Closed => {
-                self.script_editor = None;
-            }
-            ScriptEditorEvent::SaveInline {
-                entity,
-                name,
-                contents,
-                message,
-            } => {
-                self.enqueue_command(EditorCommand::Script(PendingScriptAction::SaveInline {
-                    entity,
-                    name,
-                    contents,
-                    message,
-                }));
-            }
-            ScriptEditorEvent::SaveFile { entity, message } => {
-                self.enqueue_command(EditorCommand::Script(PendingScriptAction::ReloadRuntime {
-                    entity,
-                    message,
-                }));
-            }
-        }
+        self.script_editor_system_mut()
+            .set_window_enabled(!show_fullscreen_game);
         self.run_system_ui(ctx, default_ui);
     }
 }

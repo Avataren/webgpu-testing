@@ -12,6 +12,7 @@ use wgpu_cube::SceneHierarchyHandle;
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
 use super::project_system::ProjectSystem;
+use super::script_editor_system::ScriptEditorSystem;
 use super::selection_system::SelectionSystem;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent};
@@ -24,7 +25,6 @@ use crate::history::EditorHistory;
 use crate::layout::{create_editor_layout, EditorPane, ViewportState};
 use crate::postprocess::ViewportGrid;
 use crate::project;
-use crate::script_editor::ScriptEditorState;
 use crate::windows::WindowToggles;
 
 pub(super) struct RuntimeModeTransition {
@@ -41,11 +41,11 @@ pub struct EditorApplication {
     pub(super) selection_system_index: usize,
     pub(super) history_system_index: usize,
     pub(super) project_system_index: usize,
+    pub(super) script_editor_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
     pub(super) asset_browser: AssetBrowserState,
-    pub(super) script_editor: Option<ScriptEditorState>,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
     pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
@@ -156,6 +156,12 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let script_editor_system_index = {
+            let system = ScriptEditorSystem::default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
 
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
@@ -166,11 +172,11 @@ impl EditorApplicationBuilder {
             selection_system_index,
             history_system_index,
             project_system_index,
+            script_editor_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
             asset_browser: self.asset_browser.unwrap_or_default(),
-            script_editor: None,
             pending_mode_transition: None,
             editor_scene_snapshot: None,
             scene_hierarchy_handle: None,
@@ -250,6 +256,21 @@ impl EditorApplication {
             .as_any_mut()
             .downcast_mut::<ProjectSystem>()
             .expect("project system registered")
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn script_editor_system(&self) -> &ScriptEditorSystem {
+        self.systems[self.script_editor_system_index]
+            .as_any()
+            .downcast_ref::<ScriptEditorSystem>()
+            .expect("script editor system registered")
+    }
+
+    pub(super) fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
+        self.systems[self.script_editor_system_index]
+            .as_any_mut()
+            .downcast_mut::<ScriptEditorSystem>()
+            .expect("script editor system registered")
     }
 
     pub(super) fn history(&self) -> &EditorHistory {
@@ -350,23 +371,18 @@ impl EditorApplication {
         let mut pending_imports = Vec::new();
         let mut pending_deletions = Vec::new();
         let mut pending_inspector = Vec::new();
-        let mut pending_scripts = Vec::new();
 
         while let Some(command) = queue.pop_front() {
             match command {
                 ImportPath(path) => pending_imports.push(path),
                 DeleteEntity(entity) => pending_deletions.push(entity),
                 Inspector(action) => pending_inspector.push(action),
-                Script(action) => pending_scripts.push(action),
+                Script(action) => remaining.push_back(Script(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
                 HistoryUndo => remaining.push_back(HistoryUndo),
                 HistoryRedo => remaining.push_back(HistoryRedo),
                 HistoryCommitTransforms => remaining.push_back(HistoryCommitTransforms),
             }
-        }
-
-        if !pending_scripts.is_empty() {
-            self.apply_pending_script_actions(ctx, pending_scripts);
         }
 
         if !pending_inspector.is_empty() {
