@@ -32,7 +32,7 @@ const PICK_COPY_BYTES_PER_ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 struct PickState {
     pending_request: Option<PickRequest>,
     pending_readback: Option<PendingPickReadback>,
-    ready_value: Option<u32>,
+    ready_value: Option<u64>,
 }
 
 struct PickRequest {
@@ -46,7 +46,7 @@ struct PendingPickReadback {
 }
 
 impl PendingPickReadback {
-    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u32, wgpu::BufferAsyncError>> {
+    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u64, wgpu::BufferAsyncError>> {
         {
             let guard = self.status.lock().expect("pick readback status poisoned");
             if guard.is_none() {
@@ -63,13 +63,13 @@ impl PendingPickReadback {
 
         result.map(|status| match status {
             Ok(()) => {
-                let slice = self.buffer.slice(..size_of::<u32>() as u64);
+                let slice = self.buffer.slice(..size_of::<u64>() as u64);
                 let data = slice.get_mapped_range();
-                let mut bytes = [0u8; 4];
-                bytes.copy_from_slice(&data[..4]);
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&data[..8]);
                 drop(data);
                 self.buffer.unmap();
-                Ok(u32::from_le_bytes(bytes))
+                Ok(u64::from_le_bytes(bytes))
             }
             Err(err) => {
                 self.buffer.unmap();
@@ -236,7 +236,7 @@ impl Renderer {
         true
     }
 
-    pub fn poll_pick_result(&mut self) -> Option<u32> {
+    pub fn poll_pick_result(&mut self) -> Option<u64> {
         if let Some(value) = self.pick_state.ready_value.take() {
             return Some(value);
         }

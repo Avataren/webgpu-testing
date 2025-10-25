@@ -23,7 +23,7 @@ pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use loader::{SceneImportDevice, SceneLoader};
-pub use picking::{encode_pick_value, entity_for_pick_value, PICK_HASH_MULTIPLIER};
+pub use picking::entity_for_pick_value;
 pub(crate) use scene_core::SceneSnapshot;
 pub use scene_core::{
     Scene, SceneStateSnapshot, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,
