@@ -24,8 +24,9 @@ pub use render_application::{run_application, RenderApplication};
 pub use environment::{ColorGrading, Environment, HdrBackground};
 
 pub use app::{
-    App, AppBuilder, GpuUpdateContext, GpuUpdateSystem, Plugin, StartupContext, StartupSystem,
-    UpdateContext, UpdateSystem,
+    App, AppBuilder, FrameStep, GpuUpdateContext, GpuUpdateSystem, Plugin, RenderParams,
+    RenderResult, RuntimeMode, RuntimeStateHandle, RuntimeTransition, StartupContext,
+    StartupSystem, UpdateContext, UpdateSystem,
 };
 
 #[cfg(target_arch = "wasm32")]
