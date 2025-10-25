@@ -28,6 +28,42 @@ fn pick_request_resolves_expected_entity() {
     assert_eq!(fallback, Some(entity));
 }
 
+#[test]
+fn cpu_fallback_only_accepts_zero_pick_ids() {
+    let mut scene = Scene::new();
+    let editor_id = EditorEntityId(1);
+    let pick_value = encode_pick_value(editor_id.pick_identifier());
+    assert_ne!(pick_value, 0, "expected a non-zero encoded pick value");
+
+    let mesh_entity = scene.main_world_mut().spawn((
+        editor_id,
+        MeshBounds::new(Vec3::splat(-0.5), Vec3::splat(0.5)),
+        TransformComponent(Transform::IDENTITY),
+    ));
+
+    let origin = Vec3::new(0.0, 0.0, 2.0);
+    let direction = Vec3::new(0.0, 0.0, -1.0);
+    let region = RenderRegion::new(0, 0, 1280, 720).expect("valid render region");
+    let uv = Vec2::new(0.5, 0.5);
+
+    let fallback = cpu_pick_entity(&scene, origin, direction, uv, region);
+    assert_eq!(fallback, Some(mesh_entity));
+    assert_eq!(filter_cpu_fallback(&scene, fallback), None);
+
+    let mut gizmo_scene = Scene::new();
+    let gizmo_entity = gizmo_scene.main_world_mut().spawn((
+        MeshBounds::new(Vec3::splat(-0.25), Vec3::splat(0.25)),
+        TransformComponent(Transform::IDENTITY),
+    ));
+
+    let gizmo_fallback = cpu_pick_entity(&gizmo_scene, origin, direction, uv, region);
+    assert_eq!(gizmo_fallback, Some(gizmo_entity));
+    assert_eq!(
+        filter_cpu_fallback(&gizmo_scene, gizmo_fallback),
+        Some(gizmo_entity)
+    );
+}
+
 fn cpu_pick_entity(
     scene: &Scene,
     ray_origin: Vec3,
@@ -54,6 +90,19 @@ fn cpu_pick_entity(
     }
 
     best.map(|(entity, _)| entity)
+}
+
+fn filter_cpu_fallback(scene: &Scene, candidate: Option<hecs::Entity>) -> Option<hecs::Entity> {
+    candidate.and_then(|entity| {
+        let world = scene.main_world();
+        match world.get::<&EditorEntityId>(entity) {
+            Ok(editor_id) => {
+                let pick_value = encode_pick_value(editor_id.pick_identifier());
+                (pick_value == 0).then_some(entity)
+            }
+            Err(_) => Some(entity),
+        }
+    })
 }
 
 fn ray_aabb_intersection(

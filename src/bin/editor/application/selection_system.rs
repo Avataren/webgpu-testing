@@ -4,7 +4,7 @@ use log::warn;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
-use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
+use wgpu_cube::scene::{encode_pick_value, entity_for_pick_value, Children, Parent, Scene};
 
 use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorContext, EditorSystem};
@@ -195,6 +195,16 @@ impl SelectionSystem {
             }
             PickCompletion::CpuFallback(request) => {
                 let entity = app.pick_entity(ctx, request.uv, request.region);
+                let entity = entity.and_then(|candidate| {
+                    let world = ctx.scene.main_world();
+                    match world.get::<&EditorEntityId>(candidate) {
+                        Ok(editor_id) => {
+                            let pick_value = encode_pick_value(editor_id.pick_identifier());
+                            (pick_value == 0).then_some(candidate)
+                        }
+                        Err(_) => Some(candidate),
+                    }
+                });
                 self.set_selected(entity);
                 self.request_override(entity);
                 app.update_history_selection(ctx.scene);
