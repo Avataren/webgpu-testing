@@ -28,7 +28,7 @@ impl ObjectData {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct MaterialData {
     pub color: [f32; 4],                 // 16 bytes
@@ -148,7 +148,8 @@ mod tests {
     }
 
     #[test]
-    fn material_data_size() {
+    fn material_data_layout() {
         assert_eq!(std::mem::size_of::<MaterialData>(), 64);
+        assert_eq!(std::mem::align_of::<MaterialData>(), 16);
     }
 }
