@@ -143,11 +143,13 @@ impl HistoryEntry {
     }
 
     fn restore(&mut self, scene: &mut Scene) -> HistorySelection {
+        let current_camera = *scene.camera();
         let snapshot = self
             .snapshot
             .take()
             .expect("history entry snapshot must be present");
         *scene = snapshot.into_scene();
+        scene.set_camera(current_camera);
         let selection = self.selection();
         self.snapshot = Some(SceneStateSnapshot::capture(scene));
         selection
@@ -158,5 +160,49 @@ impl HistoryEntry {
             selected: self.selected,
             highlighted: self.highlighted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3;
+    use wgpu::Color;
+
+    #[test]
+    fn undo_restores_scene_while_preserving_camera() {
+        let mut scene = Scene::new();
+        let mut history = EditorHistory::new();
+        history.initialize(&scene, None, None);
+
+        let initial_clear_color = scene.environment().clear_color();
+
+        {
+            let camera = scene.camera_mut();
+            camera.eye = Vec3::new(1.0, 2.0, 3.0);
+            camera.target = Vec3::new(-4.0, 0.5, 0.25);
+        }
+        let moved_camera = *scene.camera();
+
+        scene.environment_mut().set_clear_color(Color {
+            r: 0.2,
+            g: 0.4,
+            b: 0.6,
+            a: 1.0,
+        });
+        history.record_change(&scene, None, None);
+
+        assert_ne!(scene.environment().clear_color(), initial_clear_color);
+
+        history
+            .undo(&mut scene)
+            .expect("undo should restore previous scene state");
+
+        let restored_camera = scene.camera();
+        assert_eq!(restored_camera.eye, moved_camera.eye);
+        assert_eq!(restored_camera.target, moved_camera.target);
+        assert_eq!(restored_camera.up, moved_camera.up);
+        assert_eq!(restored_camera.projection(), moved_camera.projection());
+        assert_eq!(scene.environment().clear_color(), initial_clear_color);
     }
 }
