@@ -1,18 +1,22 @@
 use glam::Vec2;
 use hecs::Entity;
 use log::warn;
-use wgpu_cube::app::{RuntimeMode, UpdateContext};
-use wgpu_cube::scene::components::SelectedInEditor;
-use wgpu_cube::scene::{Children, Parent};
+use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
+use wgpu_cube::renderer::RenderRegion;
+use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
+use wgpu_cube::scene::{Children, Parent, Scene};
 
 use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorContext, EditorSystem};
+
+const PICK_HASH_MULTIPLIER: u32 = 0x9E3779B1;
 
 #[derive(Default)]
 pub(crate) struct SelectionSystem {
     state: SelectionState,
     pointer: PointerState,
     pending_pick: Option<ViewportPick>,
+    gpu_pick: GpuPickState,
 }
 
 pub(crate) struct SelectionDeletionResult {
@@ -52,6 +56,7 @@ impl SelectionSystem {
 
     pub(crate) fn clear_pending_pick(&mut self) {
         self.pending_pick = None;
+        self.gpu_pick.mark_discard();
     }
 
     pub(super) fn set_pending_pick(&mut self, pick: ViewportPick) {
@@ -171,6 +176,7 @@ impl SelectionSystem {
         self.reset_pointer_press();
         self.request_override(None);
         self.set_selected(None);
+        self.gpu_pick.mark_discard();
     }
 
     fn process_viewport_pick(&mut self, app: &mut EditorApplication, ctx: &mut UpdateContext) {
@@ -179,21 +185,76 @@ impl SelectionSystem {
             return;
         };
 
-        let Some(request) = self.take_pending_pick() else {
+        let Some(result) = self.gpu_pick.take_result() else {
             return;
         };
-
-        let Some(region) = app.viewports.scene_viewport.region() else {
-            self.set_selected(None);
-            self.request_override(None);
-            app.update_history_selection(ctx.scene);
-            return;
-        };
-
-        let picked = app.pick_entity(ctx, request.uv, region);
-        self.set_selected(picked);
-        self.request_override(picked);
+        self.set_selected(result);
+        self.request_override(result);
         app.update_history_selection(ctx.scene);
+    }
+
+    fn try_enqueue_pick(
+        &mut self,
+        app: &EditorApplication,
+        gpu_ctx: &mut GpuUpdateContext,
+        request: ViewportPick,
+    ) -> bool {
+        let Some(region) = app.viewports.scene_viewport.region() else {
+            self.gpu_pick.complete(None);
+            return false;
+        };
+
+        let Some(coords) = Self::framebuffer_coords_from_uv(request.uv, region) else {
+            self.gpu_pick.complete(None);
+            return false;
+        };
+
+        if gpu_ctx.renderer.request_pick(coords) {
+            self.gpu_pick.mark_in_flight();
+            true
+        } else {
+            self.pending_pick = Some(request);
+            false
+        }
+    }
+
+    fn framebuffer_coords_from_uv(uv: Vec2, region: RenderRegion) -> Option<[u32; 2]> {
+        let width = region.width();
+        let height = region.height();
+
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let clamp = |value: f32| value.clamp(0.0, 1.0);
+        let scaled_x = clamp(uv.x) * (width as f32 - 1.0);
+        let scaled_y = clamp(uv.y) * (height as f32 - 1.0);
+
+        let x = region.x() + scaled_x.round() as u32;
+        let y = region.y() + scaled_y.round() as u32;
+
+        Some([x, y])
+    }
+
+    fn entity_for_pick_value(scene: &Scene, pick_value: u32) -> Option<Entity> {
+        if pick_value == 0 {
+            return None;
+        }
+
+        let world = scene.main_world();
+        world
+            .query::<&EditorEntityId>()
+            .iter()
+            .find_map(|(entity, editor_id)| {
+                let pick_id = editor_id.pick_identifier();
+                (Self::encode_pick_value(pick_id) == pick_value).then_some(entity)
+            })
+    }
+
+    fn encode_pick_value(pick_id: u64) -> u32 {
+        let lower = pick_id as u32;
+        let upper = (pick_id >> 32) as u32;
+        lower ^ upper.wrapping_mul(PICK_HASH_MULTIPLIER)
     }
 
     pub(crate) fn sync_selection_component(&mut self, ctx: &mut UpdateContext) -> bool {
@@ -339,6 +400,34 @@ impl EditorSystem for SelectionSystem {
         };
     }
 
+    fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
+        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
+            if !matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
+                self.clear_pending_pick();
+                gpu_ctx.renderer.set_pick_active(false);
+                return;
+            }
+
+            if let Some(value) = gpu_ctx.renderer.poll_pick_result() {
+                let scene_ref: &Scene = &*gpu_ctx.scene;
+                let picked = Self::entity_for_pick_value(scene_ref, value);
+                self.gpu_pick.complete(picked);
+            }
+
+            let mut issue_pick_pass = false;
+
+            if !self.gpu_pick.in_flight() {
+                if let Some(request) = self.take_pending_pick() {
+                    issue_pick_pass = self.try_enqueue_pick(app, gpu_ctx, request);
+                }
+            }
+
+            gpu_ctx.renderer.set_pick_active(issue_pick_pass);
+        }) else {
+            return;
+        };
+    }
+
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
         let _ = ctx.with_ui(|app, ui_ctx| {
             let is_playing = matches!(app.runtime_state.active_mode(), RuntimeMode::Playing);
@@ -390,6 +479,43 @@ impl SelectionState {
 
     fn take_override(&mut self) -> Option<Option<Entity>> {
         self.override_request.take()
+    }
+}
+
+#[derive(Default)]
+struct GpuPickState {
+    in_flight: bool,
+    pending_result: Option<Option<Entity>>,
+    discard_next_result: bool,
+}
+
+impl GpuPickState {
+    fn mark_in_flight(&mut self) {
+        self.in_flight = true;
+        self.discard_next_result = false;
+    }
+
+    fn in_flight(&self) -> bool {
+        self.in_flight
+    }
+
+    fn complete(&mut self, result: Option<Entity>) {
+        self.in_flight = false;
+        if self.discard_next_result {
+            self.discard_next_result = false;
+            return;
+        }
+        self.pending_result = Some(result);
+    }
+
+    fn take_result(&mut self) -> Option<Option<Entity>> {
+        self.pending_result.take()
+    }
+
+    fn mark_discard(&mut self) {
+        self.in_flight = false;
+        self.pending_result = None;
+        self.discard_next_result = true;
     }
 }
 

@@ -1026,6 +1026,14 @@ impl PostProcess {
         self.pick_target.views()
     }
 
+    pub fn pick_texture(&self) -> Option<&wgpu::Texture> {
+        self.pick_target.texture()
+    }
+
+    pub fn pick_texture_extent(&self) -> Option<wgpu::Extent3d> {
+        self.pick_target.extent()
+    }
+
     pub fn set_color_grading(&mut self, queue: &wgpu::Queue, grading: ColorGrading) {
         if self.color_grading != grading {
             self.color_grading = grading;
@@ -1853,6 +1861,10 @@ struct TextureBundle {
 }
 
 impl TextureBundle {
+    fn texture(&self) -> &wgpu::Texture {
+        &self._texture
+    }
+
     fn color(
         device: &wgpu::Device,
         size: &wgpu::Extent3d,
@@ -2004,9 +2016,7 @@ impl LazyPickTarget {
 
     fn ensure(&mut self, device: &wgpu::Device, size: &wgpu::Extent3d, sample_count: u32) {
         let needs_rebuild = self.size.map(|current| current != *size).unwrap_or(true)
-            || self
-                .sample_count
-                .map_or(true, |current| current != sample_count);
+            || self.sample_count != Some(sample_count);
 
         if needs_rebuild {
             self.source = Some(TextureBundle::pick(device, size));
@@ -2037,5 +2047,13 @@ impl LazyPickTarget {
             },
         };
         Some(views)
+    }
+
+    fn texture(&self) -> Option<&wgpu::Texture> {
+        self.source.as_ref().map(|bundle| bundle.texture())
+    }
+
+    fn extent(&self) -> Option<wgpu::Extent3d> {
+        self.size
     }
 }
