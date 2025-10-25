@@ -20,7 +20,7 @@ struct Globals {
 struct Object {
     model: mat4x4<f32>,
     material_index: u32,
-    pick_id: array<u32, 2>, // 64-bit pick identifier split across two u32 values
+    pick_id: array<u32, 2u>, // 64-bit pick identifier split across two u32 values (std430 stride matches ObjectData)
     _padding: u32,
     _padding2: array<u32, 4>, // keeps std430 stride aligned with CPU ObjectData (96 bytes total)
 };
