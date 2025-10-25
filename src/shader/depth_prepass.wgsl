@@ -9,7 +9,7 @@ struct Globals {
 struct Object {
     model: mat4x4<f32>,
     material_index: u32,
-    pick_id: vec2<u32>,
+    pick_id: array<u32, 2>, // match CPU ObjectData pick identifier packing (96 byte stride)
     _padding: u32,
     _padding2: array<u32, 4>,
 };
