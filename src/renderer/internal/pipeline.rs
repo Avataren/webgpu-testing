@@ -6,7 +6,7 @@ use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::{
-    postprocess::{GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT},
+    postprocess::{GBUFFER_NORMAL_FORMAT, GBUFFER_PICK_FORMAT, GBUFFER_POSITION_FORMAT},
     Material, PipelineBuilder, SamplerFilterMode, ShaderBuilder, Vertex, MAX_TEXTURES,
 };
 
@@ -14,6 +14,7 @@ pub(crate) struct RenderPipeline {
     pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     depth_prepass: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
+    background_pick: wgpu::RenderPipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,6 +27,7 @@ pub(crate) struct PipelineKey {
     sampler_filtering: SamplerFilterMode,
     cull_mode: CullMode,
     gbuffer: bool,
+    write_pick: bool,
     wireframe: bool,
 }
 
@@ -40,6 +42,7 @@ impl PipelineKey {
         sampler_filtering: SamplerFilterMode,
         cull_mode: CullMode,
         gbuffer: bool,
+        write_pick: bool,
         wireframe: bool,
     ) -> Self {
         Self {
@@ -51,6 +54,7 @@ impl PipelineKey {
             sampler_filtering,
             cull_mode,
             gbuffer,
+            write_pick,
             wireframe,
         }
     }
@@ -290,6 +294,24 @@ impl RenderPipeline {
                 .with_multisample(sample_count)
                 .build();
 
+        let background_pick_pipeline =
+            PipelineBuilder::new(&context.device, &background_layout, &background_shader)
+                .with_label("EnvironmentBackgroundPipelinePick")
+                .with_vertex_entry("vs_main")
+                .with_fragment_entry("fs_main_gbuffer_pick")
+                .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE))
+                .with_color_target(GBUFFER_PICK_FORMAT, None)
+                .with_depth_stencil(
+                    context.depth.format,
+                    false, // depth_write
+                    wgpu::CompareFunction::Always,
+                )
+                .with_no_culling()
+                .with_multisample(sample_count)
+                .build();
+
         let mut pipelines = HashMap::new();
         let color_targets = [
             (scene_format, sample_count, true),
@@ -305,36 +327,41 @@ impl RenderPipeline {
         for (filtering, shader_module) in &shader_modules {
             let filtering = *filtering;
             for &(color_format, samples, gbuffer) in &color_targets {
-                for &depth_test in &[false, true] {
-                    for &depth_write in &[false, true] {
-                        for &alpha_blend in &[false, true] {
-                            for &cull_mode in &[CullMode::Back, CullMode::Front, CullMode::None] {
-                                for &wireframe in &wireframe_options {
-                                    let key = PipelineKey::new(
-                                        depth_test,
-                                        depth_write,
-                                        alpha_blend,
-                                        color_format,
-                                        samples,
-                                        filtering,
-                                        cull_mode,
-                                        gbuffer,
-                                        wireframe,
-                                    );
-                                    let pipeline = Self::create_pipeline(
-                                        context,
-                                        &pipeline_layout,
-                                        shader_module,
-                                        depth_test,
-                                        depth_write,
-                                        alpha_blend,
-                                        color_format,
-                                        samples,
-                                        cull_mode,
-                                        gbuffer,
-                                        wireframe,
-                                    );
-                                    pipelines.insert(key, pipeline);
+                for &write_pick in &[false, true] {
+                    for &depth_test in &[false, true] {
+                        for &depth_write in &[false, true] {
+                            for &alpha_blend in &[false, true] {
+                                for &cull_mode in &[CullMode::Back, CullMode::Front, CullMode::None]
+                                {
+                                    for &wireframe in &wireframe_options {
+                                        let key = PipelineKey::new(
+                                            depth_test,
+                                            depth_write,
+                                            alpha_blend,
+                                            color_format,
+                                            samples,
+                                            filtering,
+                                            cull_mode,
+                                            gbuffer,
+                                            write_pick,
+                                            wireframe,
+                                        );
+                                        let pipeline = Self::create_pipeline(
+                                            context,
+                                            &pipeline_layout,
+                                            shader_module,
+                                            depth_test,
+                                            depth_write,
+                                            alpha_blend,
+                                            color_format,
+                                            samples,
+                                            cull_mode,
+                                            gbuffer,
+                                            write_pick,
+                                            wireframe,
+                                        );
+                                        pipelines.insert(key, pipeline);
+                                    }
                                 }
                             }
                         }
@@ -355,6 +382,7 @@ impl RenderPipeline {
                 pipelines,
                 depth_prepass,
                 background: background_pipeline,
+                background_pick: background_pick_pipeline,
             },
             texture_binder,
         )
@@ -378,6 +406,7 @@ impl RenderPipeline {
         sample_count: u32,
         cull_mode: CullMode,
         gbuffer: bool,
+        write_pick: bool,
         wireframe: bool,
     ) -> wgpu::RenderPipeline {
         let depth_compare = if depth_test {
@@ -398,7 +427,14 @@ impl RenderPipeline {
             .with_multisample(sample_count);
 
         if gbuffer {
-            builder = builder.with_fragment_entry("fs_main_gbuffer");
+            let entry = if write_pick {
+                "fs_main_gbuffer_pick"
+            } else {
+                "fs_main_gbuffer"
+            };
+            builder = builder.with_fragment_entry(entry);
+        } else if write_pick {
+            builder = builder.with_fragment_entry("fs_main_pick");
         }
 
         builder = builder.with_color_target(color_format, blend_state);
@@ -407,6 +443,10 @@ impl RenderPipeline {
             builder = builder
                 .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
                 .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
+        }
+
+        if write_pick {
+            builder = builder.with_color_target(GBUFFER_PICK_FORMAT, None);
         }
 
         builder = match cull_mode {
@@ -449,8 +489,12 @@ impl RenderPipeline {
         &self.depth_prepass
     }
 
-    pub(crate) fn background(&self) -> &wgpu::RenderPipeline {
-        &self.background
+    pub(crate) fn background(&self, write_pick: bool) -> &wgpu::RenderPipeline {
+        if write_pick {
+            &self.background_pick
+        } else {
+            &self.background
+        }
     }
 }
 
