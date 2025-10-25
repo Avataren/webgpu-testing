@@ -4,7 +4,7 @@ use glam::Mat4;
 
 use crate::renderer::{Material, PickId};
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct ObjectData {
     pub model: [[f32; 4]; 4], // 64 bytes
@@ -71,6 +71,35 @@ mod tests {
     #[test]
     fn object_data_size() {
         assert_eq!(std::mem::size_of::<ObjectData>(), 96);
+    }
+
+    #[test]
+    fn object_data_layout_matches_gpu_expectations() {
+        use std::mem;
+
+        let object = ObjectData {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            material_index: 0x1122_3344,
+            pick_id: [0x5566_7788, 0x99AA_BBCC],
+            _padding: 0xDDCC_BBAA,
+            _padding2: [0x0102_0304, 0x0506_0708, 0x090A_0B0C, 0x0D0E_0F10],
+        };
+
+        assert_eq!(mem::size_of::<ObjectData>(), 96);
+        assert_eq!(mem::align_of::<ObjectData>(), 16);
+
+        let bytes = bytemuck::bytes_of(&object);
+        assert_eq!(&bytes[64..68], &object.material_index.to_le_bytes());
+        assert_eq!(&bytes[68..72], &object.pick_id[0].to_le_bytes());
+        assert_eq!(&bytes[72..76], &object.pick_id[1].to_le_bytes());
+        assert_eq!(&bytes[76..80], &object._padding.to_le_bytes());
+
+        let padding_bytes: Vec<u8> = object
+            ._padding2
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        assert_eq!(&bytes[80..96], padding_bytes.as_slice());
     }
 
     #[test]

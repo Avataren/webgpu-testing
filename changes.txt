@@ -236,4 +236,7 @@ index c9caafd..79cb71a 100644
 - Project saves now emit both `project.json` and a matching `scene.json` that captures the primary
   scene asset. Build scripts that package projects should copy both files to retain the new
   particle system components.
+- GPU picking now falls back to the existing CPU ray tests when the pick attachment resolves to
+  zero, ensuring gizmos and unbound lights remain selectable. Dedicated GPU identifiers for these
+  helpers are tracked separately and can be implemented once the renderer exposes reserved ranges.
 

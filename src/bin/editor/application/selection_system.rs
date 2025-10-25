@@ -4,12 +4,10 @@ use log::warn;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
-use wgpu_cube::scene::{Children, Parent, Scene};
+use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
 
 use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorContext, EditorSystem};
-
-const PICK_HASH_MULTIPLIER: u32 = 0x9E3779B1;
 
 #[derive(Default)]
 pub(crate) struct SelectionSystem {
@@ -188,9 +186,20 @@ impl SelectionSystem {
         let Some(result) = self.gpu_pick.take_result() else {
             return;
         };
-        self.set_selected(result);
-        self.request_override(result);
-        app.update_history_selection(ctx.scene);
+
+        match result {
+            PickCompletion::Gpu(entity) => {
+                self.set_selected(entity);
+                self.request_override(entity);
+                app.update_history_selection(ctx.scene);
+            }
+            PickCompletion::CpuFallback(request) => {
+                let entity = app.pick_entity(ctx, request.uv, request.region);
+                self.set_selected(entity);
+                self.request_override(entity);
+                app.update_history_selection(ctx.scene);
+            }
+        }
     }
 
     fn try_enqueue_pick(
@@ -200,17 +209,21 @@ impl SelectionSystem {
         request: ViewportPick,
     ) -> bool {
         let Some(region) = app.viewports.scene_viewport.region() else {
-            self.gpu_pick.complete(None);
+            self.gpu_pick.complete(PickCompletion::Gpu(None));
             return false;
         };
 
         let Some(coords) = Self::framebuffer_coords_from_uv(request.uv, region) else {
-            self.gpu_pick.complete(None);
+            self.gpu_pick.complete(PickCompletion::Gpu(None));
             return false;
         };
 
         if gpu_ctx.renderer.request_pick(coords) {
             self.gpu_pick.mark_in_flight();
+            self.gpu_pick.record_request(CpuPickRequest {
+                uv: request.uv,
+                region,
+            });
             true
         } else {
             self.pending_pick = Some(request);
@@ -234,27 +247,6 @@ impl SelectionSystem {
         let y = region.y() + scaled_y.round() as u32;
 
         Some([x, y])
-    }
-
-    fn entity_for_pick_value(scene: &Scene, pick_value: u32) -> Option<Entity> {
-        if pick_value == 0 {
-            return None;
-        }
-
-        let world = scene.main_world();
-        world
-            .query::<&EditorEntityId>()
-            .iter()
-            .find_map(|(entity, editor_id)| {
-                let pick_id = editor_id.pick_identifier();
-                (Self::encode_pick_value(pick_id) == pick_value).then_some(entity)
-            })
-    }
-
-    fn encode_pick_value(pick_id: u64) -> u32 {
-        let lower = pick_id as u32;
-        let upper = (pick_id >> 32) as u32;
-        lower ^ upper.wrapping_mul(PICK_HASH_MULTIPLIER)
     }
 
     pub(crate) fn sync_selection_component(&mut self, ctx: &mut UpdateContext) -> bool {
@@ -410,8 +402,17 @@ impl EditorSystem for SelectionSystem {
 
             if let Some(value) = gpu_ctx.renderer.poll_pick_result() {
                 let scene_ref: &Scene = &*gpu_ctx.scene;
-                let picked = Self::entity_for_pick_value(scene_ref, value);
-                self.gpu_pick.complete(picked);
+                if value == 0 {
+                    if let Some(request) = self.gpu_pick.take_last_request() {
+                        self.gpu_pick.complete(PickCompletion::CpuFallback(request));
+                    } else {
+                        self.gpu_pick.complete(PickCompletion::Gpu(None));
+                    }
+                } else {
+                    self.gpu_pick.take_last_request();
+                    let picked = entity_for_pick_value(scene_ref, value);
+                    self.gpu_pick.complete(PickCompletion::Gpu(picked));
+                }
             }
 
             let mut issue_pick_pass = false;
@@ -485,8 +486,9 @@ impl SelectionState {
 #[derive(Default)]
 struct GpuPickState {
     in_flight: bool,
-    pending_result: Option<Option<Entity>>,
+    pending_result: Option<PickCompletion>,
     discard_next_result: bool,
+    last_request: Option<CpuPickRequest>,
 }
 
 impl GpuPickState {
@@ -499,8 +501,9 @@ impl GpuPickState {
         self.in_flight
     }
 
-    fn complete(&mut self, result: Option<Entity>) {
+    fn complete(&mut self, result: PickCompletion) {
         self.in_flight = false;
+        self.last_request = None;
         if self.discard_next_result {
             self.discard_next_result = false;
             return;
@@ -508,7 +511,7 @@ impl GpuPickState {
         self.pending_result = Some(result);
     }
 
-    fn take_result(&mut self) -> Option<Option<Entity>> {
+    fn take_result(&mut self) -> Option<PickCompletion> {
         self.pending_result.take()
     }
 
@@ -516,7 +519,28 @@ impl GpuPickState {
         self.in_flight = false;
         self.pending_result = None;
         self.discard_next_result = true;
+        self.last_request = None;
     }
+
+    fn record_request(&mut self, request: CpuPickRequest) {
+        self.last_request = Some(request);
+    }
+
+    fn take_last_request(&mut self) -> Option<CpuPickRequest> {
+        self.last_request.take()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CpuPickRequest {
+    uv: Vec2,
+    region: RenderRegion,
+}
+
+#[derive(Clone, Copy)]
+enum PickCompletion {
+    Gpu(Option<Entity>),
+    CpuFallback(CpuPickRequest),
 }
 
 #[derive(Default)]
