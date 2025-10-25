@@ -2,6 +2,9 @@
 use crate::asset::{Assets, Mesh};
 use crate::environment::Environment;
 use crate::renderer::batch::InstanceData;
+use crate::renderer::frame_graph::{
+    FrameGraph, FrameGraphColorAttachment, FrameGraphDepthAttachment, PassPlan,
+};
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, OrderedBatch,
@@ -510,133 +513,34 @@ impl Renderer {
             let (view, resolve) = self.postprocess.scene_color_views();
             (view.clone(), resolve.cloned())
         };
-        // Depth-only prepass
-        {
-            let opaque_batches = prepared_batches.opaque_mut();
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("DepthPrepass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut pass);
-            }
-
-            pass.set_pipeline(self.pipeline.depth_prepass());
-            pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
-            pass.set_bind_group(1, &self.objects_buffer.bind_group, &[]);
-
-            for batch in opaque_batches {
-                if batch.alpha_blend
-                    || !batch.depth_state.depth_write
-                    || !batch.depth_state.depth_test
-                {
-                    continue;
-                }
-                let Some(mesh) = mesh_for_batch(assets, batch) else {
-                    continue;
-                };
-                self.draw_full_batch(&mut pass, mesh, batch);
-                frame_stats.depth_prepass_draw_calls += 1;
-                batch.depth_state.depth_write = false;
-            }
-        }
-
         let scene_format = self.context.scene_texture_format();
 
-        // Main color pass (to postprocess scene target)
         {
-            let color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = {
-                let gbuffer_views = self.postprocess.gbuffer_views();
-                let mut attachments = vec![
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: &scene_view,
-                        depth_slice: None,
-                        resolve_target: resolve_target.as_ref(),
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(environment.clear_color()),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }),
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: gbuffer_views.normal.0,
-                        depth_slice: None,
-                        resolve_target: gbuffer_views.normal.1,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }),
-                    Some(wgpu::RenderPassColorAttachment {
-                        view: gbuffer_views.position.0,
-                        depth_slice: None,
-                        resolve_target: gbuffer_views.position.1,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }),
-                ];
-
-                if pick_active {
-                    if let Some(id_views) = gbuffer_views.id {
-                        attachments.push(Some(wgpu::RenderPassColorAttachment {
-                            view: id_views.multisample,
-                            depth_slice: None,
-                            resolve_target: id_views.resolve,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }));
-                    }
-                }
-
-                attachments
-            };
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("MainPass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if environment.is_hdr_enabled() {
-                self.draw_environment_background(&mut rpass, pick_active);
-            }
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut rpass);
-            }
-
-            frame_stats.opaque_draw_calls += self.record_batches(
-                &mut rpass,
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.render_depth_prepass(
+                &mut frame_graph,
+                &depth_view,
+                &mut prepared_batches,
                 assets,
-                prepared_batches.opaque(),
-                prepared_batches.materials(),
+                render_region,
+                &mut frame_stats,
+            );
+        }
+
+        {
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.render_main_color_pass(
+                &mut frame_graph,
+                &scene_view,
+                resolve_target.as_ref(),
+                &depth_view,
+                environment,
+                assets,
+                &prepared_batches,
                 scene_format,
-                self.context.sample_count,
-                true,
+                render_region,
                 pick_active,
+                &mut frame_stats,
             );
         }
 
@@ -678,226 +582,63 @@ impl Renderer {
             }
         }
 
-        // Transparent pass (drawn after post-process so SSAO/Fxaa apply only to opaque surfaces).
-        if !prepared_batches.transparent().is_empty() {
-            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-
-            if pick_active {
-                if let Some(id_views) = self.postprocess.pick_attachment_views() {
-                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                        view: id_views.single_sample(),
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }));
-                }
-            }
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("TransparentPass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut rpass);
-            }
-
-            frame_stats.transparent_draw_calls += self.record_batches(
-                &mut rpass,
+        {
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.render_transparent_pass(
+                &mut frame_graph,
+                &view,
+                &depth_view,
                 assets,
-                prepared_batches.transparent(),
-                prepared_batches.materials(),
-                self.context.config.format,
-                1,
-                false,
+                &prepared_batches,
+                render_region,
                 pick_active,
+                &mut frame_stats,
             );
         }
 
-        // Overlay pass (your overlays draw after UI if you keep it here;
-        // if you want UI on top of overlays, move this block above ui_hook).
-        let overlay_batches = prepared_batches.overlay();
-        if !overlay_batches.is_empty() {
-            let overlay_needs_depth = overlay_batches
-                .iter()
-                .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
-            let depth_attachment =
-                overlay_needs_depth.then_some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                });
-
-            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-
-            if pick_active {
-                if let Some(id_views) = self.postprocess.pick_attachment_views() {
-                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                        view: id_views.single_sample(),
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }));
-                }
-            }
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("OverlayPass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: depth_attachment,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut rpass);
-            }
-
-            frame_stats.overlay_draw_calls += self.record_batches(
-                &mut rpass,
+        {
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.render_overlay_pass(
+                &mut frame_graph,
+                &view,
+                &depth_view,
                 assets,
-                overlay_batches,
-                prepared_batches.materials(),
-                self.context.config.format,
-                1,
-                false,
+                &prepared_batches,
+                render_region,
                 pick_active,
+                &mut frame_stats,
             );
         }
 
-        // Editor gizmos render pass (after overlays to guarantee visibility).
-        let gizmo_batches = prepared_batches.gizmos();
-        if !gizmo_batches.is_empty() {
-            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
+        let materials = prepared_batches.materials();
 
-            if pick_active {
-                if let Some(id_views) = self.postprocess.pick_attachment_views() {
-                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                        view: id_views.single_sample(),
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }));
-                }
-            }
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("GizmoPass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut rpass);
-            }
-
-            frame_stats.gizmo_draw_calls += self.record_batches(
-                &mut rpass,
+        if !prepared_batches.gizmos().is_empty() {
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.execute_gizmo_pass(
+                &mut frame_graph,
+                "GizmoPass",
+                prepared_batches.gizmos(),
+                &view,
                 assets,
-                gizmo_batches,
-                prepared_batches.materials(),
-                self.context.config.format,
-                1,
-                false,
+                render_region,
                 pick_active,
+                &mut frame_stats,
+                materials,
             );
         }
 
-        let gizmo_solid_batches = prepared_batches.gizmo_solids();
-        if !gizmo_solid_batches.is_empty() {
-            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-
-            if pick_active {
-                if let Some(id_views) = self.postprocess.pick_attachment_views() {
-                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                        view: id_views.single_sample(),
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    }));
-                }
-            }
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("GizmoSolidPass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            if let Some(region) = render_region {
-                region.apply_to_pass(&mut rpass);
-            }
-
-            frame_stats.gizmo_draw_calls += self.record_batches(
-                &mut rpass,
+        if !prepared_batches.gizmo_solids().is_empty() {
+            let mut frame_graph = FrameGraph::new(&mut encoder);
+            self.execute_gizmo_pass(
+                &mut frame_graph,
+                "GizmoSolidPass",
+                prepared_batches.gizmo_solids(),
+                &view,
                 assets,
-                gizmo_solid_batches,
-                prepared_batches.materials(),
-                self.context.config.format,
-                1,
-                false,
+                render_region,
                 pick_active,
+                &mut frame_stats,
+                materials,
             );
         }
 
@@ -970,6 +711,279 @@ impl Renderer {
 
     pub fn last_frame_stats(&self) -> RendererStats {
         self.stats
+    }
+
+    fn render_depth_prepass<'a>(
+        &'a mut self,
+        frame_graph: &'a mut FrameGraph<'a>,
+        depth_view: &'a wgpu::TextureView,
+        prepared_batches: &'a mut PreparedBatches,
+        assets: &'a Assets,
+        render_region: Option<RenderRegion>,
+        frame_stats: &mut RendererStats,
+    ) {
+        let plan = PassPlan::new("DepthPrepass")
+            .set_depth(FrameGraphDepthAttachment::clear(depth_view, 1.0));
+
+        let pipeline = self.pipeline.depth_prepass();
+        let camera_bind_group = &self.camera_buffer.bind_group;
+        let object_bind_group = &self.objects_buffer.bind_group;
+        let opaque_batches = prepared_batches.opaque_mut();
+
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            pass.set_bind_group(1, object_bind_group, &[]);
+
+            for batch in opaque_batches.iter_mut() {
+                if batch.alpha_blend
+                    || !batch.depth_state.depth_write
+                    || !batch.depth_state.depth_test
+                {
+                    continue;
+                }
+
+                let Some(mesh) = mesh_for_batch(assets, batch) else {
+                    continue;
+                };
+
+                self.draw_full_batch(pass, mesh, batch);
+                frame_stats.depth_prepass_draw_calls += 1;
+                batch.depth_state.depth_write = false;
+            }
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_main_color_pass<'a>(
+        &'a mut self,
+        frame_graph: &'a mut FrameGraph<'a>,
+        scene_view: &'a wgpu::TextureView,
+        resolve_target: Option<&'a wgpu::TextureView>,
+        depth_view: &'a wgpu::TextureView,
+        environment: &Environment,
+        assets: &'a Assets,
+        prepared_batches: &'a PreparedBatches,
+        scene_format: wgpu::TextureFormat,
+        render_region: Option<RenderRegion>,
+        pick_active: bool,
+        frame_stats: &mut RendererStats,
+    ) {
+        let (normal_view, normal_resolve, position_view, position_resolve, pick_targets) = {
+            let gbuffer_views = self.postprocess.gbuffer_views();
+            (
+                gbuffer_views.normal.0.clone(),
+                gbuffer_views.normal.1.cloned(),
+                gbuffer_views.position.0.clone(),
+                gbuffer_views.position.1.cloned(),
+                if pick_active {
+                    gbuffer_views
+                        .id
+                        .map(|views| (views.multisample.clone(), views.resolve.cloned()))
+                } else {
+                    None
+                },
+            )
+        };
+
+        let mut plan = PassPlan::new("MainPass")
+            .add_color(FrameGraphColorAttachment::clear(
+                scene_view,
+                resolve_target,
+                environment.clear_color(),
+            ))
+            .add_color(FrameGraphColorAttachment::clear(
+                &normal_view,
+                normal_resolve.as_ref(),
+                wgpu::Color::TRANSPARENT,
+            ))
+            .add_color(FrameGraphColorAttachment::clear(
+                &position_view,
+                position_resolve.as_ref(),
+                wgpu::Color::TRANSPARENT,
+            ))
+            .set_depth(FrameGraphDepthAttachment::load(depth_view));
+
+        if let Some((pick_view, pick_resolve)) = pick_targets.as_ref() {
+            plan = plan.add_color(FrameGraphColorAttachment::clear(
+                pick_view,
+                pick_resolve.as_ref(),
+                wgpu::Color::TRANSPARENT,
+            ));
+        }
+
+        let hdr_enabled = environment.is_hdr_enabled();
+        let sample_count = self.context.sample_count;
+        let materials = prepared_batches.materials();
+        let opaque_batches = prepared_batches.opaque();
+
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            if hdr_enabled {
+                self.draw_environment_background(pass, pick_active);
+            }
+
+            frame_stats.opaque_draw_calls += self.record_batches(
+                pass,
+                assets,
+                opaque_batches,
+                materials,
+                scene_format,
+                sample_count,
+                true,
+                pick_active,
+            );
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_transparent_pass<'a>(
+        &'a mut self,
+        frame_graph: &'a mut FrameGraph<'a>,
+        surface_view: &'a wgpu::TextureView,
+        depth_view: &'a wgpu::TextureView,
+        assets: &'a Assets,
+        prepared_batches: &'a PreparedBatches,
+        render_region: Option<RenderRegion>,
+        pick_active: bool,
+        frame_stats: &mut RendererStats,
+    ) {
+        let batches = prepared_batches.transparent();
+        if batches.is_empty() {
+            return;
+        }
+
+        let pick_view = if pick_active {
+            self.postprocess
+                .pick_attachment_views()
+                .map(|views| views.single_sample().clone())
+        } else {
+            None
+        };
+
+        let mut plan = PassPlan::new("TransparentPass")
+            .add_color(FrameGraphColorAttachment::load(surface_view, None))
+            .set_depth(FrameGraphDepthAttachment::load(depth_view));
+
+        if let Some(view) = pick_view.as_ref() {
+            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
+        }
+
+        let materials = prepared_batches.materials();
+
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            frame_stats.transparent_draw_calls += self.record_batches(
+                pass,
+                assets,
+                batches,
+                materials,
+                self.context.config.format,
+                1,
+                false,
+                pick_active,
+            );
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_overlay_pass<'a>(
+        &'a mut self,
+        frame_graph: &'a mut FrameGraph<'a>,
+        surface_view: &'a wgpu::TextureView,
+        depth_view: &'a wgpu::TextureView,
+        assets: &'a Assets,
+        prepared_batches: &'a PreparedBatches,
+        render_region: Option<RenderRegion>,
+        pick_active: bool,
+        frame_stats: &mut RendererStats,
+    ) {
+        let batches = prepared_batches.overlay();
+        if batches.is_empty() {
+            return;
+        }
+
+        let overlay_needs_depth = batches
+            .iter()
+            .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
+
+        let pick_view = if pick_active {
+            self.postprocess
+                .pick_attachment_views()
+                .map(|views| views.single_sample().clone())
+        } else {
+            None
+        };
+
+        let mut plan = PassPlan::new("OverlayPass")
+            .add_color(FrameGraphColorAttachment::load(surface_view, None));
+
+        if let Some(view) = pick_view.as_ref() {
+            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
+        }
+
+        if overlay_needs_depth {
+            plan = plan.set_depth(FrameGraphDepthAttachment::load(depth_view));
+        }
+
+        let materials = prepared_batches.materials();
+
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            frame_stats.overlay_draw_calls += self.record_batches(
+                pass,
+                assets,
+                batches,
+                materials,
+                self.context.config.format,
+                1,
+                false,
+                pick_active,
+            );
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_gizmo_pass<'a>(
+        &'a mut self,
+        frame_graph: &'a mut FrameGraph<'a>,
+        label: &'a str,
+        batches: &'a [OrderedBatch],
+        surface_view: &'a wgpu::TextureView,
+        assets: &'a Assets,
+        render_region: Option<RenderRegion>,
+        pick_active: bool,
+        frame_stats: &mut RendererStats,
+        materials: &'a [Material],
+    ) {
+        if batches.is_empty() {
+            return;
+        }
+
+        let pick_view = if pick_active {
+            self.postprocess
+                .pick_attachment_views()
+                .map(|views| views.single_sample().clone())
+        } else {
+            None
+        };
+
+        let mut plan =
+            PassPlan::new(label).add_color(FrameGraphColorAttachment::load(surface_view, None));
+
+        if let Some(view) = pick_view.as_ref() {
+            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
+        }
+
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            frame_stats.gizmo_draw_calls += self.record_batches(
+                pass,
+                assets,
+                batches,
+                materials,
+                self.context.config.format,
+                1,
+                false,
+                pick_active,
+            );
+        });
     }
 
     fn process_pick_request(&mut self, encoder: &mut wgpu::CommandEncoder) {

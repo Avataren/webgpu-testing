@@ -4,6 +4,7 @@ pub mod compute_builder;
 pub mod compute_pass;
 pub mod compute_resources;
 pub mod depth;
+pub mod frame_graph;
 pub(crate) mod internal;
 pub mod lights;
 pub mod material;
