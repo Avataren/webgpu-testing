@@ -5,8 +5,9 @@ pub mod platform_winit;
 pub mod editor;
 
 pub use core::{
-    AppBuilder, AppCore, GpuUpdateContext, GpuUpdateSystem, Plugin, RuntimeMode,
-    RuntimeStateHandle, StartupContext, StartupSystem, UpdateContext, UpdateSystem,
+    AppBuilder, AppCore, FrameStep, GpuUpdateContext, GpuUpdateSystem, Plugin, RenderParams,
+    RenderResult, RuntimeMode, RuntimeStateHandle, RuntimeTransition, StartupContext,
+    StartupSystem, UpdateContext, UpdateSystem,
 };
 
 pub use platform_winit::WinitApp;
