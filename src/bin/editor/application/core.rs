@@ -9,9 +9,11 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::Scene;
 use wgpu_cube::SceneHierarchyHandle;
 
+use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
 use super::project_system::ProjectSystem;
+use super::scene_creation_system::SceneCreationSystem;
 use super::script_editor_system::ScriptEditorSystem;
 use super::selection_system::SelectionSystem;
 use super::system::EditorSystem;
@@ -42,10 +44,11 @@ pub struct EditorApplication {
     pub(super) history_system_index: usize,
     pub(super) project_system_index: usize,
     pub(super) script_editor_system_index: usize,
+    pub(super) asset_browser_system_index: usize,
+    pub(super) scene_creation_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
-    pub(super) asset_browser: AssetBrowserState,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
     pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
@@ -162,6 +165,19 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let asset_browser_system_index = {
+            let state = self.asset_browser.unwrap_or_default();
+            let system = AssetBrowserSystem::new(state);
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
+        let scene_creation_system_index = {
+            let system = SceneCreationSystem::default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
 
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
@@ -173,10 +189,11 @@ impl EditorApplicationBuilder {
             history_system_index,
             project_system_index,
             script_editor_system_index,
+            asset_browser_system_index,
+            scene_creation_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
-            asset_browser: self.asset_browser.unwrap_or_default(),
             pending_mode_transition: None,
             editor_scene_snapshot: None,
             scene_hierarchy_handle: None,
@@ -258,11 +275,51 @@ impl EditorApplication {
             .expect("project system registered")
     }
 
+    pub(super) fn script_editor_system(&self) -> &ScriptEditorSystem {
+        self.systems[self.script_editor_system_index]
+            .as_any()
+            .downcast_ref::<ScriptEditorSystem>()
+            .expect("script editor system registered")
+    }
+
     pub(super) fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
         self.systems[self.script_editor_system_index]
             .as_any_mut()
             .downcast_mut::<ScriptEditorSystem>()
             .expect("script editor system registered")
+    }
+
+    pub(super) fn asset_browser_system(&self) -> &AssetBrowserSystem {
+        self.systems[self.asset_browser_system_index]
+            .as_any()
+            .downcast_ref::<AssetBrowserSystem>()
+            .expect("asset browser system registered")
+    }
+
+    pub(super) fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
+        self.systems[self.asset_browser_system_index]
+            .as_any_mut()
+            .downcast_mut::<AssetBrowserSystem>()
+            .expect("asset browser system registered")
+    }
+
+    pub(super) fn asset_browser_state(&self) -> &AssetBrowserState {
+        self.asset_browser_system().state()
+    }
+
+    pub(super) fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
+        self.asset_browser_system_mut().state_mut()
+    }
+
+    pub(super) fn scene_creation_system_mut(&mut self) -> &mut SceneCreationSystem {
+        self.systems[self.scene_creation_system_index]
+            .as_any_mut()
+            .downcast_mut::<SceneCreationSystem>()
+            .expect("scene creation system registered")
+    }
+
+    pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
+        self.scene_hierarchy_handle.as_ref()
     }
 
     pub(super) fn history(&self) -> &EditorHistory {
@@ -440,26 +497,6 @@ impl EditorApplication {
                 .expect("project system registered")
                 .process_pending_imports(&mut editor_ctx, pending);
         }
-    }
-
-    pub(super) fn drain_gpu_commands(&mut self, ctx: &mut GpuUpdateContext) {
-        let mut queue = std::mem::take(&mut self.commands);
-        let mut remaining = VecDeque::new();
-        let mut creations = Vec::new();
-
-        while let Some(command) = queue.pop_front() {
-            match command {
-                EditorCommand::CreateScene(action) => creations.push(action),
-                other => remaining.push_back(other),
-            }
-        }
-
-        if !creations.is_empty() {
-            self.apply_pending_scene_creations(ctx, creations);
-        }
-
-        remaining.append(&mut self.commands);
-        self.commands = remaining;
     }
 
     pub(super) fn make_ui_context<'app, 'ctx>(

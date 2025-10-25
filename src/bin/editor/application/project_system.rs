@@ -70,25 +70,21 @@ impl ProjectSystem {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let Some(project_dir) = self.controller.current_dir().cloned() else {
-                ctx.with_update(|app, _| {
-                    app.asset_browser
-                        .report_error("Open or create a project before importing assets.");
-                });
+                ctx.asset_browser()
+                    .report_error("Open or create a project before importing assets.");
                 warn!("Ignoring glTF import request: no project directory is active");
                 return;
             };
 
             let Some(content_root) = self.controller.content_root() else {
-                ctx.with_update(|app, _| {
-                    app.asset_browser
-                        .report_error("The project's content folder is unavailable.");
-                });
+                ctx.asset_browser()
+                    .report_error("The project's content folder is unavailable.");
                 warn!("Ignoring glTF import request: project content folder missing");
                 return;
             };
 
             let Some(()) = ctx.with_update(|app, update_ctx| {
-                let destination_root = app.asset_browser.selected_folder(&content_root);
+                let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
                 let mut any_spawned = false;
 
                 for source_path in pending {
@@ -106,7 +102,7 @@ impl ProjectSystem {
                                     "Failed to build import script for {:?}; skipping entity spawn",
                                     result.project_relative_gltf
                                 );
-                                app.asset_browser
+                                app.asset_browser_state_mut()
                                     .report_error("Failed to prepare glTF import script.");
                                 if let Some(folder) = result.absolute_gltf.parent() {
                                     let _ = std::fs::remove_dir_all(folder);
@@ -129,14 +125,14 @@ impl ProjectSystem {
 
                             any_spawned = true;
 
-                            app.asset_browser.report_info(format!(
+                            app.asset_browser_state_mut().report_info(format!(
                                 "Imported asset to {}",
                                 result.project_relative_gltf.display()
                             ));
                         }
                         Err(err) => {
                             error!("Failed to import glTF asset {:?}: {}", source_path, err);
-                            app.asset_browser.report_error(err.to_string());
+                            app.asset_browser_state_mut().report_error(err.to_string());
                         }
                     }
                 }
