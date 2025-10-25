@@ -2,12 +2,12 @@ use super::lights::safe_normalize;
 use crate::asset::{Handle, Mesh};
 use crate::renderer::{
     batch::{CullMode, InstanceSource},
-    Material, RenderObject, Renderer,
+    Material, PickId, RenderObject, Renderer,
 };
 use crate::scene::components::{
-    Billboard, BillboardOrientation, BillboardSpace, DepthState, GpuParticleInstance,
-    MaterialComponent, MeshComponent, Name, SelectedInEditor, TransformComponent, Visible,
-    WorldTransform,
+    Billboard, BillboardOrientation, BillboardSpace, DepthState, EditorEntityId,
+    GpuParticleInstance, MaterialComponent, MeshComponent, Name, SelectedInEditor,
+    TransformComponent, Visible, WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
@@ -53,6 +53,7 @@ struct RenderEntity {
     depth_state: Option<DepthState>,
     gpu_instance: Option<GpuParticleInstance>,
     selected: bool,
+    pick_id: PickId,
 }
 
 fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
@@ -68,6 +69,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
             Option<&DepthState>,
             Option<&GpuParticleInstance>,
             Option<&SelectedInEditor>,
+            Option<&EditorEntityId>,
         )>()
         .iter()
         .map(
@@ -84,6 +86,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                     depth_state,
                     gpu_instance,
                     selected_marker,
+                    editor_id,
                 ),
             )| RenderEntity {
                 mesh: mesh.0,
@@ -96,6 +99,7 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                 depth_state: depth_state.copied(),
                 gpu_instance: gpu_instance.copied(),
                 selected: selected_marker.is_some(),
+                pick_id: encode_pick_id(editor_id.copied()),
             },
         )
         .collect()
@@ -154,6 +158,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         instance_source,
         gpu_index,
         cull_mode: CullMode::Back,
+        pick_id: entity.pick_id,
     });
 
     if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
@@ -173,10 +178,17 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Front,
+            pick_id: entity.pick_id,
         });
     }
 
     objects
+}
+
+fn encode_pick_id(editor_id: Option<EditorEntityId>) -> PickId {
+    editor_id
+        .map(EditorEntityId::pick_identifier)
+        .unwrap_or_default()
 }
 
 fn select_render_transform(entity: &RenderEntity) -> Transform {

@@ -3,6 +3,7 @@ use super::rendering::CameraVectors;
 use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
 use crate::renderer::primitives::{cone_mesh, cube_mesh, cylinder_mesh, torus_mesh};
+use crate::renderer::PickId;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::DepthState;
 use crate::scene::transform::Transform;
@@ -38,6 +39,8 @@ const AXIS_Z_COLOR: [u8; 4] = [90, 140, 250, 230];
 const AXIS_CENTER_COLOR: [u8; 4] = [240, 240, 240, 200];
 const SCALE_HANDLE_COLOR: [u8; 4] = [240, 240, 240, 220];
 const RING_BASE_COLOR: [u8; 4] = [220, 220, 220, 180];
+
+const GIZMO_PICK_ID: PickId = 0;
 
 const TRANSLATE_SHAFT_LENGTH: f32 = 0.9;
 const TRANSLATE_SHAFT_RADIUS: f32 = 0.035;
@@ -299,6 +302,7 @@ fn build_translate_gizmo(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::None,
+            pick_id: GIZMO_PICK_ID,
         });
 
         let cone_translation =
@@ -318,6 +322,7 @@ fn build_translate_gizmo(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id: GIZMO_PICK_ID,
         });
     }
 
@@ -350,6 +355,7 @@ fn build_translate_gizmo(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id: GIZMO_PICK_ID,
         });
     }
 
@@ -372,6 +378,7 @@ fn build_translate_gizmo(
         instance_source: InstanceSource::Cpu,
         gpu_index: None,
         cull_mode: CullMode::Back,
+        pick_id: GIZMO_PICK_ID,
     });
 
     gizmos
@@ -407,6 +414,7 @@ fn build_scale_gizmo(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id: GIZMO_PICK_ID,
         });
     }
 
@@ -428,6 +436,7 @@ fn build_scale_gizmo(
         instance_source: InstanceSource::Cpu,
         gpu_index: None,
         cull_mode: CullMode::Back,
+        pick_id: GIZMO_PICK_ID,
     });
 
     gizmos
@@ -461,6 +470,7 @@ fn build_rotate_gizmo(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::None,
+            pick_id: GIZMO_PICK_ID,
         });
     }
 
@@ -481,6 +491,7 @@ fn build_rotate_gizmo(
         instance_source: InstanceSource::Cpu,
         gpu_index: None,
         cull_mode: CullMode::None,
+        pick_id: GIZMO_PICK_ID,
     });
 
     gizmos

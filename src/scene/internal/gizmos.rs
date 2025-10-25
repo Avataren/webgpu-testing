@@ -4,10 +4,10 @@ use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
 use crate::renderer::primitives::{cone_side_mesh, cylinder_mesh, quad_mesh, sphere_mesh};
 use crate::renderer::texture::Texture;
-use crate::renderer::{Material, Renderer};
+use crate::renderer::{Material, PickId, Renderer};
 use crate::scene::components::{
-    Billboard, BillboardOrientation, DepthState, DirectionalLight, PointLight, SelectedInEditor,
-    SpotLight, TransformComponent, WorldTransform,
+    Billboard, BillboardOrientation, DepthState, DirectionalLight, EditorEntityId, PointLight,
+    SelectedInEditor, SpotLight, TransformComponent, WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Quat, Vec3};
@@ -107,15 +107,17 @@ fn build_point_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (light, world_transform, local_transform, selected)) in world
+    for (_entity, (light, world_transform, local_transform, selected, editor_id)) in world
         .query::<(
             &PointLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
             Option<&SelectedInEditor>,
+            Option<&EditorEntityId>,
         )>()
         .iter()
     {
+        let pick_id = encode_pick_id(editor_id);
         let mut transform = resolve_light_transform(world_transform, local_transform);
         transform = root_transform.mul_transform(&transform);
 
@@ -143,6 +145,7 @@ fn build_point_light_gizmos(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id,
         });
 
         if selected.is_some() {
@@ -161,6 +164,7 @@ fn build_point_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
         }
     }
@@ -173,15 +177,17 @@ fn build_spot_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (light, world_transform, local_transform, selected)) in world
+    for (_entity, (light, world_transform, local_transform, selected, editor_id)) in world
         .query::<(
             &SpotLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
             Option<&SelectedInEditor>,
+            Option<&EditorEntityId>,
         )>()
         .iter()
     {
+        let pick_id = encode_pick_id(editor_id);
         let mut transform = resolve_light_transform(world_transform, local_transform);
         transform = root_transform.mul_transform(&transform);
 
@@ -209,6 +215,7 @@ fn build_spot_light_gizmos(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id,
         });
 
         if selected.is_some() {
@@ -234,6 +241,7 @@ fn build_spot_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
 
             // Inner shell: slightly inset to convey falloff thickness.
@@ -261,6 +269,7 @@ fn build_spot_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
 
             // Outer outline to highlight total spread.
@@ -278,6 +287,7 @@ fn build_spot_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
 
             // Inner outline clarifies the core beam threshold.
@@ -295,6 +305,7 @@ fn build_spot_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
         }
     }
@@ -307,15 +318,17 @@ fn build_directional_light_gizmos(
     resources: GizmoResources,
     output: &mut Vec<RenderObject>,
 ) {
-    for (_entity, (_light, world_transform, local_transform, selected)) in world
+    for (_entity, (_light, world_transform, local_transform, selected, editor_id)) in world
         .query::<(
             &DirectionalLight,
             Option<&WorldTransform>,
             Option<&TransformComponent>,
             Option<&SelectedInEditor>,
+            Option<&EditorEntityId>,
         )>()
         .iter()
     {
+        let pick_id = encode_pick_id(editor_id);
         let mut transform = resolve_light_transform(world_transform, local_transform);
         transform = root_transform.mul_transform(&transform);
         let position = transform.translation;
@@ -344,6 +357,7 @@ fn build_directional_light_gizmos(
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id,
         });
 
         if selected.is_some() {
@@ -367,6 +381,7 @@ fn build_directional_light_gizmos(
                 instance_source: InstanceSource::Cpu,
                 gpu_index: None,
                 cull_mode: CullMode::None,
+                pick_id,
             });
         }
     }
@@ -406,6 +421,13 @@ fn icon_world_scale(camera: CameraVectors, position: Vec3) -> f32 {
         let vertical_extent = half_fov.tan();
         2.0 * distance * vertical_extent * ICON_SCREEN_FRACTION
     }
+}
+
+fn encode_pick_id(editor_id: Option<&EditorEntityId>) -> PickId {
+    editor_id
+        .copied()
+        .map(EditorEntityId::pick_identifier)
+        .unwrap_or_default()
 }
 
 fn load_icon_texture(

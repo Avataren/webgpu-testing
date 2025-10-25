@@ -2,6 +2,7 @@
 use super::material::Material;
 use crate::{
     asset::{Handle, Mesh},
+    renderer::PickId,
     scene::components::DepthState,
     scene::transform::Transform,
 };
@@ -70,6 +71,7 @@ pub struct RenderObject {
     pub instance_source: InstanceSource,
     pub gpu_index: Option<u32>,
     pub cull_mode: CullMode,
+    pub pick_id: PickId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -78,6 +80,7 @@ pub struct InstanceData {
     pub material_index: u32,
     pub source: InstanceSource,
     pub gpu_index: Option<u32>,
+    pub pick_id: PickId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -162,6 +165,7 @@ impl RenderBatcher {
             material_index,
             source: obj.instance_source,
             gpu_index: obj.gpu_index,
+            pick_id: obj.pick_id,
         });
     }
 

@@ -2,23 +2,27 @@
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
-use crate::renderer::Material;
+use crate::renderer::{Material, PickId};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct ObjectData {
     pub model: [[f32; 4]; 4], // 64 bytes
     pub material_index: u32,  // 4 bytes
-    pub _padding: [u32; 3],   // 12 bytes to maintain 16-byte alignment
+    pub pick_id: [u32; 2],    // 8 bytes (64-bit pick identifier split for WGSL)
+    pub _padding: u32,        // 4 bytes to maintain 16-byte alignment
     pub _padding2: [u32; 4], // 16 bytes so the std430 stride matches WGSL expectations (96 bytes total)
 }
 
 impl ObjectData {
-    pub fn new(model: Mat4, material_index: u32) -> Self {
+    pub fn new(model: Mat4, material_index: u32, pick_id: PickId) -> Self {
+        let pick_lower = pick_id as u32;
+        let pick_upper = (pick_id >> 32) as u32;
         Self {
             model: model.to_cols_array_2d(),
             material_index,
-            _padding: [0; 3],
+            pick_id: [pick_lower, pick_upper],
+            _padding: 0,
             _padding2: [0; 4],
         }
     }
@@ -81,9 +85,10 @@ mod tests {
         assert_eq!(material.metallic_factor, 191);
         assert_eq!(material.roughness_factor, 63);
 
-        let object = ObjectData::new(Mat4::from_scale(Vec3::ONE), 3);
+        let object = ObjectData::new(Mat4::from_scale(Vec3::ONE), 3, 42);
 
         assert_eq!(object.material_index, 3);
+        assert_eq!(object.pick_id, [42, 0]);
     }
 
     #[test]
