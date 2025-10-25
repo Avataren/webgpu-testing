@@ -71,6 +71,13 @@ struct BackgroundOut {
     @location(2) world_pos: vec4<f32>,
 };
 
+struct BackgroundOutPick {
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) world_pos: vec4<f32>,
+    @location(3) pick: u32,
+};
+
 fn sample_background(in: VsOut) -> BackgroundOut {
     if (!environment_enabled()) {
         return BackgroundOut(
@@ -106,4 +113,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_main_gbuffer(in: VsOut) -> BackgroundOut {
     return sample_background(in);
+}
+
+@fragment
+fn fs_main_gbuffer_pick(in: VsOut) -> BackgroundOutPick {
+    let base = sample_background(in);
+    return BackgroundOutPick(base.color, base.normal, base.world_pos, 0u);
 }
