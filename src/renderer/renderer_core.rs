@@ -18,15 +18,66 @@ use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
 
 use glam::Vec3;
+use std::mem::size_of;
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 100;
 const POINT_SHADOW_FACE_COUNT: u32 = 6;
+const PICK_COPY_BYTES_PER_ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
+#[derive(Default)]
+struct PickState {
+    pending_request: Option<PickRequest>,
+    pending_readback: Option<PendingPickReadback>,
+    ready_value: Option<u32>,
+}
+
+struct PickRequest {
+    x: u32,
+    y: u32,
+}
+
+struct PendingPickReadback {
+    buffer: wgpu::Buffer,
+    status: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
+}
+
+impl PendingPickReadback {
+    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u32, wgpu::BufferAsyncError>> {
+        {
+            let guard = self.status.lock().expect("pick readback status poisoned");
+            if guard.is_none() {
+                drop(guard);
+                let _ = device.poll(wgpu::PollType::Poll);
+            } else {
+                drop(guard);
+            }
+        }
+
+        let mut guard = self.status.lock().expect("pick readback status poisoned");
+        let result = guard.take();
+        drop(guard);
+
+        result.map(|status| match status {
+            Ok(()) => {
+                let slice = self.buffer.slice(..size_of::<u32>() as u64);
+                let data = slice.get_mapped_range();
+                let mut bytes = [0u8; 4];
+                bytes.copy_from_slice(&data[..4]);
+                drop(data);
+                self.buffer.unmap();
+                Ok(u32::from_le_bytes(bytes))
+            }
+            Err(err) => {
+                self.buffer.unmap();
+                Err(err)
+            }
+        })
+    }
+}
 #[cfg(feature = "egui")]
 type UiHook =
     Box<dyn FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView)>;
@@ -73,6 +124,7 @@ pub struct Renderer {
     camera_aspect: f32,
     settings: RenderSettings,
     pick_active: bool,
+    pick_state: PickState,
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
     stats: RendererStats,
@@ -139,6 +191,7 @@ impl Renderer {
             camera_aspect: aspect,
             settings,
             pick_active: false,
+            pick_state: PickState::default(),
             #[cfg(feature = "egui")]
             ui_hook: None,
             stats: RendererStats::default(),
@@ -168,6 +221,40 @@ impl Renderer {
 
     pub fn is_pick_active(&self) -> bool {
         self.pick_active
+    }
+
+    pub fn request_pick(&mut self, coords: [u32; 2]) -> bool {
+        if self.pick_state.pending_request.is_some() || self.pick_state.pending_readback.is_some() {
+            return false;
+        }
+
+        self.pick_state.ready_value = None;
+        self.pick_state.pending_request = Some(PickRequest {
+            x: coords[0],
+            y: coords[1],
+        });
+        true
+    }
+
+    pub fn poll_pick_result(&mut self) -> Option<u32> {
+        if let Some(value) = self.pick_state.ready_value.take() {
+            return Some(value);
+        }
+
+        if let Some(readback) = self.pick_state.pending_readback.as_mut() {
+            if let Some(result) = readback.poll(&self.context.device) {
+                self.pick_state.pending_readback = None;
+                return Some(match result {
+                    Ok(value) => value,
+                    Err(error) => {
+                        log::error!("Failed to map pick readback buffer: {error}");
+                        0
+                    }
+                });
+            }
+        }
+
+        None
     }
 
     pub fn get_device(&self) -> &wgpu::Device {
@@ -814,6 +901,8 @@ impl Renderer {
             );
         }
 
+        self.process_pick_request(&mut encoder);
+
         // --- EGUI (optional) ---
         #[cfg(feature = "egui")]
         if let Some(hook) = self.ui_hook.take() {
@@ -883,6 +972,78 @@ impl Renderer {
         self.stats
     }
 
+    fn process_pick_request(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(request) = self.pick_state.pending_request.take() else {
+            return;
+        };
+
+        let Some(texture) = self.postprocess.pick_texture() else {
+            log::warn!("Pick request issued without an available pick attachment");
+            self.pick_state.ready_value = Some(0);
+            return;
+        };
+
+        let Some(extent) = self.postprocess.pick_texture_extent() else {
+            self.pick_state.ready_value = Some(0);
+            return;
+        };
+
+        if extent.width == 0 || extent.height == 0 {
+            self.pick_state.ready_value = Some(0);
+            return;
+        }
+
+        let origin = wgpu::Origin3d {
+            x: request.x.min(extent.width.saturating_sub(1)),
+            y: request.y.min(extent.height.saturating_sub(1)),
+            z: 0,
+        };
+
+        let buffer = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PickReadbackBuffer"),
+            size: PICK_COPY_BYTES_PER_ROW as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let source = wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin,
+            aspect: wgpu::TextureAspect::All,
+        };
+
+        let destination = wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(PICK_COPY_BYTES_PER_ROW),
+                rows_per_image: Some(1),
+            },
+        };
+
+        encoder.copy_texture_to_buffer(
+            source,
+            destination,
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let slice = buffer.slice(..PICK_COPY_BYTES_PER_ROW as u64);
+        let status = Arc::new(Mutex::new(None));
+        let status_clone = Arc::clone(&status);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            if let Ok(mut guard) = status_clone.lock() {
+                *guard = Some(result);
+            }
+        });
+
+        self.pick_state.pending_readback = Some(PendingPickReadback { buffer, status });
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn record_batches(
         &mut self,
@@ -937,6 +1098,7 @@ impl Renderer {
         draw_calls
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn setup_batch_state<'a>(
         &self,
         rpass: &mut wgpu::RenderPass<'_>,
