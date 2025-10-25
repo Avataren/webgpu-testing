@@ -1,3 +1,8 @@
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
+#[cfg(target_arch = "wasm32")]
+mod web;
+
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, KeyEvent, WindowEvent},
@@ -6,59 +11,238 @@ use winit::{
     window::{Window, WindowId},
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
-#[cfg(target_arch = "wasm32")]
-use std::{cell::RefCell, rc::Rc};
-
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_futures::spawn_local;
-
 use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
 use crate::renderer::{CustomRenderCallback, CustomRenderStage, RenderRegion, Renderer};
 
 #[cfg(feature = "egui")]
 use crate::app::editor::EditorState;
-
 #[cfg(feature = "egui")]
 use crate::ui::{
     EnvironmentSettingsHandle, FrameStatsHandle, PostProcessEffectsHandle, SceneHierarchyHandle,
 };
 
-#[cfg(target_arch = "wasm32")]
-type WindowHandle = Rc<Window>;
 #[cfg(not(target_arch = "wasm32"))]
-type WindowHandle = Arc<Window>;
+pub use native::NativeWinitDriver;
 #[cfg(target_arch = "wasm32")]
-type PendingRenderer = Rc<RefCell<Option<Renderer>>>;
+pub use web::WebWinitDriver;
 
-pub struct WinitApp {
-    core: AppCore,
-    window: Option<WindowHandle>,
+#[cfg(target_arch = "wasm32")]
+pub type DefaultDriver = WebWinitDriver;
+#[cfg(not(target_arch = "wasm32"))]
+pub type DefaultDriver = NativeWinitDriver;
+
+/// Abstraction over platform specific winit behaviours.
+pub trait PlatformDriver {
+    type WindowHandle: AsRef<Window> + Clone;
+
+    fn initialize(
+        &mut self,
+        state: &mut PlatformState<Self::WindowHandle>,
+        event_loop: &ActiveEventLoop,
+        settings: &crate::settings::RenderSettings,
+    );
+
+    fn handle_event(
+        &mut self,
+        state: &mut PlatformState<Self::WindowHandle>,
+        event_loop: &ActiveEventLoop,
+        event: &WindowEvent,
+    );
+
+    /// Ensures the renderer is ready for the upcoming frame.
+    /// Returns `true` when rendering should proceed.
+    fn render_frame(
+        &mut self,
+        state: &mut PlatformState<Self::WindowHandle>,
+        event_loop: &ActiveEventLoop,
+    ) -> bool;
+
+    fn shutdown(
+        &mut self,
+        _state: &mut PlatformState<Self::WindowHandle>,
+        _event_loop: &ActiveEventLoop,
+    ) {
+    }
+}
+
+pub struct PlatformState<H: AsRef<Window> + Clone> {
+    window: Option<H>,
     window_id: Option<WindowId>,
     renderer: Option<Renderer>,
-    #[cfg(target_arch = "wasm32")]
-    pending_renderer: Option<PendingRenderer>,
+    renderer_initialized: bool,
+}
+
+impl<H: AsRef<Window> + Clone> PlatformState<H> {
+    pub fn new() -> Self {
+        Self {
+            window: None,
+            window_id: None,
+            renderer: None,
+            renderer_initialized: false,
+        }
+    }
+
+    pub fn window(&self) -> Option<&H> {
+        self.window.as_ref()
+    }
+
+    pub fn window_id(&self) -> Option<WindowId> {
+        self.window_id
+    }
+
+    pub fn set_window(&mut self, handle: H) {
+        self.window_id = Some(handle.as_ref().id());
+        self.window = Some(handle);
+    }
+
+    pub fn take_renderer(&mut self) -> Option<Renderer> {
+        self.renderer.take()
+    }
+
+    pub fn put_renderer(&mut self, renderer: Renderer) {
+        self.renderer = Some(renderer);
+    }
+
+    pub fn renderer_mut(&mut self) -> Option<&mut Renderer> {
+        self.renderer.as_mut()
+    }
+
+    pub fn has_renderer(&self) -> bool {
+        self.renderer.is_some()
+    }
+
+    fn mark_renderer_initialized(&mut self) {
+        self.renderer_initialized = true;
+    }
+
+    fn renderer_initialized(&self) -> bool {
+        self.renderer_initialized
+    }
+}
+
+impl<H: AsRef<Window> + Clone> Default for PlatformState<H> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
+    core: AppCore,
+    platform: PlatformState<D::WindowHandle>,
+    driver: D,
     #[cfg(feature = "egui")]
     editor: EditorState,
 }
 
-impl WinitApp {
+impl<D> WinitApp<D>
+where
+    D: PlatformDriver,
+{
+    fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
+        self.core.on_renderer_ready(renderer);
+
+        #[cfg(feature = "egui")]
+        {
+            if let Some(window) = self.platform.window() {
+                let egui = crate::ui::EguiContext::new(
+                    renderer.get_device(),
+                    renderer.surface_format(),
+                    renderer.sample_count(),
+                    window.as_ref(),
+                );
+                self.editor.install_egui_context(egui);
+                log::info!("Egui context initialized");
+            }
+
+            self.editor.apply_postprocess_effects(renderer);
+            self.editor.sync_environment_controls(self.core.scene());
+            self.editor.refresh_scene_hierarchy(self.core.scene());
+        }
+    }
+
+    fn ensure_renderer_ready(&mut self) {
+        if self.platform.renderer_initialized() {
+            return;
+        }
+
+        if let Some(mut renderer) = self.platform.take_renderer() {
+            self.on_renderer_ready(&mut renderer);
+            self.platform.mark_renderer_initialized();
+            self.platform.put_renderer(renderer);
+            log::info!("Renderer initialized successfully");
+        }
+    }
+
+    fn handle_runtime_transition(&mut self, transition: RuntimeTransition) {
+        #[cfg(feature = "egui")]
+        match transition {
+            RuntimeTransition::EnteredEditor => {
+                self.editor.sync_environment_controls(self.core.scene());
+                self.editor.refresh_scene_hierarchy(self.core.scene());
+            }
+            RuntimeTransition::EnteredPlaying => {}
+        }
+
+        #[cfg(not(feature = "egui"))]
+        let _ = transition;
+    }
+
+    fn handle_surface_error(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        renderer: &mut Renderer,
+        error: wgpu::SurfaceError,
+    ) -> bool {
+        match error {
+            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                log::warn!("Surface lost/outdated; resizing swapchain");
+                if let Some(window) = self.platform.window() {
+                    renderer.resize(window.as_ref().inner_size());
+                }
+                true
+            }
+            wgpu::SurfaceError::Timeout => {
+                log::warn!("Surface timeout; will retry next frame");
+                true
+            }
+            wgpu::SurfaceError::OutOfMemory => {
+                log::error!("Surface out of memory; shutting down");
+                event_loop.exit();
+                false
+            }
+            err @ wgpu::SurfaceError::Other => {
+                log::error!("Unexpected surface error: {err:?}");
+                true
+            }
+        }
+    }
+}
+
+impl<D> WinitApp<D>
+where
+    D: PlatformDriver + Default,
+{
     pub fn new() -> Self {
         Self::from_core(AppBuilder::new().build())
     }
 
     pub fn from_core(core: AppCore) -> Self {
+        Self::from_core_with_driver(core, D::default())
+    }
+}
+
+impl<D> WinitApp<D>
+where
+    D: PlatformDriver,
+{
+    pub fn from_core_with_driver(core: AppCore, driver: D) -> Self {
         #[cfg(feature = "egui")]
         let editor = EditorState::new(core.scene());
 
         Self {
             core,
-            window: None,
-            window_id: None,
-            renderer: None,
-            #[cfg(target_arch = "wasm32")]
-            pending_renderer: None,
+            platform: PlatformState::default(),
+            driver,
             #[cfg(feature = "egui")]
             editor,
         }
@@ -134,188 +318,41 @@ impl WinitApp {
     pub fn scene_hierarchy_handle(&self) -> SceneHierarchyHandle {
         self.editor.scene_hierarchy_handle()
     }
-
-    fn handle_surface_error(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        renderer: &mut Renderer,
-        error: wgpu::SurfaceError,
-    ) -> bool {
-        match error {
-            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                log::warn!("Surface lost/outdated; resizing swapchain");
-                if let Some(window) = &self.window {
-                    renderer.resize(window.inner_size());
-                }
-                true
-            }
-            wgpu::SurfaceError::Timeout => {
-                log::warn!("Surface timeout; will retry next frame");
-                true
-            }
-            wgpu::SurfaceError::OutOfMemory => {
-                log::error!("Surface out of memory; shutting down");
-                event_loop.exit();
-                false
-            }
-            err @ wgpu::SurfaceError::Other => {
-                log::error!("Unexpected surface error: {err:?}");
-                true
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn try_finish_async_initialization(&mut self) {
-        if self.renderer.is_some() {
-            return;
-        }
-
-        let Some(pending) = self.pending_renderer.clone() else {
-            return;
-        };
-
-        let renderer_opt = {
-            let mut pending_ref = pending.borrow_mut();
-            pending_ref.take()
-        };
-
-        drop(pending);
-
-        if let Some(mut renderer) = renderer_opt {
-            log::info!("Completing asynchronous renderer initialization");
-
-            self.on_renderer_ready(&mut renderer);
-
-            self.renderer = Some(renderer);
-            self.pending_renderer = None;
-
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
-
-            log::info!("Renderer initialized successfully");
-        }
-    }
-
-    fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
-        self.core.on_renderer_ready(renderer);
-
-        #[cfg(feature = "egui")]
-        {
-            if let Some(window) = &self.window {
-                let egui = crate::ui::EguiContext::new(
-                    renderer.get_device(),
-                    renderer.surface_format(),
-                    renderer.sample_count(),
-                    window.as_ref(),
-                );
-                self.editor.install_egui_context(egui);
-                log::info!("Egui context initialized");
-            }
-
-            self.editor.apply_postprocess_effects(renderer);
-            self.editor.sync_environment_controls(self.core.scene());
-            self.editor.refresh_scene_hierarchy(self.core.scene());
-        }
-    }
-
-    fn handle_runtime_transition(&mut self, transition: RuntimeTransition) {
-        #[cfg(feature = "egui")]
-        match transition {
-            RuntimeTransition::EnteredEditor => {
-                self.editor.sync_environment_controls(self.core.scene());
-                self.editor.refresh_scene_hierarchy(self.core.scene());
-            }
-            RuntimeTransition::EnteredPlaying => {}
-        }
-
-        #[cfg(not(feature = "egui"))]
-        let _ = transition;
-    }
-
-    fn window(&self) -> Option<&Window> {
-        self.window.as_ref().map(|handle| handle.as_ref())
-    }
 }
 
-impl Default for WinitApp {
+impl<D> Default for WinitApp<D>
+where
+    D: PlatformDriver + Default,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ApplicationHandler for WinitApp {
+impl<D> ApplicationHandler for WinitApp<D>
+where
+    D: PlatformDriver,
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
+        if self.platform.window().is_some() {
             return;
         }
 
         log::info!("Initializing application...");
 
-        let base_window_attrs = Window::default_attributes()
-            .with_title("wgpu hecs Renderer")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                f64::from(self.settings().resolution.width),
-                f64::from(self.settings().resolution.height),
-            ));
+        let settings = self.settings().clone();
 
-        #[cfg(target_arch = "wasm32")]
-        let window_attrs = {
-            use winit::platform::web::WindowAttributesExtWebSys;
-            base_window_attrs.with_append(true)
-        };
+        self.driver
+            .initialize(&mut self.platform, event_loop, &settings);
+        self.ensure_renderer_ready();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let window_attrs = base_window_attrs;
-
-        let window = event_loop
-            .create_window(window_attrs)
-            .expect("Failed to create window");
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let window = Arc::new(window);
-            let id = window.id();
-
-            let mut renderer =
-                pollster::block_on(Renderer::new(window.clone(), self.settings().clone()));
-
-            self.window = Some(window);
-            self.window_id = Some(id);
-
-            self.on_renderer_ready(&mut renderer);
-
-            self.renderer = Some(renderer);
-
-            if let Some(w) = self.window() {
-                w.request_redraw();
-            }
-
-            log::info!("Application initialized");
+        if let Some(window) = self.platform.window() {
+            window.as_ref().request_redraw();
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let id = window.id();
-            let window_handle = Rc::new(window);
-            let pending_renderer: PendingRenderer = Rc::new(RefCell::new(None));
-            let renderer_cell = pending_renderer.clone();
-            let window_for_renderer = window_handle.clone();
-            let settings = self.settings().clone();
-
-            log::info!("Spawning asynchronous renderer initialization");
-
-            spawn_local(async move {
-                let renderer = Renderer::new(window_for_renderer.clone(), settings).await;
-                renderer_cell.borrow_mut().replace(renderer);
-                window_for_renderer.request_redraw();
-            });
-
-            self.window = Some(window_handle);
-            self.window_id = Some(id);
-            self.pending_renderer = Some(pending_renderer);
-
+        if self.platform.renderer_initialized() {
+            log::info!("Application initialized");
+        } else {
             log::info!("Waiting for renderer to finish initializing");
         }
     }
@@ -326,21 +363,22 @@ impl ApplicationHandler for WinitApp {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if Some(window_id) != self.window_id {
+        if Some(window_id) != self.platform.window_id() {
             return;
         }
 
-        #[cfg(target_arch = "wasm32")]
-        self.try_finish_async_initialization();
+        self.driver
+            .handle_event(&mut self.platform, event_loop, &event);
+        self.ensure_renderer_ready();
 
         #[cfg(feature = "egui")]
-        if let Some(window_handle) = self.window.as_ref().cloned() {
+        if let Some(window_handle) = self.platform.window().cloned() {
             let consumed = self
                 .editor
                 .handle_window_event(window_handle.as_ref(), &event);
             if consumed {
                 if let WindowEvent::RedrawRequested = event {
-                    window_handle.request_redraw();
+                    window_handle.as_ref().request_redraw();
                 }
                 return;
             }
@@ -352,20 +390,27 @@ impl ApplicationHandler for WinitApp {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                if let Some(renderer) = self.renderer.as_mut() {
+                if let Some(renderer) = self.platform.renderer_mut() {
                     renderer.resize(new_size);
                 }
             }
             WindowEvent::ScaleFactorChanged { .. } => {
-                if let (Some(renderer), Some(window_handle)) =
-                    (self.renderer.as_mut(), self.window.as_ref().cloned())
+                if let Some(size) = self
+                    .platform
+                    .window()
+                    .map(|window_handle| window_handle.as_ref().inner_size())
                 {
-                    renderer.resize(window_handle.inner_size());
+                    if let Some(renderer) = self.platform.renderer_mut() {
+                        renderer.resize(size);
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
-                #[cfg(target_arch = "wasm32")]
-                self.try_finish_async_initialization();
+                if !self.driver.render_frame(&mut self.platform, event_loop) {
+                    return;
+                }
+
+                self.ensure_renderer_ready();
 
                 if let Some(transition) = self.core.sync_runtime_state() {
                     self.handle_runtime_transition(transition);
@@ -374,9 +419,9 @@ impl ApplicationHandler for WinitApp {
                 let frame = self.core.begin_frame();
                 self.core.run_update_stage(frame.dt());
 
-                if let Some(mut renderer) = self.renderer.take() {
+                if let Some(mut renderer) = self.platform.take_renderer() {
                     #[cfg(feature = "egui")]
-                    if let Some(window_handle) = self.window.as_ref().cloned() {
+                    if let Some(window_handle) = self.platform.window().cloned() {
                         self.editor.begin_ui_frame(window_handle.as_ref());
                     }
 
@@ -408,7 +453,7 @@ impl ApplicationHandler for WinitApp {
                             #[allow(unused_mut)]
                             let mut render_frame = render_frame;
                             #[cfg(feature = "egui")]
-                            if let Some(window_handle) = self.window.as_ref().cloned() {
+                            if let Some(window_handle) = self.platform.window().cloned() {
                                 let window = window_handle.as_ref();
                                 if let Some(output) = self.editor.end_ui_frame(window) {
                                     self.editor.render_ui(
@@ -435,7 +480,7 @@ impl ApplicationHandler for WinitApp {
                     #[cfg(feature = "egui")]
                     self.editor.record_frame_stats(&frame, &renderer);
 
-                    self.renderer = Some(renderer);
+                    self.platform.put_renderer(renderer);
 
                     if self.core.exit_requested() {
                         event_loop.exit();
@@ -447,8 +492,8 @@ impl ApplicationHandler for WinitApp {
                     }
                 }
 
-                if let Some(window_handle) = self.window.as_ref() {
-                    window_handle.request_redraw();
+                if let Some(window_handle) = self.platform.window() {
+                    window_handle.as_ref().request_redraw();
                 }
             }
             WindowEvent::KeyboardInput {
