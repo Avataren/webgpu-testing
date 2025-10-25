@@ -46,10 +46,37 @@ struct PickRequest {
 struct PendingPickReadback {
     buffer: wgpu::Buffer,
     status: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
+    mapping_requested: bool,
 }
 
 impl PendingPickReadback {
+    fn new(buffer: wgpu::Buffer) -> Self {
+        Self {
+            buffer,
+            status: Arc::new(Mutex::new(None)),
+            mapping_requested: false,
+        }
+    }
+
+    fn ensure_mapping_requested(&mut self) {
+        if self.mapping_requested {
+            return;
+        }
+
+        let slice = self.buffer.slice(..PICK_COPY_BYTES_PER_ROW as u64);
+        let status_clone = Arc::clone(&self.status);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            if let Ok(mut guard) = status_clone.lock() {
+                *guard = Some(result);
+            }
+        });
+
+        self.mapping_requested = true;
+    }
+
     fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u64, wgpu::BufferAsyncError>> {
+        self.ensure_mapping_requested();
+
         {
             let guard = self.status.lock().expect("pick readback status poisoned");
             if guard.is_none() {
@@ -72,13 +99,24 @@ impl PendingPickReadback {
                 bytes.copy_from_slice(&data[..8]);
                 drop(data);
                 self.buffer.unmap();
+                self.mapping_requested = false;
                 Ok(u64::from_le_bytes(bytes))
             }
             Err(err) => {
                 self.buffer.unmap();
+                self.mapping_requested = false;
                 Err(err)
             }
         })
+    }
+}
+
+impl Drop for PendingPickReadback {
+    fn drop(&mut self) {
+        if self.mapping_requested {
+            self.buffer.unmap();
+            self.mapping_requested = false;
+        }
     }
 }
 #[cfg(feature = "egui")]
@@ -666,6 +704,10 @@ impl Renderer {
         self.stats = frame_stats;
 
         self.context.queue.submit(Some(encoder.finish()));
+
+        if let Some(readback) = self.pick_state.pending_readback.as_mut() {
+            readback.ensure_mapping_requested();
+        }
         Ok(RenderFrame { frame })
     }
 
@@ -1046,16 +1088,7 @@ impl Renderer {
             },
         );
 
-        let slice = buffer.slice(..PICK_COPY_BYTES_PER_ROW as u64);
-        let status = Arc::new(Mutex::new(None));
-        let status_clone = Arc::clone(&status);
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            if let Ok(mut guard) = status_clone.lock() {
-                *guard = Some(result);
-            }
-        });
-
-        self.pick_state.pending_readback = Some(PendingPickReadback { buffer, status });
+        self.pick_state.pending_readback = Some(PendingPickReadback::new(buffer));
     }
 
     #[allow(clippy::too_many_arguments)]
