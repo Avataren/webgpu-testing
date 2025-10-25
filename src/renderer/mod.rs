@@ -21,6 +21,8 @@ pub mod vertex;
 
 pub const MAX_TEXTURES: usize = 256;
 
+pub type PickId = u64;
+
 pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
 pub use compute_builder::ComputePipelineBuilder;
 pub use compute_pass::{dispatch_compute, ComputePass};

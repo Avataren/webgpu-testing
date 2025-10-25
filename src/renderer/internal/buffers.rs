@@ -133,7 +133,8 @@ impl DynamicObjectsBuffer {
                     continue;
                 }
 
-                let data = ObjectData::new(inst.transform.matrix(), inst.material_index);
+                let data =
+                    ObjectData::new(inst.transform.matrix(), inst.material_index, inst.pick_id);
                 let scratch_index = self.object_scratch.len();
                 self.object_scratch.push(data);
 

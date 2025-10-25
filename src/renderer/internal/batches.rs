@@ -258,6 +258,7 @@ mod tests {
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Back,
+            pick_id: 0,
         });
 
         batcher.clear();

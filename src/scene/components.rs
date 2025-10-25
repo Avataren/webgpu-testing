@@ -395,6 +395,15 @@ pub struct SelectedInEditor;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EditorEntityId(pub u128);
 
+impl EditorEntityId {
+    /// Mixes the 128-bit identifier into a 64-bit value suitable for GPU picking.
+    pub fn pick_identifier(self) -> u64 {
+        let low = self.0 as u64;
+        let high = (self.0 >> 64) as u64;
+        low ^ high.wrapping_mul(0x9E3779B185EBCA87)
+    }
+}
+
 /// Source glTF asset used to spawn this entity.
 #[derive(Debug, Clone)]
 pub struct GltfSource(pub PathBuf);
