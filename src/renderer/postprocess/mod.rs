@@ -8,6 +8,7 @@ const BLOOM_MIP_COUNT: usize = 5;
 const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_POSITION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const GBUFFER_PICK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as usize] = [
     -0.6401949,
     -0.76821256,
@@ -163,6 +164,7 @@ pub struct PostProcess {
     normal_msaa: Option<MsaaTarget>,
     position_source: TextureBundle,
     position_msaa: Option<MsaaTarget>,
+    pick_target: LazyPickTarget,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     bloom_down_chain: Vec<BloomMip>,
@@ -223,6 +225,19 @@ pub struct PostProcess {
 pub struct GBufferViews<'a> {
     pub normal: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
     pub position: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
+    pub id: Option<PickAttachmentViews<'a>>,
+}
+
+#[derive(Clone, Copy)]
+pub struct PickAttachmentViews<'a> {
+    pub multisample: &'a wgpu::TextureView,
+    pub resolve: Option<&'a wgpu::TextureView>,
+}
+
+impl<'a> PickAttachmentViews<'a> {
+    pub fn single_sample(self) -> &'a wgpu::TextureView {
+        self.resolve.unwrap_or(self.multisample)
+    }
 }
 
 impl PostProcess {
@@ -768,6 +783,7 @@ impl PostProcess {
             normal_msaa,
             position_source,
             position_msaa,
+            pick_target: LazyPickTarget::new(),
             ssao,
             ssao_ping,
             bloom_down_chain,
@@ -883,6 +899,7 @@ impl PostProcess {
         );
         self.position_source = position_source;
         self.position_msaa = position_msaa;
+        self.pick_target.invalidate();
         self.ssao = TextureBundle::ssao(device, &self.size);
         self.ssao_ping = TextureBundle::ssao(device, &self.size);
         self.resolved_depth = if self.sample_count > 1 {
@@ -956,7 +973,12 @@ impl PostProcess {
             Some(msaa) => (&msaa.view, Some(&self.position_source.view)),
             None => (&self.position_source.view, None),
         };
-        GBufferViews { normal, position }
+        let id = self.pick_target.views();
+        GBufferViews {
+            normal,
+            position,
+            id,
+        }
     }
 
     pub fn scene_view(&self) -> &wgpu::TextureView {
@@ -993,6 +1015,15 @@ impl PostProcess {
 
     pub fn effects(&self) -> PostProcessEffects {
         self.effects
+    }
+
+    pub fn ensure_pick_attachment(&mut self, device: &wgpu::Device) {
+        self.pick_target
+            .ensure(device, &self.size, self.sample_count);
+    }
+
+    pub fn pick_attachment_views(&self) -> Option<PickAttachmentViews<'_>> {
+        self.pick_target.views()
     }
 
     pub fn set_color_grading(&mut self, queue: &wgpu::Queue, grading: ColorGrading) {
@@ -1881,6 +1912,26 @@ impl TextureBundle {
             view,
         }
     }
+
+    fn pick(device: &wgpu::Device, size: &wgpu::Extent3d) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SceneId"),
+            size: *size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: GBUFFER_PICK_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self {
+            _texture: texture,
+            view,
+        }
+    }
 }
 
 struct BloomMip {
@@ -1929,4 +1980,62 @@ struct BloomDownsamplePass {
 struct BloomUpsamplePass {
     target_index: usize,
     bind_group: wgpu::BindGroup,
+}
+
+#[derive(Default)]
+struct LazyPickTarget {
+    source: Option<TextureBundle>,
+    msaa: Option<MsaaTarget>,
+    size: Option<wgpu::Extent3d>,
+    sample_count: Option<u32>,
+}
+
+impl LazyPickTarget {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn invalidate(&mut self) {
+        self.source = None;
+        self.msaa = None;
+        self.size = None;
+        self.sample_count = None;
+    }
+
+    fn ensure(&mut self, device: &wgpu::Device, size: &wgpu::Extent3d, sample_count: u32) {
+        let needs_rebuild = self.size.map(|current| current != *size).unwrap_or(true)
+            || self
+                .sample_count
+                .map_or(true, |current| current != sample_count);
+
+        if needs_rebuild {
+            self.source = Some(TextureBundle::pick(device, size));
+            self.msaa = (sample_count > 1).then(|| {
+                MsaaTarget::new(
+                    device,
+                    size,
+                    GBUFFER_PICK_FORMAT,
+                    sample_count,
+                    "SceneIdMsaa",
+                )
+            });
+            self.size = Some(*size);
+            self.sample_count = Some(sample_count);
+        }
+    }
+
+    fn views(&self) -> Option<PickAttachmentViews<'_>> {
+        let source = self.source.as_ref()?;
+        let views = match self.msaa.as_ref() {
+            Some(msaa) => PickAttachmentViews {
+                multisample: &msaa.view,
+                resolve: Some(&source.view),
+            },
+            None => PickAttachmentViews {
+                multisample: &source.view,
+                resolve: None,
+            },
+        };
+        Some(views)
+    }
 }

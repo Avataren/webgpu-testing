@@ -72,6 +72,7 @@ pub struct Renderer {
     camera_fov_y: f32,
     camera_aspect: f32,
     settings: RenderSettings,
+    pick_active: bool,
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
     stats: RendererStats,
@@ -137,6 +138,7 @@ impl Renderer {
             camera_fov_y: 60f32.to_radians(),
             camera_aspect: aspect,
             settings,
+            pick_active: false,
             #[cfg(feature = "egui")]
             ui_hook: None,
             stats: RendererStats::default(),
@@ -158,6 +160,14 @@ impl Renderer {
 
     pub fn supports_bindless_textures(&self) -> bool {
         self.context.supports_bindless_textures
+    }
+
+    pub fn set_pick_active(&mut self, active: bool) {
+        self.pick_active = active;
+    }
+
+    pub fn is_pick_active(&self) -> bool {
+        self.pick_active
     }
 
     pub fn get_device(&self) -> &wgpu::Device {
@@ -403,12 +413,16 @@ impl Renderer {
         self.postprocess
             .update_viewport(&self.context.queue, render_region);
 
+        let pick_active = self.pick_active;
+        if pick_active {
+            self.postprocess
+                .ensure_pick_attachment(&self.context.device);
+        }
+
         let (scene_view, resolve_target) = {
             let (view, resolve) = self.postprocess.scene_color_views();
             (view.clone(), resolve.cloned())
         };
-        let gbuffer_views = self.postprocess.gbuffer_views();
-
         // Depth-only prepass
         {
             let opaque_batches = prepared_batches.opaque_mut();
@@ -455,45 +469,54 @@ impl Renderer {
 
         // Main color pass (to postprocess scene target)
         {
-            let color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = vec![
-                Some(wgpu::RenderPassColorAttachment {
-                    view: &scene_view,
-                    depth_slice: None,
-                    resolve_target: resolve_target.as_ref(),
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(environment.clear_color()),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: gbuffer_views.normal.0,
-                    depth_slice: None,
-                    resolve_target: gbuffer_views.normal.1,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-                Some(wgpu::RenderPassColorAttachment {
-                    view: gbuffer_views.position.0,
-                    depth_slice: None,
-                    resolve_target: gbuffer_views.position.1,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                }),
-            ];
+            let color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = {
+                let gbuffer_views = self.postprocess.gbuffer_views();
+                let mut attachments = vec![
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &scene_view,
+                        depth_slice: None,
+                        resolve_target: resolve_target.as_ref(),
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(environment.clear_color()),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: gbuffer_views.normal.0,
+                        depth_slice: None,
+                        resolve_target: gbuffer_views.normal.1,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: gbuffer_views.position.0,
+                        depth_slice: None,
+                        resolve_target: gbuffer_views.position.1,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ];
+
+                if pick_active {
+                    if let Some(id_views) = gbuffer_views.id {
+                        attachments.push(Some(wgpu::RenderPassColorAttachment {
+                            view: id_views.multisample,
+                            depth_slice: None,
+                            resolve_target: id_views.resolve,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }));
+                    }
+                }
+
+                attachments
+            };
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("MainPass"),
@@ -526,6 +549,7 @@ impl Renderer {
                 scene_format,
                 self.context.sample_count,
                 true,
+                pick_active,
             );
         }
 
@@ -569,17 +593,33 @@ impl Renderer {
 
         // Transparent pass (drawn after post-process so SSAO/Fxaa apply only to opaque surfaces).
         if !prepared_batches.transparent().is_empty() {
+            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
+            if pick_active {
+                if let Some(id_views) = self.postprocess.pick_attachment_views() {
+                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                        view: id_views.single_sample(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }));
+                }
+            }
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("TransparentPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth_view,
                     depth_ops: Some(wgpu::Operations {
@@ -604,6 +644,7 @@ impl Renderer {
                 self.context.config.format,
                 1,
                 false,
+                pick_active,
             );
         }
 
@@ -624,17 +665,33 @@ impl Renderer {
                     stencil_ops: None,
                 });
 
+            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
+            if pick_active {
+                if let Some(id_views) = self.postprocess.pick_attachment_views() {
+                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                        view: id_views.single_sample(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }));
+                }
+            }
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OverlayPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -652,23 +709,40 @@ impl Renderer {
                 self.context.config.format,
                 1,
                 false,
+                pick_active,
             );
         }
 
         // Editor gizmos render pass (after overlays to guarantee visibility).
         let gizmo_batches = prepared_batches.gizmos();
         if !gizmo_batches.is_empty() {
+            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
+            if pick_active {
+                if let Some(id_views) = self.postprocess.pick_attachment_views() {
+                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                        view: id_views.single_sample(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }));
+                }
+            }
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("GizmoPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -686,22 +760,39 @@ impl Renderer {
                 self.context.config.format,
                 1,
                 false,
+                pick_active,
             );
         }
 
         let gizmo_solid_batches = prepared_batches.gizmo_solids();
         if !gizmo_solid_batches.is_empty() {
+            let mut color_attachments = vec![Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+
+            if pick_active {
+                if let Some(id_views) = self.postprocess.pick_attachment_views() {
+                    color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                        view: id_views.single_sample(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }));
+                }
+            }
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("GizmoSolidPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &color_attachments,
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -719,6 +810,7 @@ impl Renderer {
                 self.context.config.format,
                 1,
                 false,
+                pick_active,
             );
         }
 
@@ -801,6 +893,7 @@ impl Renderer {
         color_format: wgpu::TextureFormat,
         color_sample_count: u32,
         use_gbuffer: bool,
+        write_pick: bool,
     ) -> u32 {
         if batches.is_empty() {
             return 0;
@@ -817,6 +910,7 @@ impl Renderer {
                     color_format,
                     color_sample_count,
                     use_gbuffer,
+                    write_pick,
                 ) else {
                     continue;
                 };
@@ -833,6 +927,7 @@ impl Renderer {
                     color_format,
                     color_sample_count,
                     use_gbuffer,
+                    write_pick,
                 ) else {
                     continue;
                 };
@@ -850,6 +945,7 @@ impl Renderer {
         color_format: wgpu::TextureFormat,
         color_sample_count: u32,
         use_gbuffer: bool,
+        write_pick: bool,
     ) -> Option<&'a Mesh> {
         let mesh = mesh_for_batch(assets, batch)?;
         let wants_wireframe = matches!(batch.pass, RenderPass::Gizmo);
@@ -863,6 +959,7 @@ impl Renderer {
             batch.sampler_filtering,
             batch.cull_mode,
             use_gbuffer,
+            write_pick,
             wireframe,
         );
         let pipeline = self.pipeline.pipeline(pipeline_key);

@@ -90,6 +90,24 @@ struct FragmentOut {
     @location(2) world_pos: vec4<f32>,
 };
 
+struct FragmentOutPick {
+    @location(0) color: vec4<f32>,
+    @location(1) pick: u32,
+};
+
+struct FragmentOutGBufferPick {
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) world_pos: vec4<f32>,
+    @location(3) pick: u32,
+};
+
+const PICK_HASH_MULTIPLIER: u32 = 0x9E3779B1u;
+
+fn encode_pick_id(parts: vec2<u32>) -> u32 {
+    return parts.x ^ (parts.y * PICK_HASH_MULTIPLIER);
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let obj = objects[in.instance];
@@ -232,4 +250,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_main_gbuffer(in: VsOut) -> FragmentOut {
     return shade_fragment(in);
+}
+
+@fragment
+fn fs_main_pick(in: VsOut) -> FragmentOutPick {
+    let shaded = shade_fragment(in);
+    let obj = objects[in.instance_id];
+    let pick_value = encode_pick_id(vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]));
+    return FragmentOutPick(shaded.color, pick_value);
+}
+
+@fragment
+fn fs_main_gbuffer_pick(in: VsOut) -> FragmentOutGBufferPick {
+    let shaded = shade_fragment(in);
+    let obj = objects[in.instance_id];
+    let pick_value = encode_pick_id(vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]));
+    return FragmentOutGBufferPick(shaded.color, shaded.normal, shaded.world_pos, pick_value);
 }
