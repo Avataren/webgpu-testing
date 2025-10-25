@@ -1,3 +1,4 @@
+mod asset_browser_system;
 mod system;
 pub(crate) use system::*;
 mod camera_system;
@@ -7,12 +8,14 @@ mod input;
 mod picking;
 mod project_system;
 mod runtime_mode;
+mod scene_creation_system;
 mod script_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
 mod ui;
 
+use self::asset_browser_system::AssetBrowserSystem;
 pub use self::core::EditorApplication;
 #[allow(unused_imports)]
 pub use self::core::EditorApplicationBuilder;
@@ -116,7 +119,6 @@ impl EditorApplication {
     fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
-        self.drain_gpu_commands(ctx);
 
         self.run_system_gpu_updates(ctx);
     }
@@ -159,6 +161,8 @@ impl EditorApplication {
         }
         let mut inspector_actions = Vec::new();
         let mut creation_actions = Vec::new();
+        let systems_ptr = self.systems.as_mut_ptr();
+        let asset_browser_index = self.asset_browser_system_index;
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         egui::CentralPanel::default()
@@ -167,6 +171,13 @@ impl EditorApplication {
                 if show_fullscreen_game {
                     crate::layout::show_fullscreen_viewport(ui, game_viewport);
                 } else {
+                    let asset_browser_state = unsafe {
+                        (&mut *systems_ptr.add(asset_browser_index))
+                            .as_any_mut()
+                            .downcast_mut::<AssetBrowserSystem>()
+                            .expect("asset browser system registered")
+                            .state_mut()
+                    };
                     let mut behavior = EditorBehavior {
                         scene_viewport,
                         game_viewport,
@@ -175,7 +186,7 @@ impl EditorApplication {
                         is_playing,
                         inspector_actions: &mut inspector_actions,
                         scene_creation_actions: &mut creation_actions,
-                        asset_browser: &mut self.asset_browser,
+                        asset_browser: asset_browser_state,
                         content_root,
                     };
                     dock_tree.ui(&mut behavior, ui);
@@ -430,7 +441,7 @@ impl EditorApplication {
                             self.copy_environment_asset_if_needed(&mut component, previous.as_ref())
                         {
                             log::warn!("{err}");
-                            self.asset_browser.report_error(err);
+                            self.asset_browser_state_mut().report_error(err);
                         }
                     }
 
@@ -571,51 +582,6 @@ impl EditorApplication {
         if let Some(entity) = candidate {
             scene.set_active_camera_entity(Some(entity));
             self.active_camera_entity = scene.active_camera_entity();
-        }
-    }
-
-    fn apply_pending_scene_creations(
-        &mut self,
-        ctx: &mut GpuUpdateContext,
-        actions: Vec<SceneCreationAction>,
-    ) {
-        if actions.is_empty() {
-            return;
-        }
-
-        let mut last_created = None;
-
-        for action in actions {
-            let created = match action {
-                SceneCreationAction::Primitive(preset) => self.create_primitive(ctx, preset),
-                SceneCreationAction::ParticleSystem(preset) => {
-                    self.create_particle_system(ctx, preset)
-                }
-                SceneCreationAction::PointLight => self.create_point_light(ctx),
-                SceneCreationAction::DirectionalLight => self.create_directional_light(ctx),
-                SceneCreationAction::SpotLight => self.create_spot_light(ctx),
-                SceneCreationAction::Camera => self.create_camera(ctx),
-                SceneCreationAction::Environment => self.create_environment(ctx),
-            };
-
-            if let Some(entity) = created {
-                last_created = Some(entity);
-            }
-        }
-
-        if let Some(entity) = last_created {
-            let selection = self.selection_system_mut();
-            selection.set_selected(Some(entity));
-            selection.set_highlighted(Some(entity));
-            selection.request_override(Some(entity));
-            self.record_scene_change(ctx.scene);
-            self.history_system_mut().clear_redo();
-
-            if let Some(handle) = self.scene_hierarchy_handle.clone() {
-                if let Ok(mut state) = handle.lock() {
-                    state.refresh_from_scene(ctx.scene);
-                }
-            }
         }
     }
 
@@ -834,7 +800,7 @@ impl EditorApplication {
                     absolute_source, destination
                 )
             })?;
-            self.asset_browser.report_info(format!(
+            self.asset_browser_state_mut().report_info(format!(
                 "Copied environment HDR to {}",
                 destination.display()
             ));

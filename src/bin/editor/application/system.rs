@@ -4,7 +4,10 @@ use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::ptr::NonNull;
 
+use super::asset_browser_system::AssetBrowserSystem;
 use super::core::{EditorApplication, PendingScriptAction};
+use super::project_system::ProjectSystem;
+use super::script_editor_system::ScriptEditorSystem;
 use crate::asset_browser::AssetBrowserState;
 use crate::history::EditorHistory;
 use crate::inspector::InspectorAction;
@@ -112,7 +115,31 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn asset_browser(&mut self) -> &mut AssetBrowserState {
-        unsafe { &mut self.application.as_mut().asset_browser }
+        unsafe { self.application.as_mut().asset_browser_state_mut() }
+    }
+
+    pub fn asset_browser_system(&self) -> &AssetBrowserSystem {
+        unsafe { self.application.as_ref().asset_browser_system() }
+    }
+
+    pub fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
+        unsafe { self.application.as_mut().asset_browser_system_mut() }
+    }
+
+    pub fn project_system(&self) -> &ProjectSystem {
+        unsafe { self.application.as_ref().project_system() }
+    }
+
+    pub fn project_system_mut(&mut self) -> &mut ProjectSystem {
+        unsafe { self.application.as_mut().project_system_mut() }
+    }
+
+    pub fn script_editor_system(&self) -> &ScriptEditorSystem {
+        unsafe { self.application.as_ref().script_editor_system() }
+    }
+
+    pub fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
+        unsafe { self.application.as_mut().script_editor_system_mut() }
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {
