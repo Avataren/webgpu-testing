@@ -100,30 +100,24 @@ struct FragmentOut {
     @location(0) color: vec4<f32>,
     @location(1) normal: vec4<f32>,
     @location(2) world_pos: vec4<f32>,
-    @location(3) pick: u32,
+    @location(3) pick: vec2<u32>,
 };
 
 struct FragmentOutPick {
     @location(0) color: vec4<f32>,
-    @location(1) pick: u32,
+    @location(1) pick: vec2<u32>,
 };
-
-const PICK_HASH_MULTIPLIER: u32 = 0x9E3779B1u;
-
-fn encode_pick_id(parts: vec2<u32>) -> u32 {
-    return parts.x ^ (parts.y * PICK_HASH_MULTIPLIER);
-}
 
 fn object_pick_output(
     instance_index: u32,
     alpha: f32,
     material_flags: u32,
-) -> u32 {
+) -> vec2<u32> {
     let obj = objects[instance_index];
-    let pick_value = encode_pick_id(vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]));
+    let pick_value = vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]);
 
     if (material_flags & FLAG_ALPHA_BLEND) != 0u && alpha <= 0.0 {
-        return 0u;
+        return vec2<u32>(0u, 0u);
     }
 
     return pick_value;

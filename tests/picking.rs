@@ -1,14 +1,14 @@
 use glam::{Vec2, Vec3};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, MeshBounds, TransformComponent, Visible};
-use wgpu_cube::scene::{encode_pick_value, entity_for_pick_value, Scene, Transform};
+use wgpu_cube::scene::{entity_for_pick_value, Scene, Transform};
 
 #[test]
 fn pick_request_resolves_expected_entity() {
     let mut scene = Scene::new();
     let editor_id = EditorEntityId(0xABCD_EF01_2345_6789_ABCD_EF01_2345_6789);
     let pick_id = editor_id.pick_identifier();
-    let pick_value = encode_pick_value(pick_id);
+    let pick_value = pick_id;
 
     let entity = scene.main_world_mut().spawn((
         editor_id,
@@ -32,8 +32,8 @@ fn pick_request_resolves_expected_entity() {
 fn cpu_fallback_only_accepts_zero_pick_ids() {
     let mut scene = Scene::new();
     let editor_id = EditorEntityId(1);
-    let pick_value = encode_pick_value(editor_id.pick_identifier());
-    assert_ne!(pick_value, 0, "expected a non-zero encoded pick value");
+    let pick_value = editor_id.pick_identifier();
+    assert_ne!(pick_value, 0, "expected a non-zero pick value");
 
     let mesh_entity = scene.main_world_mut().spawn((
         editor_id,
@@ -97,7 +97,7 @@ fn filter_cpu_fallback(scene: &Scene, candidate: Option<hecs::Entity>) -> Option
         let world = scene.main_world();
         match world.get::<&EditorEntityId>(entity) {
             Ok(editor_id) => {
-                let pick_value = encode_pick_value(editor_id.pick_identifier());
+                let pick_value = editor_id.pick_identifier();
                 (pick_value == 0).then_some(entity)
             }
             Err(_) => Some(entity),
