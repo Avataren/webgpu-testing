@@ -940,9 +940,14 @@ impl Scene {
         lights::has_any_lights(self.main_world())
     }
 
-    pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, other: Scene) {
+    pub fn merge_as_child(
+        &mut self,
+        parent_entity: hecs::Entity,
+        other: Scene,
+        renderer: &mut dyn SceneImportDevice,
+    ) {
         if let Some(asset) = other.export_main_asset("MergedScene") {
-            let mut instance = asset.instantiate(None, &mut self.assets);
+            let mut instance = asset.instantiate(Some(renderer), &mut self.assets);
             let (animations, animation_states) = instance.take_animation_data();
             let entity_map = super::internal::composition::merge_world_as_child(
                 self.main_world_mut(),
