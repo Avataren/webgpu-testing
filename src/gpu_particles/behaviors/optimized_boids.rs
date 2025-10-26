@@ -16,33 +16,18 @@ const MAX_TOTAL_CELLS: u32 = 256;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct OptimizedBoidsParams {
-    delta_time: f32,
-    separation_radius: f32,
-    alignment_radius: f32,
-    cohesion_radius: f32,
-    separation_weight: f32,
-    alignment_weight: f32,
-    cohesion_weight: f32,
-    max_speed: f32,
-    max_force: f32,
-    bounds: f32,
-    particle_count: u32,
-    cell_size: f32,
-    grid_dimensions: [u32; 3],
-    _padding: u32,
+    radii: [f32; 4],
+    weights_and_speed: [f32; 4],
+    force_bounds_and_cell: [f32; 4],
+    grid_info: [u32; 4],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GridBuildParams {
-    bounds: f32,
-    cell_size: f32,
-    _padding1: [u32; 2],
-    grid_dimensions: [u32; 3],
-    _padding_vec3: u32,
-    particle_count: u32,
-    total_cells: u32,
-    _padding2: [u32; 2],
+    bounds_and_cell: [f32; 4],
+    grid_info: [u32; 4],
+    totals: [u32; 4],
 }
 
 pub struct OptimizedBoidsBehavior {
@@ -150,14 +135,14 @@ impl OptimizedBoidsBehavior {
             StorageBuffer::with_capacity::<u32>(device, "CellCountsBuffer", total_cells as usize);
 
         let grid_params = GridBuildParams {
-            bounds,
-            cell_size,
-            grid_dimensions,
-            particle_count: 0,
-            total_cells,
-            _padding1: [0, 0],
-            _padding_vec3: 0,
-            _padding2: [0, 0],
+            bounds_and_cell: [bounds, cell_size, 0.0, 0.0],
+            grid_info: [
+                grid_dimensions[0],
+                grid_dimensions[1],
+                grid_dimensions[2],
+                0,
+            ],
+            totals: [total_cells, 0, 0, 0],
         };
 
         let grid_params_buffer = UniformBuffer::new(device, "GridParams", &grid_params);
@@ -262,14 +247,14 @@ impl OptimizedBoidsBehavior {
         }
 
         let grid_params = GridBuildParams {
-            bounds: self.bounds,
-            cell_size: self.cell_size,
-            grid_dimensions: self.grid_dimensions,
-            particle_count: self.particle_count,
-            total_cells: self.total_cells,
-            _padding1: [0, 0],
-            _padding_vec3: 0,
-            _padding2: [0, 0],
+            bounds_and_cell: [self.bounds, self.cell_size, 0.0, 0.0],
+            grid_info: [
+                self.grid_dimensions[0],
+                self.grid_dimensions[1],
+                self.grid_dimensions[2],
+                self.particle_count,
+            ],
+            totals: [self.total_cells, 0, 0, 0],
         };
         self.grid_params_buffer.write(queue, &grid_params);
 
@@ -329,20 +314,25 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
 
     fn create_params_buffer(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> wgpu::Buffer {
         let params = OptimizedBoidsParams {
-            delta_time: 0.0,
-            separation_radius: self.separation_radius,
-            alignment_radius: self.alignment_radius,
-            cohesion_radius: self.cohesion_radius,
-            separation_weight: self.separation_weight,
-            alignment_weight: self.alignment_weight,
-            cohesion_weight: self.cohesion_weight,
-            max_speed: self.max_speed,
-            max_force: self.max_force,
-            bounds: self.bounds,
-            particle_count: self.particle_count,
-            cell_size: self.cell_size,
-            grid_dimensions: self.grid_dimensions,
-            _padding: 0,
+            radii: [
+                0.0,
+                self.separation_radius,
+                self.alignment_radius,
+                self.cohesion_radius,
+            ],
+            weights_and_speed: [
+                self.separation_weight,
+                self.alignment_weight,
+                self.cohesion_weight,
+                self.max_speed,
+            ],
+            force_bounds_and_cell: [self.max_force, self.bounds, self.cell_size, 0.0],
+            grid_info: [
+                self.grid_dimensions[0],
+                self.grid_dimensions[1],
+                self.grid_dimensions[2],
+                self.particle_count,
+            ],
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -360,20 +350,25 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
         active_count: u32,
     ) {
         let params = OptimizedBoidsParams {
-            delta_time: dt,
-            separation_radius: self.separation_radius,
-            alignment_radius: self.alignment_radius,
-            cohesion_radius: self.cohesion_radius,
-            separation_weight: self.separation_weight,
-            alignment_weight: self.alignment_weight,
-            cohesion_weight: self.cohesion_weight,
-            max_speed: self.max_speed,
-            max_force: self.max_force,
-            bounds: self.bounds,
-            particle_count: active_count,
-            cell_size: self.cell_size,
-            grid_dimensions: self.grid_dimensions,
-            _padding: 0,
+            radii: [
+                dt,
+                self.separation_radius,
+                self.alignment_radius,
+                self.cohesion_radius,
+            ],
+            weights_and_speed: [
+                self.separation_weight,
+                self.alignment_weight,
+                self.cohesion_weight,
+                self.max_speed,
+            ],
+            force_bounds_and_cell: [self.max_force, self.bounds, self.cell_size, 0.0],
+            grid_info: [
+                self.grid_dimensions[0],
+                self.grid_dimensions[1],
+                self.grid_dimensions[2],
+                active_count,
+            ],
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -437,6 +432,25 @@ mod tests {
     #[test]
     fn grid_build_params_alignment() {
         assert_eq!(std::mem::size_of::<GridBuildParams>(), 48);
+    }
+
+    #[test]
+    fn optimized_boids_params_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(OptimizedBoidsParams, radii), 0);
+        assert_eq!(offset_of!(OptimizedBoidsParams, weights_and_speed), 16);
+        assert_eq!(offset_of!(OptimizedBoidsParams, force_bounds_and_cell), 32);
+        assert_eq!(offset_of!(OptimizedBoidsParams, grid_info), 48);
+    }
+
+    #[test]
+    fn grid_build_params_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(GridBuildParams, bounds_and_cell), 0);
+        assert_eq!(offset_of!(GridBuildParams, grid_info), 16);
+        assert_eq!(offset_of!(GridBuildParams, totals), 32);
     }
 
     #[test]

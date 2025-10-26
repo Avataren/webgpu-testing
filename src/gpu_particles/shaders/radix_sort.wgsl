@@ -9,8 +9,7 @@ struct ParticleGridData {
 }
 
 struct SortParams {
-    count: u32,
-    bit_offset: u32,
+    metadata: vec4<u32>,
 }
 
 const WORKGROUP_SIZE: u32 = 256u;
@@ -47,9 +46,9 @@ fn count_phase(
     workgroupBarrier();
     
     // Count digits in this thread's elements
-    if gid < count_params.count {
+    if gid < count_params.metadata.x {
         let cell_idx = count_input_data[gid].cell_index;
-        let digit = get_digit(cell_idx, count_params.bit_offset);
+        let digit = get_digit(cell_idx, count_params.metadata.y);
         atomicAdd(&local_histogram[digit], 1u);
     }
     workgroupBarrier();
@@ -100,9 +99,9 @@ fn scatter_phase(
     let gid = global_id.x;
     
     // Each thread scatters its element
-    if gid < scatter_params.count {
+    if gid < scatter_params.metadata.x {
         let data = scatter_input_data[gid];
-        let digit = get_digit(data.cell_index, scatter_params.bit_offset);
+        let digit = get_digit(data.cell_index, scatter_params.metadata.y);
         
         // Atomically get output position and increment for next element
         let output_pos = atomicAdd(&scatter_histogram[digit], 1u);

@@ -6,14 +6,8 @@ use crate::gpu_particles::ParticleBehavior;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct StarfieldParams {
-    delta_time: f32,
-    near_plane: f32,
-    far_plane: f32,
-    far_reset_band: f32,
-    field_half_size: f32,
-    min_radius: f32,
-    particle_count: u32,
-    _padding: u32,
+    time_and_planes: [f32; 4],
+    field_and_count: [f32; 4],
 }
 
 pub struct StarfieldBehavior {
@@ -35,14 +29,8 @@ impl ParticleBehavior for StarfieldBehavior {
 
     fn create_params_buffer(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> wgpu::Buffer {
         let params = StarfieldParams {
-            delta_time: 0.0,
-            near_plane: self.near_plane,
-            far_plane: self.far_plane,
-            far_reset_band: self.far_reset_band,
-            field_half_size: self.field_half_size,
-            min_radius: self.min_radius,
-            particle_count: 0,
-            _padding: 0,
+            time_and_planes: [0.0, self.near_plane, self.far_plane, self.far_reset_band],
+            field_and_count: [self.field_half_size, self.min_radius, 0.0, 0.0],
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -60,14 +48,13 @@ impl ParticleBehavior for StarfieldBehavior {
         active_count: u32,
     ) {
         let params = StarfieldParams {
-            delta_time: dt,
-            near_plane: self.near_plane,
-            far_plane: self.far_plane,
-            far_reset_band: self.far_reset_band,
-            field_half_size: self.field_half_size,
-            min_radius: self.min_radius,
-            particle_count: active_count,
-            _padding: 0,
+            time_and_planes: [dt, self.near_plane, self.far_plane, self.far_reset_band],
+            field_and_count: [
+                self.field_half_size,
+                self.min_radius,
+                active_count as f32,
+                0.0,
+            ],
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -81,5 +68,13 @@ mod tests {
     #[test]
     fn starfield_params_alignment() {
         assert_eq!(std::mem::size_of::<StarfieldParams>(), 32);
+    }
+
+    #[test]
+    fn starfield_params_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(StarfieldParams, time_and_planes), 0);
+        assert_eq!(offset_of!(StarfieldParams, field_and_count), 16);
     }
 }

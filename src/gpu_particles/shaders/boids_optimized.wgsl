@@ -7,19 +7,10 @@
 // to approximately O(n).
 
 struct Params {
-    delta_time: f32,
-    separation_radius: f32,
-    alignment_radius: f32,
-    cohesion_radius: f32,
-    separation_weight: f32,
-    alignment_weight: f32,
-    cohesion_weight: f32,
-    max_speed: f32,
-    max_force: f32,
-    bounds: f32,
-    particle_count: u32,
-    cell_size: f32,
-    grid_dimensions: vec3<u32>,
+    radii: vec4<f32>,
+    weights_and_speed: vec4<f32>,
+    force_bounds_and_cell: vec4<f32>,
+    grid_info: vec4<u32>,
 }
 
 struct CellData {
@@ -45,36 +36,36 @@ struct ParticleGridData {
 
 /// Convert 3D position to grid cell coordinates
 fn pos_to_cell(pos: vec3<f32>) -> vec3<u32> {
-    let offset_pos = pos + vec3<f32>(params.bounds);
-    let grid_pos = offset_pos / params.cell_size;
+    let offset_pos = pos + vec3<f32>(params.force_bounds_and_cell.y);
+    let grid_pos = offset_pos / params.force_bounds_and_cell.z;
     return clamp(
         vec3<u32>(grid_pos),
         vec3<u32>(0u),
-        params.grid_dimensions - vec3<u32>(1u)
+        params.grid_info.xyz - vec3<u32>(1u)
     );
 }
 
 /// Convert 3D cell coordinates to 1D grid index
 fn cell_to_index(cell: vec3<u32>) -> u32 {
     return cell.x +
-           cell.y * params.grid_dimensions.x +
-           cell.z * params.grid_dimensions.x * params.grid_dimensions.y;
+           cell.y * params.grid_info.x +
+           cell.z * params.grid_info.x * params.grid_info.y;
 }
 
 /// Clamp cell coordinates to the valid grid range
 fn clamp_cell_coords(cell: vec3<i32>) -> vec3<i32> {
     let max_dims = vec3<i32>(
-        i32(params.grid_dimensions.x) - 1,
-        i32(params.grid_dimensions.y) - 1,
-        i32(params.grid_dimensions.z) - 1,
+        i32(params.grid_info.x) - 1,
+        i32(params.grid_info.y) - 1,
+        i32(params.grid_info.z) - 1,
     );
     return clamp(cell, vec3<i32>(0), max_dims);
 }
 
 /// Convert a world-space position to a clamped cell coordinate
 fn pos_to_cell_clamped_i32(pos: vec3<f32>) -> vec3<i32> {
-    let offset_pos = pos + vec3<f32>(params.bounds);
-    let grid_pos = offset_pos / params.cell_size;
+    let offset_pos = pos + vec3<f32>(params.force_bounds_and_cell.y);
+    let grid_pos = offset_pos / params.force_bounds_and_cell.z;
     let floored = floor(grid_pos);
     return clamp_cell_coords(vec3<i32>(floored));
 }
@@ -97,8 +88,8 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
     var steer = vec3<f32>(0.0);
     var count = 0u;
 
-    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.separation_radius));
-    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.separation_radius));
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.radii.y));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.radii.y));
 
     // Search neighboring cells that overlap the interaction sphere
     for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
@@ -116,7 +107,7 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
 
-                    if distance > 0.0 && distance < params.separation_radius {
+                    if distance > 0.0 && distance < params.radii.y {
                         var diff = position - other_pos;
                         diff = normalize(diff) / distance;  // Weight by distance
                         steer += diff;
@@ -130,7 +121,7 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
     if count > 0u {
         steer /= f32(count);
         if length(steer) > 0.0 {
-            steer = normalize(steer) * params.max_speed;
+            steer = normalize(steer) * params.weights_and_speed.w;
         }
     }
 
@@ -142,8 +133,8 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
     var sum = vec3<f32>(0.0);
     var count = 0u;
 
-    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.alignment_radius));
-    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.alignment_radius));
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.radii.z));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.radii.z));
 
     for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
         for (var cy = min_cell.y; cy <= max_cell.y; cy++) {
@@ -159,7 +150,7 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
 
-                    if distance > 0.0 && distance < params.alignment_radius {
+                    if distance > 0.0 && distance < params.radii.z {
                         sum += particles[particle_idx].velocity;
                         count++;
                     }
@@ -170,8 +161,8 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
 
     if count > 0u {
         sum /= f32(count);
-        sum = normalize(sum) * params.max_speed;
-        return limit_magnitude(sum - velocity, params.max_force);
+        sum = normalize(sum) * params.weights_and_speed.w;
+        return limit_magnitude(sum - velocity, params.force_bounds_and_cell.x);
     }
 
     return vec3<f32>(0.0);
@@ -182,8 +173,8 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     var count = 0u;
 
-    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.cohesion_radius));
-    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.cohesion_radius));
+    let min_cell = pos_to_cell_clamped_i32(position - vec3<f32>(params.radii.w));
+    let max_cell = pos_to_cell_clamped_i32(position + vec3<f32>(params.radii.w));
 
     for (var cx = min_cell.x; cx <= max_cell.x; cx++) {
         for (var cy = min_cell.y; cy <= max_cell.y; cy++) {
@@ -199,7 +190,7 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
                     let other_pos = particles[particle_idx].position;
                     let distance = length(position - other_pos);
 
-                    if distance > 0.0 && distance < params.cohesion_radius {
+                    if distance > 0.0 && distance < params.radii.w {
                         sum += other_pos;
                         count++;
                     }
@@ -211,8 +202,8 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     if count > 0u {
         sum /= f32(count);
         let desired = sum - position;
-        let desired_normalized = normalize(desired) * params.max_speed;
-        return limit_magnitude(desired_normalized - velocity, params.max_force);
+        let desired_normalized = normalize(desired) * params.weights_and_speed.w;
+        return limit_magnitude(desired_normalized - velocity, params.force_bounds_and_cell.x);
     }
 
     return vec3<f32>(0.0);
@@ -225,7 +216,7 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if index >= params.particle_count { return; }
+    if index >= params.grid_info.w { return; }
     
     var p = particles[index];
     
@@ -236,13 +227,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ali = alignment(index, p.position, p.velocity);
     let coh = cohesion(index, p.position, p.velocity);
     
-    acceleration += sep * params.separation_weight;
-    acceleration += ali * params.alignment_weight;
-    acceleration += coh * params.cohesion_weight;
+    acceleration += sep * params.weights_and_speed.x;
+    acceleration += ali * params.weights_and_speed.y;
+    acceleration += coh * params.weights_and_speed.z;
     
     // Boundary forces - soft repulsion from edges
-    let margin = params.bounds * 0.7;
-    let edge_distance = params.bounds - margin;
+    let margin = params.force_bounds_and_cell.y * 0.7;
+    let edge_distance = params.force_bounds_and_cell.y - margin;
     
     // X boundaries
     if p.position.x < -margin {
@@ -275,7 +266,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Emergency boundary clamping - strong repulsion near absolute bounds
-    let emergency_margin = params.bounds * 0.95;
+    let emergency_margin = params.force_bounds_and_cell.y * 0.95;
     if abs(p.position.x) > emergency_margin {
         acceleration.x -= sign(p.position.x) * 15.0;
     }
@@ -287,12 +278,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Update velocity and position
-    p.velocity += acceleration * params.delta_time;
-    p.velocity = limit_magnitude(p.velocity, params.max_speed);
-    p.position += p.velocity * params.delta_time;
+    p.velocity += acceleration * params.radii.x;
+    p.velocity = limit_magnitude(p.velocity, params.weights_and_speed.w);
+    p.position += p.velocity * params.radii.x;
 
     // Hard clamp to bounds (safety net)
-    p.position = clamp(p.position, vec3<f32>(-params.bounds), vec3<f32>(params.bounds));
+    p.position = clamp(p.position, vec3<f32>(-params.force_bounds_and_cell.y), vec3<f32>(params.force_bounds_and_cell.y));
 
     // Align boid orientation with velocity direction for instanced rendering
     let speed_sq = dot(p.velocity, p.velocity);

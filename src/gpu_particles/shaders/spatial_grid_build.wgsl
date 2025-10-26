@@ -11,14 +11,9 @@
 // Cell size is chosen as ~1.5x the largest interaction radius.
 
 struct GridParams {
-    bounds: f32,
-    cell_size: f32,
-    _padding1: vec2<u32>,        // ✅ Add padding
-    grid_dimensions: vec3<u32>,
-    _padding_vec3: u32,          // ✅ Pad vec3 to 16 bytes  
-    particle_count: u32,
-    total_cells: u32,
-    _padding2: vec2<u32>,        // ✅ Add padding
+    bounds_and_cell: vec4<f32>,
+    grid_info: vec4<u32>,
+    totals: vec4<u32>,
 }
 
 struct ParticleGridData {
@@ -34,16 +29,16 @@ struct ParticleGridData {
 /// Convert 3D position to grid cell coordinates
 fn pos_to_cell(pos: vec3<f32>) -> vec3<u32> {
     // Shift position from [-bounds, +bounds] to [0, 2*bounds]
-    let offset_pos = pos + vec3<f32>(params.bounds);
+    let offset_pos = pos + vec3<f32>(params.bounds_and_cell.x);
     
     // Divide by cell size to get grid coordinates
-    let grid_pos = offset_pos / params.cell_size;
+    let grid_pos = offset_pos / params.bounds_and_cell.y;
     
     // Clamp to valid grid range [0, grid_dimensions-1]
     return clamp(
         vec3<u32>(grid_pos),
         vec3<u32>(0u),
-        params.grid_dimensions - vec3<u32>(1u)
+        params.grid_info.xyz - vec3<u32>(1u)
     );
 }
 
@@ -51,14 +46,14 @@ fn pos_to_cell(pos: vec3<f32>) -> vec3<u32> {
 /// Uses row-major ordering: index = x + y*width + z*width*height
 fn cell_to_index(cell: vec3<u32>) -> u32 {
     return cell.x + 
-           cell.y * params.grid_dimensions.x + 
-           cell.z * params.grid_dimensions.x * params.grid_dimensions.y;
+           cell.y * params.grid_info.x + 
+           cell.z * params.grid_info.x * params.grid_info.y;
 }
 
 @compute @workgroup_size(256)
 fn compute_cell_indices(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
-    if idx >= params.particle_count { return; }
+    if idx >= params.grid_info.w { return; }
     
     // Get particle position
     let pos = particles[idx].position;

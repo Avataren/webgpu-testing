@@ -8,16 +8,9 @@ use crate::gpu_particles::ParticleBehavior;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PhysicsParams {
-    delta_time: f32,
-    drag: f32,
-    turbulence_strength: f32,
-    turbulence_frequency: f32,
-    gravity: [f32; 3],
-    _padding_vec3: f32, // ✅ vec3 needs padding to 16 bytes
-    particle_count: u32,
-    ground_level: f32,
-    bounce_factor: f32,
-    velocity_damping: f32,
+    time_and_turbulence: [f32; 4],
+    gravity_and_count: [f32; 4],
+    collision: [f32; 4],
 }
 
 pub struct PhysicsBehavior {
@@ -80,16 +73,19 @@ impl ParticleBehavior for PhysicsBehavior {
 
     fn create_params_buffer(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> wgpu::Buffer {
         let params = PhysicsParams {
-            delta_time: 0.0,
-            drag: self.drag,
-            turbulence_strength: self.turbulence_strength,
-            turbulence_frequency: self.turbulence_frequency,
-            gravity: self.gravity.into(),
-            _padding_vec3: 0.0, // ✅ Initialize padding
-            particle_count: 0,
-            ground_level: self.ground_level,
-            bounce_factor: self.bounce_factor,
-            velocity_damping: self.velocity_damping,
+            time_and_turbulence: [
+                0.0,
+                self.drag,
+                self.turbulence_strength,
+                self.turbulence_frequency,
+            ],
+            gravity_and_count: [self.gravity.x, self.gravity.y, self.gravity.z, 0.0],
+            collision: [
+                self.ground_level,
+                self.bounce_factor,
+                self.velocity_damping,
+                0.0,
+            ],
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -107,16 +103,24 @@ impl ParticleBehavior for PhysicsBehavior {
         active_count: u32,
     ) {
         let params = PhysicsParams {
-            delta_time: dt,
-            drag: self.drag,
-            turbulence_strength: self.turbulence_strength,
-            turbulence_frequency: self.turbulence_frequency,
-            gravity: self.gravity.into(),
-            _padding_vec3: 0.0, // ✅ Initialize padding
-            particle_count: active_count,
-            ground_level: self.ground_level,
-            bounce_factor: self.bounce_factor,
-            velocity_damping: self.velocity_damping,
+            time_and_turbulence: [
+                dt,
+                self.drag,
+                self.turbulence_strength,
+                self.turbulence_frequency,
+            ],
+            gravity_and_count: [
+                self.gravity.x,
+                self.gravity.y,
+                self.gravity.z,
+                active_count as f32,
+            ],
+            collision: [
+                self.ground_level,
+                self.bounce_factor,
+                self.velocity_damping,
+                0.0,
+            ],
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -146,11 +150,8 @@ mod tests {
     fn physics_params_layout() {
         use std::mem::offset_of;
 
-        // Verify proper vec3 alignment
-        assert_eq!(offset_of!(PhysicsParams, gravity), 16);
-        assert_eq!(offset_of!(PhysicsParams, particle_count), 32); // After 16-byte aligned vec3
-        assert_eq!(offset_of!(PhysicsParams, ground_level), 36);
-        assert_eq!(offset_of!(PhysicsParams, bounce_factor), 40);
-        assert_eq!(offset_of!(PhysicsParams, velocity_damping), 44);
+        assert_eq!(offset_of!(PhysicsParams, time_and_turbulence), 0);
+        assert_eq!(offset_of!(PhysicsParams, gravity_and_count), 16);
+        assert_eq!(offset_of!(PhysicsParams, collision), 32);
     }
 }

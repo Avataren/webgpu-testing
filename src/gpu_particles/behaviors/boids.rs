@@ -6,18 +6,9 @@ use crate::gpu_particles::ParticleBehavior;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct BoidsParams {
-    delta_time: f32,
-    separation_radius: f32,
-    alignment_radius: f32,
-    cohesion_radius: f32,
-    separation_weight: f32,
-    alignment_weight: f32,
-    cohesion_weight: f32,
-    max_speed: f32,
-    max_force: f32,
-    bounds: f32,
-    particle_count: u32,
-    _padding: u32,
+    radii: [f32; 4],
+    weights_and_speed: [f32; 4],
+    force_bounds_and_count: [f32; 4],
 }
 
 pub struct BoidsBehavior {
@@ -67,18 +58,19 @@ impl ParticleBehavior for BoidsBehavior {
 
     fn create_params_buffer(&self, device: &wgpu::Device, _queue: &wgpu::Queue) -> wgpu::Buffer {
         let params = BoidsParams {
-            delta_time: 0.0,
-            separation_radius: self.separation_radius,
-            alignment_radius: self.alignment_radius,
-            cohesion_radius: self.cohesion_radius,
-            separation_weight: self.separation_weight,
-            alignment_weight: self.alignment_weight,
-            cohesion_weight: self.cohesion_weight,
-            max_speed: self.max_speed,
-            max_force: self.max_force,
-            bounds: self.bounds,
-            particle_count: self.particle_count,
-            _padding: 0,
+            radii: [
+                0.0,
+                self.separation_radius,
+                self.alignment_radius,
+                self.cohesion_radius,
+            ],
+            weights_and_speed: [
+                self.separation_weight,
+                self.alignment_weight,
+                self.cohesion_weight,
+                self.max_speed,
+            ],
+            force_bounds_and_count: [self.max_force, self.bounds, self.particle_count as f32, 0.0],
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -96,18 +88,19 @@ impl ParticleBehavior for BoidsBehavior {
         active_count: u32,
     ) {
         let params = BoidsParams {
-            delta_time: dt,
-            separation_radius: self.separation_radius,
-            alignment_radius: self.alignment_radius,
-            cohesion_radius: self.cohesion_radius,
-            separation_weight: self.separation_weight,
-            alignment_weight: self.alignment_weight,
-            cohesion_weight: self.cohesion_weight,
-            max_speed: self.max_speed,
-            max_force: self.max_force,
-            bounds: self.bounds,
-            particle_count: active_count,
-            _padding: 0,
+            radii: [
+                dt,
+                self.separation_radius,
+                self.alignment_radius,
+                self.cohesion_radius,
+            ],
+            weights_and_speed: [
+                self.separation_weight,
+                self.alignment_weight,
+                self.cohesion_weight,
+                self.max_speed,
+            ],
+            force_bounds_and_count: [self.max_force, self.bounds, active_count as f32, 0.0],
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -143,5 +136,14 @@ mod tests {
     #[test]
     fn boids_params_alignment() {
         assert_eq!(std::mem::size_of::<BoidsParams>(), 48);
+    }
+
+    #[test]
+    fn boids_params_layout() {
+        use std::mem::offset_of;
+
+        assert_eq!(offset_of!(BoidsParams, radii), 0);
+        assert_eq!(offset_of!(BoidsParams, weights_and_speed), 16);
+        assert_eq!(offset_of!(BoidsParams, force_bounds_and_count), 32);
     }
 }

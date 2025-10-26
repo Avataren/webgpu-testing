@@ -8,9 +8,7 @@ use crate::renderer::ComputePipelineBuilder;
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct RadixSortParams {
-    count: u32,
-    bit_offset: u32,
-    _padding: [u32; 2],
+    metadata: [u32; 4],
 }
 
 pub(super) struct RadixSort {
@@ -49,9 +47,7 @@ impl RadixSort {
         );
 
         let params = RadixSortParams {
-            count: 0,
-            bit_offset: 0,
-            _padding: [0, 0],
+            metadata: [0, 0, 0, 0],
         };
         let params_buffer = UniformBuffer::new(device, "RadixSortParams", &params);
 
@@ -195,9 +191,7 @@ impl RadixSort {
             };
 
             let params = RadixSortParams {
-                count,
-                bit_offset,
-                _padding: [0, 0],
+                metadata: [count, bit_offset, 0, 0],
             };
             self.params_buffer.write(queue, &params);
 

@@ -1,17 +1,9 @@
 // src/gpu_particles/shaders/boids.wgsl
 
 struct Params {
-    delta_time: f32,
-    separation_radius: f32,
-    alignment_radius: f32,
-    cohesion_radius: f32,
-    separation_weight: f32,
-    alignment_weight: f32,
-    cohesion_weight: f32,
-    max_speed: f32,
-    max_force: f32,
-    bounds: f32,
-    particle_count: u32,
+    radii: vec4<f32>,
+    weights_and_speed: vec4<f32>,
+    force_bounds_and_count: vec4<f32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -30,13 +22,13 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
     var steer = vec3<f32>(0.0);
     var count = 0u;
     
-    for (var i = 0u; i < params.particle_count; i++) {
+    for (var i = 0u; i < u32(params.force_bounds_and_count.z); i++) {
         if i == index { continue; }
         
         let other_pos = particles[i].position;
         let distance = length(position - other_pos);
         
-        if distance > 0.0 && distance < params.separation_radius {
+        if distance > 0.0 && distance < params.radii.y {
             var diff = position - other_pos;
             diff = normalize(diff) / distance;
             steer += diff;
@@ -47,7 +39,7 @@ fn separation(index: u32, position: vec3<f32>) -> vec3<f32> {
     if count > 0u {
         steer /= f32(count);
         if length(steer) > 0.0 {
-            steer = normalize(steer) * params.max_speed;
+            steer = normalize(steer) * params.weights_and_speed.w;
         }
     }
     
@@ -58,13 +50,13 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
     var sum = vec3<f32>(0.0);
     var count = 0u;
     
-    for (var i = 0u; i < params.particle_count; i++) {
+    for (var i = 0u; i < u32(params.force_bounds_and_count.z); i++) {
         if i == index { continue; }
         
         let other_pos = particles[i].position;
         let distance = length(position - other_pos);
         
-        if distance > 0.0 && distance < params.alignment_radius {
+        if distance > 0.0 && distance < params.radii.z {
             sum += particles[i].velocity;
             count++;
         }
@@ -72,8 +64,8 @@ fn alignment(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> 
     
     if count > 0u {
         sum /= f32(count);
-        sum = normalize(sum) * params.max_speed;
-        return limit_magnitude(sum - velocity, params.max_force);
+        sum = normalize(sum) * params.weights_and_speed.w;
+        return limit_magnitude(sum - velocity, params.force_bounds_and_count.x);
     }
     
     return vec3<f32>(0.0);
@@ -83,13 +75,13 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     var sum = vec3<f32>(0.0);
     var count = 0u;
     
-    for (var i = 0u; i < params.particle_count; i++) {
+    for (var i = 0u; i < u32(params.force_bounds_and_count.z); i++) {
         if i == index { continue; }
         
         let other_pos = particles[i].position;
         let distance = length(position - other_pos);
         
-        if distance > 0.0 && distance < params.cohesion_radius {
+        if distance > 0.0 && distance < params.radii.w {
             sum += other_pos;
             count++;
         }
@@ -98,8 +90,8 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
     if count > 0u {
         sum /= f32(count);
         let desired = sum - position;
-        let desired_normalized = normalize(desired) * params.max_speed;
-        return limit_magnitude(desired_normalized - velocity, params.max_force);
+        let desired_normalized = normalize(desired) * params.weights_and_speed.w;
+        return limit_magnitude(desired_normalized - velocity, params.force_bounds_and_count.x);
     }
     
     return vec3<f32>(0.0);
@@ -108,7 +100,7 @@ fn cohesion(index: u32, position: vec3<f32>, velocity: vec3<f32>) -> vec3<f32> {
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let index = global_id.x;
-    if index >= params.particle_count { return; }
+    if index >= u32(params.force_bounds_and_count.z) { return; }
     
     var p = particles[index];
     
@@ -119,13 +111,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let ali = alignment(index, p.position, p.velocity);
     let coh = cohesion(index, p.position, p.velocity);
     
-    acceleration += sep * params.separation_weight;
-    acceleration += ali * params.alignment_weight;
-    acceleration += coh * params.cohesion_weight;
+    acceleration += sep * params.weights_and_speed.x;
+    acceleration += ali * params.weights_and_speed.y;
+    acceleration += coh * params.weights_and_speed.z;
     
     // Boundary forces
-    let margin = params.bounds * 0.7;
-    let edge_distance = params.bounds - margin;
+    let margin = params.force_bounds_and_count.y * 0.7;
+    let edge_distance = params.force_bounds_and_count.y - margin;
     
     if p.position.x < -margin {
         let dist = (-margin - p.position.x) / edge_distance;
@@ -155,7 +147,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Emergency boundary clamping
-    let emergency_margin = params.bounds * 0.95;
+    let emergency_margin = params.force_bounds_and_count.y * 0.95;
     if abs(p.position.x) > emergency_margin {
         acceleration.x -= sign(p.position.x) * 15.0;
     }
@@ -167,12 +159,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     
     // Update velocity and position
-    p.velocity += acceleration * params.delta_time;
-    p.velocity = limit_magnitude(p.velocity, params.max_speed);
-    p.position += p.velocity * params.delta_time;
+    p.velocity += acceleration * params.radii.x;
+    p.velocity = limit_magnitude(p.velocity, params.weights_and_speed.w);
+    p.position += p.velocity * params.radii.x;
 
     // Hard clamp to bounds
-    p.position = clamp(p.position, vec3<f32>(-params.bounds), vec3<f32>(params.bounds));
+    p.position = clamp(p.position, vec3<f32>(-params.force_bounds_and_count.y), vec3<f32>(params.force_bounds_and_count.y));
 
     // Align orientation with velocity direction for instanced rendering
     let speed_sq = dot(p.velocity, p.velocity);

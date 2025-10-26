@@ -6,13 +6,9 @@ struct CellData {
 }
 
 struct GridParams {
-    bounds: f32,
-    cell_size: f32,
-    _padding1: vec2<u32>,
-    grid_dimensions: vec3<u32>,  // vec3 in uniform = 16 bytes
-    particle_count: u32,
-    total_cells: u32,
-    _padding2: vec2<u32>,         // Pad to 64 bytes
+    bounds_and_cell: vec4<f32>,
+    grid_info: vec4<u32>,
+    totals: vec4<u32>,
 }
 
 @group(0) @binding(0) var<storage, read> cell_counts: array<u32>;
@@ -27,7 +23,7 @@ fn compute_start_indices(@builtin(global_invocation_id) global_id: vec3<u32>,
     let gid = global_id.x;
     let lid = local_id.x;
     
-    if gid < params.total_cells {
+    if gid < params.totals.x {
         temp[lid] = cell_counts[gid];
     } else {
         temp[lid] = 0u;
@@ -62,7 +58,7 @@ fn compute_start_indices(@builtin(global_invocation_id) global_id: vec3<u32>,
         workgroupBarrier();
     }
     
-    if gid < params.total_cells {
+    if gid < params.totals.x {
         spatial_grid[gid].start_index = temp[lid];
         spatial_grid[gid].count = cell_counts[gid];
     }

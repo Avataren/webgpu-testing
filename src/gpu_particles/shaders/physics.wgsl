@@ -1,16 +1,9 @@
 // src/gpu_particles/shaders/physics.wgsl
 
 struct Params {
-    delta_time: f32,
-    drag: f32,
-    turbulence_strength: f32,
-    turbulence_frequency: f32,
-    gravity: vec3<f32>,
-    _padding_vec3: f32,
-    particle_count: u32,
-    ground_level: f32,
-    bounce_factor: f32,
-    velocity_damping: f32,
+    time_and_turbulence: vec4<f32>,
+    gravity_and_count: vec4<f32>,
+    collision: vec4<f32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -36,12 +29,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     var p = particles[index];
+    let delta_time = params.time_and_turbulence.x;
+    let drag = params.time_and_turbulence.y;
+    let turbulence_strength = params.time_and_turbulence.z;
+    let turbulence_frequency = params.time_and_turbulence.w;
+    let gravity = params.gravity_and_count.xyz;
+    let ground_level = params.collision.x;
+    let bounce_factor = params.collision.y;
+    let velocity_damping = params.collision.z;
     
     if p.lifetime < 0.0 {
         return;
     }
     
-    p.lifetime += params.delta_time;
+    p.lifetime += delta_time;
     
     if p.lifetime >= p.max_lifetime {
         p.lifetime = -1.0;
@@ -58,24 +59,24 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let life_ratio = clamp(p.lifetime / p.max_lifetime, 0.0, 1.0);
     
     // Physics updates (gravity, drag, turbulence, collision, rotation)
-    var acceleration = params.gravity;
+    var acceleration = gravity;
     
-    if params.turbulence_strength > 0.0 {
-        let turbulence_pos = p.position * params.turbulence_frequency + vec3<f32>(p.lifetime * 0.5);
-        let turbulence = noise3d(turbulence_pos) * params.turbulence_strength;
+    if turbulence_strength > 0.0 {
+        let turbulence_pos = p.position * turbulence_frequency + vec3<f32>(p.lifetime * 0.5);
+        let turbulence = noise3d(turbulence_pos) * turbulence_strength;
         acceleration += turbulence * 0.5;
     }
     
-    acceleration -= p.velocity * params.drag;
-    p.velocity += acceleration * params.delta_time;
-    p.position += p.velocity * params.delta_time;
+    acceleration -= p.velocity * drag;
+    p.velocity += acceleration * delta_time;
+    p.position += p.velocity * delta_time;
     
-    if p.position.y < params.ground_level {
-        p.position.y = params.ground_level;
+    if p.position.y < ground_level {
+        p.position.y = ground_level;
         if p.velocity.y < -0.1 {
-            p.velocity.y = -p.velocity.y * params.bounce_factor;
-            p.velocity.x *= params.velocity_damping;
-            p.velocity.z *= params.velocity_damping;
+            p.velocity.y = -p.velocity.y * bounce_factor;
+            p.velocity.x *= velocity_damping;
+            p.velocity.z *= velocity_damping;
         } else {
             p.velocity.y = 0.0;
             p.velocity.x *= 0.95;
@@ -83,7 +84,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    p.rotation.w += p.angular_velocity * params.delta_time;
+    p.rotation.w += p.angular_velocity * delta_time;
     
     // ✅ SIMPLE: Size interpolation with uniform scale
     let spawn_scale = p.user_data.x;
