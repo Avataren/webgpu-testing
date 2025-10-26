@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use glam::Mat4;
 
 use crate::gpu_particles::shader_modules::GPU_PARTICLE_COMMON;
 use crate::renderer::compute_resources::{
@@ -348,6 +349,7 @@ impl ParticleBehavior for OptimizedBoidsBehavior {
         buffer: &wgpu::Buffer,
         dt: f32,
         active_count: u32,
+        _emitter_transform: Mat4,
     ) {
         let params = OptimizedBoidsParams {
             radii: [

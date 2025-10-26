@@ -1,5 +1,6 @@
 use crate::gpu_particles::shader_modules::GPU_PARTICLE_COMMON;
 use crate::renderer::ShaderBuilder;
+use glam::Mat4;
 
 pub trait ParticleBehavior: PlatformBehaviorBounds {
     fn shader_source(&self) -> &'static str;
@@ -18,7 +19,14 @@ pub trait ParticleBehavior: PlatformBehaviorBounds {
 
     fn create_params_buffer(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer;
 
-    fn update_params(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer, dt: f32, active_count: u32);
+    fn update_params(
+        &self,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        dt: f32,
+        active_count: u32,
+        emitter_transform: Mat4,
+    );
 
     fn additional_bindings(
         &self,
