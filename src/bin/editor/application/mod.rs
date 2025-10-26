@@ -26,14 +26,17 @@ use hecs::Entity;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
+use wgpu_cube::asset::{Handle, Mesh};
+use wgpu_cube::gpu_particles::ParticleEmitter;
 use wgpu_cube::renderer::primitives::{
     cone_mesh, cube_mesh, cylinder_mesh, quad_mesh, sphere_mesh, torus_mesh,
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
 use wgpu_cube::scene::{
-    CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
-    MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
-    Scene, SpotLight, Transform, TransformComponent,
+    Billboard, BillboardOrientation, CameraComponent, CanCastShadow, DepthState, DirectionalLight,
+    EntityBuilder, EnvironmentComponent, MaterialComponent, MeshBounds, ParticleBehaviorPreset,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
+    TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
@@ -624,13 +627,87 @@ impl EditorApplication {
         preset: ParticleBehaviorPreset,
     ) -> Option<Entity> {
         let name = format!("{} Particle System", preset.display_name());
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let spawn_rate = Self::default_particle_spawn_rate(preset);
+        let (mesh_handle, bounds) = self.ensure_particle_mesh(ctx);
+        let material = Self::default_particle_material(preset);
+        let system_component = ParticleSystemComponent::new(spawn_rate, preset);
+        let emitter_component = Self::default_particle_emitter(spawn_rate);
+
+        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
             .with_name(name)
             .with_transform(Transform::default())
-            .with_component(ParticleSystemComponent::new(120.0, preset))
-            .spawn();
+            .with_mesh(mesh_handle)
+            .with_material(material)
+            .with_particle_system(system_component)
+            .with_particle_emitter(emitter_component)
+            .visible(true);
 
-        Some(entity)
+        if let Some(bounds) = bounds {
+            builder = builder.with_component(bounds);
+        }
+
+        if let Some(billboard) = Self::default_particle_billboard(preset) {
+            builder = builder.with_component(billboard);
+        }
+
+        if let Some(depth_state) = Self::default_particle_depth_state(preset) {
+            builder = builder.with_component(depth_state);
+        }
+
+        Some(builder.spawn())
+    }
+
+    fn ensure_particle_mesh(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+    ) -> (Handle<Mesh>, Option<MeshBounds>) {
+        if let Some(handle) = self.particle_mesh {
+            return (handle, self.particle_mesh_bounds);
+        }
+
+        let (vertices, indices) = quad_mesh();
+        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
+        let handle = ctx.scene.assets.meshes.insert(mesh);
+        let bounds = MeshBounds::from_vertices(&vertices);
+
+        self.particle_mesh = Some(handle);
+        self.particle_mesh_bounds = bounds;
+
+        (handle, bounds)
+    }
+
+    fn default_particle_material(preset: ParticleBehaviorPreset) -> Material {
+        match preset {
+            ParticleBehaviorPreset::Starfield => Material::new([255, 255, 255, 255])
+                .with_unlit()
+                .with_billboarding(),
+            _ => Material::pbr(),
+        }
+    }
+
+    fn default_particle_emitter(spawn_rate: f32) -> ParticleEmitterComponent {
+        let emitter = ParticleEmitter::new(Vec3::ZERO, spawn_rate);
+        ParticleEmitterComponent::from(&emitter)
+    }
+
+    fn default_particle_billboard(preset: ParticleBehaviorPreset) -> Option<Billboard> {
+        match preset {
+            ParticleBehaviorPreset::Starfield => {
+                Some(Billboard::new(BillboardOrientation::FaceCamera))
+            }
+            _ => None,
+        }
+    }
+
+    fn default_particle_depth_state(preset: ParticleBehaviorPreset) -> Option<DepthState> {
+        match preset {
+            ParticleBehaviorPreset::Starfield => Some(DepthState::new(true, false)),
+            _ => None,
+        }
+    }
+
+    const fn default_particle_spawn_rate(_preset: ParticleBehaviorPreset) -> f32 {
+        120.0
     }
 
     fn create_point_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {

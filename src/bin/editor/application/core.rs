@@ -5,8 +5,9 @@ use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
+use wgpu_cube::asset::{Handle, Mesh};
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::scene::Scene;
+use wgpu_cube::scene::{MeshBounds, Scene};
 use wgpu_cube::SceneHierarchyHandle;
 
 use super::asset_browser_system::AssetBrowserSystem;
@@ -55,6 +56,8 @@ pub struct EditorApplication {
     pub(super) commands: VecDeque<EditorCommand>,
     #[allow(dead_code)]
     pub(super) events: Vec<EditorEvent>,
+    pub(super) particle_mesh: Option<Handle<Mesh>>,
+    pub(super) particle_mesh_bounds: Option<MeshBounds>,
 }
 
 #[derive(Default)]
@@ -199,6 +202,8 @@ impl EditorApplicationBuilder {
             scene_hierarchy_handle: None,
             commands: VecDeque::new(),
             events: Vec::new(),
+            particle_mesh: None,
+            particle_mesh_bounds: None,
         }
     }
 }
