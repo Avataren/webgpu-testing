@@ -166,12 +166,12 @@ impl EditorSystem for ScriptEditorSystem {
     }
 
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
-        let Some(ui_ctx) = ctx.ui_context() else {
-            return;
+        let egui_ctx = {
+            let Some(ui_ctx) = ctx.ui_context() else {
+                return;
+            };
+            ui_ctx.egui()
         };
-
-        let egui_ctx = ui_ctx.egui();
-        drop(ui_ctx);
 
         if !self.window_enabled {
             return;

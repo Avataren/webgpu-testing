@@ -47,7 +47,6 @@ pub struct EditorApplication {
     pub(super) project_system_index: usize,
     pub(super) script_editor_system_index: usize,
     pub(super) asset_browser_system_index: usize,
-    pub(super) scene_creation_system_index: usize,
     pub(super) particle_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
@@ -177,12 +176,7 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
-        let scene_creation_system_index = {
-            let system = SceneCreationSystem::default();
-            let index = systems.len();
-            systems.push(Box::new(system));
-            index
-        };
+        systems.push(Box::new(SceneCreationSystem));
         let particle_system_index = {
             let system = EditorParticleSystem::default();
             let index = systems.len();
@@ -201,7 +195,6 @@ impl EditorApplicationBuilder {
             project_system_index,
             script_editor_system_index,
             asset_browser_system_index,
-            scene_creation_system_index,
             particle_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
@@ -317,19 +310,8 @@ impl EditorApplication {
             .expect("asset browser system registered")
     }
 
-    pub(super) fn asset_browser_state(&self) -> &AssetBrowserState {
-        self.asset_browser_system().state()
-    }
-
     pub(super) fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
         self.asset_browser_system_mut().state_mut()
-    }
-
-    pub(super) fn scene_creation_system_mut(&mut self) -> &mut SceneCreationSystem {
-        self.systems[self.scene_creation_system_index]
-            .as_any_mut()
-            .downcast_mut::<SceneCreationSystem>()
-            .expect("scene creation system registered")
     }
 
     pub(super) fn particle_system(&self) -> &EditorParticleSystem {

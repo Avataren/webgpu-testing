@@ -1510,11 +1510,6 @@ impl SceneTreeAssetNode {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SceneTreeAssetHandle {
-    pub root: SceneTreeAssetNode,
-}
-
 pub struct SceneTreeAssetNodeBuilder {
     name: String,
     transform: SerializedTransform,
