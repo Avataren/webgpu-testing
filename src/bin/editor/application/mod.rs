@@ -593,6 +593,62 @@ impl EditorApplication {
                         self.record_scene_change(ctx.scene);
                     }
                 }
+                InspectorAction::SetBillboard { entity, billboard } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match billboard {
+                            Some(component) => {
+                                let mut needs_insert = false;
+                                match world.get::<&mut Billboard>(entity) {
+                                    Ok(mut existing) => {
+                                        *existing = component;
+                                        updated = true;
+                                    }
+                                    Err(err) => {
+                                        log::debug!(
+                                            "Billboard missing for {:?} while enabling: {}",
+                                            entity,
+                                            err
+                                        );
+                                        needs_insert = true;
+                                    }
+                                }
+
+                                if needs_insert {
+                                    match world.insert(entity, (component,)) {
+                                        Ok(_) => {
+                                            updated = true;
+                                        }
+                                        Err(insert_err) => {
+                                            log::warn!(
+                                                "Failed to add Billboard to {:?}: {}",
+                                                entity,
+                                                insert_err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            None => match world.remove_one::<Billboard>(entity) {
+                                Ok(_) => {
+                                    updated = true;
+                                }
+                                Err(err) => {
+                                    log::debug!(
+                                        "Billboard missing for {:?} while disabling: {}",
+                                        entity,
+                                        err
+                                    );
+                                }
+                            },
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
                 InspectorAction::SetCanCastShadow {
                     entity,
                     casts_shadow,

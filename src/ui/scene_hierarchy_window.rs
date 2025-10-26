@@ -1,4 +1,6 @@
 #[cfg(feature = "egui")]
+use crate::scene::components::Billboard;
+#[cfg(feature = "egui")]
 use crate::scene::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EnvironmentComponent,
     MaterialComponent, MeshComponent, Name, Parent, ParticleBehaviorPreset,
@@ -98,6 +100,7 @@ pub struct SceneEntityComponentsSummary {
     pub particle_system: Option<ParticleSystemComponent>,
     pub particle_emitter: Option<ParticleEmitterComponent>,
     pub environment: Option<EnvironmentComponent>,
+    pub billboard: Option<Billboard>,
 }
 
 #[cfg(feature = "egui")]
@@ -159,6 +162,7 @@ impl SceneHierarchySnapshot {
             let environment = entity_ref
                 .get::<&EnvironmentComponent>()
                 .map(|component| (*component).clone());
+            let billboard = entity_ref.get::<&Billboard>().map(|component| *component);
 
             nodes.insert(
                 entity,
@@ -185,6 +189,7 @@ impl SceneHierarchySnapshot {
                     particle_system,
                     particle_emitter,
                     environment,
+                    billboard,
                 },
             );
         }

@@ -10,6 +10,7 @@ use std::ops::RangeInclusive;
 use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
+use wgpu_cube::scene::components::{Billboard, BillboardOrientation};
 use wgpu_cube::scene::{
     BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
     EnvironmentComponent, MaterialComponent, MeshComponent, OptimizedBoidsBehaviorConfig,
@@ -75,6 +76,10 @@ pub enum InspectorAction {
         behavior: ParticleBehaviorPreset,
         config: ParticleBehaviorConfig,
     },
+    SetBillboard {
+        entity: Entity,
+        billboard: Option<Billboard>,
+    },
 }
 
 pub fn show_entity_inspector(
@@ -124,7 +129,14 @@ pub fn show_entity_inspector(
     if let Some(component) = data.components.particle_system.clone() {
         begin_section(ui, &mut first_section);
         let emitter = data.components.particle_emitter.clone();
-        show_particle_system_section(ui, data.entity, component, emitter, &mut actions);
+        show_particle_system_section(
+            ui,
+            data.entity,
+            component,
+            emitter,
+            data.components.billboard,
+            &mut actions,
+        );
     }
 
     if let Some(script) = data.components.script.clone() {
@@ -448,6 +460,7 @@ fn show_particle_system_section(
     entity: Entity,
     component: ParticleSystemComponent,
     emitter: Option<ParticleEmitterComponent>,
+    billboard: Option<Billboard>,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Particle System", |ui| {
@@ -456,12 +469,44 @@ fn show_particle_system_section(
         let mut emitter_changed = false;
         let mut spawn_changed = false;
         let mut behavior_action: Option<(ParticleBehaviorPreset, ParticleBehaviorConfig)> = None;
+        let mut billboard_component = billboard;
+        let mut billboard_changed = false;
 
         ui.collapsing("System", |ui| {
             Grid::new("particle_system_component_grid")
                 .num_columns(2)
                 .striped(true)
                 .show(ui, |ui| {
+                    ui.label("Billboard");
+                    ui.horizontal(|ui| {
+                        let mut enabled = billboard_component.is_some();
+                        if ui.checkbox(&mut enabled, "Enabled").changed() {
+                            billboard_changed = true;
+                            if enabled {
+                                let current = billboard_component.unwrap_or_else(|| {
+                                    Billboard::new(BillboardOrientation::FaceCamera)
+                                });
+                                billboard_component = Some(current);
+                            } else {
+                                billboard_component = None;
+                            }
+                        }
+
+                        match billboard_component {
+                            Some(component) => {
+                                ui.label(format!(
+                                    "Orientation: {:?}{}",
+                                    component.orientation,
+                                    if component.lit { ", Lit" } else { "" }
+                                ));
+                            }
+                            None => {
+                                ui.label("Disabled");
+                            }
+                        }
+                    });
+                    ui.end_row();
+
                     let mut spawn_rate = emitter_component
                         .as_ref()
                         .map(|component| component.spawn_rate)
@@ -728,6 +773,13 @@ fn show_particle_system_section(
                 entity,
                 behavior,
                 config,
+            });
+        }
+
+        if billboard_changed {
+            actions.push(InspectorAction::SetBillboard {
+                entity,
+                billboard: billboard_component,
             });
         }
     });
