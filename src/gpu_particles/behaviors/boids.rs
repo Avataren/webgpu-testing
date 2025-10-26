@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
@@ -86,6 +87,7 @@ impl ParticleBehavior for BoidsBehavior {
         buffer: &wgpu::Buffer,
         dt: f32,
         active_count: u32,
+        _emitter_transform: Mat4,
     ) {
         let params = BoidsParams {
             radii: [

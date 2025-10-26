@@ -21,7 +21,11 @@ fn gpu_particle_vertex_world_position_matches_trs() {
     let world_from_shader = rotated_pos + particle_position;
 
     // TRS matrix computation
-    let trs = Mat4::from_scale_rotation_translation(scale, Quat::from_axis_angle(axis.normalize(), angle), particle_position);
+    let trs = Mat4::from_scale_rotation_translation(
+        scale,
+        Quat::from_axis_angle(axis.normalize(), angle),
+        particle_position,
+    );
     let world_from_trs = trs * vertex_pos.extend(1.0);
 
     assert!(
@@ -39,7 +43,13 @@ fn gpu_particle_vertex_world_position_matches_trs() {
     let proj = Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 0.1, 100.0);
     let vp = proj * view;
 
-    let clip_shader = vp * Vec4::new(world_from_shader.x, world_from_shader.y, world_from_shader.z, 1.0);
+    let clip_shader = vp
+        * Vec4::new(
+            world_from_shader.x,
+            world_from_shader.y,
+            world_from_shader.z,
+            1.0,
+        );
     let clip_trs = vp * world_from_trs;
 
     assert!(
