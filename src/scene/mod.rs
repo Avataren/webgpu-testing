@@ -40,6 +40,6 @@ pub use components::{
     OrbitAnimation, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient,
     ParticleColorKeyframe, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
     ParticleSizeCurve, ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range,
-    PhysicsBehaviorConfig, PointLight, RotateAnimation, SelectedInEditor, SpotLight,
-    StarfieldBehaviorConfig, TransformComponent, Visible, WorldTransform,
+    PhysicsBehaviorConfig, PointLight, PrimitiveMeshComponent, RotateAnimation, SelectedInEditor,
+    SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible, WorldTransform,
 };

@@ -5,7 +5,7 @@ use super::assets::{
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
-use super::loader::SceneLoader;
+use super::loader::{SceneImportDevice, SceneLoader};
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
@@ -940,9 +940,14 @@ impl Scene {
         lights::has_any_lights(self.main_world())
     }
 
-    pub fn merge_as_child(&mut self, parent_entity: hecs::Entity, other: Scene) {
+    pub fn merge_as_child(
+        &mut self,
+        parent_entity: hecs::Entity,
+        other: Scene,
+        renderer: &mut dyn SceneImportDevice,
+    ) {
         if let Some(asset) = other.export_main_asset("MergedScene") {
-            let mut instance = asset.instantiate();
+            let mut instance = asset.instantiate(Some(renderer), &mut self.assets);
             let (animations, animation_states) = instance.take_animation_data();
             let entity_map = super::internal::composition::merge_world_as_child(
                 self.main_world_mut(),
@@ -983,7 +988,10 @@ impl Scene {
                         textures_updated = true;
                     }
 
-                    let mut instance = bundle.asset.instantiate();
+                    let mut instance = bundle.asset.instantiate(
+                        Some(renderer as &mut dyn SceneImportDevice),
+                        &mut self.assets,
+                    );
                     let (animations, animation_states) = instance.take_animation_data();
                     let entity_map = super::internal::composition::merge_world_as_child(
                         self.main_world_mut(),
@@ -1085,16 +1093,19 @@ impl Scene {
         id
     }
 
-    pub fn instantiate_asset_named(
+    fn instantiate_asset_internal(
         &mut self,
         asset: &SceneAsset,
-        name: impl Into<String>,
+        name: String,
         parent: Option<SceneNodeId>,
+        renderer: Option<&mut dyn SceneImportDevice>,
     ) -> SceneNodeId {
-        let name = name.into();
         let parent_id = parent.unwrap_or(self.root);
         assert!(self.is_valid_node(parent_id), "Invalid parent node");
-        let instance = asset.instantiate();
+        let instance = match renderer {
+            Some(device) => asset.instantiate(Some(device), &mut self.assets),
+            None => asset.instantiate(None, &mut self.assets),
+        };
         let should_apply_camera = parent.is_none() && self.main_scene == self.root;
         let active_camera_entity = if should_apply_camera {
             instance.active_camera()
@@ -1115,12 +1126,40 @@ impl Scene {
         id
     }
 
+    pub fn instantiate_asset_named(
+        &mut self,
+        asset: &SceneAsset,
+        name: impl Into<String>,
+        parent: Option<SceneNodeId>,
+    ) -> SceneNodeId {
+        self.instantiate_asset_internal(asset, name.into(), parent, None)
+    }
+
+    pub fn instantiate_asset_named_with_renderer(
+        &mut self,
+        asset: &SceneAsset,
+        name: impl Into<String>,
+        parent: Option<SceneNodeId>,
+        renderer: &mut dyn SceneImportDevice,
+    ) -> SceneNodeId {
+        self.instantiate_asset_internal(asset, name.into(), parent, Some(renderer))
+    }
+
     pub fn instantiate_asset(
         &mut self,
         asset: &SceneAsset,
         parent: Option<SceneNodeId>,
     ) -> SceneNodeId {
         self.instantiate_asset_named(asset, asset.name.clone(), parent)
+    }
+
+    pub fn instantiate_asset_with_renderer(
+        &mut self,
+        asset: &SceneAsset,
+        parent: Option<SceneNodeId>,
+        renderer: &mut dyn SceneImportDevice,
+    ) -> SceneNodeId {
+        self.instantiate_asset_named_with_renderer(asset, asset.name.clone(), parent, renderer)
     }
 
     pub fn instantiate_tree_asset(
@@ -1267,6 +1306,10 @@ impl Scene {
         if remap_handles {
             // ONLY REMAP IF REQUESTED
             for entity in &mut entities {
+                if entity.primitive_mesh.is_some() {
+                    continue;
+                }
+
                 if let Some(handle_index) = entity.mesh_handle {
                     let mapped = if let Some(&existing) = mesh_map.get(&handle_index) {
                         Some(existing)
@@ -1798,7 +1841,8 @@ mod tests {
             "exported asset missing directional light"
         );
 
-        let instance = root_asset.instantiate();
+        let mut scratch_assets = Assets::default();
+        let instance = root_asset.instantiate(None, &mut scratch_assets);
         let instanced_directional = instance.world().query::<&DirectionalLight>().iter().count();
         assert!(
             instanced_directional > 0,

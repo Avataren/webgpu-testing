@@ -1,6 +1,59 @@
 use super::vertex::{v, Vertex};
+use crate::asset::MeshData;
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PrimitiveMeshDescriptor {
+    Cube,
+    Sphere,
+    Plane,
+    Cylinder,
+    Cone,
+    Torus,
+}
+
+impl PrimitiveMeshDescriptor {
+    pub fn mesh_data(self) -> MeshData {
+        let (vertices, indices) = match self {
+            PrimitiveMeshDescriptor::Cube => cube_mesh(),
+            PrimitiveMeshDescriptor::Sphere => sphere_mesh(32, 16),
+            PrimitiveMeshDescriptor::Plane => quad_mesh(),
+            PrimitiveMeshDescriptor::Cylinder => cylinder_mesh(32),
+            PrimitiveMeshDescriptor::Cone => cone_mesh(32),
+            PrimitiveMeshDescriptor::Torus => torus_mesh(32, 16, 1.0, 0.35),
+        };
+
+        MeshData { vertices, indices }
+    }
+}
+
+#[cfg(feature = "egui")]
+impl From<crate::ui::scene_hierarchy_window::ScenePrimitivePreset> for PrimitiveMeshDescriptor {
+    fn from(preset: crate::ui::scene_hierarchy_window::ScenePrimitivePreset) -> Self {
+        match preset {
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cube => {
+                PrimitiveMeshDescriptor::Cube
+            }
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Sphere => {
+                PrimitiveMeshDescriptor::Sphere
+            }
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Plane => {
+                PrimitiveMeshDescriptor::Plane
+            }
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cylinder => {
+                PrimitiveMeshDescriptor::Cylinder
+            }
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cone => {
+                PrimitiveMeshDescriptor::Cone
+            }
+            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Torus => {
+                PrimitiveMeshDescriptor::Torus
+            }
+        }
+    }
+}
 
 pub fn sphere_mesh(segments: u32, rings: u32) -> (Vec<Vertex>, Vec<u32>) {
     let mut vertices = Vec::new();

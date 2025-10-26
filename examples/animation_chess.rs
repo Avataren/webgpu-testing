@@ -62,8 +62,12 @@ impl RenderApplication for ExampleApp {
         let mut textures_changed = animation_asset
             .register_resources(renderer, &mut scene.assets)
             .textures_changed();
-        let animation_node =
-            scene.instantiate_asset_named(&animation_asset.asset, "AnimatedBoxes", Some(root));
+        let animation_node = scene.instantiate_asset_named_with_renderer(
+            &animation_asset.asset,
+            "AnimatedBoxes",
+            Some(root),
+            renderer,
+        );
         scene.node_local_transform_mut(animation_node).translation = Vec3::new(-8.0, 0.0, 0.0);
 
         if chess_asset
@@ -72,8 +76,12 @@ impl RenderApplication for ExampleApp {
         {
             textures_changed = true;
         }
-        let chess_node =
-            scene.instantiate_asset_named(&chess_asset.asset, "ChessBoard", Some(root));
+        let chess_node = scene.instantiate_asset_named_with_renderer(
+            &chess_asset.asset,
+            "ChessBoard",
+            Some(root),
+            renderer,
+        );
         scene.node_local_transform_mut(chess_node).translation = Vec3::new(8.0, 0.0, 0.0);
 
         if textures_changed {

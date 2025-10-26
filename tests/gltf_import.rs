@@ -89,9 +89,9 @@ fn multi_material_import_preserves_mesh_material_association() {
         .collect();
 
     let mut scene = Scene::new();
-    let _ = bundle.register_resources(&importer, &mut scene.assets);
+    let _ = bundle.register_resources(&mut importer, &mut scene.assets);
 
-    let node = scene.instantiate_asset(&bundle.asset, None);
+    let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut importer);
     scene.set_main_scene(node);
 
     let mut local_to_global = HashMap::new();
