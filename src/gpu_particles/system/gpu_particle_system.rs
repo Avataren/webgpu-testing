@@ -417,11 +417,11 @@ impl GpuParticleSystem {
 
         self.emitters.retain(|emitter| !emitter.is_complete());
 
-        if let Some(emitter) = self.emitters.first() {
-            self.last_emitter_transform = Mat4::from(emitter.world_transform());
-        }
-
-        let emitter_transform = self.last_emitter_transform;
+        let emitter_transform = self
+            .emitters
+            .first()
+            .map(|emitter| Mat4::from(emitter.world_transform()))
+            .unwrap_or(Mat4::IDENTITY);
 
         behavior.update_params(
             queue,
