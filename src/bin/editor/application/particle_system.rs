@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use glam::Vec3;
+use glam::{Affine3A, Vec3};
 use hecs::{ComponentError, Entity};
 use log::{debug, warn};
 
@@ -31,7 +31,7 @@ struct ParticleSystemDescriptor {
 struct ParticleSceneData {
     entity: Entity,
     descriptor: ParticleSystemDescriptor,
-    emitter_origin: Vec3,
+    emitter_transform: Affine3A,
     existing_gpu_instance: Option<GpuParticleInstance>,
 }
 
@@ -243,9 +243,11 @@ impl EditorParticleSystem {
                 let transform = world_transform
                     .map(|wt| wt.0)
                     .or_else(|| local_transform.map(|lt| lt.0));
-                let emitter_origin = transform
-                    .map(|t| Self::transform_point(t, Vec3::from_array(emitter.position)))
-                    .unwrap_or_else(|| Vec3::from_array(emitter.position));
+                let entity_affine = transform
+                    .map(Self::transform_affine)
+                    .unwrap_or(Affine3A::IDENTITY);
+                let emitter_affine = Affine3A::from_translation(Vec3::from_array(emitter.position));
+                let emitter_transform = entity_affine * emitter_affine;
 
                 let mut material = material_component.0;
                 material = if billboard.is_some() {
@@ -264,7 +266,7 @@ impl EditorParticleSystem {
                         depth_state: depth_state.copied(),
                         casts_shadows: casts_shadow.map(|s| s.0).unwrap_or(false),
                     },
-                    emitter_origin,
+                    emitter_transform,
                     existing_gpu_instance: gpu_instance.copied(),
                 });
             }
@@ -284,21 +286,21 @@ impl EditorParticleSystem {
                     let gpu_index = entry.gpu_index;
                     *entry = Self::create_entry(
                         descriptor.clone(),
-                        data.emitter_origin,
+                        data.emitter_transform,
                         renderer,
                         gpu_index,
                     );
                 }
 
                 entry.descriptor = descriptor;
-                Self::refresh_entry(entry, data.emitter_origin);
+                Self::refresh_entry(entry, data.emitter_transform);
                 entry.gpu_index
             }
             Entry::Vacant(vacant) => {
                 let gpu_index = self.next_gpu_index;
                 self.next_gpu_index = self.next_gpu_index.saturating_add(1);
                 let entry =
-                    Self::create_entry(descriptor, data.emitter_origin, renderer, gpu_index);
+                    Self::create_entry(descriptor, data.emitter_transform, renderer, gpu_index);
                 vacant.insert(entry);
                 gpu_index
             }
@@ -307,7 +309,7 @@ impl EditorParticleSystem {
 
     fn create_entry(
         descriptor: ParticleSystemDescriptor,
-        emitter_origin: Vec3,
+        emitter_transform: Affine3A,
         renderer: &mut Renderer,
         gpu_index: u32,
     ) -> ParticleSystemEntry {
@@ -334,7 +336,7 @@ impl EditorParticleSystem {
         );
 
         let mut emitter = descriptor.emitter.to_runtime();
-        emitter.position = emitter_origin;
+        emitter.set_world_transform(emitter_transform);
         system.add_emitter(emitter);
 
         ParticleSystemEntry {
@@ -345,7 +347,7 @@ impl EditorParticleSystem {
         }
     }
 
-    fn refresh_entry(entry: &mut ParticleSystemEntry, emitter_origin: Vec3) {
+    fn refresh_entry(entry: &mut ParticleSystemEntry, emitter_transform: Affine3A) {
         entry
             .system
             .set_casts_shadows(entry.descriptor.casts_shadows);
@@ -358,10 +360,10 @@ impl EditorParticleSystem {
         );
 
         if let Some(emitter) = entry.system.emitters_mut().first_mut() {
-            emitter.position = emitter_origin;
+            emitter.set_world_transform(emitter_transform);
         } else {
             let mut emitter = entry.descriptor.emitter.to_runtime();
-            emitter.position = emitter_origin;
+            emitter.set_world_transform(emitter_transform);
             entry.system.add_emitter(emitter);
         }
     }
@@ -417,8 +419,8 @@ impl EditorParticleSystem {
         estimate.max(64)
     }
 
-    fn transform_point(transform: Transform, point: Vec3) -> Vec3 {
-        transform.translation + transform.rotation * (transform.scale * point)
+    fn transform_affine(transform: Transform) -> Affine3A {
+        Affine3A::from_mat4(transform.matrix())
     }
 }
 

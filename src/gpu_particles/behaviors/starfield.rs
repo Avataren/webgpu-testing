@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
@@ -8,6 +9,7 @@ use crate::gpu_particles::ParticleBehavior;
 struct StarfieldParams {
     time_and_planes: [f32; 4],
     field_and_count: [f32; 4],
+    emitter_transform: [[f32; 4]; 4],
 }
 
 pub struct StarfieldBehavior {
@@ -31,6 +33,7 @@ impl ParticleBehavior for StarfieldBehavior {
         let params = StarfieldParams {
             time_and_planes: [0.0, self.near_plane, self.far_plane, self.far_reset_band],
             field_and_count: [self.field_half_size, self.min_radius, 0.0, 0.0],
+            emitter_transform: Mat4::IDENTITY.to_cols_array_2d(),
         };
 
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -46,6 +49,7 @@ impl ParticleBehavior for StarfieldBehavior {
         buffer: &wgpu::Buffer,
         dt: f32,
         active_count: u32,
+        emitter_transform: Mat4,
     ) {
         let params = StarfieldParams {
             time_and_planes: [dt, self.near_plane, self.far_plane, self.far_reset_band],
@@ -55,6 +59,7 @@ impl ParticleBehavior for StarfieldBehavior {
                 active_count as f32,
                 0.0,
             ],
+            emitter_transform: emitter_transform.to_cols_array_2d(),
         };
 
         queue.write_buffer(buffer, 0, bytemuck::bytes_of(&params));
@@ -67,7 +72,7 @@ mod tests {
 
     #[test]
     fn starfield_params_alignment() {
-        assert_eq!(std::mem::size_of::<StarfieldParams>(), 32);
+        assert_eq!(std::mem::size_of::<StarfieldParams>(), 96);
     }
 
     #[test]
@@ -76,5 +81,6 @@ mod tests {
 
         assert_eq!(offset_of!(StarfieldParams, time_and_planes), 0);
         assert_eq!(offset_of!(StarfieldParams, field_and_count), 16);
+        assert_eq!(offset_of!(StarfieldParams, emitter_transform), 32);
     }
 }
