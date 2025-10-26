@@ -85,6 +85,7 @@ pub struct GpuParticleSystem {
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
+    last_emitter_transform: Mat4,
     slot_allocator: SlotAllocator,
     spawn_scratch: Vec<Particle>,
     dead_list_dirty: bool,
@@ -362,6 +363,7 @@ impl GpuParticleSystem {
             sorting,
             depth_write_enabled,
             pipeline_depth_write_state: depth_write_enabled,
+            last_emitter_transform: Mat4::IDENTITY,
         }
     }
 
@@ -376,6 +378,10 @@ impl GpuParticleSystem {
     }
 
     pub fn add_emitter(&mut self, emitter: ParticleEmitter) {
+        if self.emitters.is_empty() {
+            self.last_emitter_transform = Mat4::from(emitter.world_transform());
+        }
+
         self.emitters.push(emitter);
     }
 
