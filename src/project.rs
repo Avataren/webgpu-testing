@@ -122,27 +122,27 @@ impl ProjectManifest {
             .ok_or(ProjectError::EmptyScene)?;
         let environment = SerializedEnvironment::from_environment(scene.environment());
         let mut imports_set: BTreeSet<PathBuf> = BTreeSet::new();
-        let mut primitive_mesh_indices: HashSet<usize> = HashSet::new();
+        let mut referenced_mesh_indices: HashSet<usize> = HashSet::new();
 
-        for entity in &asset.entities {
+        for entity in &mut asset.entities {
             if let Some(source) = &entity.gltf_source {
                 imports_set.insert(source.clone());
             }
 
-            if let Some(mesh_handle) = entity.mesh_handle {
-                if entity.gltf_source.is_none() {
-                    primitive_mesh_indices.insert(mesh_handle);
-                }
+            if entity.primitive_mesh.is_some() {
+                entity.mesh_handle = None;
+            } else if let Some(mesh_handle) = entity.mesh_handle {
+                referenced_mesh_indices.insert(mesh_handle);
             }
         }
 
         if !asset.mesh_data.is_empty() {
             let original_mesh_data = std::mem::take(&mut asset.mesh_data);
             let mut remap: HashMap<usize, usize> = HashMap::new();
-            let mut retained_meshes = Vec::with_capacity(primitive_mesh_indices.len());
+            let mut retained_meshes = Vec::with_capacity(referenced_mesh_indices.len());
 
             for (index, data) in original_mesh_data.into_iter().enumerate() {
-                if primitive_mesh_indices.contains(&index) {
+                if referenced_mesh_indices.contains(&index) {
                     let new_index = retained_meshes.len();
                     remap.insert(index, new_index);
                     retained_meshes.push(data);
@@ -152,12 +152,16 @@ impl ProjectManifest {
             asset.mesh_data = retained_meshes;
 
             for entity in &mut asset.entities {
-                if let Some(mesh_handle) = entity.mesh_handle {
-                    if let Some(&new_index) = remap.get(&mesh_handle) {
-                        entity.mesh_handle = Some(new_index);
-                    } else if entity.gltf_source.is_some() {
-                        entity.mesh_handle = None;
+                if entity.primitive_mesh.is_none() {
+                    if let Some(mesh_handle) = entity.mesh_handle {
+                        if let Some(&new_index) = remap.get(&mesh_handle) {
+                            entity.mesh_handle = Some(new_index);
+                        } else if entity.gltf_source.is_some() {
+                            entity.mesh_handle = None;
+                        }
                     }
+                } else {
+                    entity.mesh_handle = None;
                 }
             }
         }
@@ -307,7 +311,7 @@ impl ProjectManifest {
         textures_changed |= registration.textures_changed;
 
         if !bundle.asset.entities.is_empty() {
-            let main = new_scene.instantiate_asset(&bundle.asset, None);
+            let main = new_scene.instantiate_asset_with_renderer(&bundle.asset, None, renderer);
             new_scene.set_main_scene(main);
         }
 

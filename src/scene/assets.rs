@@ -7,13 +7,14 @@ use super::components::{
     EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
     MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
     ParticleColorGradient, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
-    ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range, PointLight, SpotLight,
-    TransformComponent, Visible,
+    ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range, PointLight,
+    PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
 use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::material::MaterialFlags;
+use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
@@ -249,7 +250,11 @@ impl SceneAsset {
         SceneAssetBuilder::new(name)
     }
 
-    pub(crate) fn instantiate(&self) -> SceneInstance {
+    pub(crate) fn instantiate(
+        &self,
+        mut renderer: Option<&mut dyn SceneImportDevice>,
+        assets: &mut Assets,
+    ) -> SceneInstance {
         let mut instance = SceneInstance::new();
         let mut entity_map = Vec::with_capacity(self.entities.len());
 
@@ -265,7 +270,27 @@ impl SceneAsset {
             )));
             builder.add(Visible(entity.visible));
 
-            if let Some(mesh) = entity.mesh_handle {
+            if let Some(descriptor) = entity.primitive_mesh {
+                let handle = assets
+                    .primitive_mesh_handle(descriptor)
+                    .or_else(|| {
+                        renderer
+                            .as_deref_mut()
+                            .map(|device| assets.ensure_primitive_mesh(device, descriptor))
+                    })
+                    .or_else(|| entity.mesh_handle.map(Handle::new));
+
+                if let Some(handle) = handle {
+                    builder.add(MeshComponent(handle));
+                } else {
+                    log::warn!(
+                        "Primitive mesh {:?} missing shared handle and renderer; entity will spawn without mesh",
+                        descriptor
+                    );
+                }
+
+                builder.add(PrimitiveMeshComponent { descriptor });
+            } else if let Some(mesh) = entity.mesh_handle {
                 builder.add(MeshComponent(Handle::new(mesh)));
             }
 
@@ -392,14 +417,16 @@ impl SceneAsset {
 
         for entity in &mut self.entities {
             // Remap mesh handles using the map
-            if let Some(mesh_handle) = &mut entity.mesh_handle {
-                if let Some(&new_index) = mesh_map.get(mesh_handle) {
-                    *mesh_handle = new_index;
-                } else if entity.gltf_source.is_none() {
-                    log::warn!(
-                        "Mesh handle {} not found in mesh_map during resource mapping",
-                        mesh_handle
-                    );
+            if entity.primitive_mesh.is_none() {
+                if let Some(mesh_handle) = &mut entity.mesh_handle {
+                    if let Some(&new_index) = mesh_map.get(mesh_handle) {
+                        *mesh_handle = new_index;
+                    } else if entity.gltf_source.is_none() {
+                        log::warn!(
+                            "Mesh handle {} not found in mesh_map during resource mapping",
+                            mesh_handle
+                        );
+                    }
                 }
             }
 
@@ -420,8 +447,10 @@ impl SceneAsset {
         }
 
         for entity in &mut self.entities {
-            if let Some(mesh) = &mut entity.mesh_handle {
-                *mesh += mesh_offset;
+            if entity.primitive_mesh.is_none() {
+                if let Some(mesh) = &mut entity.mesh_handle {
+                    *mesh += mesh_offset;
+                }
             }
 
             if let Some(material) = &mut entity.material {
@@ -558,11 +587,18 @@ impl SceneAssetBundle {
 
     pub fn register_resources<R: SceneImportDevice>(
         &mut self,
-        renderer: &R,
+        renderer: &mut R,
         assets: &mut Assets,
     ) -> ResourceRegistration {
         if self.resources_registered {
             return ResourceRegistration::default();
+        }
+
+        for entity in &mut self.asset.entities {
+            if let Some(descriptor) = entity.primitive_mesh {
+                let handle = assets.ensure_primitive_mesh(renderer, descriptor);
+                entity.mesh_handle = Some(handle.index());
+            }
         }
 
         if self.resources.meshes.is_empty() && !self.asset.mesh_data.is_empty() {
@@ -667,6 +703,8 @@ pub struct SceneAssetEntity {
     pub transform: SerializedTransform,
     pub visible: bool,
     pub mesh_handle: Option<usize>,
+    #[serde(default)]
+    pub primitive_mesh: Option<PrimitiveMeshDescriptor>,
     #[serde(default)]
     pub mesh_bounds: Option<SerializedMeshBounds>,
     pub material: Option<SerializedMaterial>,
@@ -776,6 +814,10 @@ impl SceneAssetEntity {
             .get::<&MeshComponent>(entity)
             .ok()
             .map(|m| m.0.index());
+        let primitive_mesh = world
+            .get::<&PrimitiveMeshComponent>(entity)
+            .ok()
+            .map(|component| component.descriptor);
         let mesh_bounds = world
             .get::<&MeshBounds>(entity)
             .ok()
@@ -874,6 +916,7 @@ impl SceneAssetEntity {
             transform,
             visible,
             mesh_handle,
+            primitive_mesh,
             mesh_bounds,
             material,
             parent,
@@ -902,6 +945,7 @@ pub struct SceneAssetEntityBuilder {
     transform: SerializedTransform,
     visible: bool,
     mesh_handle: Option<usize>,
+    primitive_mesh: Option<PrimitiveMeshDescriptor>,
     mesh_bounds: Option<SerializedMeshBounds>,
     material: Option<SerializedMaterial>,
     parent: Option<usize>,
@@ -930,6 +974,7 @@ impl SceneAssetEntityBuilder {
             transform,
             visible: true,
             mesh_handle: None,
+            primitive_mesh: None,
             mesh_bounds: None,
             material: None,
             parent: None,
@@ -964,6 +1009,11 @@ impl SceneAssetEntityBuilder {
 
     pub fn with_mesh_handle(mut self, handle: usize) -> Self {
         self.mesh_handle = Some(handle);
+        self
+    }
+
+    pub fn with_primitive_mesh(mut self, descriptor: PrimitiveMeshDescriptor) -> Self {
+        self.primitive_mesh = Some(descriptor);
         self
     }
 
@@ -1074,6 +1124,7 @@ impl SceneAssetEntityBuilder {
             transform: self.transform,
             visible: self.visible,
             mesh_handle: self.mesh_handle,
+            primitive_mesh: self.primitive_mesh,
             mesh_bounds: self.mesh_bounds,
             material: self.material,
             parent: self.parent,
@@ -1709,6 +1760,7 @@ mod tests {
                 transform: SerializedTransform::identity(),
                 visible: true,
                 mesh_handle: None,
+                primitive_mesh: None,
                 mesh_bounds: None,
                 material: Some(make_material(MaterialFlags::USE_BASE_COLOR_TEXTURE, 10)),
                 parent: None,

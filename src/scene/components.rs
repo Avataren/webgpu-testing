@@ -8,6 +8,7 @@ use crate::gpu_particles::behaviors::{
     BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
 };
 use crate::gpu_particles::{ColorGradient, EmissionShape, ParticleEmitter, SizeCurve};
+use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Vertex};
 use crate::scene::camera::{Camera, CameraProjection};
 use crate::scene::Transform;
@@ -346,6 +347,12 @@ pub struct WorldTransform(pub Transform);
 /// Mesh component
 #[derive(Debug, Clone, Copy)]
 pub struct MeshComponent(pub Handle<Mesh>);
+
+/// Marker component identifying a built-in primitive mesh and its descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrimitiveMeshComponent {
+    pub descriptor: PrimitiveMeshDescriptor,
+}
 
 /// Axis-aligned bounding box for a mesh in local space.
 #[derive(Debug, Clone, Copy)]

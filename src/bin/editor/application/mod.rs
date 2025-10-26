@@ -29,11 +29,11 @@ use wgpu_cube::app::{
 };
 use wgpu_cube::asset::{Handle, Mesh};
 use wgpu_cube::gpu_particles::ParticleEmitter;
-use wgpu_cube::renderer::primitives::{
-    cone_mesh, cube_mesh, cylinder_mesh, quad_mesh, sphere_mesh, torus_mesh,
-};
+use wgpu_cube::renderer::primitives::{quad_mesh, PrimitiveMeshDescriptor};
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
-use wgpu_cube::scene::components::{Billboard, BillboardOrientation, DepthState};
+use wgpu_cube::scene::components::{
+    Billboard, BillboardOrientation, DepthState, PrimitiveMeshComponent,
+};
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
     MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
@@ -738,18 +738,17 @@ impl EditorApplication {
         ctx: &mut GpuUpdateContext,
         preset: ScenePrimitivePreset,
     ) -> Option<Entity> {
-        let (vertices, indices) = match preset {
-            ScenePrimitivePreset::Cube => cube_mesh(),
-            ScenePrimitivePreset::Sphere => sphere_mesh(32, 16),
-            ScenePrimitivePreset::Plane => quad_mesh(),
-            ScenePrimitivePreset::Cylinder => cylinder_mesh(32),
-            ScenePrimitivePreset::Cone => cone_mesh(32),
-            ScenePrimitivePreset::Torus => torus_mesh(32, 16, 1.0, 0.35),
-        };
-
-        let mesh = ctx.renderer.create_mesh(&vertices, &indices);
-        let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
-        let bounds = MeshBounds::from_vertices(&vertices);
+        let descriptor = PrimitiveMeshDescriptor::from(preset);
+        let mesh_handle = ctx
+            .scene
+            .assets
+            .ensure_primitive_mesh(ctx.renderer, descriptor);
+        let bounds = ctx
+            .scene
+            .assets
+            .meshes
+            .get(mesh_handle)
+            .and_then(|mesh| MeshBounds::from_vertices(&mesh.data().vertices));
 
         let mut builder = EntityBuilder::new(ctx.scene.main_world_mut());
         builder = builder
@@ -758,6 +757,8 @@ impl EditorApplication {
             .with_mesh(mesh_handle)
             .with_material(Material::pbr())
             .visible(true);
+
+        builder = builder.with_component(PrimitiveMeshComponent { descriptor });
 
         if let Some(bounds) = bounds {
             builder = builder.with_component(bounds);

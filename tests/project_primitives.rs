@@ -9,11 +9,11 @@ use wgpu::{
 
 use wgpu_cube::asset::Mesh;
 use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
-use wgpu_cube::renderer::primitives::cube_mesh;
+use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
-    MeshComponent, Name, Scene, SceneAssetBundle, SceneAssetResources, SceneImportDevice,
-    Transform, TransformComponent, Visible,
+    MeshBounds, MeshComponent, Name, PrimitiveMeshComponent, Scene, SceneAssetBundle,
+    SceneAssetResources, SceneImportDevice, Transform, TransformComponent, Visible,
 };
 
 struct HeadlessDevice {
@@ -74,25 +74,62 @@ impl SceneImportDevice for HeadlessDevice {
 
 #[test]
 fn project_manifest_roundtrip_preserves_primitive_meshes() {
-    let Some(headless) = HeadlessDevice::new() else {
+    let Some(mut headless) = HeadlessDevice::new() else {
         eprintln!("Skipping primitive mesh roundtrip test: no suitable headless adapter available");
         return;
     };
 
-    let (cube_vertices, cube_indices) = cube_mesh();
-    let expected_vertices = cube_vertices.clone();
-    let expected_indices = cube_indices.clone();
-
-    let cube_mesh = Mesh::from_vertices(headless.device.as_ref(), &cube_vertices, &cube_indices);
+    let descriptor = PrimitiveMeshDescriptor::Cube;
 
     let mut scene = Scene::new();
-    let cube_handle = scene.assets.meshes.insert(cube_mesh);
-    scene.main_world_mut().spawn((
-        Name::new("Cube"),
-        TransformComponent(Transform::default()),
-        MeshComponent(cube_handle),
-        Visible(true),
-    ));
+    let cube_handle = scene
+        .assets
+        .ensure_primitive_mesh(&mut headless, descriptor);
+    let bounds = scene
+        .assets
+        .meshes
+        .get(cube_handle)
+        .and_then(|mesh| MeshBounds::from_vertices(&mesh.data().vertices));
+
+    let spawn_cube = |scene: &mut Scene, name: &str| {
+        if let Some(bounds) = bounds {
+            scene.main_world_mut().spawn((
+                Name::new(name.to_string()),
+                TransformComponent(Transform::default()),
+                MeshComponent(cube_handle),
+                PrimitiveMeshComponent { descriptor },
+                bounds,
+                Visible(true),
+            ));
+        } else {
+            scene.main_world_mut().spawn((
+                Name::new(name.to_string()),
+                TransformComponent(Transform::default()),
+                MeshComponent(cube_handle),
+                PrimitiveMeshComponent { descriptor },
+                Visible(true),
+            ));
+        }
+    };
+
+    spawn_cube(&mut scene, "Cube A");
+    spawn_cube(&mut scene, "Cube B");
+
+    let handles: Vec<_> = scene
+        .main_world()
+        .query::<&MeshComponent>()
+        .iter()
+        .map(|(_, component)| component.0)
+        .collect();
+    assert_eq!(
+        handles.len(),
+        2,
+        "expected two primitive meshes before capture"
+    );
+    assert!(
+        handles.iter().all(|&handle| handle == cube_handle),
+        "primitive meshes should share the same handle before capture"
+    );
 
     let metadata = ProjectMetadata::default();
     let manifest = ProjectManifest::capture(&scene, metadata)
@@ -109,35 +146,29 @@ fn project_manifest_roundtrip_preserves_primitive_meshes() {
     let mut bundle = SceneAssetBundle::new(loaded.scene.clone(), SceneAssetResources::default());
     let mut restored_scene = Scene::new();
 
-    bundle.register_resources(&headless, &mut restored_scene.assets);
+    bundle.register_resources(&mut headless, &mut restored_scene.assets);
 
-    let node = restored_scene.instantiate_asset(&bundle.asset, None);
+    let node = restored_scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
     restored_scene.set_main_scene(node);
 
-    let mut cube_found = false;
-    let mut query = restored_scene.world().query::<(&MeshComponent, &Name)>();
+    let mut query = restored_scene
+        .world()
+        .query::<(&MeshComponent, &PrimitiveMeshComponent)>();
+    let restored: Vec<_> = query
+        .iter()
+        .map(|(_, (mesh, primitive))| (mesh.0, primitive.descriptor))
+        .collect();
 
-    for (_, (mesh_component, name)) in query.iter() {
-        if name.0 == "Cube" {
-            cube_found = true;
-            let mesh = restored_scene
-                .assets
-                .meshes
-                .get(mesh_component.0)
-                .expect("cube mesh handle should resolve after reload");
-            let data = mesh.data();
-
-            assert_eq!(data.indices, expected_indices);
-            assert_eq!(data.vertices.len(), expected_vertices.len());
-            for (actual, expected) in data.vertices.iter().zip(&expected_vertices) {
-                assert_eq!(actual.pos, expected.pos);
-                assert_eq!(actual.normal, expected.normal);
-                assert_eq!(actual.uv, expected.uv);
-                assert_eq!(actual.tangent, expected.tangent);
-            }
-            break;
-        }
-    }
-
-    assert!(cube_found, "cube entity should exist after manifest reload");
+    assert_eq!(
+        restored.len(),
+        2,
+        "restored scene should contain two primitives"
+    );
+    assert!(
+        restored.iter().all(
+            |&(handle, descriptor)| descriptor == PrimitiveMeshDescriptor::Cube
+                && handle == restored[0].0
+        ),
+        "restored primitives should share the same handle and descriptor"
+    );
 }
