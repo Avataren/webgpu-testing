@@ -20,25 +20,26 @@ fn particle_system_asset_roundtrip() {
             field_half_size: 75.0,
             min_radius: 0.4,
         }));
-    let mut particle_emitter = ParticleEmitterComponent::default();
-    particle_emitter.spawn_rate = 180.0;
-    particle_emitter.burst_count = Some(32);
-    particle_emitter.auto_respawn = true;
-    particle_emitter.emission_shape = ParticleEmissionShape::Sphere { radius: 2.5 };
-    particle_emitter.initial_velocity_range =
-        ParticleVec3Range::new([-0.5, 1.0, -0.5], [0.5, 2.0, 0.5]);
-    particle_emitter.lifetime_range = ParticleFloatRange::new(1.25, 2.75);
-    particle_emitter.size_curve = ParticleSizeCurve {
-        keyframes: vec![
-            ParticleSizeKeyframe {
-                size: 0.5,
-                time: 0.0,
-            },
-            ParticleSizeKeyframe {
-                size: 1.5,
-                time: 0.8,
-            },
-        ],
+    let particle_emitter = ParticleEmitterComponent {
+        spawn_rate: 180.0,
+        burst_count: Some(32),
+        auto_respawn: true,
+        emission_shape: ParticleEmissionShape::Sphere { radius: 2.5 },
+        initial_velocity_range: ParticleVec3Range::new([-0.5, 1.0, -0.5], [0.5, 2.0, 0.5]),
+        lifetime_range: ParticleFloatRange::new(1.25, 2.75),
+        size_curve: ParticleSizeCurve {
+            keyframes: vec![
+                ParticleSizeKeyframe {
+                    size: 0.5,
+                    time: 0.0,
+                },
+                ParticleSizeKeyframe {
+                    size: 1.5,
+                    time: 0.8,
+                },
+            ],
+        },
+        ..Default::default()
     };
     scene.main_world_mut().spawn((
         Name::new("Particle Emitter"),
@@ -86,11 +87,13 @@ fn particle_system_asset_roundtrip() {
 #[test]
 fn project_manifest_scene_json_roundtrip_includes_particles() {
     let mut scene = Scene::new();
-    let mut particle_emitter = ParticleEmitterComponent::default();
-    particle_emitter.spawn_rate = 60.0;
-    particle_emitter.emission_shape = ParticleEmissionShape::Cone {
-        angle: 0.5,
-        radius: 1.0,
+    let particle_emitter = ParticleEmitterComponent {
+        spawn_rate: 60.0,
+        emission_shape: ParticleEmissionShape::Cone {
+            angle: 0.5,
+            radius: 1.0,
+        },
+        ..Default::default()
     };
     scene.main_world_mut().spawn((
         Name::new("Burst"),

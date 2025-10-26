@@ -753,7 +753,7 @@ impl From<&ParticleEmitter> for ParticleEmitterComponent {
             spawn_rate: emitter.spawn_rate,
             burst_count: emitter.burst_count,
             position: emitter.position.to_array(),
-            emission_shape: emitter.emission_shape.clone().into(),
+            emission_shape: emitter.emission_shape.into(),
             initial_velocity_range: emitter.initial_velocity_range.into(),
             initial_scale_range: emitter.initial_scale_range.into(),
             lifetime_range: emitter.lifetime_range.into(),
