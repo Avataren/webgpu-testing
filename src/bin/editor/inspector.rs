@@ -3,6 +3,7 @@ use egui::{
     ComboBox, DragValue, Grid, Slider,
 };
 use glam::{EulerRot, Quat, Vec3};
+use std::cmp::Ordering;
 use std::f32::consts::PI;
 use std::ops::RangeInclusive;
 
@@ -10,9 +11,12 @@ use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::{
-    CameraComponent, CameraProjection, CanCastShadow, DirectionalLight, EnvironmentComponent,
-    MaterialComponent, MeshComponent, ParticleBehaviorPreset, ParticleSystemComponent, PointLight,
-    SpotLight, Transform,
+    BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
+    EnvironmentComponent, MaterialComponent, MeshComponent, OptimizedBoidsBehaviorConfig,
+    ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe,
+    ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve,
+    ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig,
+    PointLight, SpotLight, StarfieldBehaviorConfig, Transform,
 };
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
 use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
@@ -62,6 +66,15 @@ pub enum InspectorAction {
         entity: Entity,
         component: ParticleSystemComponent,
     },
+    UpdateParticleEmitter {
+        entity: Entity,
+        component: ParticleEmitterComponent,
+    },
+    UpdateParticleBehavior {
+        entity: Entity,
+        behavior: ParticleBehaviorPreset,
+        config: ParticleBehaviorConfig,
+    },
 }
 
 pub fn show_entity_inspector(
@@ -110,7 +123,8 @@ pub fn show_entity_inspector(
 
     if let Some(component) = data.components.particle_system.clone() {
         begin_section(ui, &mut first_section);
-        show_particle_system_section(ui, data.entity, component, &mut actions);
+        let emitter = data.components.particle_emitter.clone();
+        show_particle_system_section(ui, data.entity, component, emitter, &mut actions);
     }
 
     if let Some(script) = data.components.script.clone() {
@@ -433,50 +447,279 @@ fn show_particle_system_section(
     ui: &mut egui::Ui,
     entity: Entity,
     component: ParticleSystemComponent,
+    emitter: Option<ParticleEmitterComponent>,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Particle System", |ui| {
-        let mut updated = component;
-        let mut changed = false;
+        let mut system_component = component;
+        let mut spawn_changed = false;
+        let mut behavior_action: Option<(ParticleBehaviorPreset, ParticleBehaviorConfig)> = None;
 
-        Grid::new("particle_system_component_grid")
-            .num_columns(2)
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label("Spawn rate");
-                if ui
-                    .add(
-                        DragValue::new(&mut updated.spawn_rate)
-                            .range(0.0..=10_000.0)
-                            .speed(0.1),
-                    )
-                    .changed()
-                {
-                    updated.spawn_rate = updated.spawn_rate.max(0.0);
-                    changed = true;
+        ui.collapsing("System", |ui| {
+            Grid::new("particle_system_component_grid")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    if float_drag_value(
+                        ui,
+                        "Spawn rate",
+                        &mut system_component.spawn_rate,
+                        0.1,
+                        Some(0.0..=10_000.0),
+                    ) {
+                        system_component.spawn_rate = system_component.spawn_rate.max(0.0);
+                        spawn_changed = true;
+                    }
+                });
+        });
+
+        ui.add_space(6.0);
+        ui.collapsing("Behavior", |ui| {
+            let mut preset = system_component.behavior;
+            let mut config = system_component.behavior_config.clone();
+            let mut section_changed = false;
+            let mut preset_changed = false;
+            Grid::new("particle_behavior_grid")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("Behavior preset");
+                    ComboBox::from_id_salt("particle_behavior_combo")
+                        .selected_text(preset.display_name())
+                        .show_ui(ui, |ui| {
+                            for variant in ParticleBehaviorPreset::variants() {
+                                if ui
+                                    .selectable_label(preset == variant, variant.display_name())
+                                    .clicked()
+                                {
+                                    preset = variant;
+                                    preset_changed = true;
+                                }
+                            }
+                        });
+                    ui.end_row();
+                });
+            section_changed |= preset_changed;
+
+            if preset != system_component.behavior {
+                config = ParticleBehaviorConfig::from_preset(preset);
+                section_changed = true;
+            }
+
+            section_changed |= match &mut config {
+                ParticleBehaviorConfig::Physics(physics) => physics_behavior_editor(ui, physics),
+                ParticleBehaviorConfig::Starfield(starfield) => {
+                    starfield_behavior_editor(ui, starfield)
                 }
-                ui.end_row();
+                ParticleBehaviorConfig::Boids(boids) => {
+                    edit_boids_like_config(ui, "boids_behavior_grid", boids)
+                }
+                ParticleBehaviorConfig::OptimizedBoids(boids) => {
+                    edit_boids_like_config(ui, "optimized_boids_behavior_grid", boids)
+                }
+            };
 
-                ui.label("Behavior");
-                let mut behavior = updated.behavior;
-                ComboBox::from_id_salt("particle_behavior_combo")
-                    .selected_text(behavior.display_name())
-                    .show_ui(ui, |ui| {
-                        for preset in ParticleBehaviorPreset::variants() {
-                            ui.selectable_value(&mut behavior, preset, preset.display_name());
+            if section_changed
+                && (preset != system_component.behavior
+                    || config != system_component.behavior_config)
+            {
+                config = config.ensure_variant(preset);
+                system_component.behavior = preset;
+                system_component.behavior_config = config.clone();
+                behavior_action = Some((preset, config));
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.collapsing("Emitter", |ui| match emitter {
+            Some(mut component) => {
+                let mut emitter_changed = false;
+                Grid::new("particle_emitter_component_grid")
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        if float_drag_value(
+                            ui,
+                            "Spawn rate",
+                            &mut component.spawn_rate,
+                            0.1,
+                            Some(0.0..=10_000.0),
+                        ) {
+                            component.spawn_rate = component.spawn_rate.max(0.0);
+                            emitter_changed = true;
                         }
-                    });
-                if behavior != updated.behavior {
-                    updated.set_behavior(behavior);
-                    changed = true;
-                }
-                ui.end_row();
-            });
 
-        if changed {
+                        ui.label("Burst count");
+                        let mut burst_enabled = component.burst_count.is_some();
+                        let mut burst_value = component.burst_count.unwrap_or(1);
+                        ui.horizontal(|ui| {
+                            if ui.checkbox(&mut burst_enabled, "Enabled").changed() {
+                                emitter_changed = true;
+                            }
+                            if burst_enabled
+                                && ui
+                                    .add(
+                                        DragValue::new(&mut burst_value)
+                                            .range(1..=1_000_000)
+                                            .speed(1.0),
+                                    )
+                                    .changed()
+                            {
+                                emitter_changed = true;
+                            }
+                        });
+                        ui.end_row();
+                        if burst_enabled {
+                            let new_value = burst_value.max(1);
+                            if component.burst_count != Some(new_value) {
+                                component.burst_count = Some(new_value);
+                                emitter_changed = true;
+                            }
+                        } else if component.burst_count.is_some() {
+                            component.burst_count = None;
+                            emitter_changed = true;
+                        }
+
+                        let mut position = Vec3::from_array(component.position);
+                        if vec3_editor(ui, "Position", &mut position) {
+                            component.position = position.to_array();
+                            emitter_changed = true;
+                        }
+
+                        if emission_shape_editor(ui, &mut component.emission_shape) {
+                            emitter_changed = true;
+                        }
+
+                        let mut velocity_min =
+                            Vec3::from_array(component.initial_velocity_range.min);
+                        let mut velocity_max =
+                            Vec3::from_array(component.initial_velocity_range.max);
+                        let mut velocity_changed = false;
+                        if vec3_editor(ui, "Velocity min", &mut velocity_min) {
+                            velocity_changed = true;
+                        }
+                        if vec3_editor(ui, "Velocity max", &mut velocity_max) {
+                            velocity_changed = true;
+                        }
+                        if velocity_changed {
+                            let min = velocity_min.to_array();
+                            let mut max = velocity_max.to_array();
+                            for i in 0..3 {
+                                if max[i] < min[i] {
+                                    max[i] = min[i];
+                                }
+                            }
+                            component.initial_velocity_range = ParticleVec3Range::new(min, max);
+                            emitter_changed = true;
+                        }
+
+                        let mut scale_min = Vec3::from_array(component.initial_scale_range.min);
+                        let mut scale_max = Vec3::from_array(component.initial_scale_range.max);
+                        let mut scale_changed = false;
+                        if vec3_editor(ui, "Scale min", &mut scale_min) {
+                            scale_changed = true;
+                        }
+                        if vec3_editor(ui, "Scale max", &mut scale_max) {
+                            scale_changed = true;
+                        }
+                        if scale_changed {
+                            let min = scale_min.to_array();
+                            let mut max = scale_max.to_array();
+                            for i in 0..3 {
+                                if max[i] < min[i] {
+                                    max[i] = min[i];
+                                }
+                            }
+                            component.initial_scale_range = ParticleVec3Range::new(min, max);
+                            emitter_changed = true;
+                        }
+
+                        let mut lifetime_min = component.lifetime_range.min;
+                        let mut lifetime_max = component.lifetime_range.max;
+                        if float_drag_value(
+                            ui,
+                            "Lifetime min",
+                            &mut lifetime_min,
+                            0.01,
+                            Some(0.0..=1_000.0),
+                        ) {
+                            emitter_changed = true;
+                        }
+                        if float_drag_value(
+                            ui,
+                            "Lifetime max",
+                            &mut lifetime_max,
+                            0.01,
+                            Some(0.0..=1_000.0),
+                        ) {
+                            emitter_changed = true;
+                        }
+                        if lifetime_max < lifetime_min {
+                            lifetime_max = lifetime_min;
+                            emitter_changed = true;
+                        }
+                        component.lifetime_range =
+                            ParticleFloatRange::new(lifetime_min, lifetime_max);
+
+                        ui.label("Auto respawn");
+                        if ui
+                            .checkbox(&mut component.auto_respawn, "Enabled")
+                            .changed()
+                        {
+                            emitter_changed = true;
+                        }
+                        ui.end_row();
+
+                        let mut radial_min = component.radial_velocity.min;
+                        let mut radial_max = component.radial_velocity.max;
+                        if float_drag_value(ui, "Radial velocity min", &mut radial_min, 0.01, None)
+                        {
+                            emitter_changed = true;
+                        }
+                        if float_drag_value(ui, "Radial velocity max", &mut radial_max, 0.01, None)
+                        {
+                            emitter_changed = true;
+                        }
+                        if radial_max < radial_min {
+                            radial_max = radial_min;
+                            emitter_changed = true;
+                        }
+                        component.radial_velocity = ParticleFloatRange::new(radial_min, radial_max);
+                    });
+
+                ui.add_space(6.0);
+                ui.label("Color gradient");
+                if color_gradient_editor(ui, &mut component.color_gradient) {
+                    emitter_changed = true;
+                }
+
+                ui.add_space(6.0);
+                ui.label("Size curve");
+                if size_curve_editor(ui, &mut component.size_curve) {
+                    emitter_changed = true;
+                }
+
+                if emitter_changed {
+                    actions.push(InspectorAction::UpdateParticleEmitter { entity, component });
+                }
+            }
+            None => {
+                ui.label("No ParticleEmitterComponent on this entity.");
+            }
+        });
+
+        if spawn_changed {
             actions.push(InspectorAction::UpdateParticleSystem {
                 entity,
-                component: updated,
+                component: system_component.clone(),
+            });
+        }
+
+        if let Some((behavior, config)) = behavior_action {
+            actions.push(InspectorAction::UpdateParticleBehavior {
+                entity,
+                behavior,
+                config,
             });
         }
     });
@@ -501,6 +744,618 @@ fn show_light_sections(
         ui.add_space(6.0);
         show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
     }
+}
+
+fn physics_behavior_editor(ui: &mut egui::Ui, config: &mut PhysicsBehaviorConfig) -> bool {
+    let mut changed = false;
+    Grid::new("physics_behavior_grid")
+        .num_columns(2)
+        .striped(true)
+        .show(ui, |ui| {
+            changed |= float_drag_value(ui, "Drag", &mut config.drag, 0.01, Some(0.0..=10.0));
+            changed |= float_drag_value(
+                ui,
+                "Turbulence strength",
+                &mut config.turbulence_strength,
+                0.01,
+                Some(0.0..=10.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Turbulence frequency",
+                &mut config.turbulence_frequency,
+                0.01,
+                Some(0.0..=10.0),
+            );
+            let mut gravity = Vec3::from_array(config.gravity);
+            if vec3_editor(ui, "Gravity", &mut gravity) {
+                config.gravity = gravity.to_array();
+                changed = true;
+            }
+            changed |= float_drag_value(ui, "Ground level", &mut config.ground_level, 0.01, None);
+            changed |= float_drag_value(
+                ui,
+                "Bounce factor",
+                &mut config.bounce_factor,
+                0.01,
+                Some(0.0..=1.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Velocity damping",
+                &mut config.velocity_damping,
+                0.01,
+                Some(0.0..=10.0),
+            );
+        });
+
+    if config.drag < 0.0 {
+        config.drag = 0.0;
+        changed = true;
+    }
+    if config.turbulence_strength < 0.0 {
+        config.turbulence_strength = 0.0;
+        changed = true;
+    }
+    if config.turbulence_frequency < 0.0 {
+        config.turbulence_frequency = 0.0;
+        changed = true;
+    }
+    if config.bounce_factor < 0.0 {
+        config.bounce_factor = 0.0;
+        changed = true;
+    }
+    if config.velocity_damping < 0.0 {
+        config.velocity_damping = 0.0;
+        changed = true;
+    }
+
+    changed
+}
+
+fn starfield_behavior_editor(ui: &mut egui::Ui, config: &mut StarfieldBehaviorConfig) -> bool {
+    let mut changed = false;
+    Grid::new("starfield_behavior_grid")
+        .num_columns(2)
+        .striped(true)
+        .show(ui, |ui| {
+            changed |= float_drag_value(
+                ui,
+                "Near plane",
+                &mut config.near_plane,
+                0.01,
+                Some(0.0..=1_000.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Far plane",
+                &mut config.far_plane,
+                0.01,
+                Some(0.0..=10_000.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Far reset band",
+                &mut config.far_reset_band,
+                0.01,
+                Some(0.0..=10_000.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Field half size",
+                &mut config.field_half_size,
+                0.1,
+                Some(0.0..=10_000.0),
+            );
+            changed |= float_drag_value(
+                ui,
+                "Minimum radius",
+                &mut config.min_radius,
+                0.01,
+                Some(0.0..=100.0),
+            );
+        });
+
+    if config.near_plane < 0.0 {
+        config.near_plane = 0.0;
+        changed = true;
+    }
+    if config.far_plane <= config.near_plane {
+        config.far_plane = config.near_plane + 0.01;
+        changed = true;
+    }
+    if config.far_reset_band < 0.0 {
+        config.far_reset_band = 0.0;
+        changed = true;
+    }
+    if config.field_half_size < 0.0 {
+        config.field_half_size = 0.0;
+        changed = true;
+    }
+    if config.min_radius < 0.0 {
+        config.min_radius = 0.0;
+        changed = true;
+    }
+
+    changed
+}
+
+struct BoidsConfigMut<'a> {
+    separation_radius: &'a mut f32,
+    alignment_radius: &'a mut f32,
+    cohesion_radius: &'a mut f32,
+    separation_weight: &'a mut f32,
+    alignment_weight: &'a mut f32,
+    cohesion_weight: &'a mut f32,
+    max_speed: &'a mut f32,
+    max_force: &'a mut f32,
+    bounds: &'a mut f32,
+    particle_count: &'a mut u32,
+}
+
+trait BoidsConfigAccess {
+    fn as_mut_fields(&mut self) -> BoidsConfigMut<'_>;
+}
+
+impl BoidsConfigAccess for BoidsBehaviorConfig {
+    fn as_mut_fields(&mut self) -> BoidsConfigMut<'_> {
+        BoidsConfigMut {
+            separation_radius: &mut self.separation_radius,
+            alignment_radius: &mut self.alignment_radius,
+            cohesion_radius: &mut self.cohesion_radius,
+            separation_weight: &mut self.separation_weight,
+            alignment_weight: &mut self.alignment_weight,
+            cohesion_weight: &mut self.cohesion_weight,
+            max_speed: &mut self.max_speed,
+            max_force: &mut self.max_force,
+            bounds: &mut self.bounds,
+            particle_count: &mut self.particle_count,
+        }
+    }
+}
+
+impl BoidsConfigAccess for OptimizedBoidsBehaviorConfig {
+    fn as_mut_fields(&mut self) -> BoidsConfigMut<'_> {
+        BoidsConfigMut {
+            separation_radius: &mut self.separation_radius,
+            alignment_radius: &mut self.alignment_radius,
+            cohesion_radius: &mut self.cohesion_radius,
+            separation_weight: &mut self.separation_weight,
+            alignment_weight: &mut self.alignment_weight,
+            cohesion_weight: &mut self.cohesion_weight,
+            max_speed: &mut self.max_speed,
+            max_force: &mut self.max_force,
+            bounds: &mut self.bounds,
+            particle_count: &mut self.particle_count,
+        }
+    }
+}
+
+fn edit_boids_like_config<T: BoidsConfigAccess>(
+    ui: &mut egui::Ui,
+    id: &str,
+    config: &mut T,
+) -> bool {
+    let fields = config.as_mut_fields();
+    edit_boids_fields(ui, id, fields)
+}
+
+fn edit_boids_fields(ui: &mut egui::Ui, id: &str, fields: BoidsConfigMut<'_>) -> bool {
+    let mut changed = false;
+    Grid::new(id).num_columns(2).striped(true).show(ui, |ui| {
+        changed |= float_drag_value(
+            ui,
+            "Separation radius",
+            fields.separation_radius,
+            0.01,
+            Some(0.0..=1_000.0),
+        );
+        changed |= float_drag_value(
+            ui,
+            "Alignment radius",
+            fields.alignment_radius,
+            0.01,
+            Some(0.0..=1_000.0),
+        );
+        changed |= float_drag_value(
+            ui,
+            "Cohesion radius",
+            fields.cohesion_radius,
+            0.01,
+            Some(0.0..=1_000.0),
+        );
+        changed |= float_drag_value(
+            ui,
+            "Separation weight",
+            fields.separation_weight,
+            0.01,
+            Some(0.0..=10.0),
+        );
+        changed |= float_drag_value(
+            ui,
+            "Alignment weight",
+            fields.alignment_weight,
+            0.01,
+            Some(0.0..=10.0),
+        );
+        changed |= float_drag_value(
+            ui,
+            "Cohesion weight",
+            fields.cohesion_weight,
+            0.01,
+            Some(0.0..=10.0),
+        );
+        changed |= float_drag_value(ui, "Max speed", fields.max_speed, 0.01, Some(0.0..=1_000.0));
+        changed |= float_drag_value(ui, "Max force", fields.max_force, 0.01, Some(0.0..=1_000.0));
+        changed |= float_drag_value(ui, "Bounds", fields.bounds, 0.1, Some(0.0..=10_000.0));
+        changed |= u32_drag_value(
+            ui,
+            "Particle count",
+            fields.particle_count,
+            1.0,
+            Some(1..=1_000_000),
+        );
+    });
+
+    if *fields.separation_radius < 0.0 {
+        *fields.separation_radius = 0.0;
+        changed = true;
+    }
+    if *fields.alignment_radius < 0.0 {
+        *fields.alignment_radius = 0.0;
+        changed = true;
+    }
+    if *fields.cohesion_radius < 0.0 {
+        *fields.cohesion_radius = 0.0;
+        changed = true;
+    }
+    if *fields.separation_weight < 0.0 {
+        *fields.separation_weight = 0.0;
+        changed = true;
+    }
+    if *fields.alignment_weight < 0.0 {
+        *fields.alignment_weight = 0.0;
+        changed = true;
+    }
+    if *fields.cohesion_weight < 0.0 {
+        *fields.cohesion_weight = 0.0;
+        changed = true;
+    }
+    if *fields.max_speed < 0.0 {
+        *fields.max_speed = 0.0;
+        changed = true;
+    }
+    if *fields.max_force < 0.0 {
+        *fields.max_force = 0.0;
+        changed = true;
+    }
+    if *fields.bounds < 0.0 {
+        *fields.bounds = 0.0;
+        changed = true;
+    }
+    if *fields.particle_count == 0 {
+        *fields.particle_count = 1;
+        changed = true;
+    }
+
+    changed
+}
+
+fn u32_drag_value(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut u32,
+    speed: f32,
+    range: Option<RangeInclusive<u32>>,
+) -> bool {
+    ui.label(label);
+    let mut drag = DragValue::new(value).speed(speed);
+    if let Some(range) = range {
+        drag = drag.range(range);
+    }
+    let changed = ui.add(drag).changed();
+    ui.end_row();
+    changed
+}
+
+fn emission_shape_editor(ui: &mut egui::Ui, shape: &mut ParticleEmissionShape) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum EmissionShapeKind {
+        Point,
+        Sphere,
+        Box,
+        Cone,
+        Disc,
+        Ring,
+        RadialBurst,
+    }
+
+    fn shape_kind(shape: &ParticleEmissionShape) -> EmissionShapeKind {
+        match shape {
+            ParticleEmissionShape::Point => EmissionShapeKind::Point,
+            ParticleEmissionShape::Sphere { .. } => EmissionShapeKind::Sphere,
+            ParticleEmissionShape::Box { .. } => EmissionShapeKind::Box,
+            ParticleEmissionShape::Cone { .. } => EmissionShapeKind::Cone,
+            ParticleEmissionShape::Disc { .. } => EmissionShapeKind::Disc,
+            ParticleEmissionShape::Ring { .. } => EmissionShapeKind::Ring,
+            ParticleEmissionShape::RadialBurst => EmissionShapeKind::RadialBurst,
+        }
+    }
+
+    fn kind_label(kind: EmissionShapeKind) -> &'static str {
+        match kind {
+            EmissionShapeKind::Point => "Point",
+            EmissionShapeKind::Sphere => "Sphere",
+            EmissionShapeKind::Box => "Box",
+            EmissionShapeKind::Cone => "Cone",
+            EmissionShapeKind::Disc => "Disc",
+            EmissionShapeKind::Ring => "Ring",
+            EmissionShapeKind::RadialBurst => "Radial Burst",
+        }
+    }
+
+    fn default_shape(kind: EmissionShapeKind) -> ParticleEmissionShape {
+        match kind {
+            EmissionShapeKind::Point => ParticleEmissionShape::Point,
+            EmissionShapeKind::Sphere => ParticleEmissionShape::Sphere { radius: 1.0 },
+            EmissionShapeKind::Box => ParticleEmissionShape::Box {
+                half_extents: [1.0, 1.0, 1.0],
+            },
+            EmissionShapeKind::Cone => ParticleEmissionShape::Cone {
+                angle: (45.0_f32).to_radians(),
+                radius: 1.0,
+            },
+            EmissionShapeKind::Disc => ParticleEmissionShape::Disc { radius: 1.0 },
+            EmissionShapeKind::Ring => ParticleEmissionShape::Ring {
+                radius: 1.0,
+                thickness: 0.1,
+            },
+            EmissionShapeKind::RadialBurst => ParticleEmissionShape::RadialBurst,
+        }
+    }
+
+    let mut changed = false;
+    let mut kind = shape_kind(shape);
+
+    ui.label("Emission shape");
+    ComboBox::from_id_salt("particle_emission_shape")
+        .selected_text(kind_label(kind))
+        .show_ui(ui, |ui| {
+            for candidate in [
+                EmissionShapeKind::Point,
+                EmissionShapeKind::Sphere,
+                EmissionShapeKind::Box,
+                EmissionShapeKind::Cone,
+                EmissionShapeKind::Disc,
+                EmissionShapeKind::Ring,
+                EmissionShapeKind::RadialBurst,
+            ] {
+                if ui
+                    .selectable_label(kind == candidate, kind_label(candidate))
+                    .clicked()
+                {
+                    kind = candidate;
+                }
+            }
+        });
+    ui.end_row();
+
+    if kind != shape_kind(shape) {
+        *shape = default_shape(kind);
+        changed = true;
+    }
+
+    match shape {
+        ParticleEmissionShape::Sphere { radius } => {
+            if float_drag_value(ui, "Sphere radius", radius, 0.01, Some(0.0..=10_000.0)) {
+                if *radius < 0.0 {
+                    *radius = 0.0;
+                }
+                changed = true;
+            }
+        }
+        ParticleEmissionShape::Box { half_extents } => {
+            let mut extents = Vec3::from_array(*half_extents);
+            if vec3_editor(ui, "Half extents", &mut extents) {
+                *half_extents = extents.to_array();
+                changed = true;
+            }
+        }
+        ParticleEmissionShape::Cone { angle, radius } => {
+            let mut angle_degrees = angle.to_degrees();
+            if float_drag_value(
+                ui,
+                "Cone angle (deg)",
+                &mut angle_degrees,
+                0.5,
+                Some(0.0..=179.0),
+            ) {
+                *angle = angle_degrees.clamp(0.0, 179.0).to_radians();
+                changed = true;
+            }
+            if float_drag_value(ui, "Cone radius", radius, 0.01, Some(0.0..=10_000.0)) {
+                if *radius < 0.0 {
+                    *radius = 0.0;
+                }
+                changed = true;
+            }
+        }
+        ParticleEmissionShape::Disc { radius } => {
+            if float_drag_value(ui, "Disc radius", radius, 0.01, Some(0.0..=10_000.0)) {
+                if *radius < 0.0 {
+                    *radius = 0.0;
+                }
+                changed = true;
+            }
+        }
+        ParticleEmissionShape::Ring { radius, thickness } => {
+            if float_drag_value(ui, "Ring radius", radius, 0.01, Some(0.0..=10_000.0)) {
+                if *radius < 0.0 {
+                    *radius = 0.0;
+                }
+                changed = true;
+            }
+            if float_drag_value(ui, "Ring thickness", thickness, 0.01, Some(0.0..=10_000.0)) {
+                if *thickness < 0.0 {
+                    *thickness = 0.0;
+                }
+                changed = true;
+            }
+        }
+        ParticleEmissionShape::Point | ParticleEmissionShape::RadialBurst => {
+            // No additional parameters
+        }
+    }
+
+    changed
+}
+
+fn color_gradient_editor(ui: &mut egui::Ui, gradient: &mut ParticleColorGradient) -> bool {
+    let mut changed = false;
+    let mut remove_index = None;
+
+    for (index, keyframe) in gradient.keyframes.iter_mut().enumerate() {
+        ui.push_id(index, |ui| {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Keyframe {}", index + 1));
+                    if ui.small_button("Remove").clicked() {
+                        remove_index = Some(index);
+                    }
+                });
+                Grid::new(format!("color_keyframe_grid_{index}"))
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.label("Color");
+                        let mut color = egui::Rgba::from_rgba_unmultiplied(
+                            keyframe.color[0],
+                            keyframe.color[1],
+                            keyframe.color[2],
+                            keyframe.color[3],
+                        );
+                        if color_edit_button_rgba(ui, &mut color, Alpha::OnlyBlend).changed() {
+                            keyframe.color = color.to_array();
+                            changed = true;
+                        }
+                        ui.end_row();
+
+                        ui.label("Time");
+                        let mut time = keyframe.time;
+                        if ui.add(DragValue::new(&mut time).speed(0.01)).changed() {
+                            keyframe.time = time.max(0.0);
+                            changed = true;
+                        }
+                        ui.end_row();
+                    });
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        if gradient.keyframes.len() > 1 {
+            gradient.keyframes.remove(index);
+        } else if let Some(first) = gradient.keyframes.first_mut() {
+            *first = ParticleColorKeyframe {
+                color: [1.0, 1.0, 1.0, 1.0],
+                time: 0.0,
+            };
+        }
+        changed = true;
+    }
+
+    if ui.button("Add keyframe").clicked() {
+        let (color, time) = gradient
+            .keyframes
+            .last()
+            .map(|key| (key.color, key.time + 0.1))
+            .unwrap_or(([1.0, 1.0, 1.0, 1.0], 0.0));
+        gradient
+            .keyframes
+            .push(ParticleColorKeyframe { color, time });
+        changed = true;
+    }
+
+    if changed {
+        gradient
+            .keyframes
+            .sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(Ordering::Equal));
+    }
+
+    changed
+}
+
+fn size_curve_editor(ui: &mut egui::Ui, curve: &mut ParticleSizeCurve) -> bool {
+    let mut changed = false;
+    let mut remove_index = None;
+
+    for (index, keyframe) in curve.keyframes.iter_mut().enumerate() {
+        ui.push_id(index, |ui| {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("Keyframe {}", index + 1));
+                    if ui.small_button("Remove").clicked() {
+                        remove_index = Some(index);
+                    }
+                });
+                Grid::new(format!("size_keyframe_grid_{index}"))
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        if float_drag_value(
+                            ui,
+                            "Size",
+                            &mut keyframe.size,
+                            0.01,
+                            Some(0.0..=1_000.0),
+                        ) {
+                            if keyframe.size < 0.0 {
+                                keyframe.size = 0.0;
+                            }
+                            changed = true;
+                        }
+
+                        ui.label("Time");
+                        let mut time = keyframe.time;
+                        if ui.add(DragValue::new(&mut time).speed(0.01)).changed() {
+                            keyframe.time = time.max(0.0);
+                            changed = true;
+                        }
+                        ui.end_row();
+                    });
+            });
+        });
+    }
+
+    if let Some(index) = remove_index {
+        if curve.keyframes.len() > 1 {
+            curve.keyframes.remove(index);
+        } else if let Some(first) = curve.keyframes.first_mut() {
+            *first = ParticleSizeKeyframe {
+                size: 1.0,
+                time: 0.0,
+            };
+        }
+        changed = true;
+    }
+
+    if ui.button("Add keyframe").clicked() {
+        let (size, time) = curve
+            .keyframes
+            .last()
+            .map(|key| (key.size, key.time + 0.1))
+            .unwrap_or((1.0, 0.0));
+        curve.keyframes.push(ParticleSizeKeyframe { size, time });
+        changed = true;
+    }
+
+    if changed {
+        curve
+            .keyframes
+            .sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(Ordering::Equal));
+    }
+
+    changed
 }
 
 fn show_environment_section(

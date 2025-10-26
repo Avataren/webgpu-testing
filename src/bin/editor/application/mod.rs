@@ -32,14 +32,14 @@ use wgpu_cube::renderer::primitives::{
     cone_mesh, cube_mesh, cylinder_mesh, quad_mesh, sphere_mesh, torus_mesh,
 };
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
+use wgpu_cube::scene::components::{Billboard, BillboardOrientation, DepthState};
 use wgpu_cube::scene::{
-    Billboard, BillboardOrientation, CameraComponent, CanCastShadow, DepthState, DirectionalLight,
-    EntityBuilder, EnvironmentComponent, MaterialComponent, MeshBounds, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
-    TransformComponent,
+    CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
+    MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
+    ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
-use wgpu_cube::{DefaultUI, RenderApplication, SceneCreationAction, ScenePrimitivePreset};
+use wgpu_cube::{DefaultUI, RenderApplication, ScenePrimitivePreset};
 
 use crate::inspector::InspectorAction;
 use crate::layout::{EditorBehavior, EditorPane};
@@ -493,6 +493,64 @@ impl EditorApplication {
                             Err(err) => {
                                 log::warn!(
                                     "Failed to update particle system for {:?}: {}",
+                                    entity,
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateParticleEmitter { entity, component } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut ParticleEmitterComponent>(entity) {
+                            Ok(mut existing) => {
+                                if *existing != component {
+                                    *existing = component;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update particle emitter for {:?}: {}",
+                                    entity,
+                                    err
+                                );
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateParticleBehavior {
+                    entity,
+                    behavior,
+                    config,
+                } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut ParticleSystemComponent>(entity) {
+                            Ok(mut existing) => {
+                                let config = config.ensure_variant(behavior);
+                                if existing.behavior != behavior
+                                    || existing.behavior_config != config
+                                {
+                                    existing.behavior = behavior;
+                                    existing.behavior_config = config;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Failed to update particle behavior for {:?}: {}",
                                     entity,
                                     err
                                 );

@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 
 use hecs::Entity;
 
-use super::core::EditorApplication;
 use super::system::{EditorCommand, EditorContext, EditorSystem};
 use wgpu_cube::SceneCreationAction;
 

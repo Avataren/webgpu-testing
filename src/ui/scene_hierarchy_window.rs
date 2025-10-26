@@ -152,10 +152,10 @@ impl SceneHierarchySnapshot {
                 .map(|component| *component);
             let particle_system = entity_ref
                 .get::<&ParticleSystemComponent>()
-                .map(|component| component.clone());
+                .map(|component| (*component).clone());
             let particle_emitter = entity_ref
                 .get::<&ParticleEmitterComponent>()
-                .map(|component| component.clone());
+                .map(|component| (*component).clone());
             let environment = entity_ref
                 .get::<&EnvironmentComponent>()
                 .map(|component| (*component).clone());
