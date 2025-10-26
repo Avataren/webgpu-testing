@@ -662,7 +662,12 @@ impl EditorApplication {
         ctx: &mut GpuUpdateContext,
     ) -> (Handle<Mesh>, Option<MeshBounds>) {
         if let Some(handle) = self.particle_mesh {
-            return (handle, self.particle_mesh_bounds);
+            if ctx.scene.assets.meshes.get(handle).is_some() {
+                return (handle, self.particle_mesh_bounds);
+            }
+
+            self.particle_mesh = None;
+            self.particle_mesh_bounds = None;
         }
 
         let (vertices, indices) = quad_mesh();
