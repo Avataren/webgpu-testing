@@ -181,3 +181,50 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .iter()
         .any(|entity| entity.particle_behavior.is_some()));
 }
+
+#[test]
+fn particle_spawn_rate_edit_serializes_consistently() {
+    let mut scene = Scene::new();
+    let entity = scene.main_world_mut().spawn((
+        Name::new("Emitter"),
+        TransformComponent(Transform::IDENTITY),
+        ParticleSystemComponent::new(90.0, ParticleBehaviorPreset::Physics),
+        ParticleEmitterComponent {
+            spawn_rate: 90.0,
+            ..Default::default()
+        },
+    ));
+
+    let updated_spawn_rate = 240.0;
+    {
+        let world = scene.main_world_mut();
+        let mut system = world
+            .get::<&mut ParticleSystemComponent>(entity)
+            .expect("system component should exist");
+        system.spawn_rate = updated_spawn_rate;
+        let mut emitter = world
+            .get::<&mut ParticleEmitterComponent>(entity)
+            .expect("emitter component should exist");
+        emitter.spawn_rate = updated_spawn_rate;
+    }
+
+    let asset = scene
+        .export_main_asset("Particles")
+        .expect("scene should export asset after spawn rate edit");
+    let serialized = asset
+        .entities
+        .iter()
+        .find(|entity| entity.particle_system.is_some())
+        .expect("particle entity should exist");
+    let serialized_system = serialized
+        .particle_system
+        .as_ref()
+        .expect("serialized system should exist");
+    let serialized_emitter = serialized
+        .particle_emitter
+        .as_ref()
+        .expect("serialized emitter should exist");
+
+    assert_eq!(serialized_system.spawn_rate, updated_spawn_rate);
+    assert_eq!(serialized_emitter.spawn_rate, updated_spawn_rate);
+}
