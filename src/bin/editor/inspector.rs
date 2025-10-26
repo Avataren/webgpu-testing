@@ -108,7 +108,7 @@ pub fn show_entity_inspector(
         show_environment_section(ui, data.entity, environment, &mut actions);
     }
 
-    if let Some(component) = data.components.particle_system {
+    if let Some(component) = data.components.particle_system.clone() {
         begin_section(ui, &mut first_section);
         show_particle_system_section(ui, data.entity, component, &mut actions);
     }
@@ -467,7 +467,7 @@ fn show_particle_system_section(
                         }
                     });
                 if behavior != updated.behavior {
-                    updated.behavior = behavior;
+                    updated.set_behavior(behavior);
                     changed = true;
                 }
                 ui.end_row();

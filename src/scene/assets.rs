@@ -5,8 +5,9 @@ use super::animation::{
 use super::components::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
     EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
-    MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorPreset, ParticleSystemComponent,
-    PointLight, SpotLight, TransformComponent, Visible,
+    MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight, TransformComponent,
+    Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -317,6 +318,10 @@ impl SceneAsset {
 
             if let Some(particle_system) = &entity.particle_system {
                 builder.add(ParticleSystemComponent::from(particle_system.clone()));
+            }
+
+            if let Some(particle_emitter) = &entity.particle_emitter {
+                builder.add(particle_emitter.clone());
             }
 
             if let Some(editor_id) = entity.editor_id {
@@ -681,6 +686,8 @@ pub struct SceneAssetEntity {
     #[serde(default)]
     pub particle_system: Option<SerializedParticleSystem>,
     #[serde(default)]
+    pub particle_emitter: Option<ParticleEmitterComponent>,
+    #[serde(default)]
     pub environment: Option<EnvironmentComponent>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
@@ -772,7 +779,11 @@ impl SceneAssetEntity {
         let particle_system = world
             .get::<&ParticleSystemComponent>(entity)
             .ok()
-            .map(|component| SerializedParticleSystem::from(*component));
+            .map(|component| SerializedParticleSystem::from((*component).clone()));
+        let particle_emitter = world
+            .get::<&ParticleEmitterComponent>(entity)
+            .ok()
+            .map(|component| (*component).clone());
 
         let parent = world
             .get::<&Parent>(entity)
@@ -852,6 +863,7 @@ impl SceneAssetEntity {
             casts_shadow,
             editor_id,
             particle_system,
+            particle_emitter,
             environment,
             camera,
         }
@@ -878,6 +890,7 @@ pub struct SceneAssetEntityBuilder {
     casts_shadow: Option<bool>,
     editor_id: Option<u128>,
     particle_system: Option<SerializedParticleSystem>,
+    particle_emitter: Option<ParticleEmitterComponent>,
     environment: Option<EnvironmentComponent>,
     camera: Option<CameraComponent>,
 }
@@ -904,6 +917,7 @@ impl SceneAssetEntityBuilder {
             casts_shadow: None,
             editor_id: None,
             particle_system: None,
+            particle_emitter: None,
             environment: None,
             camera: None,
         }
@@ -1002,6 +1016,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_particle_emitter(mut self, emitter: ParticleEmitterComponent) -> Self {
+        self.particle_emitter = Some(emitter);
+        self
+    }
+
     pub fn with_environment(mut self, component: EnvironmentComponent) -> Self {
         self.environment = Some(component);
         self
@@ -1033,6 +1052,7 @@ impl SceneAssetEntityBuilder {
             casts_shadow: self.casts_shadow,
             editor_id: self.editor_id,
             particle_system: self.particle_system,
+            particle_emitter: self.particle_emitter,
             environment: self.environment,
             camera: self.camera,
         }
@@ -1044,6 +1064,8 @@ pub struct SerializedParticleSystem {
     pub spawn_rate: f32,
     #[serde(default)]
     pub behavior: ParticleBehaviorPreset,
+    #[serde(default)]
+    pub behavior_config: ParticleBehaviorConfig,
 }
 
 impl From<ParticleSystemComponent> for SerializedParticleSystem {
@@ -1051,13 +1073,19 @@ impl From<ParticleSystemComponent> for SerializedParticleSystem {
         Self {
             spawn_rate: component.spawn_rate,
             behavior: component.behavior,
+            behavior_config: component.behavior_config.clone(),
         }
     }
 }
 
 impl From<SerializedParticleSystem> for ParticleSystemComponent {
     fn from(serialized: SerializedParticleSystem) -> Self {
-        ParticleSystemComponent::new(serialized.spawn_rate, serialized.behavior)
+        let mut component =
+            ParticleSystemComponent::new(serialized.spawn_rate, serialized.behavior);
+        component.behavior_config = serialized
+            .behavior_config
+            .ensure_variant(serialized.behavior);
+        component
     }
 }
 
@@ -1536,6 +1564,7 @@ mod tests {
                 casts_shadow: None,
                 editor_id: None,
                 particle_system: None,
+                particle_emitter: None,
                 environment: None,
                 camera: None,
             }],

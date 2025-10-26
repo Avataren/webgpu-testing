@@ -4,6 +4,10 @@
 use crate::asset::Handle;
 use crate::asset::Mesh;
 use crate::environment::{ColorGrading, Environment, HdrBackground};
+use crate::gpu_particles::behaviors::{
+    BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
+};
+use crate::gpu_particles::{ColorGradient, EmissionShape, ParticleEmitter, SizeCurve};
 use crate::renderer::{Material, Vertex};
 use crate::scene::camera::{Camera, CameraProjection};
 use crate::scene::Transform;
@@ -460,18 +464,600 @@ impl ParticleBehaviorPreset {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParticleFloatRange {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl ParticleFloatRange {
+    pub const fn new(min: f32, max: f32) -> Self {
+        Self { min, max }
+    }
+}
+
+impl Default for ParticleFloatRange {
+    fn default() -> Self {
+        Self::new(0.0, 0.0)
+    }
+}
+
+impl From<(f32, f32)> for ParticleFloatRange {
+    fn from(range: (f32, f32)) -> Self {
+        Self {
+            min: range.0,
+            max: range.1,
+        }
+    }
+}
+
+impl From<ParticleFloatRange> for (f32, f32) {
+    fn from(range: ParticleFloatRange) -> Self {
+        (range.min, range.max)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParticleVec3Range {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl ParticleVec3Range {
+    pub const fn new(min: [f32; 3], max: [f32; 3]) -> Self {
+        Self { min, max }
+    }
+
+    pub const fn splat(value: f32) -> Self {
+        Self {
+            min: [value; 3],
+            max: [value; 3],
+        }
+    }
+}
+
+impl Default for ParticleVec3Range {
+    fn default() -> Self {
+        Self::new([0.0; 3], [0.0; 3])
+    }
+}
+
+impl From<(Vec3, Vec3)> for ParticleVec3Range {
+    fn from(range: (Vec3, Vec3)) -> Self {
+        Self {
+            min: range.0.to_array(),
+            max: range.1.to_array(),
+        }
+    }
+}
+
+impl From<ParticleVec3Range> for (Vec3, Vec3) {
+    fn from(range: ParticleVec3Range) -> Self {
+        (Vec3::from_array(range.min), Vec3::from_array(range.max))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleColorKeyframe {
+    pub color: [f32; 4],
+    pub time: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleColorGradient {
+    pub keyframes: Vec<ParticleColorKeyframe>,
+}
+
+impl Default for ParticleColorGradient {
+    fn default() -> Self {
+        Self {
+            keyframes: vec![ParticleColorKeyframe {
+                color: [1.0, 1.0, 1.0, 1.0],
+                time: 0.0,
+            }],
+        }
+    }
+}
+
+impl From<ColorGradient> for ParticleColorGradient {
+    fn from(gradient: ColorGradient) -> Self {
+        Self {
+            keyframes: gradient
+                .keyframes
+                .into_iter()
+                .map(|(color, time)| ParticleColorKeyframe { color, time })
+                .collect(),
+        }
+    }
+}
+
+impl From<ParticleColorGradient> for ColorGradient {
+    fn from(gradient: ParticleColorGradient) -> Self {
+        ColorGradient {
+            keyframes: gradient
+                .keyframes
+                .into_iter()
+                .map(|key| (key.color, key.time))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleSizeKeyframe {
+    pub size: f32,
+    pub time: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleSizeCurve {
+    pub keyframes: Vec<ParticleSizeKeyframe>,
+}
+
+impl Default for ParticleSizeCurve {
+    fn default() -> Self {
+        Self {
+            keyframes: vec![ParticleSizeKeyframe {
+                size: 1.0,
+                time: 0.0,
+            }],
+        }
+    }
+}
+
+impl From<SizeCurve> for ParticleSizeCurve {
+    fn from(curve: SizeCurve) -> Self {
+        Self {
+            keyframes: curve
+                .keyframes
+                .into_iter()
+                .map(|(size, time)| ParticleSizeKeyframe { size, time })
+                .collect(),
+        }
+    }
+}
+
+impl From<ParticleSizeCurve> for SizeCurve {
+    fn from(curve: ParticleSizeCurve) -> Self {
+        SizeCurve {
+            keyframes: curve
+                .keyframes
+                .into_iter()
+                .map(|key| (key.size, key.time))
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParticleEmissionShape {
+    Point,
+    Sphere { radius: f32 },
+    Box { half_extents: [f32; 3] },
+    Cone { angle: f32, radius: f32 },
+    Disc { radius: f32 },
+    Ring { radius: f32, thickness: f32 },
+    RadialBurst,
+}
+
+impl Default for ParticleEmissionShape {
+    fn default() -> Self {
+        Self::Point
+    }
+}
+
+impl From<EmissionShape> for ParticleEmissionShape {
+    fn from(shape: EmissionShape) -> Self {
+        match shape {
+            EmissionShape::Point => Self::Point,
+            EmissionShape::Sphere { radius } => Self::Sphere { radius },
+            EmissionShape::Box { half_extents } => Self::Box {
+                half_extents: half_extents.to_array(),
+            },
+            EmissionShape::Cone { angle, radius } => Self::Cone { angle, radius },
+            EmissionShape::Disc { radius } => Self::Disc { radius },
+            EmissionShape::Ring { radius, thickness } => Self::Ring { radius, thickness },
+            EmissionShape::RadialBurst => Self::RadialBurst,
+        }
+    }
+}
+
+impl From<ParticleEmissionShape> for EmissionShape {
+    fn from(shape: ParticleEmissionShape) -> Self {
+        match shape {
+            ParticleEmissionShape::Point => EmissionShape::Point,
+            ParticleEmissionShape::Sphere { radius } => EmissionShape::Sphere { radius },
+            ParticleEmissionShape::Box { half_extents } => EmissionShape::Box {
+                half_extents: Vec3::from_array(half_extents),
+            },
+            ParticleEmissionShape::Cone { angle, radius } => EmissionShape::Cone { angle, radius },
+            ParticleEmissionShape::Disc { radius } => EmissionShape::Disc { radius },
+            ParticleEmissionShape::Ring { radius, thickness } => {
+                EmissionShape::Ring { radius, thickness }
+            }
+            ParticleEmissionShape::RadialBurst => EmissionShape::RadialBurst,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParticleEmitterComponent {
+    pub spawn_rate: f32,
+    #[serde(default)]
+    pub burst_count: Option<u32>,
+    #[serde(default)]
+    pub position: [f32; 3],
+    #[serde(default)]
+    pub emission_shape: ParticleEmissionShape,
+    #[serde(default)]
+    pub initial_velocity_range: ParticleVec3Range,
+    #[serde(default = "ParticleEmitterComponent::default_scale_range")]
+    pub initial_scale_range: ParticleVec3Range,
+    #[serde(default = "ParticleEmitterComponent::default_lifetime_range")]
+    pub lifetime_range: ParticleFloatRange,
+    #[serde(default)]
+    pub color_gradient: ParticleColorGradient,
+    #[serde(default)]
+    pub size_curve: ParticleSizeCurve,
+    #[serde(default)]
+    pub radial_velocity: ParticleFloatRange,
+    #[serde(default)]
+    pub auto_respawn: bool,
+}
+
+impl ParticleEmitterComponent {
+    const fn default_scale_range() -> ParticleVec3Range {
+        ParticleVec3Range::splat(1.0)
+    }
+
+    const fn default_lifetime_range() -> ParticleFloatRange {
+        ParticleFloatRange::new(5.0, 5.0)
+    }
+
+    pub fn to_runtime(&self) -> ParticleEmitter {
+        let mut emitter = ParticleEmitter::new(Vec3::from_array(self.position), self.spawn_rate);
+        emitter.burst_count = self.burst_count;
+        emitter.emission_shape = self.emission_shape.clone().into();
+        emitter.initial_velocity_range = self.initial_velocity_range.into();
+        emitter.initial_scale_range = self.initial_scale_range.into();
+        emitter.lifetime_range = self.lifetime_range.into();
+        emitter.color_gradient = self.color_gradient.clone().into();
+        emitter.size_curve = self.size_curve.clone().into();
+        emitter.radial_velocity = self.radial_velocity.into();
+        emitter.auto_respawn = self.auto_respawn;
+        emitter
+    }
+}
+
+impl Default for ParticleEmitterComponent {
+    fn default() -> Self {
+        Self {
+            spawn_rate: 0.0,
+            burst_count: None,
+            position: [0.0; 3],
+            emission_shape: ParticleEmissionShape::default(),
+            initial_velocity_range: ParticleVec3Range::default(),
+            initial_scale_range: Self::default_scale_range(),
+            lifetime_range: Self::default_lifetime_range(),
+            color_gradient: ParticleColorGradient::default(),
+            size_curve: ParticleSizeCurve::default(),
+            radial_velocity: ParticleFloatRange::default(),
+            auto_respawn: false,
+        }
+    }
+}
+
+impl From<&ParticleEmitter> for ParticleEmitterComponent {
+    fn from(emitter: &ParticleEmitter) -> Self {
+        Self {
+            spawn_rate: emitter.spawn_rate,
+            burst_count: emitter.burst_count,
+            position: emitter.position.to_array(),
+            emission_shape: emitter.emission_shape.clone().into(),
+            initial_velocity_range: emitter.initial_velocity_range.into(),
+            initial_scale_range: emitter.initial_scale_range.into(),
+            lifetime_range: emitter.lifetime_range.into(),
+            color_gradient: emitter.color_gradient.clone().into(),
+            size_curve: emitter.size_curve.clone().into(),
+            radial_velocity: emitter.radial_velocity.into(),
+            auto_respawn: emitter.auto_respawn,
+        }
+    }
+}
+
+impl From<ParticleEmitterComponent> for ParticleEmitter {
+    fn from(component: ParticleEmitterComponent) -> Self {
+        component.to_runtime()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PhysicsBehaviorConfig {
+    pub drag: f32,
+    pub turbulence_strength: f32,
+    pub turbulence_frequency: f32,
+    pub gravity: [f32; 3],
+    pub ground_level: f32,
+    pub bounce_factor: f32,
+    pub velocity_damping: f32,
+}
+
+impl Default for PhysicsBehaviorConfig {
+    fn default() -> Self {
+        let behavior = PhysicsBehavior::default();
+        Self {
+            drag: behavior.drag,
+            turbulence_strength: behavior.turbulence_strength,
+            turbulence_frequency: behavior.turbulence_frequency,
+            gravity: behavior.gravity.to_array(),
+            ground_level: behavior.ground_level,
+            bounce_factor: behavior.bounce_factor,
+            velocity_damping: behavior.velocity_damping,
+        }
+    }
+}
+
+impl From<&PhysicsBehavior> for PhysicsBehaviorConfig {
+    fn from(behavior: &PhysicsBehavior) -> Self {
+        Self {
+            drag: behavior.drag,
+            turbulence_strength: behavior.turbulence_strength,
+            turbulence_frequency: behavior.turbulence_frequency,
+            gravity: behavior.gravity.to_array(),
+            ground_level: behavior.ground_level,
+            bounce_factor: behavior.bounce_factor,
+            velocity_damping: behavior.velocity_damping,
+        }
+    }
+}
+
+impl PhysicsBehaviorConfig {
+    pub fn to_behavior(&self) -> PhysicsBehavior {
+        PhysicsBehavior {
+            drag: self.drag,
+            turbulence_strength: self.turbulence_strength,
+            turbulence_frequency: self.turbulence_frequency,
+            gravity: Vec3::from_array(self.gravity),
+            ground_level: self.ground_level,
+            bounce_factor: self.bounce_factor,
+            velocity_damping: self.velocity_damping,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StarfieldBehaviorConfig {
+    pub near_plane: f32,
+    pub far_plane: f32,
+    pub far_reset_band: f32,
+    pub field_half_size: f32,
+    pub min_radius: f32,
+}
+
+impl Default for StarfieldBehaviorConfig {
+    fn default() -> Self {
+        Self {
+            near_plane: 0.05,
+            far_plane: 200.0,
+            far_reset_band: 5.0,
+            field_half_size: 60.0,
+            min_radius: 0.25,
+        }
+    }
+}
+
+impl From<&StarfieldBehavior> for StarfieldBehaviorConfig {
+    fn from(behavior: &StarfieldBehavior) -> Self {
+        Self {
+            near_plane: behavior.near_plane,
+            far_plane: behavior.far_plane,
+            far_reset_band: behavior.far_reset_band,
+            field_half_size: behavior.field_half_size,
+            min_radius: behavior.min_radius,
+        }
+    }
+}
+
+impl StarfieldBehaviorConfig {
+    pub fn to_behavior(&self) -> StarfieldBehavior {
+        StarfieldBehavior {
+            near_plane: self.near_plane,
+            far_plane: self.far_plane,
+            far_reset_band: self.far_reset_band,
+            field_half_size: self.field_half_size,
+            min_radius: self.min_radius,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoidsBehaviorConfig {
+    pub separation_radius: f32,
+    pub alignment_radius: f32,
+    pub cohesion_radius: f32,
+    pub separation_weight: f32,
+    pub alignment_weight: f32,
+    pub cohesion_weight: f32,
+    pub max_speed: f32,
+    pub max_force: f32,
+    pub bounds: f32,
+    pub particle_count: u32,
+}
+
+impl Default for BoidsBehaviorConfig {
+    fn default() -> Self {
+        let behavior = BoidsBehavior::default();
+        Self {
+            separation_radius: behavior.separation_radius,
+            alignment_radius: behavior.alignment_radius,
+            cohesion_radius: behavior.cohesion_radius,
+            separation_weight: behavior.separation_weight,
+            alignment_weight: behavior.alignment_weight,
+            cohesion_weight: behavior.cohesion_weight,
+            max_speed: behavior.max_speed,
+            max_force: behavior.max_force,
+            bounds: behavior.bounds,
+            particle_count: behavior.particle_count,
+        }
+    }
+}
+
+impl From<&BoidsBehavior> for BoidsBehaviorConfig {
+    fn from(behavior: &BoidsBehavior) -> Self {
+        Self {
+            separation_radius: behavior.separation_radius,
+            alignment_radius: behavior.alignment_radius,
+            cohesion_radius: behavior.cohesion_radius,
+            separation_weight: behavior.separation_weight,
+            alignment_weight: behavior.alignment_weight,
+            cohesion_weight: behavior.cohesion_weight,
+            max_speed: behavior.max_speed,
+            max_force: behavior.max_force,
+            bounds: behavior.bounds,
+            particle_count: behavior.particle_count,
+        }
+    }
+}
+
+impl BoidsBehaviorConfig {
+    pub fn to_behavior(&self) -> BoidsBehavior {
+        BoidsBehavior {
+            separation_radius: self.separation_radius,
+            alignment_radius: self.alignment_radius,
+            cohesion_radius: self.cohesion_radius,
+            separation_weight: self.separation_weight,
+            alignment_weight: self.alignment_weight,
+            cohesion_weight: self.cohesion_weight,
+            max_speed: self.max_speed,
+            max_force: self.max_force,
+            bounds: self.bounds,
+            particle_count: self.particle_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OptimizedBoidsBehaviorConfig {
+    pub separation_radius: f32,
+    pub alignment_radius: f32,
+    pub cohesion_radius: f32,
+    pub separation_weight: f32,
+    pub alignment_weight: f32,
+    pub cohesion_weight: f32,
+    pub max_speed: f32,
+    pub max_force: f32,
+    pub bounds: f32,
+    pub particle_count: u32,
+}
+
+impl Default for OptimizedBoidsBehaviorConfig {
+    fn default() -> Self {
+        let behavior = BoidsBehavior::default();
+        Self {
+            separation_radius: behavior.separation_radius,
+            alignment_radius: behavior.alignment_radius,
+            cohesion_radius: behavior.cohesion_radius,
+            separation_weight: behavior.separation_weight,
+            alignment_weight: behavior.alignment_weight,
+            cohesion_weight: behavior.cohesion_weight,
+            max_speed: behavior.max_speed,
+            max_force: behavior.max_force,
+            bounds: behavior.bounds,
+            particle_count: behavior.particle_count,
+        }
+    }
+}
+
+impl From<&OptimizedBoidsBehavior> for OptimizedBoidsBehaviorConfig {
+    fn from(behavior: &OptimizedBoidsBehavior) -> Self {
+        Self {
+            separation_radius: behavior.separation_radius,
+            alignment_radius: behavior.alignment_radius,
+            cohesion_radius: behavior.cohesion_radius,
+            separation_weight: behavior.separation_weight,
+            alignment_weight: behavior.alignment_weight,
+            cohesion_weight: behavior.cohesion_weight,
+            max_speed: behavior.max_speed,
+            max_force: behavior.max_force,
+            bounds: behavior.bounds,
+            particle_count: behavior.particle_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ParticleBehaviorConfig {
+    Physics(PhysicsBehaviorConfig),
+    Starfield(StarfieldBehaviorConfig),
+    Boids(BoidsBehaviorConfig),
+    OptimizedBoids(OptimizedBoidsBehaviorConfig),
+}
+
+impl ParticleBehaviorConfig {
+    pub fn from_preset(preset: ParticleBehaviorPreset) -> Self {
+        match preset {
+            ParticleBehaviorPreset::Physics => Self::Physics(PhysicsBehaviorConfig::default()),
+            ParticleBehaviorPreset::Starfield => {
+                Self::Starfield(StarfieldBehaviorConfig::default())
+            }
+            ParticleBehaviorPreset::Boids => Self::Boids(BoidsBehaviorConfig::default()),
+            ParticleBehaviorPreset::OptimizedBoids => {
+                Self::OptimizedBoids(OptimizedBoidsBehaviorConfig::default())
+            }
+        }
+    }
+
+    pub const fn preset(&self) -> ParticleBehaviorPreset {
+        match self {
+            ParticleBehaviorConfig::Physics(_) => ParticleBehaviorPreset::Physics,
+            ParticleBehaviorConfig::Starfield(_) => ParticleBehaviorPreset::Starfield,
+            ParticleBehaviorConfig::Boids(_) => ParticleBehaviorPreset::Boids,
+            ParticleBehaviorConfig::OptimizedBoids(_) => ParticleBehaviorPreset::OptimizedBoids,
+        }
+    }
+
+    pub fn ensure_variant(self, preset: ParticleBehaviorPreset) -> Self {
+        if self.preset() == preset {
+            self
+        } else {
+            Self::from_preset(preset)
+        }
+    }
+}
+
+impl Default for ParticleBehaviorConfig {
+    fn default() -> Self {
+        Self::from_preset(ParticleBehaviorPreset::default())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParticleSystemComponent {
     pub spawn_rate: f32,
     #[serde(default)]
     pub behavior: ParticleBehaviorPreset,
+    #[serde(default)]
+    pub behavior_config: ParticleBehaviorConfig,
 }
 
 impl ParticleSystemComponent {
-    pub const fn new(spawn_rate: f32, behavior: ParticleBehaviorPreset) -> Self {
+    pub fn new(spawn_rate: f32, behavior: ParticleBehaviorPreset) -> Self {
         Self {
             spawn_rate,
             behavior,
+            behavior_config: ParticleBehaviorConfig::from_preset(behavior),
         }
+    }
+
+    pub fn set_behavior(&mut self, behavior: ParticleBehaviorPreset) {
+        self.behavior = behavior;
+        self.behavior_config = ParticleBehaviorConfig::from_preset(behavior);
+    }
+
+    pub fn with_behavior_config(mut self, config: ParticleBehaviorConfig) -> Self {
+        self.behavior_config = config.ensure_variant(self.behavior);
+        self
     }
 }
 
