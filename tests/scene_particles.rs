@@ -3,17 +3,48 @@ use std::fs;
 use tempfile::tempdir;
 use wgpu_cube::project::{ProjectManifest, ProjectMetadata, SCENE_FILE_NAME};
 use wgpu_cube::scene::{
-    Name, ParticleBehaviorPreset, ParticleSystemComponent, Scene, SceneAsset, Transform,
-    TransformComponent,
+    Name, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleEmissionShape,
+    ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve, ParticleSizeKeyframe,
+    ParticleSystemComponent, ParticleVec3Range, Scene, SceneAsset, StarfieldBehaviorConfig,
+    Transform, TransformComponent,
 };
 
 #[test]
 fn particle_system_asset_roundtrip() {
     let mut scene = Scene::new();
+    let particle_system = ParticleSystemComponent::new(120.0, ParticleBehaviorPreset::Starfield)
+        .with_behavior_config(ParticleBehaviorConfig::Starfield(StarfieldBehaviorConfig {
+            near_plane: 0.05,
+            far_plane: 180.0,
+            far_reset_band: 6.0,
+            field_half_size: 75.0,
+            min_radius: 0.4,
+        }));
+    let mut particle_emitter = ParticleEmitterComponent::default();
+    particle_emitter.spawn_rate = 180.0;
+    particle_emitter.burst_count = Some(32);
+    particle_emitter.auto_respawn = true;
+    particle_emitter.emission_shape = ParticleEmissionShape::Sphere { radius: 2.5 };
+    particle_emitter.initial_velocity_range =
+        ParticleVec3Range::new([-0.5, 1.0, -0.5], [0.5, 2.0, 0.5]);
+    particle_emitter.lifetime_range = ParticleFloatRange::new(1.25, 2.75);
+    particle_emitter.size_curve = ParticleSizeCurve {
+        keyframes: vec![
+            ParticleSizeKeyframe {
+                size: 0.5,
+                time: 0.0,
+            },
+            ParticleSizeKeyframe {
+                size: 1.5,
+                time: 0.8,
+            },
+        ],
+    };
     scene.main_world_mut().spawn((
         Name::new("Particle Emitter"),
         TransformComponent(Transform::IDENTITY),
-        ParticleSystemComponent::new(120.0, ParticleBehaviorPreset::Starfield),
+        particle_system.clone(),
+        particle_emitter.clone(),
     ));
 
     let asset = scene
@@ -31,28 +62,41 @@ fn particle_system_asset_roundtrip() {
     let node = restored_scene.instantiate_asset(&restored, None);
     restored_scene.set_main_scene(node);
 
-    let mut query = restored_scene
+    let mut system_query = restored_scene
         .main_world()
         .query::<&ParticleSystemComponent>();
-    let restored_component = query
+    let restored_system = system_query
         .iter()
-        .map(|(_, component)| *component)
+        .map(|(_, component)| component.clone())
         .next()
         .expect("particle system component should restore");
+    assert_eq!(restored_system, particle_system);
 
-    assert_eq!(
-        restored_component,
-        ParticleSystemComponent::new(120.0, ParticleBehaviorPreset::Starfield)
-    );
+    let mut emitter_query = restored_scene
+        .main_world()
+        .query::<&ParticleEmitterComponent>();
+    let restored_emitter = emitter_query
+        .iter()
+        .map(|(_, component)| component.clone())
+        .next()
+        .expect("particle emitter component should restore");
+    assert_eq!(restored_emitter, particle_emitter);
 }
 
 #[test]
 fn project_manifest_scene_json_roundtrip_includes_particles() {
     let mut scene = Scene::new();
+    let mut particle_emitter = ParticleEmitterComponent::default();
+    particle_emitter.spawn_rate = 60.0;
+    particle_emitter.emission_shape = ParticleEmissionShape::Cone {
+        angle: 0.5,
+        radius: 1.0,
+    };
     scene.main_world_mut().spawn((
         Name::new("Burst"),
         TransformComponent(Transform::IDENTITY),
         ParticleSystemComponent::new(45.0, ParticleBehaviorPreset::Physics),
+        particle_emitter,
     ));
 
     let metadata = ProjectMetadata::default();
@@ -87,4 +131,9 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
+    assert!(manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_emitter.is_some()));
 }

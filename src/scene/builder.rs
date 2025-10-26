@@ -69,6 +69,18 @@ impl<'w> EntityBuilder<'w> {
         self
     }
 
+    /// Add a particle system component
+    pub fn with_particle_system(mut self, component: ParticleSystemComponent) -> Self {
+        self.builder.add(component);
+        self
+    }
+
+    /// Add a particle emitter component
+    pub fn with_particle_emitter(mut self, component: ParticleEmitterComponent) -> Self {
+        self.builder.add(component);
+        self
+    }
+
     /// Attach a scripting component to the entity.
     pub fn with_script(mut self, source: RuneScriptSource) -> Self {
         self.builder.add(RuneScriptComponent::new(source));

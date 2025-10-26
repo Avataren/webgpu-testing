@@ -2,7 +2,8 @@
 use crate::scene::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EnvironmentComponent,
     MaterialComponent, MeshComponent, Name, Parent, ParticleBehaviorPreset,
-    ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
+    TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -95,6 +96,7 @@ pub struct SceneEntityComponentsSummary {
     pub spot_light: Option<SpotLight>,
     pub can_cast_shadow: Option<CanCastShadow>,
     pub particle_system: Option<ParticleSystemComponent>,
+    pub particle_emitter: Option<ParticleEmitterComponent>,
     pub environment: Option<EnvironmentComponent>,
 }
 
@@ -150,7 +152,10 @@ impl SceneHierarchySnapshot {
                 .map(|component| *component);
             let particle_system = entity_ref
                 .get::<&ParticleSystemComponent>()
-                .map(|component| *component);
+                .map(|component| component.clone());
+            let particle_emitter = entity_ref
+                .get::<&ParticleEmitterComponent>()
+                .map(|component| component.clone());
             let environment = entity_ref
                 .get::<&EnvironmentComponent>()
                 .map(|component| (*component).clone());
@@ -178,6 +183,7 @@ impl SceneHierarchySnapshot {
                     spot_light,
                     can_cast_shadow,
                     particle_system,
+                    particle_emitter,
                     environment,
                 },
             );
