@@ -509,6 +509,8 @@ impl GpuParticleSystem {
             CustomRenderStage::BeforePostprocess | CustomRenderStage::AfterPostprocess => {
                 self.ensure_render_pipeline(ctx.renderer.get_device(), ctx.renderer, ctx.stage);
 
+                let render_region = ctx.render_region();
+
                 let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ParticleRenderPass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -531,6 +533,10 @@ impl GpuParticleSystem {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                 });
+
+                if let Some(region) = render_region {
+                    region.apply_to_pass(&mut pass);
+                }
 
                 pass.set_pipeline(&self.render_pipeline);
                 pass.set_bind_group(0, ctx.renderer.camera_bind_group(), &[]);
