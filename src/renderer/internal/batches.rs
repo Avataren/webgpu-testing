@@ -310,7 +310,7 @@ fn allocate_cpu_range(
 
             let attempted_start = *cursor;
             let attempted_end = attempted_start.saturating_add(length);
-            log::warn!(
+            log::trace!(
                 "CPU instance range [{}..{}) overlaps GPU reservation [{}..{}); skipping to {}",
                 attempted_start,
                 attempted_end,

@@ -30,27 +30,17 @@ impl PrimitiveMeshDescriptor {
 }
 
 #[cfg(feature = "egui")]
-impl From<crate::ui::scene_hierarchy_window::ScenePrimitivePreset> for PrimitiveMeshDescriptor {
-    fn from(preset: crate::ui::scene_hierarchy_window::ScenePrimitivePreset) -> Self {
+impl From<crate::ScenePrimitivePreset> for PrimitiveMeshDescriptor {
+    fn from(preset: crate::ScenePrimitivePreset) -> Self {
+        use crate::ScenePrimitivePreset::*;
+
         match preset {
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cube => {
-                PrimitiveMeshDescriptor::Cube
-            }
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Sphere => {
-                PrimitiveMeshDescriptor::Sphere
-            }
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Plane => {
-                PrimitiveMeshDescriptor::Plane
-            }
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cylinder => {
-                PrimitiveMeshDescriptor::Cylinder
-            }
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Cone => {
-                PrimitiveMeshDescriptor::Cone
-            }
-            crate::ui::scene_hierarchy_window::ScenePrimitivePreset::Torus => {
-                PrimitiveMeshDescriptor::Torus
-            }
+            Cube => PrimitiveMeshDescriptor::Cube,
+            Sphere => PrimitiveMeshDescriptor::Sphere,
+            Plane => PrimitiveMeshDescriptor::Plane,
+            Cylinder => PrimitiveMeshDescriptor::Cylinder,
+            Cone => PrimitiveMeshDescriptor::Cone,
+            Torus => PrimitiveMeshDescriptor::Torus,
         }
     }
 }
