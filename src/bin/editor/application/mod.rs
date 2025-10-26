@@ -490,10 +490,14 @@ impl EditorApplication {
                 }
                 InspectorAction::UpdateParticleSystem { entity, component } => {
                     let mut updated = false;
+                    let new_spawn_rate = component.spawn_rate;
+                    let mut spawn_rate_changed = false;
                     {
                         let world = ctx.scene.main_world_mut();
                         match world.get::<&mut ParticleSystemComponent>(entity) {
                             Ok(mut existing) => {
+                                spawn_rate_changed =
+                                    (existing.spawn_rate - new_spawn_rate).abs() > f32::EPSILON;
                                 if *existing != component {
                                     *existing = component;
                                     updated = true;
@@ -505,6 +509,24 @@ impl EditorApplication {
                                     entity,
                                     err
                                 );
+                            }
+                        }
+
+                        if spawn_rate_changed {
+                            match world.get::<&mut ParticleEmitterComponent>(entity) {
+                                Ok(mut emitter) => {
+                                    if (emitter.spawn_rate - new_spawn_rate).abs() > f32::EPSILON {
+                                        emitter.spawn_rate = new_spawn_rate;
+                                        updated = true;
+                                    }
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "Failed to update particle emitter spawn rate for {:?}: {}",
+                                        entity,
+                                        err
+                                    );
+                                }
                             }
                         }
                     }

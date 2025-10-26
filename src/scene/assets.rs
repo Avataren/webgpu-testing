@@ -785,18 +785,31 @@ impl SceneAssetEntity {
             .ok()
             .map(|m| SerializedMaterial::from(m.0));
 
-        let (particle_system, particle_behavior) =
-            match world.get::<&ParticleSystemComponent>(entity) {
-                Ok(component) => (
-                    Some(SerializedParticleSystem::from((*component).clone())),
-                    Some(SerializedParticleBehavior::from(&*component)),
-                ),
-                Err(_) => (None, None),
-            };
-        let particle_emitter = world
+        let emitter_component = world
             .get::<&ParticleEmitterComponent>(entity)
             .ok()
-            .map(|component| SerializedParticleEmitter::from(&*component));
+            .map(|component| (*component).clone());
+        let emitter_spawn_rate = emitter_component
+            .as_ref()
+            .map(|component| component.spawn_rate);
+        let particle_emitter = emitter_component
+            .as_ref()
+            .map(SerializedParticleEmitter::from);
+
+        let (particle_system, particle_behavior) =
+            match world.get::<&ParticleSystemComponent>(entity) {
+                Ok(component) => {
+                    let mut component_clone = (*component).clone();
+                    if let Some(spawn_rate) = emitter_spawn_rate {
+                        component_clone.spawn_rate = spawn_rate;
+                    }
+                    (
+                        Some(SerializedParticleSystem::from(&component_clone)),
+                        Some(SerializedParticleBehavior::from(&component_clone)),
+                    )
+                }
+                Err(_) => (None, None),
+            };
 
         let parent = world
             .get::<&Parent>(entity)
@@ -1093,13 +1106,19 @@ pub struct SerializedParticleSystem {
     pub behavior_config: Option<ParticleBehaviorConfig>,
 }
 
-impl From<ParticleSystemComponent> for SerializedParticleSystem {
-    fn from(component: ParticleSystemComponent) -> Self {
+impl From<&ParticleSystemComponent> for SerializedParticleSystem {
+    fn from(component: &ParticleSystemComponent) -> Self {
         Self {
             spawn_rate: component.spawn_rate,
             behavior: Some(component.behavior),
             behavior_config: Some(component.behavior_config.clone()),
         }
+    }
+}
+
+impl From<ParticleSystemComponent> for SerializedParticleSystem {
+    fn from(component: ParticleSystemComponent) -> Self {
+        Self::from(&component)
     }
 }
 

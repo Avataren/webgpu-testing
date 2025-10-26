@@ -452,6 +452,8 @@ fn show_particle_system_section(
 ) {
     ui.collapsing("Particle System", |ui| {
         let mut system_component = component;
+        let mut emitter_component = emitter;
+        let mut emitter_changed = false;
         let mut spawn_changed = false;
         let mut behavior_action: Option<(ParticleBehaviorPreset, ParticleBehaviorConfig)> = None;
 
@@ -460,15 +462,31 @@ fn show_particle_system_section(
                 .num_columns(2)
                 .striped(true)
                 .show(ui, |ui| {
+                    let mut spawn_rate = emitter_component
+                        .as_ref()
+                        .map(|component| component.spawn_rate)
+                        .unwrap_or(system_component.spawn_rate);
                     if float_drag_value(
                         ui,
                         "Spawn rate",
-                        &mut system_component.spawn_rate,
+                        &mut spawn_rate,
                         0.1,
                         Some(0.0..=10_000.0),
                     ) {
-                        system_component.spawn_rate = system_component.spawn_rate.max(0.0);
-                        spawn_changed = true;
+                        spawn_rate = spawn_rate.max(0.0);
+                        if (spawn_rate - system_component.spawn_rate).abs() > f32::EPSILON {
+                            spawn_changed = true;
+                        }
+                        system_component.spawn_rate = spawn_rate;
+                        if let Some(component) = emitter_component.as_mut() {
+                            if (component.spawn_rate - spawn_rate).abs() > f32::EPSILON {
+                                component.spawn_rate = spawn_rate;
+                                emitter_changed = true;
+                            }
+                        }
+                    } else if let Some(component) = emitter_component.as_ref() {
+                        // Keep the system value in sync with the emitter when no edit occurred.
+                        system_component.spawn_rate = component.spawn_rate;
                     }
                 });
         });
@@ -531,24 +549,12 @@ fn show_particle_system_section(
         });
 
         ui.add_space(6.0);
-        ui.collapsing("Emitter", |ui| match emitter {
-            Some(mut component) => {
-                let mut emitter_changed = false;
+        ui.collapsing("Emitter", |ui| match emitter_component.as_mut() {
+            Some(component) => {
                 Grid::new("particle_emitter_component_grid")
                     .num_columns(2)
                     .striped(true)
                     .show(ui, |ui| {
-                        if float_drag_value(
-                            ui,
-                            "Spawn rate",
-                            &mut component.spawn_rate,
-                            0.1,
-                            Some(0.0..=10_000.0),
-                        ) {
-                            component.spawn_rate = component.spawn_rate.max(0.0);
-                            emitter_changed = true;
-                        }
-
                         ui.label("Burst count");
                         let mut burst_enabled = component.burst_count.is_some();
                         let mut burst_value = component.burst_count.unwrap_or(1);
@@ -698,10 +704,6 @@ fn show_particle_system_section(
                 if size_curve_editor(ui, &mut component.size_curve) {
                     emitter_changed = true;
                 }
-
-                if emitter_changed {
-                    actions.push(InspectorAction::UpdateParticleEmitter { entity, component });
-                }
             }
             None => {
                 ui.label("No ParticleEmitterComponent on this entity.");
@@ -713,6 +715,12 @@ fn show_particle_system_section(
                 entity,
                 component: system_component.clone(),
             });
+        }
+
+        if emitter_changed {
+            if let Some(component) = emitter_component {
+                actions.push(InspectorAction::UpdateParticleEmitter { entity, component });
+            }
         }
 
         if let Some((behavior, config)) = behavior_action {
