@@ -12,7 +12,7 @@ use wgpu_cube::gpu_particles::behaviors::{
 use wgpu_cube::gpu_particles::{GpuParticleSystem, ParticleBehavior};
 use wgpu_cube::renderer::{CustomRenderContext, Renderer};
 use wgpu_cube::scene::components::{
-    CanCastShadow, DepthState, GpuParticleInstance, MaterialComponent, MeshComponent,
+    Billboard, CanCastShadow, DepthState, GpuParticleInstance, MaterialComponent, MeshComponent,
     ParticleEmitterComponent, ParticleSystemComponent, TransformComponent, WorldTransform,
 };
 use wgpu_cube::scene::transform::Transform;
@@ -218,6 +218,7 @@ impl EditorParticleSystem {
                 &MeshComponent,
                 Option<&DepthState>,
                 Option<&CanCastShadow>,
+                Option<&Billboard>,
                 Option<&GpuParticleInstance>,
                 Option<&WorldTransform>,
                 Option<&TransformComponent>,
@@ -228,10 +229,11 @@ impl EditorParticleSystem {
                 (
                     system,
                     emitter,
-                    material,
+                    material_component,
                     mesh,
                     depth_state,
                     casts_shadow,
+                    billboard,
                     gpu_instance,
                     world_transform,
                     local_transform,
@@ -245,11 +247,18 @@ impl EditorParticleSystem {
                     .map(|t| Self::transform_point(t, Vec3::from_array(emitter.position)))
                     .unwrap_or_else(|| Vec3::from_array(emitter.position));
 
+                let mut material = material_component.0;
+                material = if billboard.is_some() {
+                    material.with_billboarding()
+                } else {
+                    material.without_billboarding()
+                };
+
                 data.push(ParticleSceneData {
                     entity,
                     descriptor: ParticleSystemDescriptor {
                         mesh: mesh.0,
-                        material: material.0,
+                        material,
                         emitter: emitter.clone(),
                         system: (*system).clone(),
                         depth_state: depth_state.copied(),
