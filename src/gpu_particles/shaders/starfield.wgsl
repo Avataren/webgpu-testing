@@ -3,6 +3,7 @@
 struct Params {
     time_and_planes: vec4<f32>,
     field_and_count: vec4<f32>,
+    emitter_transform: mat4x4<f32>,
 }
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -48,8 +49,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         p.rotation.w += 6.28318;
     }
     
-    // Check if particle passed the near plane
-    if p.position.z > params.time_and_planes.y {
+    let translation = params.emitter_transform[3].xyz;
+    let forward = normalize(params.emitter_transform[2].xyz);
+    let local_z = dot(p.position - translation, forward);
+
+    // Check if particle passed the near plane in emitter space
+    if local_z > params.time_and_planes.y {
         // Increment reset counter (stored in user_data.x for debugging)
         p.user_data.x += 1.0;
         
@@ -72,8 +77,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Reset to far plane with small random offset
         let z_randomness = hash(seed + 3u) * params.time_and_planes.w;
         let reset_z = -params.time_and_planes.z + z_randomness;
-        p.position = vec3<f32>(x, y, reset_z);
-        
+        let local_position = vec4<f32>(x, y, reset_z, 1.0);
+        let world_position = params.emitter_transform * local_position;
+        p.position = world_position.xyz;
+
+        // Realign velocity with the emitter's forward axis so motion stays in emitter space.
+        let forward_speed = dot(p.velocity, forward);
+        var speed = length(p.velocity);
+        if forward_speed > 1e-4 {
+            speed = forward_speed;
+        } else if forward_speed < -1e-4 {
+            speed = -forward_speed;
+        }
+        p.velocity = forward * speed;
+
         // Give it a new random rotation axis and angle
         let new_angle = hash(seed + 4u) * 6.28318;
         let axis_x = hash(seed + 5u) * 2.0 - 1.0;

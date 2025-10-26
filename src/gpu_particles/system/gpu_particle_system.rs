@@ -8,6 +8,7 @@ use crate::renderer::{
     ShadowPassStage,
 };
 use bytemuck::{bytes_of, cast_slice};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
@@ -84,6 +85,7 @@ pub struct GpuParticleSystem {
     workgroup_count: u32,
 
     emitters: Vec<ParticleEmitter>,
+    last_emitter_transform: Mat4,
     slot_allocator: SlotAllocator,
     spawn_scratch: Vec<Particle>,
     dead_list_dirty: bool,
@@ -361,6 +363,7 @@ impl GpuParticleSystem {
             sorting,
             depth_write_enabled,
             pipeline_depth_write_state: depth_write_enabled,
+            last_emitter_transform: Mat4::IDENTITY,
         }
     }
 
@@ -375,6 +378,10 @@ impl GpuParticleSystem {
     }
 
     pub fn add_emitter(&mut self, emitter: ParticleEmitter) {
+        if self.emitters.is_empty() {
+            self.last_emitter_transform = Mat4::from(emitter.world_transform());
+        }
+
         self.emitters.push(emitter);
     }
 
@@ -410,7 +417,19 @@ impl GpuParticleSystem {
 
         self.emitters.retain(|emitter| !emitter.is_complete());
 
-        behavior.update_params(queue, &self.params_buffer, dt, self.active_particles);
+        if let Some(emitter) = self.emitters.first() {
+            self.last_emitter_transform = Mat4::from(emitter.world_transform());
+        }
+
+        let emitter_transform = self.last_emitter_transform;
+
+        behavior.update_params(
+            queue,
+            &self.params_buffer,
+            dt,
+            self.active_particles,
+            emitter_transform,
+        );
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
