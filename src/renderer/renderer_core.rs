@@ -383,7 +383,18 @@ impl Renderer {
         let proj = camera.proj(aspect);
         let vp = proj * view;
         let inv_vp = vp.inverse();
-        let uni = CameraUniform::from_matrices(vp, inv_vp, camera.position());
+        let camera_pos = camera.position();
+        let mut forward = (camera.target - camera_pos)
+            .try_normalize()
+            .unwrap_or(Vec3::NEG_Z);
+        if forward.length_squared() < 1e-6 {
+            forward = Vec3::NEG_Z;
+        }
+        let mut up = camera.up.try_normalize().unwrap_or(Vec3::Y);
+        if up.length_squared() < 1e-6 {
+            up = Vec3::Y;
+        }
+        let uni = CameraUniform::from_matrices(vp, inv_vp, camera_pos, forward, up);
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
