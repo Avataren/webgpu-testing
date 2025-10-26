@@ -318,13 +318,16 @@ impl EditorParticleSystem {
         let queue = renderer.get_queue();
         let behavior = BehaviorRuntime::new(&descriptor, device, max_particles);
 
-        let mut system = GpuParticleSystem::new(
+        let render_mode = descriptor.system.render_mode.resolve(&descriptor.material);
+
+        let mut system = GpuParticleSystem::new_with_mode(
             device,
             queue,
             renderer,
             max_particles,
             descriptor.material,
             behavior.as_behavior(),
+            render_mode,
         );
 
         system.set_casts_shadows(descriptor.casts_shadows);

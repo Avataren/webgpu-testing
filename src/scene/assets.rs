@@ -7,8 +7,8 @@ use super::components::{
     EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
     MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
     ParticleColorGradient, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
-    ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range, PointLight,
-    PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
+    ParticleRenderBlendMode, ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range,
+    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -1143,6 +1143,8 @@ pub struct SerializedParticleSystem {
     pub behavior: Option<ParticleBehaviorPreset>,
     #[serde(default)]
     pub behavior_config: Option<ParticleBehaviorConfig>,
+    #[serde(default)]
+    pub render_mode: ParticleRenderBlendMode,
 }
 
 impl From<&ParticleSystemComponent> for SerializedParticleSystem {
@@ -1151,6 +1153,7 @@ impl From<&ParticleSystemComponent> for SerializedParticleSystem {
             spawn_rate: component.spawn_rate,
             behavior: Some(component.behavior),
             behavior_config: Some(component.behavior_config.clone()),
+            render_mode: component.render_mode,
         }
     }
 }
@@ -1168,6 +1171,7 @@ impl From<SerializedParticleSystem> for ParticleSystemComponent {
         if let Some(config) = serialized.behavior_config {
             component.behavior_config = config.ensure_variant(preset);
         }
+        component.render_mode = serialized.render_mode;
         component
     }
 }

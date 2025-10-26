@@ -7,7 +7,9 @@ use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::gpu_particles::behaviors::{
     BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
 };
-use crate::gpu_particles::{ColorGradient, EmissionShape, ParticleEmitter, SizeCurve};
+use crate::gpu_particles::{
+    ColorGradient, EmissionShape, ParticleEmitter, ParticleRenderMode, SizeCurve,
+};
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Vertex};
 use crate::scene::camera::{Camera, CameraProjection};
@@ -467,6 +469,56 @@ impl ParticleBehaviorPreset {
             ParticleBehaviorPreset::Boids,
             ParticleBehaviorPreset::OptimizedBoids,
         ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParticleRenderBlendMode {
+    Auto,
+    Opaque,
+    AlphaBlend,
+    Additive,
+}
+
+impl Default for ParticleRenderBlendMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl ParticleRenderBlendMode {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            ParticleRenderBlendMode::Auto => "Auto",
+            ParticleRenderBlendMode::Opaque => "Opaque",
+            ParticleRenderBlendMode::AlphaBlend => "Alpha Blend",
+            ParticleRenderBlendMode::Additive => "Additive",
+        }
+    }
+
+    pub const fn variants() -> [ParticleRenderBlendMode; 4] {
+        [
+            ParticleRenderBlendMode::Auto,
+            ParticleRenderBlendMode::Opaque,
+            ParticleRenderBlendMode::AlphaBlend,
+            ParticleRenderBlendMode::Additive,
+        ]
+    }
+
+    pub fn resolve(self, material: &Material) -> ParticleRenderMode {
+        match self {
+            ParticleRenderBlendMode::Auto => {
+                if material.requires_separate_pass() {
+                    ParticleRenderMode::AlphaBlend
+                } else {
+                    ParticleRenderMode::Opaque
+                }
+            }
+            ParticleRenderBlendMode::Opaque => ParticleRenderMode::Opaque,
+            ParticleRenderBlendMode::AlphaBlend => ParticleRenderMode::AlphaBlend,
+            ParticleRenderBlendMode::Additive => ParticleRenderMode::Additive,
+        }
     }
 }
 
@@ -1046,6 +1098,8 @@ pub struct ParticleSystemComponent {
     pub behavior: ParticleBehaviorPreset,
     #[serde(default)]
     pub behavior_config: ParticleBehaviorConfig,
+    #[serde(default)]
+    pub render_mode: ParticleRenderBlendMode,
 }
 
 impl ParticleSystemComponent {
@@ -1054,6 +1108,7 @@ impl ParticleSystemComponent {
             spawn_rate,
             behavior,
             behavior_config: ParticleBehaviorConfig::from_preset(behavior),
+            render_mode: ParticleRenderBlendMode::default(),
         }
     }
 

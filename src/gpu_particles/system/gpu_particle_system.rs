@@ -9,6 +9,7 @@ use crate::renderer::{
 };
 use bytemuck::{bytes_of, cast_slice};
 use glam::Mat4;
+use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
@@ -19,7 +20,7 @@ use super::{
 
 const WORKGROUP_SIZE: u32 = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ParticleRenderMode {
     Opaque,
     AlphaBlend,
