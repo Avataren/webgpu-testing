@@ -112,7 +112,10 @@ impl PreparedBatches {
         let gizmo_range = append_batches(&mut batches, gizmos);
         let gizmo_solid_range = append_batches(&mut batches, gizmo_solids);
 
-        let mut offset = 0u32;
+        let gpu_ranges = collect_gpu_ranges(&batches);
+        let mut cpu_cursor = 0u32;
+        let mut next_gpu_range = 0usize;
+
         for batch in &mut batches {
             if batch
                 .instances
@@ -121,24 +124,18 @@ impl PreparedBatches {
             {
                 if let Some(first_gpu) = batch.instances.first().and_then(|inst| inst.gpu_index) {
                     batch.first_instance = first_gpu;
-                    if let Some(last_gpu) = batch.instances.last().and_then(|inst| inst.gpu_index) {
-                        let end = last_gpu + 1;
-                        if offset > first_gpu {
-                            log::warn!(
-                                "GPU instance range [{}..{}) overlaps existing CPU range ending at {}",
-                                first_gpu,
-                                end,
-                                offset
-                            );
-                        }
-                        offset = offset.max(end);
-                    }
                     continue;
                 }
             }
 
-            batch.first_instance = offset;
-            offset += batch.instances.len() as u32;
+            let instance_count = batch.instances.len() as u32;
+            let start = allocate_cpu_range(
+                &mut cpu_cursor,
+                instance_count,
+                &gpu_ranges,
+                &mut next_gpu_range,
+            );
+            batch.first_instance = start;
         }
 
         Self {
@@ -234,6 +231,104 @@ fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
     }
 }
 
+fn collect_gpu_ranges(batches: &[OrderedBatch]) -> Vec<Range<u32>> {
+    let mut ranges: Vec<Range<u32>> = Vec::new();
+
+    for batch in batches {
+        if !batch
+            .instances
+            .iter()
+            .any(|inst| inst.source == InstanceSource::Gpu)
+        {
+            continue;
+        }
+
+        let mut current: Option<Range<u32>> = None;
+        for inst in batch
+            .instances
+            .iter()
+            .filter(|inst| inst.source == InstanceSource::Gpu)
+            .filter_map(|inst| inst.gpu_index)
+        {
+            match current.as_mut() {
+                Some(range) if inst == range.end => {
+                    range.end += 1;
+                }
+                Some(range) if inst < range.end => {
+                    // Overlapping or duplicate index, extend to cover it.
+                    range.end = range.end.max(inst + 1);
+                }
+                Some(range) => {
+                    ranges.push(range.clone());
+                    *range = inst..inst + 1;
+                }
+                None => {
+                    current = Some(inst..inst + 1);
+                }
+            }
+        }
+
+        if let Some(range) = current.take() {
+            ranges.push(range);
+        }
+    }
+
+    ranges.sort_by_key(|range| range.start);
+
+    let mut merged: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(last) = merged.last_mut() {
+            if range.start <= last.end {
+                last.end = last.end.max(range.end);
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+
+    merged
+}
+
+fn allocate_cpu_range(
+    cursor: &mut u32,
+    length: u32,
+    gpu_ranges: &[Range<u32>],
+    next_gpu_range: &mut usize,
+) -> u32 {
+    loop {
+        if let Some(range) = gpu_ranges.get(*next_gpu_range) {
+            if cursor.saturating_add(length) <= range.start {
+                let start = *cursor;
+                *cursor = cursor.saturating_add(length);
+                return start;
+            }
+
+            if *cursor >= range.end {
+                *next_gpu_range += 1;
+                continue;
+            }
+
+            let attempted_start = *cursor;
+            let attempted_end = attempted_start.saturating_add(length);
+            log::warn!(
+                "CPU instance range [{}..{}) overlaps GPU reservation [{}..{}); skipping to {}",
+                attempted_start,
+                attempted_end,
+                range.start,
+                range.end,
+                range.end
+            );
+            *cursor = range.end;
+            *next_gpu_range += 1;
+            continue;
+        }
+
+        let start = *cursor;
+        *cursor = cursor.saturating_add(length);
+        return start;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,6 +338,7 @@ mod tests {
     use crate::scene::components::DepthState;
     use crate::scene::transform::Transform;
     use glam::Vec3;
+    use std::collections::BTreeSet;
 
     #[test]
     fn empty_batches_are_skipped() {
@@ -269,5 +365,137 @@ mod tests {
             prepared.all().is_empty(),
             "empty batch entries should not produce draw calls"
         );
+    }
+
+    #[test]
+    fn cpu_and_gpu_batches_do_not_overlap_reserved_ranges() {
+        let mut batcher = RenderBatcher::new();
+        let mesh = Handle::new(42);
+        let material = Material::white();
+
+        // CPU opaque batch that should be placed after GPU indices [0, 2).
+        for pick_id in 0..3 {
+            batcher.add(RenderObject {
+                mesh,
+                material,
+                transform: Transform::IDENTITY,
+                depth_state: DepthState::default(),
+                force_overlay: false,
+                render_pass: Some(RenderPass::Opaque),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::Back,
+                pick_id: pick_id as u64,
+            });
+        }
+
+        // GPU transparent batch reserving indices [0, 2).
+        for (i, gpu_index) in (0..2).enumerate() {
+            batcher.add(RenderObject {
+                mesh,
+                material,
+                transform: Transform::IDENTITY,
+                depth_state: DepthState::default(),
+                force_overlay: false,
+                render_pass: Some(RenderPass::Transparent),
+                instance_source: InstanceSource::Gpu,
+                gpu_index: Some(gpu_index),
+                cull_mode: CullMode::Back,
+                pick_id: 100 + i as u64,
+            });
+        }
+
+        // GPU gizmo batch reserving indices [5, 8).
+        for (i, gpu_index) in (5..8).enumerate() {
+            batcher.add(RenderObject {
+                mesh,
+                material,
+                transform: Transform::IDENTITY,
+                depth_state: DepthState::default(),
+                force_overlay: false,
+                render_pass: Some(RenderPass::Gizmo),
+                instance_source: InstanceSource::Gpu,
+                gpu_index: Some(gpu_index),
+                cull_mode: CullMode::Back,
+                pick_id: 200 + i as u64,
+            });
+        }
+
+        // CPU overlay batch that should skip over the [5, 8) GPU reservation.
+        for pick_id in 300..302 {
+            batcher.add(RenderObject {
+                mesh,
+                material,
+                transform: Transform::IDENTITY,
+                depth_state: DepthState::default(),
+                force_overlay: false,
+                render_pass: Some(RenderPass::Overlay),
+                instance_source: InstanceSource::Cpu,
+                gpu_index: None,
+                cull_mode: CullMode::Back,
+                pick_id: pick_id as u64,
+            });
+        }
+
+        // CPU gizmo solid batch to verify ranges after the final GPU segment.
+        batcher.add(RenderObject {
+            mesh,
+            material,
+            transform: Transform::IDENTITY,
+            depth_state: DepthState::default(),
+            force_overlay: false,
+            render_pass: Some(RenderPass::GizmoSolid),
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::Back,
+            pick_id: 999u64,
+        });
+
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+
+        let mut gpu_indices = BTreeSet::new();
+        for batch in prepared.all() {
+            for inst in &batch.instances {
+                if let Some(idx) = inst.gpu_index {
+                    gpu_indices.insert(idx);
+                }
+            }
+        }
+
+        let expected: BTreeSet<_> = [0, 1, 5, 6, 7].into_iter().collect();
+        assert_eq!(gpu_indices, expected);
+
+        let cpu_batches: Vec<_> = prepared
+            .all()
+            .iter()
+            .filter(|batch| {
+                batch
+                    .instances
+                    .iter()
+                    .all(|inst| inst.source == InstanceSource::Cpu)
+            })
+            .collect();
+        assert_eq!(cpu_batches.len(), 3);
+
+        let mut cpu_starts: Vec<u32> = cpu_batches
+            .iter()
+            .map(|batch| batch.first_instance)
+            .collect();
+        cpu_starts.sort_unstable();
+        assert_eq!(cpu_starts, vec![2, 8, 10]);
+
+        for batch in cpu_batches {
+            let start = batch.first_instance;
+            let end = start + batch.instances.len() as u32;
+            for idx in start..end {
+                assert!(
+                    !gpu_indices.contains(&idx),
+                    "CPU draw range [{}..{}) overlaps GPU index {}",
+                    start,
+                    end,
+                    idx
+                );
+            }
+        }
     }
 }
