@@ -13,6 +13,7 @@ use wgpu_cube::SceneHierarchyHandle;
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
+use super::particle_system::EditorParticleSystem;
 use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
 use super::script_editor_system::ScriptEditorSystem;
@@ -47,6 +48,7 @@ pub struct EditorApplication {
     pub(super) script_editor_system_index: usize,
     pub(super) asset_browser_system_index: usize,
     pub(super) scene_creation_system_index: usize,
+    pub(super) particle_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
@@ -181,6 +183,12 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let particle_system_index = {
+            let system = EditorParticleSystem::default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
 
         EditorApplication {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
@@ -194,6 +202,7 @@ impl EditorApplicationBuilder {
             script_editor_system_index,
             asset_browser_system_index,
             scene_creation_system_index,
+            particle_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
@@ -321,6 +330,20 @@ impl EditorApplication {
             .as_any_mut()
             .downcast_mut::<SceneCreationSystem>()
             .expect("scene creation system registered")
+    }
+
+    pub(super) fn particle_system(&self) -> &EditorParticleSystem {
+        self.systems[self.particle_system_index]
+            .as_any()
+            .downcast_ref::<EditorParticleSystem>()
+            .expect("particle system registered")
+    }
+
+    pub(super) fn particle_system_mut(&mut self) -> &mut EditorParticleSystem {
+        self.systems[self.particle_system_index]
+            .as_any_mut()
+            .downcast_mut::<EditorParticleSystem>()
+            .expect("particle system registered")
     }
 
     pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
