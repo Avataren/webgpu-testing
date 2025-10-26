@@ -5,6 +5,7 @@ mod camera_system;
 mod core;
 mod history_system;
 mod input;
+mod particle_system;
 mod picking;
 mod project_system;
 mod runtime_mode;
@@ -78,17 +79,25 @@ impl RenderApplication for EditorApplication {
     }
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
-        if matches!(self.runtime_state.active_mode(), RuntimeMode::Editor) {
+        if !matches!(ctx.stage, CustomRenderStage::Shadow(_))
+            && matches!(self.runtime_state.active_mode(), RuntimeMode::Editor)
+        {
             let grid = self
                 .viewports
                 .grid_postprocess
                 .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
             grid.render(ctx);
         }
+
+        self.particle_system_mut().render(ctx);
     }
 
     fn custom_render_stage(&self) -> CustomRenderStage {
         CustomRenderStage::AfterPostprocess
+    }
+
+    fn custom_render_includes_shadows(&self) -> bool {
+        self.particle_system().has_shadow_casters()
     }
 
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
