@@ -1,6 +1,6 @@
 // src/gpu_particles/behaviors/physics.rs
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
 use crate::gpu_particles::ParticleBehavior;
@@ -101,6 +101,7 @@ impl ParticleBehavior for PhysicsBehavior {
         buffer: &wgpu::Buffer,
         dt: f32,
         active_count: u32,
+        _emitter_transform: Mat4,
     ) {
         let params = PhysicsParams {
             time_and_turbulence: [

@@ -8,6 +8,7 @@ use crate::renderer::{
     ShadowPassStage,
 };
 use bytemuck::{bytes_of, cast_slice};
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
@@ -410,7 +411,19 @@ impl GpuParticleSystem {
 
         self.emitters.retain(|emitter| !emitter.is_complete());
 
-        behavior.update_params(queue, &self.params_buffer, dt, self.active_particles);
+        let emitter_transform = self
+            .emitters
+            .first()
+            .map(|emitter| Mat4::from(emitter.world_transform()))
+            .unwrap_or(Mat4::IDENTITY);
+
+        behavior.update_params(
+            queue,
+            &self.params_buffer,
+            dt,
+            self.active_particles,
+            emitter_transform,
+        );
 
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

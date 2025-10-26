@@ -1,5 +1,5 @@
 // src/gpu_particles/emitter.rs
-use glam::Vec3;
+use glam::{Affine3A, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use super::particle::{Particle, MAX_COLOR_KEYS};
@@ -128,7 +128,7 @@ impl SizeCurve {
 pub struct ParticleEmitter {
     pub spawn_rate: f32,
     pub burst_count: Option<u32>,
-    pub position: Vec3,
+    transform: Affine3A,
     pub emission_shape: EmissionShape,
     pub initial_velocity_range: (Vec3, Vec3),
     pub initial_scale_range: (Vec3, Vec3),
@@ -147,7 +147,7 @@ impl ParticleEmitter {
         Self {
             spawn_rate,
             burst_count: None,
-            position,
+            transform: Affine3A::from_translation(position),
             emission_shape: EmissionShape::Point,
             initial_velocity_range: (Vec3::ZERO, Vec3::ZERO),
             initial_scale_range: (Vec3::ONE, Vec3::ONE),
@@ -165,6 +165,22 @@ impl ParticleEmitter {
     pub fn with_burst(mut self, count: u32) -> Self {
         self.burst_count = Some(count);
         self
+    }
+
+    pub fn position(&self) -> Vec3 {
+        self.transform.translation.into()
+    }
+
+    pub fn set_position(&mut self, position: Vec3) {
+        self.transform.translation = position.into();
+    }
+
+    pub fn world_transform(&self) -> Affine3A {
+        self.transform
+    }
+
+    pub fn set_world_transform(&mut self, transform: Affine3A) {
+        self.transform = transform;
     }
 
     pub fn with_auto_respawn(mut self, enabled: bool) -> Self {
@@ -359,16 +375,17 @@ impl ParticleEmitter {
             }
         };
 
-        let position = self.position + offset;
+        let transform = self.transform;
+        let position = transform.transform_point3(offset);
 
         // Calculate velocity
-        let base_velocity = sample_vec3(
+        let mut velocity = sample_vec3(
             &mut self.rng,
             self.initial_velocity_range.0,
             self.initial_velocity_range.1,
         );
 
-        let velocity = if self.radial_velocity.1 > 0.0 {
+        if self.radial_velocity.1 > 0.0 {
             // Add radial component if specified
             let radial_speed = sample_range(
                 &mut self.rng,
@@ -385,10 +402,10 @@ impl ParticleEmitter {
                     Vec3::Y
                 }
             };
-            base_velocity + radial_dir * radial_speed
-        } else {
-            base_velocity
-        };
+            velocity += radial_dir * radial_speed;
+        }
+
+        let velocity = transform.transform_vector3(velocity);
 
         // ✅ Use uniform scale (single value for all axes)
         let scale_range = (
@@ -442,9 +459,9 @@ impl ParticleEmitter {
         let spawn_scale = scale_uniform * start_size;
 
         Particle {
-            position: position.into(),
+            position: position.to_array(),
             lifetime: 0.0,
-            velocity: velocity.into(),
+            velocity: velocity.to_array(),
             max_lifetime: lifetime,
             rotation: Particle::AXIS_ANGLE_IDENTITY,
             // ✅ Uniform scale on all axes
