@@ -39,7 +39,8 @@ pub use components::{
     MaterialComponent, MeshBounds, MeshComponent, Name, OptimizedBoidsBehaviorConfig,
     OrbitAnimation, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient,
     ParticleColorKeyframe, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
-    ParticleSizeCurve, ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range,
-    PhysicsBehaviorConfig, PointLight, PrimitiveMeshComponent, RotateAnimation, SelectedInEditor,
-    SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible, WorldTransform,
+    ParticleRenderBlendMode, ParticleSizeCurve, ParticleSizeKeyframe, ParticleSystemComponent,
+    ParticleVec3Range, PhysicsBehaviorConfig, PointLight, PrimitiveMeshComponent, RotateAnimation,
+    SelectedInEditor, SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible,
+    WorldTransform,
 };

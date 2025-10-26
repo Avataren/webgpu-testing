@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use hecs::Entity;
 
 use wgpu_cube::renderer::Material;
-use wgpu_cube::scene::components::{Billboard, BillboardOrientation};
+use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
 use wgpu_cube::scene::{
     BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
     EnvironmentComponent, MaterialComponent, MeshComponent, OptimizedBoidsBehaviorConfig,
@@ -467,7 +467,7 @@ fn show_particle_system_section(
         let mut system_component = component;
         let mut emitter_component = emitter;
         let mut emitter_changed = false;
-        let mut spawn_changed = false;
+        let mut system_changed = false;
         let mut behavior_action: Option<(ParticleBehaviorPreset, ParticleBehaviorConfig)> = None;
         let mut billboard_component = billboard;
         let mut billboard_changed = false;
@@ -520,7 +520,7 @@ fn show_particle_system_section(
                     ) {
                         spawn_rate = spawn_rate.max(0.0);
                         if (spawn_rate - system_component.spawn_rate).abs() > f32::EPSILON {
-                            spawn_changed = true;
+                            system_changed = true;
                         }
                         system_component.spawn_rate = spawn_rate;
                         if let Some(component) = emitter_component.as_mut() {
@@ -533,6 +533,31 @@ fn show_particle_system_section(
                         // Keep the system value in sync with the emitter when no edit occurred.
                         system_component.spawn_rate = component.spawn_rate;
                     }
+
+                    ui.end_row();
+
+                    ui.label("Blend mode");
+                    let mut render_mode = system_component.render_mode;
+                    ComboBox::from_id_salt("particle_render_mode_combo")
+                        .selected_text(render_mode.display_name())
+                        .show_ui(ui, |ui| {
+                            for variant in ParticleRenderBlendMode::variants() {
+                                if ui
+                                    .selectable_label(
+                                        render_mode == variant,
+                                        variant.display_name(),
+                                    )
+                                    .clicked()
+                                {
+                                    render_mode = variant;
+                                }
+                            }
+                        });
+                    if render_mode != system_component.render_mode {
+                        system_component.render_mode = render_mode;
+                        system_changed = true;
+                    }
+                    ui.end_row();
                 });
         });
 
@@ -755,7 +780,7 @@ fn show_particle_system_section(
             }
         });
 
-        if spawn_changed {
+        if system_changed {
             actions.push(InspectorAction::UpdateParticleSystem {
                 entity,
                 component: system_component.clone(),
