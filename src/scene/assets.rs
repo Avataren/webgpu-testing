@@ -827,29 +827,17 @@ impl SceneAssetEntity {
             .ok()
             .map(|m| SerializedMaterial::from(m.0));
 
-        let emitter_component = world
+        let particle_emitter = world
             .get::<&ParticleEmitterComponent>(entity)
             .ok()
-            .map(|component| (*component).clone());
-        let emitter_spawn_rate = emitter_component
-            .as_ref()
-            .map(|component| component.spawn_rate);
-        let particle_emitter = emitter_component
-            .as_ref()
-            .map(SerializedParticleEmitter::from);
+            .map(|component| SerializedParticleEmitter::from(&*component));
 
         let (particle_system, particle_behavior) =
             match world.get::<&ParticleSystemComponent>(entity) {
-                Ok(component) => {
-                    let mut component_clone = (*component).clone();
-                    if let Some(spawn_rate) = emitter_spawn_rate {
-                        component_clone.spawn_rate = spawn_rate;
-                    }
-                    (
-                        Some(SerializedParticleSystem::from(&component_clone)),
-                        Some(SerializedParticleBehavior::from(&component_clone)),
-                    )
-                }
+                Ok(component) => (
+                    Some(SerializedParticleSystem::from(&*component)),
+                    Some(SerializedParticleBehavior::from(&*component)),
+                ),
                 Err(_) => (None, None),
             };
 
