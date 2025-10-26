@@ -78,6 +78,29 @@ fn safe_normalize(v: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     return v * inverseSqrt(len_sq);
 }
 
+fn billboard_matrix(camera_forward: vec3<f32>, camera_up: vec3<f32>) -> mat3x3<f32> {
+    let forward = -safe_normalize(camera_forward, vec3<f32>(0.0, 0.0, -1.0));
+    let up_hint = safe_normalize(camera_up, vec3<f32>(0.0, 1.0, 0.0));
+
+    var right = cross(up_hint, forward);
+    let right_len = length(right);
+    if (right_len < 1e-4) {
+        right = vec3<f32>(1.0, 0.0, 0.0);
+    } else {
+        right = right / right_len;
+    }
+
+    var up = cross(forward, right);
+    let up_len = length(up);
+    if (up_len < 1e-4) {
+        up = vec3<f32>(0.0, 1.0, 0.0);
+    } else {
+        up = up / up_len;
+    }
+
+    return mat3x3<f32>(right, up, forward);
+}
+
 // Build rotation matrix from axis-angle (Rodrigues' rotation formula)
 fn axis_angle_to_matrix(axis: vec3<f32>, angle: f32) -> mat3x3<f32> {
     let c = cos(angle);
@@ -109,9 +132,15 @@ fn vs_main(
 ) -> VertexOutput {
     let particle = particles[instance_idx];
 
+    let is_billboarded = (material_data.material_flags & FLAG_BILLBOARDED) != 0u;
     let axis = safe_normalized_axis(particle.rotation.xyz);
     let angle = particle.rotation.w;
-    let rot_mat = axis_angle_to_matrix(axis, angle);
+    var rot_mat: mat3x3<f32>;
+    if (is_billboarded) {
+        rot_mat = billboard_matrix(camera.camera_forward, camera.camera_up);
+    } else {
+        rot_mat = axis_angle_to_matrix(axis, angle);
+    }
     
     // Apply scale and rotation to vertex (unchanged)
     let scaled_pos = vertex.position * particle.scale;
