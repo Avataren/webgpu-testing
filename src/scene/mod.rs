@@ -16,7 +16,8 @@ pub mod transform;
 pub use assets::{
     SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity, SceneAssetEntityBuilder,
     SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset, SceneTreeAssetNode,
-    SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleSystem, SerializedRuneScript,
+    SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleBehavior,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedRuneScript,
     SerializedRuneScriptSource, SerializedTransform,
 };
 pub use builder::EntityBuilder;

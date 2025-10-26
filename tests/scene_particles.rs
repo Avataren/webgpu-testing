@@ -55,6 +55,14 @@ fn particle_system_asset_roundtrip() {
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
+    assert!(asset
+        .entities
+        .iter()
+        .any(|entity| entity.particle_emitter.is_some()));
+    assert!(asset
+        .entities
+        .iter()
+        .any(|entity| entity.particle_behavior.is_some()));
 
     let json = asset.to_json().expect("asset should serialize");
     let restored = SceneAsset::from_json(&json).expect("asset should deserialize");
@@ -111,6 +119,16 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
+    assert!(manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_emitter.is_some()));
+    assert!(manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_behavior.is_some()));
 
     let temp_dir = tempdir().expect("temp dir should create");
     manifest
@@ -126,6 +144,14 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
+    assert!(saved_scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_emitter.is_some()));
+    assert!(saved_scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_behavior.is_some()));
 
     let loaded_manifest =
         ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should load from disk");
@@ -139,4 +165,19 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .entities
         .iter()
         .any(|entity| entity.particle_emitter.is_some()));
+    assert!(loaded_manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_emitter.is_some()));
+    assert!(loaded_manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_behavior.is_some()));
+    assert!(manifest
+        .scene
+        .entities
+        .iter()
+        .any(|entity| entity.particle_behavior.is_some()));
 }

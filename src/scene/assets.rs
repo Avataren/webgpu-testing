@@ -6,8 +6,9 @@ use super::components::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
     EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
     MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight, TransformComponent,
-    Visible,
+    ParticleColorGradient, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
+    ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range, PointLight, SpotLight,
+    TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -317,11 +318,17 @@ impl SceneAsset {
             }
 
             if let Some(particle_system) = &entity.particle_system {
-                builder.add(ParticleSystemComponent::from(particle_system.clone()));
+                let mut system_component = ParticleSystemComponent::from(particle_system.clone());
+                if let Some(behavior) = &entity.particle_behavior {
+                    behavior.apply_to_component(&mut system_component);
+                }
+                builder.add(system_component);
+            } else if let Some(behavior) = &entity.particle_behavior {
+                builder.add(behavior.clone().into_component_with_spawn_rate(0.0));
             }
 
             if let Some(particle_emitter) = &entity.particle_emitter {
-                builder.add(particle_emitter.clone());
+                builder.add(ParticleEmitterComponent::from(particle_emitter.clone()));
             }
 
             if let Some(editor_id) = entity.editor_id {
@@ -686,7 +693,9 @@ pub struct SceneAssetEntity {
     #[serde(default)]
     pub particle_system: Option<SerializedParticleSystem>,
     #[serde(default)]
-    pub particle_emitter: Option<ParticleEmitterComponent>,
+    pub particle_emitter: Option<SerializedParticleEmitter>,
+    #[serde(default)]
+    pub particle_behavior: Option<SerializedParticleBehavior>,
     #[serde(default)]
     pub environment: Option<EnvironmentComponent>,
     #[serde(default)]
@@ -776,14 +785,18 @@ impl SceneAssetEntity {
             .ok()
             .map(|m| SerializedMaterial::from(m.0));
 
-        let particle_system = world
-            .get::<&ParticleSystemComponent>(entity)
-            .ok()
-            .map(|component| SerializedParticleSystem::from((*component).clone()));
+        let (particle_system, particle_behavior) =
+            match world.get::<&ParticleSystemComponent>(entity) {
+                Ok(component) => (
+                    Some(SerializedParticleSystem::from((*component).clone())),
+                    Some(SerializedParticleBehavior::from(&*component)),
+                ),
+                Err(_) => (None, None),
+            };
         let particle_emitter = world
             .get::<&ParticleEmitterComponent>(entity)
             .ok()
-            .map(|component| (*component).clone());
+            .map(|component| SerializedParticleEmitter::from(&*component));
 
         let parent = world
             .get::<&Parent>(entity)
@@ -864,6 +877,7 @@ impl SceneAssetEntity {
             editor_id,
             particle_system,
             particle_emitter,
+            particle_behavior,
             environment,
             camera,
         }
@@ -890,7 +904,8 @@ pub struct SceneAssetEntityBuilder {
     casts_shadow: Option<bool>,
     editor_id: Option<u128>,
     particle_system: Option<SerializedParticleSystem>,
-    particle_emitter: Option<ParticleEmitterComponent>,
+    particle_emitter: Option<SerializedParticleEmitter>,
+    particle_behavior: Option<SerializedParticleBehavior>,
     environment: Option<EnvironmentComponent>,
     camera: Option<CameraComponent>,
 }
@@ -918,6 +933,7 @@ impl SceneAssetEntityBuilder {
             editor_id: None,
             particle_system: None,
             particle_emitter: None,
+            particle_behavior: None,
             environment: None,
             camera: None,
         }
@@ -1016,8 +1032,16 @@ impl SceneAssetEntityBuilder {
         self
     }
 
-    pub fn with_particle_emitter(mut self, emitter: ParticleEmitterComponent) -> Self {
-        self.particle_emitter = Some(emitter);
+    pub fn with_particle_emitter<T>(mut self, emitter: T) -> Self
+    where
+        T: Into<SerializedParticleEmitter>,
+    {
+        self.particle_emitter = Some(emitter.into());
+        self
+    }
+
+    pub fn with_particle_behavior(mut self, behavior: SerializedParticleBehavior) -> Self {
+        self.particle_behavior = Some(behavior);
         self
     }
 
@@ -1053,6 +1077,7 @@ impl SceneAssetEntityBuilder {
             editor_id: self.editor_id,
             particle_system: self.particle_system,
             particle_emitter: self.particle_emitter,
+            particle_behavior: self.particle_behavior,
             environment: self.environment,
             camera: self.camera,
         }
@@ -1063,29 +1088,145 @@ impl SceneAssetEntityBuilder {
 pub struct SerializedParticleSystem {
     pub spawn_rate: f32,
     #[serde(default)]
-    pub behavior: ParticleBehaviorPreset,
+    pub behavior: Option<ParticleBehaviorPreset>,
     #[serde(default)]
-    pub behavior_config: ParticleBehaviorConfig,
+    pub behavior_config: Option<ParticleBehaviorConfig>,
 }
 
 impl From<ParticleSystemComponent> for SerializedParticleSystem {
     fn from(component: ParticleSystemComponent) -> Self {
         Self {
             spawn_rate: component.spawn_rate,
-            behavior: component.behavior,
-            behavior_config: component.behavior_config.clone(),
+            behavior: Some(component.behavior),
+            behavior_config: Some(component.behavior_config.clone()),
         }
     }
 }
 
 impl From<SerializedParticleSystem> for ParticleSystemComponent {
     fn from(serialized: SerializedParticleSystem) -> Self {
-        let mut component =
-            ParticleSystemComponent::new(serialized.spawn_rate, serialized.behavior);
-        component.behavior_config = serialized
-            .behavior_config
-            .ensure_variant(serialized.behavior);
+        let preset = serialized.behavior.unwrap_or_default();
+        let mut component = ParticleSystemComponent::new(serialized.spawn_rate, preset);
+        if let Some(config) = serialized.behavior_config {
+            component.behavior_config = config.ensure_variant(preset);
+        }
         component
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedParticleBehavior {
+    pub preset: ParticleBehaviorPreset,
+    #[serde(default)]
+    pub config: ParticleBehaviorConfig,
+}
+
+impl SerializedParticleBehavior {
+    fn config_for_preset(&self) -> ParticleBehaviorConfig {
+        self.config.clone().ensure_variant(self.preset)
+    }
+
+    pub fn apply_to_component(&self, component: &mut ParticleSystemComponent) {
+        component.set_behavior(self.preset);
+        component.behavior_config = self.config_for_preset();
+    }
+
+    pub fn into_component_with_spawn_rate(self, spawn_rate: f32) -> ParticleSystemComponent {
+        let mut component = ParticleSystemComponent::new(spawn_rate, self.preset);
+        component.behavior_config = self.config.ensure_variant(self.preset);
+        component
+    }
+}
+
+impl From<&ParticleSystemComponent> for SerializedParticleBehavior {
+    fn from(component: &ParticleSystemComponent) -> Self {
+        Self {
+            preset: component.behavior,
+            config: component.behavior_config.clone(),
+        }
+    }
+}
+
+impl From<ParticleSystemComponent> for SerializedParticleBehavior {
+    fn from(component: ParticleSystemComponent) -> Self {
+        Self::from(&component)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedParticleEmitter {
+    pub spawn_rate: f32,
+    #[serde(default)]
+    pub burst_count: Option<u32>,
+    #[serde(default)]
+    pub position: [f32; 3],
+    #[serde(default)]
+    pub emission_shape: ParticleEmissionShape,
+    #[serde(default)]
+    pub initial_velocity_range: ParticleVec3Range,
+    #[serde(default = "SerializedParticleEmitter::default_scale_range")]
+    pub initial_scale_range: ParticleVec3Range,
+    #[serde(default = "SerializedParticleEmitter::default_lifetime_range")]
+    pub lifetime_range: ParticleFloatRange,
+    #[serde(default)]
+    pub color_gradient: ParticleColorGradient,
+    #[serde(default)]
+    pub size_curve: ParticleSizeCurve,
+    #[serde(default)]
+    pub radial_velocity: ParticleFloatRange,
+    #[serde(default)]
+    pub auto_respawn: bool,
+}
+
+impl SerializedParticleEmitter {
+    const fn default_scale_range() -> ParticleVec3Range {
+        ParticleVec3Range::splat(1.0)
+    }
+
+    const fn default_lifetime_range() -> ParticleFloatRange {
+        ParticleFloatRange::new(5.0, 5.0)
+    }
+}
+
+impl From<&ParticleEmitterComponent> for SerializedParticleEmitter {
+    fn from(component: &ParticleEmitterComponent) -> Self {
+        Self {
+            spawn_rate: component.spawn_rate,
+            burst_count: component.burst_count,
+            position: component.position,
+            emission_shape: component.emission_shape.clone(),
+            initial_velocity_range: component.initial_velocity_range,
+            initial_scale_range: component.initial_scale_range,
+            lifetime_range: component.lifetime_range,
+            color_gradient: component.color_gradient.clone(),
+            size_curve: component.size_curve.clone(),
+            radial_velocity: component.radial_velocity,
+            auto_respawn: component.auto_respawn,
+        }
+    }
+}
+
+impl From<ParticleEmitterComponent> for SerializedParticleEmitter {
+    fn from(component: ParticleEmitterComponent) -> Self {
+        Self::from(&component)
+    }
+}
+
+impl From<SerializedParticleEmitter> for ParticleEmitterComponent {
+    fn from(serialized: SerializedParticleEmitter) -> Self {
+        ParticleEmitterComponent {
+            spawn_rate: serialized.spawn_rate,
+            burst_count: serialized.burst_count,
+            position: serialized.position,
+            emission_shape: serialized.emission_shape,
+            initial_velocity_range: serialized.initial_velocity_range,
+            initial_scale_range: serialized.initial_scale_range,
+            lifetime_range: serialized.lifetime_range,
+            color_gradient: serialized.color_gradient,
+            size_curve: serialized.size_curve,
+            radial_velocity: serialized.radial_velocity,
+            auto_respawn: serialized.auto_respawn,
+        }
     }
 }
 
@@ -1565,6 +1706,7 @@ mod tests {
                 editor_id: None,
                 particle_system: None,
                 particle_emitter: None,
+                particle_behavior: None,
                 environment: None,
                 camera: None,
             }],
