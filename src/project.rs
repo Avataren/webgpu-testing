@@ -184,6 +184,7 @@ impl ProjectManifest {
 
         let mut manifest = self.clone();
         manifest.environment.prepare_for_save(dir)?;
+        manifest.scene.persist_material_assets(dir)?;
 
         let json = serde_json::to_string_pretty(&manifest)?;
         fs::write(dir.join(PROJECT_FILE_NAME), json)?;
@@ -207,6 +208,7 @@ impl ProjectManifest {
             let scene_json = fs::read_to_string(scene_path)?;
             manifest.scene =
                 SceneAsset::from_json(&scene_json).map_err(ProjectError::Serialization)?;
+            manifest.scene.persist_material_assets(dir)?;
         }
         Ok(manifest)
     }
@@ -258,7 +260,7 @@ impl ProjectManifest {
                         }
 
                         if let Some(gltf_material) = entity.gltf_material {
-                            if let Some(material) = &entity.material {
+                            if let Some(material) = &entity.material_data {
                                 material_lookup
                                     .insert((source.clone(), gltf_material), material.clone());
                             }
@@ -296,8 +298,8 @@ impl ProjectManifest {
 
             if let Some(gltf_material) = entity.gltf_material {
                 if let Some(material) = material_lookup.get(&(source.clone(), gltf_material)) {
-                    entity.material = Some(material.clone());
-                } else if entity.material.is_some() {
+                    entity.material_data = Some(material.clone());
+                } else if entity.material_data.is_some() {
                     log::warn!(
                         "Missing reimported material for {:?} (material index {})",
                         source,

@@ -463,7 +463,7 @@ impl SceneLoader {
 
         let mut used_texture_indices = std::collections::BTreeSet::new();
         for entity in &asset.entities {
-            if let Some(material) = &entity.material {
+            if let Some(material) = &entity.material_data {
                 let flags = MaterialFlags::from_bits(material.flags);
                 if flags.contains(MaterialFlags::USE_BASE_COLOR_TEXTURE) {
                     used_texture_indices.insert(material.base_color_texture);
