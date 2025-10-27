@@ -290,10 +290,11 @@ impl SceneAsset {
                 .as_ref()
                 .map(|handle| normalize_material_path(project_root, handle.path()));
 
-            if material_path
-                .as_ref()
-                .is_none_or(|path| path.as_os_str().is_empty())
-            {
+            if material_path.as_ref().is_none_or(|path| {
+                path.as_os_str().is_empty()
+                    || path.extension().map(|ext| ext != "json").unwrap_or(true)
+                    || path.to_string_lossy().contains('#')
+            }) {
                 let generated =
                     generate_material_asset_path(&materials_dir_rel, &materials_dir_abs, &written);
                 material_path = Some(generated);
@@ -324,6 +325,7 @@ impl SceneAsset {
     ) -> SceneInstance {
         let mut instance = SceneInstance::new();
         let mut entity_map = Vec::with_capacity(self.entities.len());
+        let mut material_cache: HashMap<PathBuf, Handle<MaterialAsset>> = HashMap::new();
 
         for entity in &self.entities {
             let mut builder = hecs::EntityBuilder::new();
@@ -365,34 +367,16 @@ impl SceneAsset {
                 builder.add(MeshBounds::from(bounds));
             }
 
-            if let Some(material_ref) = &entity.material {
-                let resolved_path = resolve_project_path(material_ref.path());
-                match assets.get_or_load_material(&resolved_path, load_material_asset_from_file) {
-                    Ok(handle) => {
-                        builder.add(MaterialComponent(handle));
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Failed to load material asset {:?}: {}",
-                            material_ref.path(),
-                            err
-                        );
+            let material_handle = resolve_material_handle(
+                entity.material.as_ref(),
+                entity.material_data.as_ref(),
+                entity.gltf_source.as_deref(),
+                entity.gltf_material,
+                assets,
+                &mut material_cache,
+            );
 
-                        if let Some(material_data) = &entity.material_data {
-                            let asset = MaterialAsset::from_material(
-                                material_data.clone().into(),
-                                resolved_path.clone(),
-                            );
-                            let handle = assets.insert_material_asset(asset);
-                            builder.add(MaterialComponent(handle));
-                        }
-                    }
-                }
-            } else if let Some(material_data) = &entity.material_data {
-                let handle = assets.insert_material_asset(MaterialAsset::from_material(
-                    material_data.clone().into(),
-                    PathBuf::new(),
-                ));
+            if let Some(handle) = material_handle {
                 builder.add(MaterialComponent(handle));
             }
 
@@ -558,6 +542,118 @@ impl SceneAsset {
 pub struct SceneAssetResources {
     meshes: Vec<(usize, Mesh)>,
     textures: Vec<(u32, Texture)>,
+}
+
+fn determine_canonical_material_path(
+    material_ref: Option<&SceneMaterialHandle>,
+    gltf_source: Option<&Path>,
+    gltf_material: Option<usize>,
+) -> Option<PathBuf> {
+    if let Some(material_ref) = material_ref {
+        let path = material_ref.path();
+        if path.as_os_str().is_empty() {
+            None
+        } else {
+            Some(resolve_project_path(path))
+        }
+    } else if let (Some(source), Some(material_index)) = (gltf_source, gltf_material) {
+        let resolved_source = resolve_project_path(source);
+        Some(PathBuf::from(format!(
+            "{}#material{}",
+            resolved_source.display(),
+            material_index
+        )))
+    } else {
+        None
+    }
+}
+
+fn canonicalize_material_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn resolve_material_handle(
+    material_ref: Option<&SceneMaterialHandle>,
+    material_data: Option<&SerializedMaterial>,
+    gltf_source: Option<&Path>,
+    gltf_material: Option<usize>,
+    assets: &mut Assets,
+    cache: &mut HashMap<PathBuf, Handle<MaterialAsset>>,
+) -> Option<Handle<MaterialAsset>> {
+    let canonical_path =
+        determine_canonical_material_path(material_ref, gltf_source, gltf_material);
+
+    if let Some(path) = canonical_path.as_ref() {
+        let key = canonicalize_material_path(path);
+
+        if let Some(&handle) = cache.get(&key) {
+            return Some(handle);
+        }
+
+        if let Some(handle) = assets.material_handle_for_path(path) {
+            if let Some(serialized) = material_data {
+                let desired: Material = serialized.clone().into();
+                let needs_update = assets
+                    .material(handle)
+                    .map(|asset| asset.material() != &desired)
+                    .unwrap_or(true);
+
+                if needs_update {
+                    if let Some(asset) = assets.material_mut(handle) {
+                        *asset.material_mut() = desired;
+                    }
+                }
+            }
+
+            cache.insert(key, handle);
+            return Some(handle);
+        }
+    }
+
+    if let Some(path) = canonical_path.as_ref() {
+        if path.exists() {
+            match assets.get_or_load_material(path, load_material_asset_from_file) {
+                Ok(handle) => {
+                    if let Some(serialized) = material_data {
+                        if let Some(asset) = assets.material_mut(handle) {
+                            *asset.material_mut() = serialized.clone().into();
+                        }
+                    }
+
+                    let key = canonicalize_material_path(path);
+                    cache.insert(key, handle);
+                    return Some(handle);
+                }
+                Err(err) => {
+                    log::error!("Failed to load material asset {:?}: {}", path, err);
+                }
+            }
+        }
+    }
+
+    if let Some(serialized) = material_data {
+        let material: Material = serialized.clone().into();
+
+        if let Some(path) = canonical_path.clone() {
+            let key = canonicalize_material_path(&path);
+            let handle = assets.insert_material_asset(MaterialAsset::from_material(material, path));
+            cache.insert(key, handle);
+            return Some(handle);
+        } else {
+            let handle = assets
+                .insert_material_asset(MaterialAsset::from_material(material, PathBuf::new()));
+            return Some(handle);
+        }
+    }
+
+    if let Some(path) = canonical_path {
+        log::warn!(
+            "Material asset {:?} missing and no embedded data available",
+            path
+        );
+    }
+
+    Some(assets.default_material_handle())
 }
 
 impl SceneAssetResources {

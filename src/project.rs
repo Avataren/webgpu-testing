@@ -240,6 +240,10 @@ impl ProjectManifest {
         let mut mesh_lookup: HashMap<(PathBuf, Option<usize>, Option<usize>), usize> =
             HashMap::new();
         let mut material_lookup: HashMap<(PathBuf, usize), SerializedMaterial> = HashMap::new();
+        let normalize_path = |path: &Path| -> PathBuf {
+            let resolved = resolve_project_path(path);
+            std::fs::canonicalize(&resolved).unwrap_or(resolved)
+        };
 
         for import in &self.imports {
             match SceneLoader::load_gltf_asset(&import.path, renderer, 1.0) {
@@ -253,16 +257,18 @@ impl ProjectManifest {
                         };
 
                         if let Some(mesh_handle) = entity.mesh_handle {
-                            mesh_lookup.insert(
-                                (source.clone(), entity.gltf_node, entity.gltf_primitive),
-                                mesh_handle,
+                            let key = (
+                                normalize_path(source),
+                                entity.gltf_node,
+                                entity.gltf_primitive,
                             );
+                            mesh_lookup.insert(key, mesh_handle);
                         }
 
                         if let Some(gltf_material) = entity.gltf_material {
                             if let Some(material) = &entity.material_data {
-                                material_lookup
-                                    .insert((source.clone(), gltf_material), material.clone());
+                                let key = (normalize_path(source), gltf_material);
+                                material_lookup.insert(key, material.clone());
                             }
                         }
                     }
@@ -283,8 +289,13 @@ impl ProjectManifest {
             let Some(source) = entity.gltf_source.clone() else {
                 continue;
             };
+            let normalized_source = normalize_path(&source);
 
-            let mesh_key = (source.clone(), entity.gltf_node, entity.gltf_primitive);
+            let mesh_key = (
+                normalized_source.clone(),
+                entity.gltf_node,
+                entity.gltf_primitive,
+            );
             if let Some(&mesh_handle) = mesh_lookup.get(&mesh_key) {
                 entity.mesh_handle = Some(mesh_handle);
             } else if entity.mesh_handle.is_some() {
@@ -297,8 +308,44 @@ impl ProjectManifest {
             }
 
             if let Some(gltf_material) = entity.gltf_material {
-                if let Some(material) = material_lookup.get(&(source.clone(), gltf_material)) {
-                    entity.material_data = Some(material.clone());
+                if let Some(material) = material_lookup.get(&(normalized_source, gltf_material)) {
+                    let serialized = material.clone();
+                    entity.material_data = Some(serialized.clone());
+
+                    if let Some(handle) = entity.material.as_ref() {
+                        let material_path = handle.path();
+                        if !material_path.as_os_str().is_empty() {
+                            let absolute_path = project_root.join(material_path);
+                            if let Some(parent) = absolute_path.parent() {
+                                if let Err(err) = fs::create_dir_all(parent) {
+                                    log::error!(
+                                        "Failed to create material directory {:?}: {}",
+                                        parent,
+                                        err
+                                    );
+                                }
+                            }
+
+                            match serde_json::to_string_pretty(&serialized) {
+                                Ok(json) => {
+                                    if let Err(err) = fs::write(&absolute_path, json) {
+                                        log::error!(
+                                            "Failed to update material asset {:?}: {}",
+                                            absolute_path,
+                                            err
+                                        );
+                                    }
+                                }
+                                Err(err) => {
+                                    log::error!(
+                                        "Failed to serialize material for {:?}: {}",
+                                        material_path,
+                                        err
+                                    );
+                                }
+                            }
+                        }
+                    }
                 } else if entity.material_data.is_some() {
                     log::warn!(
                         "Missing reimported material for {:?} (material index {})",
