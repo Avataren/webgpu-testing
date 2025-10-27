@@ -1,26 +1,74 @@
 // scene/builder.rs
 // Optional helper for building entities - uses pure hecs
 
-use glam::Vec3;
-use hecs::World;
-
 use super::components::*;
+use super::Scene;
 use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::scene::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+use crate::{asset::Assets, renderer::Material};
+use glam::Vec3;
+use std::path::PathBuf;
+
+#[derive(Debug)]
+pub enum MaterialAssignment {
+    Handle(Handle<MaterialAsset>),
+    Asset(MaterialAsset),
+    Material {
+        material: Material,
+        canonical_path: Option<PathBuf>,
+    },
+}
+
+pub trait IntoMaterialAssignment {
+    fn into_material_assignment(self) -> MaterialAssignment;
+}
+
+impl IntoMaterialAssignment for Handle<MaterialAsset> {
+    fn into_material_assignment(self) -> MaterialAssignment {
+        MaterialAssignment::Handle(self)
+    }
+}
+
+impl IntoMaterialAssignment for MaterialAsset {
+    fn into_material_assignment(self) -> MaterialAssignment {
+        MaterialAssignment::Asset(self)
+    }
+}
+
+impl IntoMaterialAssignment for Material {
+    fn into_material_assignment(self) -> MaterialAssignment {
+        MaterialAssignment::Material {
+            material: self,
+            canonical_path: None,
+        }
+    }
+}
+
+impl<P> IntoMaterialAssignment for (P, Material)
+where
+    P: Into<PathBuf>,
+{
+    fn into_material_assignment(self) -> MaterialAssignment {
+        MaterialAssignment::Material {
+            material: self.1,
+            canonical_path: Some(self.0.into()),
+        }
+    }
+}
 
 /// Helper for building entities with a fluent API
 /// This is optional - you can also use world.spawn() directly
 pub struct EntityBuilder<'w> {
-    world: &'w mut World,
+    scene: &'w mut Scene,
     builder: hecs::EntityBuilder,
 }
 
 impl<'w> EntityBuilder<'w> {
     /// Create a new entity builder
-    pub fn new(world: &'w mut World) -> Self {
+    pub fn new(scene: &'w mut Scene) -> Self {
         Self {
-            world,
+            scene,
             builder: hecs::EntityBuilder::new(),
         }
     }
@@ -50,8 +98,24 @@ impl<'w> EntityBuilder<'w> {
     }
 
     /// Add a material component
-    pub fn with_material(mut self, material: Handle<MaterialAsset>) -> Self {
-        self.builder.add(MaterialComponent(material));
+    pub fn with_material<M>(mut self, material: M) -> Self
+    where
+        M: IntoMaterialAssignment,
+    {
+        let handle = match material.into_material_assignment() {
+            MaterialAssignment::Handle(handle) => handle,
+            MaterialAssignment::Asset(asset) => self.insert_material_asset(asset),
+            MaterialAssignment::Material {
+                material,
+                canonical_path,
+            } => {
+                let asset =
+                    MaterialAsset::from_material(material, canonical_path.unwrap_or_default());
+                self.insert_material_asset(asset)
+            }
+        };
+
+        self.builder.add(MaterialComponent(handle));
         self
     }
 
@@ -104,7 +168,18 @@ impl<'w> EntityBuilder<'w> {
 
     /// Spawn the entity into the world
     pub fn spawn(&mut self) -> hecs::Entity {
-        self.world.spawn(self.builder.build())
+        self.scene.main_world_mut().spawn(self.builder.build())
+    }
+
+    fn insert_material_asset(&mut self, asset: MaterialAsset) -> Handle<MaterialAsset> {
+        Self::insert_material_asset_inner(&mut self.scene.assets, asset)
+    }
+
+    fn insert_material_asset_inner(
+        assets: &mut Assets,
+        asset: MaterialAsset,
+    ) -> Handle<MaterialAsset> {
+        assets.insert_material_asset(asset)
     }
 }
 

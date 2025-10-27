@@ -160,8 +160,6 @@ impl MultiSceneParticlesExample {
         ));
 
         {
-            let world = scene.world_mut();
-
             let half_extent = (FLOOR_DIMENSION as f32 - 1.0) * 0.5 * TILE_SPACING;
 
             for z in 0..FLOOR_DIMENSION {
@@ -178,7 +176,7 @@ impl MultiSceneParticlesExample {
                         light_handle
                     };
 
-                    EntityBuilder::new(world)
+                    EntityBuilder::new(scene)
                         .with_name(format!("FloorTile_{}_{}", x, z))
                         .with_transform(transform)
                         .with_mesh(mesh_handle)
@@ -191,7 +189,7 @@ impl MultiSceneParticlesExample {
             let light_direction = Vec3::new(0.45, -1.0, 0.35).normalize();
             let light_rotation = Quat::from_rotation_arc(Vec3::NEG_Z, light_direction);
 
-            world.spawn((
+            scene.world_mut().spawn((
                 wgpu_cube::scene::Name::new("Floor Sun"),
                 wgpu_cube::scene::TransformComponent(Transform::from_trs(
                     Vec3::new(0.0, 22.0, -18.0),

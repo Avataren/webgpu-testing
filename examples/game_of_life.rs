@@ -307,7 +307,7 @@ fn spawn_billboard(
         PathBuf::from("examples/game_of_life/board"),
     ));
 
-    let entity = EntityBuilder::new(scene.world_mut())
+    let entity = EntityBuilder::new(scene)
         .with_name("Game of Life Board")
         .with_transform(Transform::from_trs(
             Vec3::ZERO,

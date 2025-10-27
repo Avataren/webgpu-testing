@@ -779,7 +779,7 @@ impl EditorApplication {
                 Material::pbr(),
                 PathBuf::new(),
             ));
-        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut());
+        let mut builder = EntityBuilder::new(ctx.scene);
         builder = builder
             .with_name(preset.display_name())
             .with_transform(Transform::default())
@@ -813,7 +813,7 @@ impl EditorApplication {
         let system_component = ParticleSystemComponent::new(spawn_rate, preset);
         let emitter_component = Self::default_particle_emitter(spawn_rate);
 
-        let mut builder = EntityBuilder::new(ctx.scene.main_world_mut())
+        let mut builder = EntityBuilder::new(ctx.scene)
             .with_name(name)
             .with_transform(Transform::default())
             .with_mesh(mesh_handle)
@@ -903,7 +903,7 @@ impl EditorApplication {
             range: 12.0,
         };
 
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let entity = EntityBuilder::new(ctx.scene)
             .with_name("Point Light")
             .with_transform(transform)
             .with_component(light)
@@ -919,7 +919,7 @@ impl EditorApplication {
         let transform = Transform::from_trs(Vec3::new(0.0, 6.0, 0.0), rotation, Vec3::ONE);
         let light = DirectionalLight::new(Vec3::new(0.9, 0.95, 1.0), 3.0);
 
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let entity = EntityBuilder::new(ctx.scene)
             .with_name("Directional Light")
             .with_transform(transform)
             .with_component(light)
@@ -943,7 +943,7 @@ impl EditorApplication {
             range: 18.0,
         };
 
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let entity = EntityBuilder::new(ctx.scene)
             .with_name("Spot Light")
             .with_transform(transform)
             .with_component(light)
@@ -969,7 +969,7 @@ impl EditorApplication {
 
         let current_camera = *ctx.scene.camera();
         let camera_component = CameraComponent::from(current_camera);
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let entity = EntityBuilder::new(ctx.scene)
             .with_name("Camera")
             .with_transform(transform)
             .with_component(camera_component)
@@ -983,7 +983,7 @@ impl EditorApplication {
 
     fn create_environment(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let component = EnvironmentComponent::from_environment(ctx.scene.environment());
-        let entity = EntityBuilder::new(ctx.scene.main_world_mut())
+        let entity = EntityBuilder::new(ctx.scene)
             .with_name("Environment")
             .with_component(component.clone())
             .spawn();

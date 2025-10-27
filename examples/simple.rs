@@ -54,7 +54,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
         PathBuf::from("examples/simple/red"),
     ));
 
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Red Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(-2.0, 0.0, 0.0),
@@ -88,7 +88,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
         PathBuf::from("examples/simple/blue"),
     ));
 
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Blue Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(2.0, 0.0, 0.0),

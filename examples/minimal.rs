@@ -24,8 +24,7 @@ impl RenderApplication for ExampleApp {
                 Material::red(),
                 PathBuf::from("examples/minimal/red"),
             ));
-        let world = ctx.scene.world_mut();
-        EntityBuilder::new(world)
+        EntityBuilder::new(ctx.scene)
             .with_name("Test Cube")
             .with_mesh(mesh_handle)
             .with_material(material_handle)

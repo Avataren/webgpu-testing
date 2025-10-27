@@ -45,7 +45,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         Material::new([70, 80, 90, 255]).with_roughness(1.0),
         PathBuf::from("examples/z_buffer/floor"),
     ));
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Test Floor")
         .with_transform(Transform::from_trs(
             Vec3::new(0.0, -0.05, 0.0),
@@ -62,7 +62,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         Material::new([205, 75, 65, 255]).with_roughness(0.4),
         PathBuf::from("examples/z_buffer/front_cube"),
     ));
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Front Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(-0.35, 0.6, -0.2),
@@ -78,7 +78,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
         Material::new([65, 115, 205, 255]).with_roughness(0.35),
         PathBuf::from("examples/z_buffer/back_cube"),
     ));
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Back Cube")
         .with_transform(Transform::from_trs(
             Vec3::new(0.35, 0.6, -0.05),

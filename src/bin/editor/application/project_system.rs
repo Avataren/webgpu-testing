@@ -117,7 +117,7 @@ impl ProjectSystem {
                                 .filter(|name| !name.is_empty())
                                 .unwrap_or_else(|| "Imported glTF".to_string());
 
-                            let mut builder = EntityBuilder::new(update_ctx.scene.main_world_mut())
+                            let mut builder = EntityBuilder::new(update_ctx.scene)
                                 .with_name(format!("{entity_name} (glTF)"))
                                 .with_transform(Transform::default())
                                 .with_script(script_source);

@@ -29,9 +29,9 @@ use std::path::{Path, PathBuf};
 
 mod path_serde {
     use serde::{Deserialize, Deserializer, Serializer};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    pub fn serialize<S>(path: &PathBuf, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -292,7 +292,7 @@ impl SceneAsset {
 
             if material_path
                 .as_ref()
-                .map_or(true, |path| path.as_os_str().is_empty())
+                .is_none_or(|path| path.as_os_str().is_empty())
             {
                 let generated =
                     generate_material_asset_path(&materials_dir_rel, &materials_dir_abs, &written);
