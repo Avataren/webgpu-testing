@@ -10,7 +10,7 @@ pub struct WindowToggles {
 impl WindowToggles {
     pub fn new() -> Self {
         Self {
-            stats: true,
+            stats: false,
             environment: false,
             postprocess: false,
         }
