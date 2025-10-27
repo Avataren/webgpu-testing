@@ -180,7 +180,7 @@ impl GizmoState {
     }
 
     pub(crate) fn gizmo_resources(&self) -> Option<gizmos::GizmoResources> {
-        self.gizmo_resources.clone()
+        self.gizmo_resources
     }
 
     pub(crate) fn set_gizmo_resources(&mut self, resources: Option<gizmos::GizmoResources>) {
@@ -190,7 +190,7 @@ impl GizmoState {
     pub(crate) fn transform_gizmo_resources(
         &self,
     ) -> Option<transform_gizmos::TransformGizmoResources> {
-        self.transform_gizmo_resources.clone()
+        self.transform_gizmo_resources
     }
 
     pub(crate) fn set_transform_gizmo_resources(
@@ -210,7 +210,6 @@ impl GizmoState {
             self.gizmo_resources = Some(resources);
         }
         self.gizmo_resources
-            .clone()
             .expect("gizmo resources must be initialised")
     }
 
@@ -224,7 +223,6 @@ impl GizmoState {
             self.transform_gizmo_resources = Some(resources);
         }
         self.transform_gizmo_resources
-            .clone()
             .expect("transform gizmo resources must be initialised")
     }
 
