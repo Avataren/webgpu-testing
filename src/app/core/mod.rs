@@ -237,7 +237,7 @@ impl AppCore {
         let render_frame = self.scene.render(
             renderer,
             &mut self.batcher,
-            &mut custom_render_request,
+            custom_render_request.as_mut(),
             self.runtime.gizmos_enabled(),
         )?;
 

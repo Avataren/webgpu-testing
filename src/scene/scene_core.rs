@@ -845,11 +845,11 @@ impl Scene {
         true
     }
 
-    pub fn render(
-        &mut self,
+    pub fn render<'a>(
+        &'a mut self,
         renderer: &mut Renderer,
         batcher: &mut RenderBatcher,
-        custom_render: &mut Option<CustomRenderRequest<'_>>,
+        custom_render: Option<&'a mut CustomRenderRequest<'a>>,
         gizmos_enabled: bool,
     ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
         self.refresh_environment_state();
@@ -926,7 +926,7 @@ impl Scene {
             self,
             &self.assets,
             batcher,
-            &lights_data,
+            lights_data,
             &self.environment,
             custom_render,
         )
