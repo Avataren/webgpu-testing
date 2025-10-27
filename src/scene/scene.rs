@@ -4,10 +4,11 @@ use super::assets::{
     SerializedAnimationClip, SerializedTransform,
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
-use super::importer::ImportQueue;
+use super::import_state::SceneImports;
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::loader::SceneImportDevice;
 use super::render_bridge::RenderBridge;
+use super::runtime_state::SceneRuntime;
 use super::state::{
     EnvironmentState, GizmoState, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
@@ -20,189 +21,24 @@ use crate::scene::components::{
 use crate::scene::internal::lights::safe_normalize;
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
-use crate::scripting::{RuneScriptComponent, RuneScriptSource, ScriptingState};
+use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use glam::Vec3;
 use hecs::{Entity, World};
 use log::error;
 use std::collections::HashMap;
 
-#[derive(Clone)]
-pub(crate) struct SceneSnapshot {
-    pub(crate) assets: Assets,
-    pub(crate) environment: Environment,
-    pub(crate) camera: Camera,
-    pub(crate) time: f64,
-    pub(crate) tree: SceneTreeAsset,
-    pub(crate) main_scene_path: Vec<usize>,
-    pub(crate) gizmo_resources: Option<gizmos::GizmoResources>,
-    pub(crate) transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
-    pub(crate) gizmo_mode: TransformGizmoMode,
-    pub(crate) gizmo_space: TransformGizmoSpace,
-    pub(crate) gizmo_hover: Option<TransformGizmoHandle>,
-}
-
-impl SceneSnapshot {
-    pub(crate) fn capture(scene: &Scene) -> Self {
-        let assets = scene.assets.clone();
-        let environment = scene.environment().clone();
-        let camera = *scene.camera();
-        let time = scene.time();
-        let tree = scene.export_tree_asset("SceneSnapshot");
-        let main_scene_path = scene.path_from_root(scene.main_scene());
-        let gizmo_resources = scene.gizmo_resources();
-        let transform_gizmo_resources = scene.transform_gizmo_resources();
-        let gizmo_mode = scene.transform_gizmo_mode();
-        let gizmo_space = scene.transform_gizmo_space();
-        let gizmo_hover = scene.transform_gizmo_hover();
-
-        Self {
-            assets,
-            environment,
-            camera,
-            time,
-            tree,
-            main_scene_path,
-            gizmo_resources,
-            transform_gizmo_resources,
-            gizmo_mode,
-            gizmo_space,
-            gizmo_hover,
-        }
-    }
-
-    pub(crate) fn into_scene(self) -> Scene {
-        let mut scene = Scene::new();
-        scene.replace_assets(self.assets);
-        scene.set_environment(self.environment);
-        scene.set_camera(self.camera);
-        scene.set_time(self.time);
-        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
-
-        let main_scene = if self.main_scene_path.is_empty() {
-            Some(tree_root)
-        } else {
-            let mut current = tree_root;
-            let mut found = true;
-            for &index in &self.main_scene_path {
-                let children = scene.node(current).children();
-                match children.get(index).copied() {
-                    Some(child) => current = child,
-                    None => {
-                        found = false;
-                        break;
-                    }
-                }
-            }
-
-            if found {
-                Some(current)
-            } else {
-                scene.node_from_path(&self.main_scene_path)
-            }
-        };
-
-        if let Some(main) = main_scene {
-            scene.set_main_scene(main);
-        }
-
-        scene.propagate_transforms();
-
-        scene.gizmos.set_gizmo_resources(self.gizmo_resources);
-        scene
-            .gizmos
-            .set_transform_gizmo_resources(self.transform_gizmo_resources);
-        scene.set_transform_gizmo_mode(self.gizmo_mode);
-        scene.set_transform_gizmo_space(self.gizmo_space);
-        scene.set_transform_gizmo_hover(self.gizmo_hover);
-
-        scene
-    }
-
-    pub fn restore_without_assets(&self, scene: &mut Scene) {
-        // Clear current entities
-        let entities_to_remove: Vec<_> = scene
-            .main_world()
-            .iter()
-            .map(|entity_ref| entity_ref.entity())
-            .collect();
-
-        for entity in entities_to_remove {
-            let _ = scene.main_world_mut().despawn(entity);
-        }
-
-        // Restore the tree (uses current asset storage)
-        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
-
-        // Restore main scene
-        let main_scene = if self.main_scene_path.is_empty() {
-            Some(tree_root)
-        } else {
-            scene
-                .node_from_path(&self.main_scene_path)
-                .or(Some(tree_root))
-        };
-
-        if let Some(main) = main_scene {
-            scene.set_main_scene(main);
-        }
-
-        // Restore other state (but NOT assets)
-        scene.set_camera(self.camera);
-        scene.set_environment(self.environment.clone());
-        scene.set_time(self.time);
-
-        // Restore gizmo state
-        scene.gizmos.set_gizmo_resources(self.gizmo_resources);
-        scene
-            .gizmos
-            .set_transform_gizmo_resources(self.transform_gizmo_resources);
-        scene.set_transform_gizmo_mode(self.gizmo_mode);
-        scene.set_transform_gizmo_space(self.gizmo_space);
-        scene.set_transform_gizmo_hover(self.gizmo_hover);
-
-        scene.propagate_transforms();
-    }
-}
-
-#[derive(Clone)]
-pub struct SceneStateSnapshot {
-    snapshot: SceneSnapshot,
-}
-
-impl SceneStateSnapshot {
-    pub fn capture(scene: &Scene) -> Self {
-        Self {
-            snapshot: SceneSnapshot::capture(scene),
-        }
-    }
-
-    pub fn into_scene(self) -> Scene {
-        self.snapshot.into_scene()
-    }
-
-    pub fn restore(&self, scene: &mut Scene) {
-        *scene = self.snapshot.clone().into_scene();
-    }
-
-    // ADD this wrapper method
-    pub fn restore_without_assets(&self, scene: &mut Scene) {
-        self.snapshot.restore_without_assets(scene);
-    }
-}
 pub struct Scene {
     pub assets: Assets,
     environment: EnvironmentState,
     camera: Camera,
-    time: f64,
-    last_frame: Option<Instant>,
     nodes: Vec<Option<SceneNode>>,
     free_list: Vec<SceneNodeId>,
     root: SceneNodeId,
     main_scene: SceneNodeId,
-    scripting: ScriptingState,
+    runtime: SceneRuntime,
     gizmos: GizmoState,
-    import_queue: ImportQueue,
+    imports: SceneImports,
 }
 
 impl Scene {
@@ -216,15 +52,13 @@ impl Scene {
             assets: Assets::default(),
             environment: EnvironmentState::new(),
             camera: Camera::default(),
-            time: 0.0,
-            last_frame: None,
             nodes,
             free_list: Vec::new(),
             root: root_id,
             main_scene: root_id,
-            scripting: ScriptingState::default(),
+            runtime: SceneRuntime::new(),
             gizmos: GizmoState::new(),
-            import_queue: ImportQueue::new(),
+            imports: SceneImports::new(),
         }
     }
 
@@ -286,11 +120,11 @@ impl Scene {
     }
 
     pub fn scripting(&self) -> &ScriptingState {
-        &self.scripting
+        self.runtime.scripting()
     }
 
     pub fn scripting_mut(&mut self) -> &mut ScriptingState {
-        &mut self.scripting
+        self.runtime.scripting_mut()
     }
 
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
@@ -399,32 +233,13 @@ impl Scene {
     }
 
     pub fn init_timer(&mut self) {
-        self.last_frame = Some(Instant::now());
+        self.runtime.init_timer();
     }
 
     pub fn reset_script_runtime(&mut self) {
-        {
-            let world = self.main_world_mut();
-            let mut query = world.query::<&mut RuneScriptComponent>();
-            for (_, component) in query.iter() {
-                let should_skip = match component.source() {
-                    RuneScriptSource::Inline { name, .. } => {
-                        let name_ref = name.as_ref();
-                        name_ref == "editor_startup.rn"
-                            || name_ref.starts_with("editor_import_gltf::")
-                    }
-                    RuneScriptSource::File { .. } => false,
-                };
-
-                if should_skip {
-                    continue;
-                }
-
-                component.set_created_called(false);
-            }
-        }
-
-        self.scripting_mut().reset_runtime();
+        let mut runtime = std::mem::take(&mut self.runtime);
+        runtime.reset_script_runtime(self.main_world_mut());
+        self.runtime = runtime;
     }
 
     pub fn set_animation_playback(&mut self, playing: bool) {
@@ -459,24 +274,23 @@ impl Scene {
     }
 
     pub fn time(&self) -> f64 {
-        self.time
+        self.runtime.time()
     }
 
     pub(crate) fn set_time(&mut self, time: f64) {
-        self.time = time;
+        self.runtime.set_time(time);
     }
 
     pub fn last_frame(&self) -> Instant {
-        self.last_frame
-            .expect("Scene timer not initialized - call init_timer() first")
+        self.runtime.last_frame()
     }
 
     pub fn last_frame_instant(&self) -> Option<Instant> {
-        self.last_frame
+        self.runtime.last_frame_instant()
     }
 
     pub fn set_last_frame(&mut self, instant: Instant) {
-        self.last_frame = Some(instant);
+        self.runtime.set_last_frame(instant);
     }
 
     pub fn camera(&self) -> &Camera {
@@ -579,6 +393,10 @@ impl Scene {
         self.gizmos.gizmo_resources()
     }
 
+    pub(crate) fn set_gizmo_resources(&mut self, resources: Option<gizmos::GizmoResources>) {
+        self.gizmos.set_gizmo_resources(resources);
+    }
+
     pub(super) fn ensure_gizmo_resources(
         &mut self,
         renderer: &mut Renderer,
@@ -591,6 +409,13 @@ impl Scene {
         &self,
     ) -> Option<transform_gizmos::TransformGizmoResources> {
         self.gizmos.transform_gizmo_resources()
+    }
+
+    pub(crate) fn set_transform_gizmo_resources(
+        &mut self,
+        resources: Option<transform_gizmos::TransformGizmoResources>,
+    ) {
+        self.gizmos.set_transform_gizmo_resources(resources);
     }
 
     pub(super) fn ensure_transform_gizmo_resources(
@@ -627,9 +452,7 @@ impl Scene {
 
     pub fn update(&mut self, dt: f64) {
         self.refresh_environment_state();
-        self.time += dt;
-
-        let absolute_time = self.time;
+        let absolute_time = self.runtime.advance_time(dt);
         for node in self.nodes_iter_mut() {
             node.instance_mut().update(dt, absolute_time);
         }
@@ -639,9 +462,7 @@ impl Scene {
         let main_scene_index = self.main_scene.index();
         if let Some(Some(main_node)) = self.nodes.get_mut(main_scene_index) {
             let world = main_node.instance_mut().world_mut();
-            if let Err(err) = self.scripting.update_scripts(world, dt) {
-                error!("Rune scripting error: {err}");
-            }
+            self.runtime.run_scripts(world, dt);
         } else {
             error!("Rune scripting error: main scene node is missing");
         }
@@ -791,25 +612,15 @@ impl Scene {
         other: Scene,
         renderer: &mut dyn SceneImportDevice,
     ) {
-        if let Some(asset) = other.export_main_asset("MergedScene") {
-            let mut instance = asset.instantiate(Some(renderer), &mut self.assets);
-            let (animations, animation_states) = instance.take_animation_data();
-            let entity_map = super::internal::composition::merge_world_as_child(
-                self.main_world_mut(),
-                parent_entity,
-                instance.into_world(),
-            );
-            let mut queue = std::mem::take(&mut self.import_queue);
-            queue.attach_imported_animations(self, animations, animation_states, &entity_map);
-            self.import_queue = queue;
-            self.refresh_environment_state();
-        }
+        let mut imports = std::mem::take(&mut self.imports);
+        imports.merge_as_child(self, parent_entity, other, renderer);
+        self.imports = imports;
     }
 
     pub fn process_pending_gltf_imports(&mut self, renderer: &mut Renderer) {
-        let mut queue = std::mem::take(&mut self.import_queue);
-        queue.process_pending_gltf_imports(self, renderer);
-        self.import_queue = queue;
+        let mut imports = std::mem::take(&mut self.imports);
+        imports.process_pending_gltf_imports(self, renderer);
+        self.imports = imports;
     }
 
     pub fn debug_print_transforms(&self) {
@@ -1130,6 +941,7 @@ mod tests {
         Children, DirectionalLight, Name, Parent, TransformComponent, Visible,
     };
     use super::*;
+    use crate::scene::SceneSnapshot;
     use crate::scripting::{RuneScriptComponent, RuneScriptSource};
     use glam::{Quat, Vec3};
 

@@ -4,7 +4,7 @@
 //! and feeds them into the renderer. Extracting this logic keeps `Scene` focused
 //! on data management while leaving presentation concerns to a dedicated helper.
 
-use super::scene_core::Scene;
+use super::scene::Scene;
 use crate::renderer::{CustomRenderRequest, LightsData, RenderBatcher, RenderFrame, Renderer};
 use crate::scene::components::{SelectedInEditor, WorldTransform};
 use crate::scene::internal::{gizmos, lights, rendering, transform_gizmos};

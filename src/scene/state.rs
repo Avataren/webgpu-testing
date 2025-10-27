@@ -2,7 +2,7 @@
 //!
 //! This module isolates subsystems that manage editor-facing scene state such as
 //! the active environment and transform gizmo configuration. Splitting these
-//! concerns away from `scene_core` keeps the graph/node management code focused
+//! concerns away from `scene` keeps the graph/node management code focused
 //! while still providing a single entry point (`Scene`) that coordinates all
 //! subsystems.
 
