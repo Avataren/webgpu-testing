@@ -3,7 +3,7 @@ use glam::{Quat, Vec3, Vec4};
 use std::path::{Path, PathBuf};
 
 use super::components::*;
-use crate::asset::{Handle, MaterialAsset, Mesh};
+use crate::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh};
 use crate::renderer::{material::MaterialFlags, Material, Renderer, Texture, Vertex};
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
@@ -58,6 +58,13 @@ type GltfImport = (
     Vec<gltf::buffer::Data>,
     Vec<gltf::image::Data>,
 );
+
+#[derive(Debug, Clone)]
+struct ImportedTexture {
+    index: u32,
+    canonical_path: Option<PathBuf>,
+    display_name: Option<String>,
+}
 
 impl SceneLoader {
     fn reconcile_keyframe_lengths<T>(
@@ -326,12 +333,12 @@ impl SceneLoader {
 
         // Load all textures first
         log::info!("Loading textures...");
-        let texture_handles = Self::load_textures(&document, &images, base_dir, scene, renderer)?;
-        log::info!("Loaded {} textures", texture_handles.len());
+        let texture_data = Self::load_textures(&document, &images, base_dir, scene, renderer)?;
+        log::info!("Loaded {} textures", texture_data.len());
 
         // Load all materials
         log::info!("Loading materials...");
-        let material_handles = Self::load_materials(&document, &texture_handles, scene, path)?;
+        let material_handles = Self::load_materials(&document, &texture_data, scene, path)?;
         log::info!("Loaded {} materials", material_handles.len());
 
         let default_material_handle =
@@ -469,19 +476,29 @@ impl SceneLoader {
             if let Some(material) = &entity.material_data {
                 let flags = MaterialFlags::from_bits(material.flags);
                 if flags.contains(MaterialFlags::USE_BASE_COLOR_TEXTURE) {
-                    used_texture_indices.insert(material.base_color_texture);
+                    if let Some(index) = material.base_color_texture.index {
+                        used_texture_indices.insert(index);
+                    }
                 }
                 if flags.contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE) {
-                    used_texture_indices.insert(material.metallic_roughness_texture);
+                    if let Some(index) = material.metallic_roughness_texture.index {
+                        used_texture_indices.insert(index);
+                    }
                 }
                 if flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
-                    used_texture_indices.insert(material.normal_texture);
+                    if let Some(index) = material.normal_texture.index {
+                        used_texture_indices.insert(index);
+                    }
                 }
                 if flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE) {
-                    used_texture_indices.insert(material.emissive_texture);
+                    if let Some(index) = material.emissive_texture.index {
+                        used_texture_indices.insert(index);
+                    }
                 }
                 if flags.contains(MaterialFlags::USE_OCCLUSION_TEXTURE) {
-                    used_texture_indices.insert(material.occlusion_texture);
+                    if let Some(index) = material.occlusion_texture.index {
+                        used_texture_indices.insert(index);
+                    }
                 }
             }
         }
@@ -1064,12 +1081,14 @@ impl SceneLoader {
         base_dir: &Path,
         scene: &mut Scene,
         renderer: &mut impl SceneImportDevice,
-    ) -> Result<Vec<u32>, String> {
-        let mut handles = Vec::new();
+    ) -> Result<Vec<ImportedTexture>, String> {
+        let mut textures = Vec::new();
 
         for gltf_texture in document.textures() {
             let source = gltf_texture.source();
-            let texture = match source.source() {
+            let base_name = gltf_texture.name().map(|name| name.to_string());
+
+            match source.source() {
                 gltf::image::Source::Uri { uri, .. } => {
                     let decoded = crate::io::percent_decode_uri(uri).ok();
                     let mut candidates = Vec::new();
@@ -1082,19 +1101,33 @@ impl SceneLoader {
                         candidates.push(base_dir.join(uri));
                     }
 
+                    if candidates.is_empty() {
+                        candidates.push(base_dir.join(uri));
+                    }
+
                     let mut last_error: Option<String> = None;
-                    let mut loaded: Option<Texture> = None;
+                    let mut loaded: Option<ImportedTexture> = None;
 
                     for candidate in candidates {
                         log::debug!("  Loading texture from file: {:?}", candidate);
-                        match Texture::from_path(
-                            renderer.device(),
-                            renderer.queue(),
-                            &candidate,
-                            false,
-                        ) {
-                            Ok(texture) => {
-                                loaded = Some(texture);
+                        match scene
+                            .assets
+                            .get_or_load_texture(renderer, &candidate, false)
+                        {
+                            Ok(handle) => {
+                                let canonical =
+                                    candidate.canonicalize().unwrap_or(candidate.clone());
+                                let display_name = base_name.clone().or_else(|| {
+                                    canonical
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().to_string())
+                                });
+
+                                loaded = Some(ImportedTexture {
+                                    index: handle.index() as u32,
+                                    canonical_path: Some(canonical),
+                                    display_name,
+                                });
                                 break;
                             }
                             Err(err) => {
@@ -1103,7 +1136,7 @@ impl SceneLoader {
                         }
                     }
 
-                    loaded.ok_or_else(|| {
+                    let texture = loaded.ok_or_else(|| {
                         last_error.unwrap_or_else(|| {
                             format!(
                                 "Failed to load image {:?}",
@@ -1113,7 +1146,9 @@ impl SceneLoader {
                                     .unwrap_or_else(|| base_dir.join(uri))
                             )
                         })
-                    })?
+                    })?;
+
+                    textures.push(texture);
                 }
                 gltf::image::Source::View { .. } => {
                     let img_data = &images[source.index()];
@@ -1123,28 +1158,36 @@ impl SceneLoader {
                         img_data.height
                     );
 
-                    Texture::from_bytes(
+                    let texture = Texture::from_bytes(
                         renderer.device(),
                         renderer.queue(),
                         &img_data.pixels,
                         img_data.width,
                         img_data.height,
                         Some(&format!("EmbeddedTexture_{}", source.index())),
-                    )
-                }
-            };
+                    );
 
-            let handle = scene.assets.textures.insert(texture);
-            handles.push(handle.index() as u32);
+                    let handle = scene.assets.textures.insert(texture);
+                    let display_name = base_name
+                        .clone()
+                        .or_else(|| Some(format!("EmbeddedTexture_{}", source.index())));
+
+                    textures.push(ImportedTexture {
+                        index: handle.index() as u32,
+                        canonical_path: None,
+                        display_name,
+                    });
+                }
+            }
         }
 
-        Ok(handles)
+        Ok(textures)
     }
 
     /// Load all materials from glTF
     fn load_materials(
         document: &gltf::Document,
-        texture_handles: &[u32],
+        textures: &[ImportedTexture],
         scene: &mut Scene,
         source_path: &Path,
     ) -> Result<Vec<Handle<MaterialAsset>>, String> {
@@ -1167,35 +1210,45 @@ impl SceneLoader {
                 .with_metallic(pbr.metallic_factor())
                 .with_roughness(pbr.roughness_factor());
 
+            let mut base_color_ref: Option<&ImportedTexture> = None;
+            let mut metallic_ref: Option<&ImportedTexture> = None;
+            let mut normal_ref: Option<&ImportedTexture> = None;
+            let mut emissive_ref: Option<&ImportedTexture> = None;
+            let mut occlusion_ref: Option<&ImportedTexture> = None;
+
             // Base color texture
             if let Some(info) = pbr.base_color_texture() {
                 let tex_index = info.texture().index();
-                if tex_index < texture_handles.len() {
-                    material = material.with_base_color_texture(texture_handles[tex_index]);
+                if let Some(texture) = textures.get(tex_index) {
+                    material = material.with_base_color_texture(texture.index);
+                    base_color_ref = Some(texture);
                 }
             }
 
             // Metallic-roughness texture
             if let Some(info) = pbr.metallic_roughness_texture() {
                 let tex_index = info.texture().index();
-                if tex_index < texture_handles.len() {
-                    material = material.with_metallic_roughness_texture(texture_handles[tex_index]);
+                if let Some(texture) = textures.get(tex_index) {
+                    material = material.with_metallic_roughness_texture(texture.index);
+                    metallic_ref = Some(texture);
                 }
             }
 
             // Normal map
             if let Some(normal) = gltf_mat.normal_texture() {
                 let tex_index = normal.texture().index();
-                if tex_index < texture_handles.len() {
-                    material = material.with_normal_texture(texture_handles[tex_index]);
+                if let Some(texture) = textures.get(tex_index) {
+                    material = material.with_normal_texture(texture.index);
+                    normal_ref = Some(texture);
                 }
             }
 
             // Emissive
             if let Some(emissive) = gltf_mat.emissive_texture() {
                 let tex_index = emissive.texture().index();
-                if tex_index < texture_handles.len() {
-                    material = material.with_emissive_texture(texture_handles[tex_index]);
+                if let Some(texture) = textures.get(tex_index) {
+                    material = material.with_emissive_texture(texture.index);
+                    emissive_ref = Some(texture);
                 }
             }
 
@@ -1208,8 +1261,9 @@ impl SceneLoader {
             // Occlusion
             if let Some(occlusion) = gltf_mat.occlusion_texture() {
                 let tex_index = occlusion.texture().index();
-                if tex_index < texture_handles.len() {
-                    material = material.with_occlusion_texture(texture_handles[tex_index]);
+                if let Some(texture) = textures.get(tex_index) {
+                    material = material.with_occlusion_texture(texture.index);
+                    occlusion_ref = Some(texture);
                 }
             }
 
@@ -1233,9 +1287,30 @@ impl SceneLoader {
                 source_path.display(),
                 material_index
             ));
-            let handle = scene
-                .assets
-                .insert_material_asset(MaterialAsset::from_material(material, canonical_path));
+            let mut asset = MaterialAsset::from_material(material, canonical_path);
+
+            let mut apply_reference =
+                |slot: MaterialTextureSlot, texture: Option<&ImportedTexture>| {
+                    if let Some(texture) = texture {
+                        if texture.canonical_path.is_some() || texture.display_name.is_some() {
+                            asset.set_texture_reference(
+                                slot,
+                                MaterialTextureReference::new(
+                                    texture.canonical_path.clone(),
+                                    texture.display_name.clone(),
+                                ),
+                            );
+                        }
+                    }
+                };
+
+            apply_reference(MaterialTextureSlot::BaseColor, base_color_ref);
+            apply_reference(MaterialTextureSlot::MetallicRoughness, metallic_ref);
+            apply_reference(MaterialTextureSlot::Normal, normal_ref);
+            apply_reference(MaterialTextureSlot::Emissive, emissive_ref);
+            apply_reference(MaterialTextureSlot::Occlusion, occlusion_ref);
+
+            let handle = scene.assets.insert_material_asset(asset);
             material_handles.push(handle);
         }
 

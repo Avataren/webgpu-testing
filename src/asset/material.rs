@@ -1,6 +1,6 @@
 use crate::renderer::Material;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default)]
@@ -40,6 +40,73 @@ impl MaterialParameterMetadata {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum MaterialTextureSlot {
+    BaseColor,
+    MetallicRoughness,
+    Normal,
+    Emissive,
+    Occlusion,
+}
+
+impl MaterialTextureSlot {
+    pub const fn all() -> [Self; 5] {
+        [
+            MaterialTextureSlot::BaseColor,
+            MaterialTextureSlot::MetallicRoughness,
+            MaterialTextureSlot::Normal,
+            MaterialTextureSlot::Emissive,
+            MaterialTextureSlot::Occlusion,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MaterialTextureReference {
+    canonical_path: Option<PathBuf>,
+    display_name: Option<String>,
+}
+
+impl MaterialTextureReference {
+    pub fn new(canonical_path: Option<PathBuf>, display_name: Option<String>) -> Self {
+        Self {
+            canonical_path,
+            display_name,
+        }
+    }
+
+    pub fn with_path(path: PathBuf) -> Self {
+        Self {
+            canonical_path: Some(path),
+            display_name: None,
+        }
+    }
+
+    pub fn canonical_path(&self) -> Option<&Path> {
+        self.canonical_path.as_deref()
+    }
+
+    pub fn set_canonical_path(&mut self, path: PathBuf) {
+        self.canonical_path = Some(path);
+    }
+
+    pub fn clear_path(&mut self) {
+        self.canonical_path = None;
+    }
+
+    pub fn display_name(&self) -> Option<&str> {
+        self.display_name.as_deref()
+    }
+
+    pub fn set_display_name(&mut self, name: Option<String>) {
+        self.display_name = name;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.canonical_path.is_none() && self.display_name.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AssetTypeTag(String);
 
@@ -70,6 +137,7 @@ pub struct MaterialAsset {
     canonical_path: PathBuf,
     default_parameters: MaterialParameterMetadata,
     asset_type: AssetTypeTag,
+    texture_references: BTreeMap<MaterialTextureSlot, MaterialTextureReference>,
 }
 
 impl MaterialAsset {
@@ -84,6 +152,7 @@ impl MaterialAsset {
             canonical_path,
             default_parameters,
             asset_type,
+            texture_references: BTreeMap::new(),
         }
     }
 
@@ -126,6 +195,44 @@ impl MaterialAsset {
 
     pub fn set_asset_type(&mut self, asset_type: AssetTypeTag) {
         self.asset_type = asset_type;
+    }
+
+    pub fn texture_reference(
+        &self,
+        slot: MaterialTextureSlot,
+    ) -> Option<&MaterialTextureReference> {
+        self.texture_references.get(&slot)
+    }
+
+    pub fn texture_reference_mut(
+        &mut self,
+        slot: MaterialTextureSlot,
+    ) -> &mut MaterialTextureReference {
+        self.texture_references.entry(slot).or_default()
+    }
+
+    pub fn set_texture_reference(
+        &mut self,
+        slot: MaterialTextureSlot,
+        reference: MaterialTextureReference,
+    ) {
+        if reference.is_empty() {
+            self.texture_references.remove(&slot);
+        } else {
+            self.texture_references.insert(slot, reference);
+        }
+    }
+
+    pub fn clear_texture_reference(&mut self, slot: MaterialTextureSlot) {
+        self.texture_references.remove(&slot);
+    }
+
+    pub fn texture_references(
+        &self,
+    ) -> impl Iterator<Item = (MaterialTextureSlot, &MaterialTextureReference)> {
+        self.texture_references
+            .iter()
+            .map(|(slot, reference)| (*slot, reference))
     }
 }
 
