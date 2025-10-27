@@ -108,12 +108,10 @@ impl SceneSnapshot {
 
         scene.propagate_transforms();
 
+        scene.gizmos.set_gizmo_resources(self.gizmo_resources);
         scene
             .gizmos
-            .set_gizmo_resources(self.gizmo_resources.clone());
-        scene
-            .gizmos
-            .set_transform_gizmo_resources(self.transform_gizmo_resources.clone());
+            .set_transform_gizmo_resources(self.transform_gizmo_resources);
         scene.set_transform_gizmo_mode(self.gizmo_mode);
         scene.set_transform_gizmo_space(self.gizmo_space);
         scene.set_transform_gizmo_hover(self.gizmo_hover);
@@ -155,12 +153,10 @@ impl SceneSnapshot {
         scene.set_time(self.time);
 
         // Restore gizmo state
+        scene.gizmos.set_gizmo_resources(self.gizmo_resources);
         scene
             .gizmos
-            .set_gizmo_resources(self.gizmo_resources.clone());
-        scene
-            .gizmos
-            .set_transform_gizmo_resources(self.transform_gizmo_resources.clone());
+            .set_transform_gizmo_resources(self.transform_gizmo_resources);
         scene.set_transform_gizmo_mode(self.gizmo_mode);
         scene.set_transform_gizmo_space(self.gizmo_space);
         scene.set_transform_gizmo_hover(self.gizmo_hover);

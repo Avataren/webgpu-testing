@@ -17,7 +17,7 @@ pub struct ImportQueue;
 
 impl ImportQueue {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     pub fn process_pending_gltf_imports(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
