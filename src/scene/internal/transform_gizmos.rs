@@ -1,6 +1,6 @@
 use super::lights::safe_normalize;
 use super::rendering::CameraVectors;
-use crate::asset::{Assets, Handle, Mesh};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
 use crate::renderer::primitives::{cone_mesh, cube_mesh, cylinder_mesh, torus_mesh};
 use crate::renderer::PickId;
@@ -19,6 +19,7 @@ pub(crate) struct TransformGizmoResources {
     pub scale_cube: Handle<Mesh>,
     pub rotation_ring: Handle<Mesh>,
     pub rotation_ring_highlight: Handle<Mesh>,
+    pub default_material: Handle<MaterialAsset>,
 }
 
 const AXES: [TransformGizmoAxis; 3] = [
@@ -102,6 +103,7 @@ pub(crate) fn create_resources(
         scale_cube,
         rotation_ring,
         rotation_ring_highlight,
+        default_material: assets.default_material_handle(),
     }
 }
 
@@ -290,7 +292,8 @@ fn build_translate_gizmo(
         let shaft_translation = gizmo_transform.translation + axis_vec * (shaft_length * 0.5);
         gizmos.push(RenderObject {
             mesh: resources.axis_cylinder,
-            material: solid_color_material(color),
+            material: resources.default_material,
+            resolved_material: Some(solid_color_material(color)),
             transform: Transform::from_trs(
                 shaft_translation,
                 rotation,
@@ -310,7 +313,8 @@ fn build_translate_gizmo(
         let cone_rotation = align_vector(Vec3::NEG_Z, axis_vec);
         gizmos.push(RenderObject {
             mesh: resources.axis_cone,
-            material: solid_color_material(color),
+            material: resources.default_material,
+            resolved_material: Some(solid_color_material(color)),
             transform: Transform::from_trs(
                 cone_translation,
                 cone_rotation,
@@ -343,7 +347,8 @@ fn build_translate_gizmo(
         );
         gizmos.push(RenderObject {
             mesh: resources.scale_cube,
-            material: solid_color_material(color),
+            material: resources.default_material,
+            resolved_material: Some(solid_color_material(color)),
             transform: Transform::from_trs(
                 plane_center,
                 orientation,
@@ -366,7 +371,8 @@ fn build_translate_gizmo(
     );
     gizmos.push(RenderObject {
         mesh: resources.scale_cube,
-        material: solid_color_material(center_color),
+        material: resources.default_material,
+        resolved_material: Some(solid_color_material(center_color)),
         transform: Transform::from_trs(
             gizmo_transform.translation,
             Quat::IDENTITY,
@@ -402,7 +408,8 @@ fn build_scale_gizmo(
         );
         gizmos.push(RenderObject {
             mesh: resources.scale_cube,
-            material: solid_color_material(color),
+            material: resources.default_material,
+            resolved_material: Some(solid_color_material(color)),
             transform: Transform::from_trs(
                 gizmo_transform.translation + offset,
                 Quat::IDENTITY,
@@ -424,7 +431,8 @@ fn build_scale_gizmo(
     );
     gizmos.push(RenderObject {
         mesh: resources.scale_cube,
-        material: solid_color_material(center_color),
+        material: resources.default_material,
+        resolved_material: Some(solid_color_material(center_color)),
         transform: Transform::from_trs(
             gizmo_transform.translation,
             Quat::IDENTITY,
@@ -462,7 +470,8 @@ fn build_rotate_gizmo(
         let rotation = align_ring(axis_vec);
         gizmos.push(RenderObject {
             mesh: resources.rotation_ring,
-            material: solid_color_material(color),
+            material: resources.default_material,
+            resolved_material: Some(solid_color_material(color)),
             transform: Transform::from_trs(gizmo_transform.translation, rotation, ring_scale),
             depth_state: GIZMO_DEPTH,
             force_overlay: false,
@@ -479,7 +488,8 @@ fn build_rotate_gizmo(
     let screen_color = highlight_color(RING_BASE_COLOR, screen_hovered);
     gizmos.push(RenderObject {
         mesh: resources.rotation_ring_highlight,
-        material: solid_color_material(screen_color),
+        material: resources.default_material,
+        resolved_material: Some(solid_color_material(screen_color)),
         transform: Transform::from_trs(
             gizmo_transform.translation,
             align_ring(-camera_forward),

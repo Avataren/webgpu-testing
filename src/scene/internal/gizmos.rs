@@ -1,6 +1,6 @@
 use super::lights::{resolve_light_transform, safe_normalize};
 use super::rendering::{apply_billboard_transform, CameraVectors};
-use crate::asset::{Assets, Handle, Mesh};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::renderer::batch::{CullMode, InstanceSource, RenderObject, RenderPass};
 use crate::renderer::primitives::{cone_side_mesh, cylinder_mesh, quad_mesh, sphere_mesh};
 use crate::renderer::texture::Texture;
@@ -22,6 +22,7 @@ pub(crate) struct GizmoResources {
     pub point_icon: Handle<Texture>,
     pub spot_icon: Handle<Texture>,
     pub directional_icon: Handle<Texture>,
+    pub default_material: Handle<MaterialAsset>,
 }
 
 const POINT_SPRITE_COLOR: [u8; 4] = [255, 226, 120, 255];
@@ -82,6 +83,7 @@ pub(crate) fn create_resources(renderer: &mut Renderer, assets: &mut Assets) -> 
         point_icon,
         spot_icon,
         directional_icon,
+        default_material: assets.default_material_handle(),
     }
 }
 
@@ -137,7 +139,11 @@ fn build_point_light_gizmos(
 
         output.push(RenderObject {
             mesh: resources.quad,
-            material: sprite_material(POINT_SPRITE_COLOR, resources.point_icon.index() as u32),
+            material: resources.default_material,
+            resolved_material: Some(sprite_material(
+                POINT_SPRITE_COLOR,
+                resources.point_icon.index() as u32,
+            )),
             transform: icon_transform,
             depth_state: DepthState::new(false, false),
             force_overlay: false,
@@ -152,7 +158,8 @@ fn build_point_light_gizmos(
             let radius = light.range.max(0.01);
             output.push(RenderObject {
                 mesh: resources.sphere,
-                material: volume_material(POINT_VOLUME_COLOR),
+                material: resources.default_material,
+                resolved_material: Some(volume_material(POINT_VOLUME_COLOR)),
                 transform: Transform::from_trs(
                     transform.translation,
                     Quat::IDENTITY,
@@ -207,7 +214,11 @@ fn build_spot_light_gizmos(
 
         output.push(RenderObject {
             mesh: resources.quad,
-            material: sprite_material(SPOT_SPRITE_COLOR, resources.spot_icon.index() as u32),
+            material: resources.default_material,
+            resolved_material: Some(sprite_material(
+                SPOT_SPRITE_COLOR,
+                resources.spot_icon.index() as u32,
+            )),
             transform: icon_transform,
             depth_state: DepthState::new(false, false),
             force_overlay: false,
@@ -229,7 +240,8 @@ fn build_spot_light_gizmos(
             // Outer cone volume
             output.push(RenderObject {
                 mesh: resources.cone_shell,
-                material: volume_material(SPOT_VOLUME_COLOR),
+                material: resources.default_material,
+                resolved_material: Some(volume_material(SPOT_VOLUME_COLOR)),
                 transform: Transform::from_trs(
                     transform.translation,
                     rotation,
@@ -248,12 +260,13 @@ fn build_spot_light_gizmos(
             let shell_scale = (inner_radius / outer_radius).clamp(0.0, 0.999).max(0.01);
             output.push(RenderObject {
                 mesh: resources.cone_shell,
-                material: volume_material([
+                resolved_material: Some(volume_material([
                     SPOT_VOLUME_COLOR[0],
                     SPOT_VOLUME_COLOR[1],
                     SPOT_VOLUME_COLOR[2],
                     60,
-                ]),
+                ])),
+                material: resources.default_material,
                 transform: Transform::from_trs(
                     transform.translation,
                     rotation,
@@ -275,7 +288,8 @@ fn build_spot_light_gizmos(
             // Outer outline to highlight total spread.
             output.push(RenderObject {
                 mesh: resources.cone_shell,
-                material: outline_material(SPOT_OUTER_OUTLINE_COLOR),
+                material: resources.default_material,
+                resolved_material: Some(outline_material(SPOT_OUTER_OUTLINE_COLOR)),
                 transform: Transform::from_trs(
                     transform.translation,
                     rotation,
@@ -293,7 +307,8 @@ fn build_spot_light_gizmos(
             // Inner outline clarifies the core beam threshold.
             output.push(RenderObject {
                 mesh: resources.cone_shell,
-                material: outline_material(SPOT_INNER_OUTLINE_COLOR),
+                material: resources.default_material,
+                resolved_material: Some(outline_material(SPOT_INNER_OUTLINE_COLOR)),
                 transform: Transform::from_trs(
                     transform.translation,
                     rotation,
@@ -346,10 +361,11 @@ fn build_directional_light_gizmos(
 
         output.push(RenderObject {
             mesh: resources.quad,
-            material: sprite_material(
+            material: resources.default_material,
+            resolved_material: Some(sprite_material(
                 DIRECTIONAL_SPRITE_COLOR,
                 resources.directional_icon.index() as u32,
-            ),
+            )),
             transform: icon_transform,
             depth_state: DepthState::new(false, false),
             force_overlay: false,
@@ -365,7 +381,8 @@ fn build_directional_light_gizmos(
             let shaft_translation = position + direction * (DIRECTIONAL_SHAFT_LENGTH * 0.5);
             output.push(RenderObject {
                 mesh: resources.cylinder,
-                material: volume_material(DIRECTIONAL_SHAFT_COLOR),
+                material: resources.default_material,
+                resolved_material: Some(volume_material(DIRECTIONAL_SHAFT_COLOR)),
                 transform: Transform::from_trs(
                     shaft_translation,
                     shaft_rotation,

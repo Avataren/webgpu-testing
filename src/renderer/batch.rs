@@ -1,7 +1,7 @@
 // renderer/batch.rs (Smart version)
 use super::material::Material;
 use crate::{
-    asset::{Handle, Mesh},
+    asset::{Assets, Handle, MaterialAsset, Mesh},
     renderer::PickId,
     scene::components::DepthState,
     scene::transform::Transform,
@@ -63,7 +63,8 @@ impl Default for CullMode {
 /// A single renderable object instance
 pub struct RenderObject {
     pub mesh: Handle<Mesh>,
-    pub material: Material,
+    pub material: Handle<MaterialAsset>,
+    pub resolved_material: Option<Material>,
     pub transform: Transform, // Changed from Mat4
     pub depth_state: DepthState,
     pub force_overlay: bool,
@@ -100,6 +101,7 @@ pub struct Batch<'a> {
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
+    pub material_handles: &'a [Handle<MaterialAsset>],
     pub materials: &'a [Material],
     pub use_nearest_filtering: bool,
     pub cull_mode: CullMode,
@@ -119,8 +121,15 @@ struct BatchKey {
 /// Collects objects and batches by pipeline requirements
 pub struct RenderBatcher {
     batches: HashMap<BatchKey, Vec<InstanceData>>,
-    materials: Vec<Material>,
+    materials: Vec<Handle<MaterialAsset>>,
+    resolved_materials: Vec<Material>,
     material_lookup: HashMap<Material, u32>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BatchError {
+    #[error("material handle {handle:?} is not present in the asset cache")]
+    MissingMaterial { handle: Handle<MaterialAsset> },
 }
 
 impl RenderBatcher {
@@ -128,17 +137,29 @@ impl RenderBatcher {
         Self {
             batches: HashMap::new(),
             materials: Vec::new(),
+            resolved_materials: Vec::new(),
             material_lookup: HashMap::new(),
         }
     }
 
     /// Add an object to be rendered
-    pub fn add(&mut self, obj: RenderObject) {
+    pub fn add(&mut self, obj: RenderObject, assets: &Assets) -> Result<(), BatchError> {
+        let material = if let Some(resolved) = obj.resolved_material {
+            resolved
+        } else {
+            assets
+                .material(obj.material)
+                .map(|asset| *asset.material())
+                .ok_or(BatchError::MissingMaterial {
+                    handle: obj.material,
+                })?
+        };
+
         // Determine which pass this object belongs to
         let pass = obj.render_pass.unwrap_or_else(|| {
             if obj.force_overlay {
                 RenderPass::Overlay
-            } else if obj.material.requires_separate_pass() {
+            } else if material.requires_separate_pass() {
                 RenderPass::Transparent
             } else {
                 RenderPass::Opaque
@@ -150,13 +171,14 @@ impl RenderBatcher {
             pass,
             depth_state: obj.depth_state,
             source: obj.instance_source,
-            use_nearest_filtering: obj.material.uses_nearest_filtering(),
+            use_nearest_filtering: material.uses_nearest_filtering(),
             cull_mode: obj.cull_mode,
         };
 
-        let material_index = *self.material_lookup.entry(obj.material).or_insert_with(|| {
+        let material_index = *self.material_lookup.entry(material).or_insert_with(|| {
             let index = self.materials.len() as u32;
             self.materials.push(obj.material);
+            self.resolved_materials.push(material);
             index
         });
 
@@ -167,6 +189,8 @@ impl RenderBatcher {
             gpu_index: obj.gpu_index,
             pick_id: obj.pick_id,
         });
+
+        Ok(())
     }
 
     /// Clear all batches
@@ -175,6 +199,7 @@ impl RenderBatcher {
             batch.clear();
         }
         self.materials.clear();
+        self.resolved_materials.clear();
         self.material_lookup.clear();
     }
 
@@ -184,7 +209,8 @@ impl RenderBatcher {
             pass: key.pass,
             depth_state: key.depth_state,
             instances: instances.as_slice(),
-            materials: self.materials.as_slice(),
+            material_handles: self.materials.as_slice(),
+            materials: self.resolved_materials.as_slice(),
             use_nearest_filtering: key.use_nearest_filtering,
             cull_mode: key.cull_mode,
         })
@@ -198,7 +224,8 @@ impl RenderBatcher {
                     pass: key.pass,
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
-                    materials: self.materials.as_slice(),
+                    material_handles: self.materials.as_slice(),
+                    materials: self.resolved_materials.as_slice(),
                     use_nearest_filtering: key.use_nearest_filtering,
                     cull_mode: key.cull_mode,
                 })
@@ -226,6 +253,10 @@ impl RenderBatcher {
     }
 
     pub fn materials(&self) -> &[Material] {
+        &self.resolved_materials
+    }
+
+    pub fn material_handles(&self) -> &[Handle<MaterialAsset>] {
         &self.materials
     }
 }
