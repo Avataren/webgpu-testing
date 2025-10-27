@@ -1992,8 +1992,8 @@ mod tests {
     #[test]
     fn gltf_snapshot_restores_after_playback() {
         use crate::scene::components::{Children, Name, Parent, TransformComponent, Visible};
-        use crate::scene::scene_core::{Scene, SceneSnapshot};
         use crate::scene::transform::Transform;
+        use crate::scene::{Scene, SceneSnapshot};
         use glam::{Quat, Vec3};
 
         let path = Path::new("web/assets/animated/AnimatedCube.gltf");
@@ -2204,7 +2204,7 @@ mod tests {
     #[test]
     #[ignore]
     fn complex_gltf_snapshot_restores_after_stop() {
-        use crate::scene::scene_core::SceneSnapshot;
+        use crate::scene::SceneSnapshot;
 
         let path = Path::new("web/assets/chessboard/ABeautifulGame.gltf");
         let (mut scene, document, buffers, node_entities) = instantiate_gltf_scene(path);

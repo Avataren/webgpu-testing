@@ -1,10 +1,10 @@
 //! Utilities for processing editor-driven glTF imports.
 //!
 //! The importer integrates assets spawned by the scripting system back into the
-//! live scene graph. Isolating the logic here keeps `scene_core` focused on graph
+//! live scene graph. Isolating the logic here keeps `scene` focused on graph
 //! management and exposes a narrow entry point for `Scene` to trigger imports.
 
-use super::scene_core::Scene;
+use super::scene::Scene;
 use crate::renderer::Renderer;
 use crate::scene::animation::{AnimationClip, AnimationState, AnimationTarget};
 use crate::scene::loader::{SceneImportDevice, SceneLoader};

@@ -6,12 +6,16 @@ pub mod builder;
 pub mod camera;
 pub mod components;
 mod graph;
+mod import_state;
 mod importer;
 pub(crate) mod internal;
 pub mod loader;
 pub mod picking;
 mod render_bridge;
-mod scene_core;
+mod runtime_state;
+#[allow(clippy::module_inception)]
+mod scene;
+mod snapshot;
 pub mod state;
 pub mod transform;
 
@@ -28,8 +32,9 @@ pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
-pub(crate) use scene_core::SceneSnapshot;
-pub use scene_core::{Scene, SceneStateSnapshot};
+pub use scene::Scene;
+pub(crate) use snapshot::SceneSnapshot;
+pub use snapshot::SceneStateSnapshot;
 pub use state::{
     GizmoState, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
