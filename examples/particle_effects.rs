@@ -1,6 +1,8 @@
 // examples/particle_effects.rs - With floor and shadows
 use glam::{Quat, Vec3};
+use std::path::PathBuf;
 
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
 use wgpu_cube::gpu_particles::{
     ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, ParticleRenderMode, SizeCurve,
@@ -117,7 +119,14 @@ impl RenderApplication for ParticleEffectsApp {
         // ====================================================================
         // FLOOR - Scaled cube with checker material
         // ====================================================================
-        let floor_material = Material::checker().with_metallic(0.1).with_roughness(0.8);
+        let floor_material = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(
+                Material::checker().with_metallic(0.1).with_roughness(0.8),
+                PathBuf::from("examples/particle_effects/floor"),
+            ));
 
         ctx.scene.world_mut().spawn((
             Name::new("Floor"),

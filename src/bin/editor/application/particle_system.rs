@@ -5,7 +5,7 @@ use hecs::{ComponentError, Entity};
 use log::{debug, warn};
 
 use super::system::{EditorContext, EditorSystem};
-use wgpu_cube::asset::{Handle, Mesh};
+use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::gpu_particles::behaviors::{
     BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
 };
@@ -21,6 +21,7 @@ use wgpu_cube::scene::Scene;
 #[derive(Clone, PartialEq)]
 struct ParticleSystemDescriptor {
     mesh: Handle<Mesh>,
+    material_handle: Handle<MaterialAsset>,
     material: wgpu_cube::renderer::Material,
     emitter: ParticleEmitterComponent,
     system: ParticleSystemComponent,
@@ -209,6 +210,8 @@ impl EditorParticleSystem {
     fn collect_scene_data(scene: &mut Scene) -> Vec<ParticleSceneData> {
         let mut data = Vec::new();
 
+        let mut pending = Vec::new();
+
         {
             let world = scene.main_world_mut();
             let mut query = world.query::<(
@@ -248,28 +251,64 @@ impl EditorParticleSystem {
                     .unwrap_or(Affine3A::IDENTITY);
                 let emitter_affine = Affine3A::from_translation(Vec3::from_array(emitter.position));
                 let emitter_transform = entity_affine * emitter_affine;
-
-                let mut material = material_component.0;
-                material = if billboard.is_some() {
-                    material.with_billboarding()
-                } else {
-                    material.without_billboarding()
-                };
-
-                data.push(ParticleSceneData {
+                pending.push((
                     entity,
-                    descriptor: ParticleSystemDescriptor {
-                        mesh: mesh.0,
-                        material,
-                        emitter: emitter.clone(),
-                        system: (*system).clone(),
-                        depth_state: depth_state.copied(),
-                        casts_shadows: casts_shadow.map(|s| s.0).unwrap_or(false),
-                    },
+                    mesh.0,
+                    material_component.0,
+                    emitter.clone(),
+                    (*system).clone(),
+                    depth_state.copied(),
+                    casts_shadow.map(|s| s.0).unwrap_or(false),
+                    billboard.is_some(),
                     emitter_transform,
-                    existing_gpu_instance: gpu_instance.copied(),
-                });
+                    gpu_instance.copied(),
+                ));
             }
+        }
+
+        for (
+            entity,
+            mesh_handle,
+            material_handle,
+            emitter,
+            system,
+            depth_state,
+            casts_shadows,
+            is_billboard,
+            emitter_transform,
+            existing_gpu_instance,
+        ) in pending
+        {
+            let Some(asset) = scene.assets.material(material_handle) else {
+                warn!(
+                    "Particle system {:?} references missing material handle {}",
+                    entity,
+                    material_handle.index()
+                );
+                continue;
+            };
+
+            let mut material = *asset.material();
+            material = if is_billboard {
+                material.with_billboarding()
+            } else {
+                material.without_billboarding()
+            };
+
+            data.push(ParticleSceneData {
+                entity,
+                descriptor: ParticleSystemDescriptor {
+                    mesh: mesh_handle,
+                    material_handle,
+                    material,
+                    emitter,
+                    system,
+                    depth_state,
+                    casts_shadows,
+                },
+                emitter_transform,
+                existing_gpu_instance,
+            });
         }
 
         data

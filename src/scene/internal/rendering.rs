@@ -1,5 +1,5 @@
 use super::lights::safe_normalize;
-use crate::asset::{Handle, Mesh};
+use crate::asset::{Assets, Handle, Mesh};
 use crate::renderer::{
     batch::{CullMode, InstanceSource},
     Material, PickId, RenderObject, Renderer,
@@ -33,8 +33,12 @@ impl CameraVectors {
     }
 }
 
-pub(crate) fn build_render_objects(world: &World, camera: CameraVectors) -> Vec<RenderObject> {
-    let render_entities = collect_render_entities(world);
+pub(crate) fn build_render_objects(
+    world: &World,
+    assets: &Assets,
+    camera: CameraVectors,
+) -> Vec<RenderObject> {
+    let render_entities = collect_render_entities(world, assets);
 
     render_entities
         .into_par_iter()
@@ -56,7 +60,7 @@ struct RenderEntity {
     pick_id: PickId,
 }
 
-fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
+fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> {
     world
         .query::<(
             &MeshComponent,
@@ -90,7 +94,10 @@ fn collect_render_entities(world: &World) -> Vec<RenderEntity> {
                 ),
             )| RenderEntity {
                 mesh: mesh.0,
-                material: material.0,
+                material: assets
+                    .material(material.0)
+                    .map(|asset| *asset.material())
+                    .unwrap_or_else(Material::pbr),
                 visible: visible.0,
                 world_transform: world_transform.map(|t| t.0),
                 local_transform: local_transform.map(|t| t.0),

@@ -12,7 +12,7 @@ use super::components::{
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
-use crate::asset::{Assets, Handle, Mesh, MeshData};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh, MeshData};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Texture};
@@ -299,7 +299,11 @@ impl SceneAsset {
             }
 
             if let Some(material) = &entity.material {
-                builder.add(MaterialComponent(material.clone().into()));
+                let handle = assets.materials.insert(MaterialAsset::from_material(
+                    material.clone().into(),
+                    PathBuf::new(),
+                ));
+                builder.add(MaterialComponent(handle));
             }
 
             if let Some(gltf_node) = entity.gltf_node {
@@ -800,6 +804,7 @@ impl SceneAssetEntity {
     fn from_world_entity(
         entity: Entity,
         world: &World,
+        assets: &Assets,
         index_map: &HashMap<Entity, usize>,
     ) -> Self {
         let name = world.get::<&Name>(entity).ok().map(|n| n.0.clone());
@@ -825,7 +830,8 @@ impl SceneAssetEntity {
         let material = world
             .get::<&MaterialComponent>(entity)
             .ok()
-            .map(|m| SerializedMaterial::from(m.0));
+            .and_then(|component| assets.material(component.0))
+            .map(|asset| SerializedMaterial::from(*asset.material()));
 
         let particle_emitter = world
             .get::<&ParticleEmitterComponent>(entity)
@@ -1606,7 +1612,10 @@ impl From<SerializedTransform> for Transform {
     }
 }
 
-pub(crate) fn serialize_world(world: &World) -> (Vec<SceneAssetEntity>, HashMap<Entity, usize>) {
+pub(crate) fn serialize_world(
+    world: &World,
+    assets: &Assets,
+) -> (Vec<SceneAssetEntity>, HashMap<Entity, usize>) {
     let mut entities: Vec<Entity> = Vec::new();
     for (entity, _) in world.query::<()>().iter() {
         entities.push(entity);
@@ -1620,7 +1629,7 @@ pub(crate) fn serialize_world(world: &World) -> (Vec<SceneAssetEntity>, HashMap<
 
     let serialized = entities
         .iter()
-        .map(|entity| SceneAssetEntity::from_world_entity(*entity, world, &index_map))
+        .map(|entity| SceneAssetEntity::from_world_entity(*entity, world, assets, &index_map))
         .collect();
 
     (serialized, index_map)

@@ -1,3 +1,4 @@
+use crate::asset::Assets;
 use crate::scene::animation::{AnimationClip, AnimationState, MaterialUpdate, TransformUpdate};
 use crate::scene::components::{
     GltfMaterial, MaterialComponent, OrbitAnimation, RotateAnimation, TransformComponent,
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 
 pub(crate) fn advance_animations(
     world: &mut World,
+    assets: &mut Assets,
     animations: &[AnimationClip],
     animation_states: &mut [AnimationState],
     dt: f64,
@@ -45,7 +47,7 @@ pub(crate) fn advance_animations(
         apply_transform_update(world, entity, update);
     }
 
-    apply_material_updates(world, material_updates);
+    apply_material_updates(world, assets, material_updates);
 }
 
 pub(crate) fn update_rotate_animations(world: &mut World, dt: f64) {
@@ -117,7 +119,11 @@ fn apply_transform_update(world: &mut World, entity: hecs::Entity, update: Trans
     }
 }
 
-fn apply_material_updates(world: &mut World, material_updates: HashMap<usize, MaterialUpdate>) {
+fn apply_material_updates(
+    world: &mut World,
+    assets: &mut Assets,
+    material_updates: HashMap<usize, MaterialUpdate>,
+) {
     if material_updates.is_empty() {
         return;
     }
@@ -146,13 +152,16 @@ fn apply_material_updates(world: &mut World, material_updates: HashMap<usize, Ma
         let to_u8 = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
 
         for entity in &material_entities {
-            if let Ok(mut material) = world.get::<&mut MaterialComponent>(*entity) {
-                material.0.base_color = [
-                    to_u8(color.x),
-                    to_u8(color.y),
-                    to_u8(color.z),
-                    to_u8(color.w),
-                ];
+            if let Ok(material_component) = world.get::<&MaterialComponent>(*entity) {
+                if let Some(material_asset) = assets.material_mut(material_component.0) {
+                    let material = material_asset.material_mut();
+                    material.base_color = [
+                        to_u8(color.x),
+                        to_u8(color.y),
+                        to_u8(color.z),
+                        to_u8(color.w),
+                    ];
+                }
             }
         }
     }
@@ -161,12 +170,14 @@ fn apply_material_updates(world: &mut World, material_updates: HashMap<usize, Ma
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asset::{Assets, MaterialAsset};
     use crate::scene::animation::{
         AnimationChannel, AnimationInterpolation, AnimationOutput, AnimationSampler,
         AnimationTarget, TransformProperty,
     };
     use crate::scene::components::TransformComponent;
     use crate::scene::transform::Transform;
+    use std::path::PathBuf;
 
     #[test]
     fn transform_updates_modify_world() {
@@ -190,10 +201,12 @@ mod tests {
     #[test]
     fn material_updates_apply_base_color() {
         let mut world = World::new();
-        let entity = world.spawn((
-            GltfMaterial(3),
-            MaterialComponent(crate::renderer::Material::default()),
+        let mut assets = Assets::default();
+        let handle = assets.materials.insert(MaterialAsset::from_material(
+            crate::renderer::Material::default(),
+            PathBuf::new(),
         ));
+        let _entity = world.spawn((GltfMaterial(3), MaterialComponent(handle)));
 
         let mut updates = HashMap::new();
         updates.insert(
@@ -203,10 +216,10 @@ mod tests {
             },
         );
 
-        apply_material_updates(&mut world, updates);
+        apply_material_updates(&mut world, &mut assets, updates);
 
-        let material = world.get::<&MaterialComponent>(entity).unwrap();
-        assert_eq!(material.0.base_color, [128, 64, 191, 255]);
+        let material = assets.material(handle).unwrap();
+        assert_eq!(material.material().base_color, [128, 64, 191, 255]);
     }
 
     #[test]
@@ -254,7 +267,14 @@ mod tests {
             playing: false,
         }];
 
-        advance_animations(&mut world, std::slice::from_ref(&clip), &mut states, 0.0);
+        let mut assets = Assets::default();
+        advance_animations(
+            &mut world,
+            &mut assets,
+            std::slice::from_ref(&clip),
+            &mut states,
+            0.0,
+        );
 
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert!(transform.0.scale.abs_diff_eq(Vec3::ONE, 1e-6));
@@ -286,8 +306,10 @@ mod tests {
             playing: false,
         };
 
+        let mut assets = Assets::default();
         advance_animations(
             &mut world,
+            &mut assets,
             std::slice::from_ref(&clip),
             std::slice::from_mut(&mut state),
             0.5,
@@ -324,8 +346,10 @@ mod tests {
             playing: true,
         };
 
+        let mut assets = Assets::default();
         advance_animations(
             &mut world,
+            &mut assets,
             std::slice::from_ref(&clip),
             std::slice::from_mut(&mut state),
             1.0,
@@ -340,6 +364,7 @@ mod tests {
 
         advance_animations(
             &mut world,
+            &mut assets,
             std::slice::from_ref(&clip),
             std::slice::from_mut(&mut state),
             0.016,

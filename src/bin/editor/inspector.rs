@@ -9,18 +9,19 @@ use std::ops::RangeInclusive;
 
 use hecs::Entity;
 
+use wgpu_cube::asset::{Handle, MaterialAsset};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
 use wgpu_cube::scene::{
     BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
-    EnvironmentComponent, MaterialComponent, MeshComponent, OptimizedBoidsBehaviorConfig,
-    ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe,
-    ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve,
-    ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig,
-    PointLight, SpotLight, StarfieldBehaviorConfig, Transform,
+    EnvironmentComponent, MeshComponent, OptimizedBoidsBehaviorConfig, ParticleBehaviorConfig,
+    ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe, ParticleEmissionShape,
+    ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve, ParticleSizeKeyframe,
+    ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig, PointLight, SpotLight,
+    StarfieldBehaviorConfig, Transform,
 };
 use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
-use wgpu_cube::{SceneEntityComponentsSummary, SceneEntityInspectorData};
+use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInspectorData};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
@@ -41,6 +42,7 @@ pub enum InspectorAction {
     },
     UpdateMaterial {
         entity: Entity,
+        handle: Handle<MaterialAsset>,
         material: Material,
     },
     UpdatePointLight {
@@ -379,11 +381,11 @@ fn show_mesh_section(ui: &mut egui::Ui, mesh: MeshComponent) {
 fn show_material_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    material_component: MaterialComponent,
+    material_data: InspectorMaterial,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Material", |ui| {
-        let mut material = material_component.0;
+        let mut material = material_data.material;
         let mut changed = false;
 
         Grid::new("material_component_grid")
@@ -450,7 +452,11 @@ fn show_material_section(
             });
 
         if changed {
-            actions.push(InspectorAction::UpdateMaterial { entity, material });
+            actions.push(InspectorAction::UpdateMaterial {
+                entity,
+                handle: material_data.handle,
+                material,
+            });
         }
     });
 }

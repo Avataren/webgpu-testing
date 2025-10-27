@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glam::{Quat, Vec3};
 use log::info;
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, BillboardSpace, DepthState};
@@ -53,9 +54,12 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     );
     let checker_handle = scene.assets.textures.insert(checker_texture);
 
-    let floor_material = Material::pbr()
-        .with_base_color_texture(checker_handle.index() as u32)
-        .with_roughness(1.0);
+    let floor_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::pbr()
+            .with_base_color_texture(checker_handle.index() as u32)
+            .with_roughness(1.0),
+        PathBuf::from("examples/shadow/floor"),
+    ));
 
     scene.world_mut().spawn((
         Name::new("Shadow Test Floor"),
@@ -69,9 +73,12 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         Visible(true),
     ));
 
-    let cube_material = Material::new([220, 220, 230, 255])
-        .with_metallic(0.0)
-        .with_roughness(0.3);
+    let cube_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([220, 220, 230, 255])
+            .with_metallic(0.0)
+            .with_roughness(0.3),
+        PathBuf::from("examples/shadow/cube"),
+    ));
 
     scene.world_mut().spawn((
         Name::new("Shadow Test Cube"),
@@ -94,9 +101,12 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     .expect("Failed to load webgpu billboard texture");
     let webgpu_handle = scene.assets.textures.insert(webgpu_texture);
 
-    let sprite_material = Material::new([255, 255, 255, 255])
-        .with_base_color_texture(webgpu_handle.index() as u32)
-        .with_alpha();
+    let sprite_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([255, 255, 255, 255])
+            .with_base_color_texture(webgpu_handle.index() as u32)
+            .with_alpha(),
+        PathBuf::from("examples/shadow/sprite"),
+    ));
 
     let sprite_offset = Vec3::new(3.0, 2.2, 8.0);
     let sprite_transform = Transform::from_trs(sprite_offset, Quat::IDENTITY, Vec3::splat(2.5));

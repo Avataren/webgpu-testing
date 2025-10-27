@@ -3,8 +3,7 @@ use glam::{Quat, Vec3, Vec4};
 use std::path::{Path, PathBuf};
 
 use super::components::*;
-use crate::asset::Handle;
-use crate::asset::Mesh;
+use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::renderer::{material::MaterialFlags, Material, Renderer, Texture, Vertex};
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
@@ -129,7 +128,8 @@ impl SceneLoader {
         node: &gltf::Node,
         parent: Option<hecs::Entity>,
         mesh_handles: &[Vec<PrimitiveMesh>],
-        materials: &[Material],
+        materials: &[Handle<MaterialAsset>],
+        default_material: Handle<MaterialAsset>,
         world: &mut hecs::World,
         scale_multiplier: f32,
         node_entities: &mut [Option<hecs::Entity>],
@@ -200,12 +200,11 @@ impl SceneLoader {
                     entity_builder.add(primitive.bounds);
                     entity_builder.add(GltfPrimitive(primitive.primitive_index));
 
-                    let material = if let Some(mat_idx) = primitive.material_index {
-                        materials.get(mat_idx).copied().unwrap_or(Material::pbr())
-                    } else {
-                        Material::pbr()
-                    };
-                    entity_builder.add(MaterialComponent(material));
+                    let material_handle = primitive
+                        .material_index
+                        .and_then(|mat_idx| materials.get(mat_idx).copied())
+                        .unwrap_or(default_material);
+                    entity_builder.add(MaterialComponent(material_handle));
                     if let Some(mat_idx) = primitive.material_index {
                         entity_builder.add(GltfMaterial(mat_idx));
                     }
@@ -251,12 +250,11 @@ impl SceneLoader {
             primitive_builder.add(primitive.bounds);
             primitive_builder.add(GltfPrimitive(primitive.primitive_index));
 
-            let material = if let Some(mat_idx) = primitive.material_index {
-                materials.get(mat_idx).copied().unwrap_or(Material::pbr())
-            } else {
-                Material::pbr()
-            };
-            primitive_builder.add(MaterialComponent(material));
+            let material_handle = primitive
+                .material_index
+                .and_then(|mat_idx| materials.get(mat_idx).copied())
+                .unwrap_or(default_material);
+            primitive_builder.add(MaterialComponent(material_handle));
             if let Some(mat_idx) = primitive.material_index {
                 primitive_builder.add(GltfMaterial(mat_idx));
             }
@@ -274,6 +272,7 @@ impl SceneLoader {
                 Some(entity),
                 mesh_handles,
                 materials,
+                default_material,
                 world,
                 scale_multiplier,
                 node_entities,
@@ -332,8 +331,13 @@ impl SceneLoader {
 
         // Load all materials
         log::info!("Loading materials...");
-        let material_handles = Self::load_materials(&document, &texture_handles)?;
+        let material_handles = Self::load_materials(&document, &texture_handles, scene, path)?;
         log::info!("Loaded {} materials", material_handles.len());
+
+        let default_material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+            Material::pbr(),
+            PathBuf::from(format!("{}#default", path.display())),
+        ));
 
         // Load all meshes (each mesh can have multiple primitives)
         log::info!("Loading meshes...");
@@ -405,6 +409,7 @@ impl SceneLoader {
                     None,
                     &mesh_handles,
                     &material_handles,
+                    default_material_handle,
                     scene.world_mut(),
                     scale,
                     &mut node_entities,
@@ -1137,10 +1142,12 @@ impl SceneLoader {
     fn load_materials(
         document: &gltf::Document,
         texture_handles: &[u32],
-    ) -> Result<Vec<Material>, String> {
-        let mut materials = Vec::new();
+        scene: &mut Scene,
+        source_path: &Path,
+    ) -> Result<Vec<Handle<MaterialAsset>>, String> {
+        let mut material_handles = Vec::new();
 
-        for gltf_mat in document.materials() {
+        for (material_index, gltf_mat) in document.materials().enumerate() {
             let mat_name = gltf_mat.name().unwrap_or("Unnamed");
             let pbr = gltf_mat.pbr_metallic_roughness();
 
@@ -1218,15 +1225,19 @@ impl SceneLoader {
                 pbr.roughness_factor()
             );
 
-            materials.push(material);
+            let canonical_path = PathBuf::from(format!(
+                "{}#material{}",
+                source_path.display(),
+                material_index
+            ));
+            let handle = scene
+                .assets
+                .materials
+                .insert(MaterialAsset::from_material(material, canonical_path));
+            material_handles.push(handle);
         }
 
-        // Add a default material if none exist
-        if materials.is_empty() {
-            materials.push(Material::pbr());
-        }
-
-        Ok(materials)
+        Ok(material_handles)
     }
 
     /// Generate tangents for a mesh using a simplified MikkTSpace-like algorithm

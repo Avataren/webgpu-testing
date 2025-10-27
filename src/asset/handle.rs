@@ -1,9 +1,24 @@
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-#[derive(Debug, PartialEq, Eq, Hash)] // Only derive these
+#[derive(Debug)]
 pub struct Handle<T> {
     index: usize,
     _marker: PhantomData<*const T>,
+}
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl<T> Eq for Handle<T> {}
+
+impl<T> Hash for Handle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.index.hash(state);
+    }
 }
 
 // Manually implement Clone without requiring T: Clone

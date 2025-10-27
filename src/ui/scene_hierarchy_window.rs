@@ -1,4 +1,8 @@
 #[cfg(feature = "egui")]
+use crate::asset::{Handle, MaterialAsset};
+#[cfg(feature = "egui")]
+use crate::renderer::Material;
+#[cfg(feature = "egui")]
 use crate::scene::components::Billboard;
 #[cfg(feature = "egui")]
 use crate::scene::{
@@ -86,12 +90,19 @@ pub struct SceneHierarchySnapshot {
 }
 
 #[cfg(feature = "egui")]
+#[derive(Clone, Copy, Debug)]
+pub struct InspectorMaterial {
+    pub handle: Handle<MaterialAsset>,
+    pub material: Material,
+}
+
+#[cfg(feature = "egui")]
 #[derive(Clone, Debug, Default)]
 pub struct SceneEntityComponentsSummary {
     pub camera: Option<CameraComponent>,
     pub transform: Option<Transform>,
     pub mesh: Option<MeshComponent>,
-    pub material: Option<MaterialComponent>,
+    pub material: Option<InspectorMaterial>,
     pub script: Option<RuneScriptComponent>,
     pub point_light: Option<PointLight>,
     pub directional_light: Option<DirectionalLight>,
@@ -141,7 +152,15 @@ impl SceneHierarchySnapshot {
                 .map(|component| *component);
             let material = entity_ref
                 .get::<&MaterialComponent>()
-                .map(|component| *component);
+                .and_then(|component| {
+                    scene
+                        .assets
+                        .material(component.0)
+                        .map(|asset| InspectorMaterial {
+                            handle: component.0,
+                            material: *asset.material(),
+                        })
+                });
             let script = entity_ref
                 .get::<&RuneScriptComponent>()
                 .map(|component| (*component).clone());

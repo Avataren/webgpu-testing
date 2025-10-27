@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use log::info;
+use std::path::PathBuf;
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::{
@@ -47,6 +49,11 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
     scene.assets.textures.insert(texture);
     renderer.update_texture_bind_group(&scene.assets);
 
+    let red_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::red(),
+        PathBuf::from("examples/simple/red"),
+    ));
+
     EntityBuilder::new(scene.world_mut())
         .with_name("Red Cube")
         .with_transform(Transform::from_trs(
@@ -55,9 +62,14 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
             Vec3::ONE,
         ))
         .with_mesh(cube_handle)
-        .with_material(Material::red())
+        .with_material(red_material)
         .visible(true)
         .spawn();
+
+    let green_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::green(),
+        PathBuf::from("examples/simple/green"),
+    ));
 
     scene.world_mut().spawn((
         Name::new("Green Cube"),
@@ -67,8 +79,13 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
             Vec3::ONE,
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::green()),
+        MaterialComponent(green_material),
         Visible(true),
+    ));
+
+    let blue_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::blue(),
+        PathBuf::from("examples/simple/blue"),
     ));
 
     EntityBuilder::new(scene.world_mut())
@@ -79,7 +96,7 @@ fn setup_simple_scene(ctx: &mut StartupContext<'_>) {
             Vec3::ONE,
         ))
         .with_mesh(cube_handle)
-        .with_material(Material::blue())
+        .with_material(blue_material)
         .visible(true)
         .spawn();
 

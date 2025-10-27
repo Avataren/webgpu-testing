@@ -1,5 +1,6 @@
 use super::animation::{AnimationClip, AnimationState};
 use super::internal::{animations, transforms};
+use crate::asset::Assets;
 use crate::scene::components::TransformComponent;
 use crate::scene::transform::Transform;
 use hecs::{Entity, World};
@@ -117,12 +118,12 @@ impl SceneInstance {
         }
     }
 
-    pub(crate) fn update(&mut self, dt: f64, absolute_time: f64) {
+    pub(crate) fn update(&mut self, assets: &mut Assets, dt: f64, absolute_time: f64) {
         let world = &mut self.world;
         let animations = &self.animations;
         let animation_states = &mut self.animation_states;
 
-        animations::advance_animations(world, animations, animation_states, dt);
+        animations::advance_animations(world, assets, animations, animation_states, dt);
         animations::update_rotate_animations(world, dt);
         animations::update_orbit_animations(world, absolute_time);
     }

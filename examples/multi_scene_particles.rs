@@ -1,9 +1,10 @@
 use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use std::f32::consts::TAU;
+use std::path::PathBuf;
 
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
-use wgpu_cube::asset::{Handle, Mesh};
+use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::gpu_particles::behaviors::StarfieldBehavior;
 use wgpu_cube::gpu_particles::{GpuParticleSystem, Particle};
 use wgpu_cube::render_application::{run_application, RenderApplication};
@@ -149,10 +150,17 @@ impl MultiSceneParticlesExample {
         let original_main = scene.main_scene();
         scene.set_main_scene(node);
 
+        let dark_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+            Material::rgb(40, 48, 62).with_roughness(0.85),
+            PathBuf::from("examples/multi_scene_particles/floor_dark"),
+        ));
+        let light_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+            Material::rgb(215, 220, 235).with_roughness(0.55),
+            PathBuf::from("examples/multi_scene_particles/floor_light"),
+        ));
+
         {
             let world = scene.world_mut();
-            let dark = Material::rgb(40, 48, 62).with_roughness(0.85);
-            let light = Material::rgb(215, 220, 235).with_roughness(0.55);
 
             let half_extent = (FLOOR_DIMENSION as f32 - 1.0) * 0.5 * TILE_SPACING;
 
@@ -164,13 +172,17 @@ impl MultiSceneParticlesExample {
                         (z as f32 * TILE_SPACING) - half_extent,
                     );
                     let transform = Transform::from_trs(offset, Quat::IDENTITY, TILE_SCALE);
-                    let material = if (x + z) % 2 == 0 { dark } else { light };
+                    let material_handle = if (x + z) % 2 == 0 {
+                        dark_handle
+                    } else {
+                        light_handle
+                    };
 
                     EntityBuilder::new(world)
                         .with_name(format!("FloorTile_{}_{}", x, z))
                         .with_transform(transform)
                         .with_mesh(mesh_handle)
-                        .with_material(material)
+                        .with_material(material_handle)
                         .visible(true)
                         .spawn();
                 }

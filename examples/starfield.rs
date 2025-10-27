@@ -2,9 +2,11 @@ use glam::{Quat, Vec3};
 use rand::thread_rng;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rayon::prelude::*; // rayon = "1"
+use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
@@ -72,6 +74,14 @@ impl RenderApplication for StarfieldApp {
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
         let mut material = Material::checker();
         material.roughness_factor = 64;
+        let material_handle = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(
+                material,
+                PathBuf::from("examples/starfield/star"),
+            ));
         ctx.scene.environment_mut().set_clear_color(wgpu::Color {
             r: 0.001,
             g: 0.005,
@@ -113,7 +123,7 @@ impl RenderApplication for StarfieldApp {
             ctx.scene.world_mut().spawn((
                 TransformComponent(transform),
                 MeshComponent(mesh_handle),
-                MaterialComponent(material),
+                MaterialComponent(material_handle),
                 Visible(true),
                 motion,
             ));

@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use log::info;
+use std::path::PathBuf;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{
@@ -44,6 +46,11 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     let cube_mesh = renderer.create_mesh(&cube_verts, &cube_idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
+    let floor_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([64, 70, 76, 255]).with_roughness(0.85),
+        PathBuf::from("examples/bloom/floor"),
+    ));
+
     EntityBuilder::new(scene.world_mut())
         .with_name("Floor")
         .with_transform(Transform::from_trs(
@@ -52,13 +59,16 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             Vec3::new(14.0, 0.5, 14.0),
         ))
         .with_mesh(cube_handle)
-        .with_material(Material::new([64, 70, 76, 255]).with_roughness(0.85))
+        .with_material(floor_material)
         .visible(true)
         .spawn();
 
-    let column_material = Material::new([230, 232, 240, 255])
-        .with_metallic(0.05)
-        .with_roughness(0.18);
+    let column_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([230, 232, 240, 255])
+            .with_metallic(0.05)
+            .with_roughness(0.18),
+        PathBuf::from("examples/bloom/column"),
+    ));
 
     let column_positions = [
         Vec3::new(-3.5, 0.0, -2.2),
@@ -81,9 +91,12 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             .spawn();
     }
 
-    let pedestal_material = Material::new([200, 205, 215, 255])
-        .with_metallic(0.0)
-        .with_roughness(0.35);
+    let pedestal_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([200, 205, 215, 255])
+            .with_metallic(0.0)
+            .with_roughness(0.35),
+        PathBuf::from("examples/bloom/pedestal"),
+    ));
 
     let bloom_emitters = [
         (Vec3::new(0.0, 1.4, 0.0), Vec3::new(1.0, 0.85, 0.6), 440.0),
@@ -108,6 +121,10 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
 
         let mut orb_material = Material::pbr().with_roughness(0.05);
         orb_material.base_color = to_srgb(*color);
+        let orb_material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+            orb_material,
+            PathBuf::from(format!("examples/bloom/orb_{idx}")),
+        ));
 
         EntityBuilder::new(scene.world_mut())
             .with_name(format!("Emitter {}", idx))
@@ -117,7 +134,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
                 Vec3::splat(0.65),
             ))
             .with_mesh(sphere_handle)
-            .with_material(orb_material)
+            .with_material(orb_material_handle)
             .visible(true)
             .spawn();
 
