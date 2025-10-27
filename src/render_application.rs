@@ -3,7 +3,7 @@
 
 #[cfg(feature = "egui")]
 use crate::app::RuntimeStateHandle;
-use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext};
+use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext, WinitApp};
 
 use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
@@ -184,13 +184,10 @@ impl DefaultUI {
     }
 }
 
-/// Run an application that implements RenderApplication
-#[cfg(not(target_arch = "wasm32"))]
-pub fn run_application<T>(application: T) -> Result<(), winit::error::EventLoopError>
+fn build_winit_app<T>(app_rc: Rc<RefCell<T>>) -> WinitApp
 where
     T: RenderApplication,
 {
-    let app_rc = Rc::new(RefCell::new(application));
     let mut builder = AppBuilder::new();
 
     app_rc.borrow().configure(&mut builder);
@@ -217,7 +214,7 @@ where
     }
 
     let core = builder.build();
-    let mut app = crate::app::WinitApp::from_core(core);
+    let mut app = WinitApp::from_core(core);
 
     #[cfg(feature = "egui")]
     {
@@ -255,7 +252,7 @@ where
     #[cfg(feature = "egui")]
     {
         let show_default = app_rc.borrow().show_default_ui();
-        let ui_style = app_rc.borrow().ui_style(); // Get the style
+        let ui_style = app_rc.borrow().ui_style();
         let stats_handle = app.frame_stats_handle();
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
@@ -273,7 +270,7 @@ where
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
-                ui_style.apply(ctx); // Apply style at the start of each frame
+                ui_style.apply(ctx);
                 default_ui.show(ctx);
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
@@ -288,12 +285,23 @@ where
             let app_ref = app_rc.clone();
 
             app.set_egui_ui(move |ctx| {
-                ui_style.apply(ctx); // Apply style at the start of each frame
+                ui_style.apply(ctx);
                 app_ref.borrow_mut().ui(ctx, &mut default_ui);
             });
         }
     }
 
+    app
+}
+
+/// Run an application that implements RenderApplication
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_application<T>(application: T) -> Result<(), winit::error::EventLoopError>
+where
+    T: RenderApplication,
+{
+    let app_rc = Rc::new(RefCell::new(application));
+    let app = build_winit_app(app_rc);
     crate::run_with_app(app)
 }
 
@@ -304,107 +312,6 @@ where
     T: RenderApplication,
 {
     let app_rc = Rc::new(RefCell::new(application));
-    let mut builder = AppBuilder::new();
-
-    app_rc.borrow().configure(&mut builder);
-
-    {
-        let app = app_rc.clone();
-        builder.add_startup_system(move |ctx| {
-            app.borrow_mut().setup(ctx);
-        });
-    }
-
-    {
-        let app = app_rc.clone();
-        builder.add_system(move |ctx| {
-            app.borrow_mut().update(ctx);
-        });
-    }
-
-    {
-        let app = app_rc.clone();
-        builder.add_gpu_system(move |ctx| {
-            app.borrow_mut().gpu_update(ctx);
-        });
-    }
-
-    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
-    let core = builder.build();
-    #[cfg_attr(not(feature = "egui"), allow(unused_mut))]
-    let mut app = crate::app::WinitApp::from_core(core);
-
-    #[cfg(feature = "egui")]
-    {
-        let runtime_handle = app.runtime_state_handle();
-        app_rc
-            .borrow_mut()
-            .install_runtime_state_handle(runtime_handle.clone());
-    }
-
-    // Install custom render callback
-    {
-        let stage = app_rc.borrow().custom_render_stage();
-        app.set_custom_render_stage(stage);
-
-        let initial_shadow = app_rc.borrow().custom_render_includes_shadows();
-        app.enable_custom_render_shadows(initial_shadow);
-
-        let shadow_query_app = app_rc.clone();
-        app.set_custom_render_shadow_query(Box::new(move || {
-            shadow_query_app.borrow().custom_render_includes_shadows()
-        }));
-
-        let app_ref = app_rc.clone();
-        app.set_custom_render_callback(Box::new(move |ctx| {
-            app_ref.borrow_mut().custom_render(ctx);
-        }));
-    }
-
-    #[cfg(feature = "egui")]
-    {
-        let region_app = app_rc.clone();
-        app.set_render_region_query(move || region_app.borrow().render_region());
-    }
-
-    #[cfg(feature = "egui")]
-    {
-        let show_default = app_rc.borrow().show_default_ui();
-        let stats_handle = app.frame_stats_handle();
-        let log_handle = init_log_recorder();
-        let post_handle = app.postprocess_effects_handle();
-        let env_handle = app.environment_settings_handle();
-        let hierarchy_handle = app.scene_hierarchy_handle();
-
-        if show_default {
-            let mut default_ui = DefaultUI::new(
-                stats_handle,
-                log_handle,
-                post_handle,
-                env_handle.clone(),
-                hierarchy_handle.clone(),
-            );
-            let app_ref = app_rc.clone();
-
-            app.set_egui_ui(move |ctx| {
-                default_ui.show(ctx);
-                app_ref.borrow_mut().ui(ctx, &mut default_ui);
-            });
-        } else {
-            let mut default_ui = DefaultUI::new(
-                stats_handle,
-                log_handle,
-                post_handle,
-                env_handle.clone(),
-                hierarchy_handle,
-            );
-            let app_ref = app_rc.clone();
-
-            app.set_egui_ui(move |ctx| {
-                app_ref.borrow_mut().ui(ctx, &mut default_ui);
-            });
-        }
-    }
-
+    let app = build_winit_app(app_rc);
     crate::run_with_app(app)
 }
