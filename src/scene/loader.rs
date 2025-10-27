@@ -334,10 +334,13 @@ impl SceneLoader {
         let material_handles = Self::load_materials(&document, &texture_handles, scene, path)?;
         log::info!("Loaded {} materials", material_handles.len());
 
-        let default_material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
-            Material::pbr(),
-            PathBuf::from(format!("{}#default", path.display())),
-        ));
+        let default_material_handle =
+            scene
+                .assets
+                .insert_material_asset(MaterialAsset::from_material(
+                    Material::pbr(),
+                    PathBuf::from(format!("{}#default", path.display())),
+                ));
 
         // Load all meshes (each mesh can have multiple primitives)
         log::info!("Loading meshes...");
@@ -1232,8 +1235,7 @@ impl SceneLoader {
             ));
             let handle = scene
                 .assets
-                .materials
-                .insert(MaterialAsset::from_material(material, canonical_path));
+                .insert_material_asset(MaterialAsset::from_material(material, canonical_path));
             material_handles.push(handle);
         }
 
