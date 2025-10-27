@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use log::info;
+use std::path::PathBuf;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::texture::DEFAULT_WHITE_TEXTURE_INDEX;
 use wgpu_cube::renderer::{Material, Texture};
@@ -78,6 +80,11 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
                 .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX)
                 .with_metallic_roughness_texture(unit_mr_handle.index() as u32);
 
+            let material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+                material,
+                PathBuf::from(format!("examples/pbr/material_{}_{}", row, col)),
+            ));
+
             scene.world_mut().spawn((
                 Name::new(format!("Sphere_M{:.2}_R{:.2}", metallic, roughness)),
                 TransformComponent(Transform::from_trs(
@@ -86,7 +93,7 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
                     Vec3::splat(0.8),
                 )),
                 MeshComponent(sphere_handle),
-                MaterialComponent(material),
+                MaterialComponent(material_handle),
                 Visible(true),
             ));
         }

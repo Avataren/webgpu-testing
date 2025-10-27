@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use log::info;
+use std::path::PathBuf;
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::{
@@ -44,22 +46,35 @@ fn setup_grid_scene(ctx: &mut StartupContext<'_>) {
         [255, 100, 255, 255],
     ];
 
+    let mut texture_indices = Vec::new();
     for color in colors {
         let texture = Texture::from_color(renderer.get_device(), renderer.get_queue(), color, None);
-        scene.assets.textures.insert(texture);
+        let handle = scene.assets.textures.insert(texture);
+        texture_indices.push(handle.index() as u32);
     }
+
+    let material_handles: Vec<_> = texture_indices
+        .iter()
+        .enumerate()
+        .map(|(i, &texture_index)| {
+            scene.assets.materials.insert(MaterialAsset::from_material(
+                Material::white().with_texture(texture_index),
+                PathBuf::from(format!("examples/grid/material{}", i)),
+            ))
+        })
+        .collect();
 
     let spacing = 2.0;
     for x in -GRID_SIZE..=GRID_SIZE {
         for z in -GRID_SIZE..=GRID_SIZE {
             let pos = Vec3::new(x as f32 * spacing, 0.0, z as f32 * spacing);
-            let texture_idx = ((x.abs() + z.abs()) % 5) as u32;
+            let texture_idx = ((x.abs() + z.abs()) % material_handles.len() as i32) as usize;
 
             scene.world_mut().spawn((
                 Name::new(format!("Cube_{}_{}", x, z)),
                 TransformComponent(Transform::from_trs(pos, Quat::IDENTITY, Vec3::splat(0.4))),
                 MeshComponent(cube_handle),
-                MaterialComponent(Material::white().with_texture(texture_idx)),
+                MaterialComponent(material_handles[texture_idx]),
                 Visible(true),
             ));
         }

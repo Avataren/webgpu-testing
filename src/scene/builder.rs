@@ -5,9 +5,7 @@ use glam::Vec3;
 use hecs::World;
 
 use super::components::*;
-use crate::asset::Handle;
-use crate::asset::Mesh;
-use crate::renderer::Material;
+use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::scene::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 
@@ -52,7 +50,7 @@ impl<'w> EntityBuilder<'w> {
     }
 
     /// Add a material component
-    pub fn with_material(mut self, material: Material) -> Self {
+    pub fn with_material(mut self, material: Handle<MaterialAsset>) -> Self {
         self.builder.add(MaterialComponent(material));
         self
     }
@@ -117,7 +115,7 @@ let entity = world.spawn((
     Name::new("Cube"),
     TransformComponent(Transform::default()),
     MeshComponent(mesh_handle),
-    MaterialComponent(Material::white()),
+    MaterialComponent(material_handle),
     Visible(true),
 ));
 */

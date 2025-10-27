@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use log::info;
+use std::path::PathBuf;
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{
@@ -46,10 +48,23 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         [255, 0, 255, 255],
     ];
 
+    let mut texture_indices = Vec::new();
     for color in colors {
         let texture = Texture::from_color(renderer.get_device(), renderer.get_queue(), color, None);
-        scene.assets.textures.insert(texture);
+        let handle = scene.assets.textures.insert(texture);
+        texture_indices.push(handle.index() as u32);
     }
+
+    let material_handles: Vec<_> = texture_indices
+        .iter()
+        .enumerate()
+        .map(|(i, &texture_index)| {
+            scene.assets.materials.insert(MaterialAsset::from_material(
+                Material::white().with_texture(texture_index),
+                PathBuf::from(format!("examples/hierarchy/material{}", i)),
+            ))
+        })
+        .collect();
 
     let parent1 = scene.world_mut().spawn((
         Name::new("Parent1 (Red)"),
@@ -59,7 +74,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::ONE,
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(0)),
+        MaterialComponent(material_handles[0]),
         Visible(true),
     ));
 
@@ -71,7 +86,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.5),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(1)),
+        MaterialComponent(material_handles[1]),
         Visible(true),
         Parent(parent1),
     ));
@@ -85,7 +100,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
         Name::new("Grandparent (Blue)"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(2)),
+        MaterialComponent(material_handles[2]),
         Visible(true),
     ));
 
@@ -97,7 +112,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.8),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(3)),
+        MaterialComponent(material_handles[3]),
         Visible(true),
         Parent(grandparent),
     ));
@@ -110,7 +125,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.6),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(4)),
+        MaterialComponent(material_handles[4]),
         Visible(true),
         Parent(parent2),
     ));
@@ -132,7 +147,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::ONE,
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(0)),
+        MaterialComponent(material_handles[0]),
         Visible(true),
         RotateAnimation {
             axis: Vec3::Y,
@@ -148,7 +163,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.5),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(1)),
+        MaterialComponent(material_handles[1]),
         Visible(true),
         Parent(rotating_parent),
     ));
@@ -166,7 +181,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(2.0),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(2)),
+        MaterialComponent(material_handles[2]),
         Visible(true),
     ));
 
@@ -178,7 +193,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.5),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(3)),
+        MaterialComponent(material_handles[3]),
         Visible(true),
         Parent(scaled_parent),
     ));
@@ -196,7 +211,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(1.0),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(0)),
+        MaterialComponent(material_handles[0]),
         Visible(true),
     ));
 
@@ -208,7 +223,7 @@ fn setup_hierarchy_scene(ctx: &mut StartupContext<'_>) {
             Vec3::splat(0.6),
         )),
         MeshComponent(cube_handle),
-        MaterialComponent(Material::white().with_texture(1)),
+        MaterialComponent(material_handles[1]),
         Visible(true),
         Parent(billboard_parent),
         Billboard::new(BillboardOrientation::FaceCameraYAxis),

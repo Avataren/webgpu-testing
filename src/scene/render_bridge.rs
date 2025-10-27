@@ -35,7 +35,9 @@ impl RenderBridge {
             let world = node.instance().world();
             let world_transform = *node.world_transform();
 
-            for mut object in rendering::build_render_objects(world, camera_vectors).into_iter() {
+            for mut object in
+                rendering::build_render_objects(world, &scene.assets, camera_vectors).into_iter()
+            {
                 object.transform = world_transform.mul_transform(&object.transform);
                 batcher.add(object);
             }

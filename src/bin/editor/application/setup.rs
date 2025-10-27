@@ -1,5 +1,7 @@
 use glam::Vec3;
 use log::error;
+use std::path::PathBuf;
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
 use wgpu_cube::scene::{EntityBuilder, Scene};
@@ -81,9 +83,13 @@ impl EditorApplication {
                 world.get::<&MaterialComponent>(entity).is_err()
             };
             if missing_material {
+                let handle = scene.assets.materials.insert(MaterialAsset::from_material(
+                    Material::pbr(),
+                    PathBuf::new(),
+                ));
                 if let Err(err) = scene
                     .main_world_mut()
-                    .insert_one(entity, MaterialComponent(Material::pbr()))
+                    .insert_one(entity, MaterialComponent(handle))
                 {
                     error!("failed to attach material to Editor Cube: {err}");
                 }

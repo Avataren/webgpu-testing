@@ -1,5 +1,7 @@
 use glam::{Quat, Vec3};
+use std::path::PathBuf;
 use wgpu_cube::app::{AppBuilder, StartupContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
@@ -50,6 +52,11 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
             .with_roughness(roughness)
             .with_metallic_roughness_texture(mr_handle.index() as u32);
 
+        let material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
+            material,
+            PathBuf::from(format!("examples/roughness_ramp/material_{i}")),
+        ));
+
         scene.world_mut().spawn((
             Name::new(format!("Sphere_R{roughness:.2}")),
             TransformComponent(Transform::from_trs(
@@ -58,7 +65,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
                 Vec3::splat(0.9),
             )),
             MeshComponent(sphere_handle),
-            MaterialComponent(material),
+            MaterialComponent(material_handle),
             Visible(true),
         ));
     }

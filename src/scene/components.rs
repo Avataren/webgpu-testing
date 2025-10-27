@@ -1,8 +1,7 @@
 // scene/components.rs
 // Pure hecs components - no custom entity system
 
-use crate::asset::Handle;
-use crate::asset::Mesh;
+use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::gpu_particles::behaviors::{
     BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
@@ -11,7 +10,8 @@ use crate::gpu_particles::{
     ColorGradient, EmissionShape, ParticleEmitter, ParticleRenderMode, SizeCurve,
 };
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
-use crate::renderer::{Material, Vertex};
+use crate::renderer::Material;
+use crate::renderer::Vertex;
 use crate::scene::camera::{Camera, CameraProjection};
 use crate::scene::Transform;
 use glam::Vec3;
@@ -388,7 +388,7 @@ impl MeshBounds {
 
 /// Material component
 #[derive(Debug, Clone, Copy)]
-pub struct MaterialComponent(pub Material);
+pub struct MaterialComponent(pub Handle<MaterialAsset>);
 
 /// Visibility component
 #[derive(Debug, Clone, Copy)]

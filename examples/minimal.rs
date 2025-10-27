@@ -1,5 +1,7 @@
 use glam::Vec3;
+use std::path::PathBuf;
 use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::EntityBuilder;
@@ -14,11 +16,19 @@ impl RenderApplication for ExampleApp {
         let mesh = ctx.renderer.create_mesh(&verts, &idx);
         let mesh_handle = ctx.scene.assets.meshes.insert(mesh);
 
+        let material_handle = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(
+                Material::red(),
+                PathBuf::from("examples/minimal/red"),
+            ));
         let world = ctx.scene.world_mut();
         EntityBuilder::new(world)
             .with_name("Test Cube")
             .with_mesh(mesh_handle)
-            .with_material(Material::red())
+            .with_material(material_handle)
             .visible(true)
             .spawn();
     }

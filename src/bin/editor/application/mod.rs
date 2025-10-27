@@ -24,10 +24,11 @@ use self::core::GameViewDisplayMode;
 
 use glam::{Quat, Vec3};
 use hecs::Entity;
+use std::path::PathBuf;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
-use wgpu_cube::asset::{Handle, Mesh};
+use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::gpu_particles::ParticleEmitter;
 use wgpu_cube::renderer::primitives::{quad_mesh, PrimitiveMeshDescriptor};
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
@@ -335,23 +336,43 @@ impl EditorApplication {
                         self.record_scene_change(ctx.scene);
                     }
                 }
-                InspectorAction::UpdateMaterial { entity, material } => {
-                    let mut updated = false;
+                InspectorAction::UpdateMaterial {
+                    entity,
+                    handle,
+                    material,
+                } => {
+                    let mut can_update = false;
                     {
                         let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut MaterialComponent>(entity) {
-                            Ok(mut component) => {
-                                component.0 = material;
-                                updated = true;
+                        match world.get::<&MaterialComponent>(entity) {
+                            Ok(component) => {
+                                if component.0 == handle {
+                                    can_update = true;
+                                } else {
+                                    log::warn!(
+                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                        entity,
+                                        component.0.index(),
+                                        handle.index()
+                                    );
+                                }
                             }
                             Err(err) => {
-                                log::warn!("Failed to update material for {:?}: {}", entity, err);
+                                log::warn!("Failed to access material for {:?}: {}", entity, err);
                             }
                         }
                     }
 
-                    if updated {
-                        self.record_scene_change(ctx.scene);
+                    if can_update {
+                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                            *asset.material_mut() = material;
+                            self.record_scene_change(ctx.scene);
+                        } else {
+                            log::warn!(
+                                "Inspector material asset missing for handle {:?}",
+                                handle.index()
+                            );
+                        }
                     }
                 }
                 InspectorAction::UpdatePointLight { entity, light } => {
@@ -750,12 +771,20 @@ impl EditorApplication {
             .get(mesh_handle)
             .and_then(|mesh| MeshBounds::from_vertices(&mesh.data().vertices));
 
+        let material_handle = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(
+                Material::pbr(),
+                PathBuf::new(),
+            ));
         let mut builder = EntityBuilder::new(ctx.scene.main_world_mut());
         builder = builder
             .with_name(preset.display_name())
             .with_transform(Transform::default())
             .with_mesh(mesh_handle)
-            .with_material(Material::pbr())
+            .with_material(material_handle)
             .visible(true);
 
         builder = builder.with_component(PrimitiveMeshComponent { descriptor });
@@ -776,6 +805,11 @@ impl EditorApplication {
         let spawn_rate = Self::default_particle_spawn_rate(preset);
         let (mesh_handle, bounds) = self.ensure_particle_mesh(ctx);
         let material = Self::default_particle_material(preset);
+        let material_handle = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
         let system_component = ParticleSystemComponent::new(spawn_rate, preset);
         let emitter_component = Self::default_particle_emitter(spawn_rate);
 
@@ -783,7 +817,7 @@ impl EditorApplication {
             .with_name(name)
             .with_transform(Transform::default())
             .with_mesh(mesh_handle)
-            .with_material(material)
+            .with_material(material_handle)
             .with_particle_system(system_component)
             .with_particle_emitter(emitter_component)
             .visible(true);

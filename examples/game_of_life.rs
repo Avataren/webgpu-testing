@@ -1,8 +1,9 @@
 // examples/game_of_life_refactored.rs - Refactored version using new compute abstractions
 
 use glam::{Quat, Vec3};
+use std::path::PathBuf;
 use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
-use wgpu_cube::asset::Handle;
+use wgpu_cube::asset::{Handle, MaterialAsset};
 use wgpu_cube::render_application::{run_application, RenderApplication};
 use wgpu_cube::renderer::{
     BindGroupBuilder, BindGroupLayoutBuilder, ComputePass, ComputePipelineBuilder, Material,
@@ -298,6 +299,14 @@ fn spawn_billboard(
     let scale_x = (width as f32) / 128.0;
     let scale_y = (height as f32) / 128.0;
 
+    let board_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::pbr()
+            .with_unlit()
+            .with_nearest_filtering()
+            .with_base_color_texture(texture_handle.index() as u32),
+        PathBuf::from("examples/game_of_life/board"),
+    ));
+
     let entity = EntityBuilder::new(scene.world_mut())
         .with_name("Game of Life Board")
         .with_transform(Transform::from_trs(
@@ -306,12 +315,7 @@ fn spawn_billboard(
             Vec3::new(scale_x, scale_y, 1.0),
         ))
         .with_mesh(mesh_handle)
-        .with_material(
-            Material::pbr()
-                .with_unlit()
-                .with_nearest_filtering()
-                .with_base_color_texture(texture_handle.index() as u32),
-        )
+        .with_material(board_material)
         .visible(true)
         .spawn();
 

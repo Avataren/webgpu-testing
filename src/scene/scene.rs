@@ -453,8 +453,11 @@ impl Scene {
     pub fn update(&mut self, dt: f64) {
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);
-        for node in self.nodes_iter_mut() {
-            node.instance_mut().update(dt, absolute_time);
+        let assets = &mut self.assets;
+        for node_opt in &mut self.nodes {
+            if let Some(node) = node_opt.as_mut() {
+                node.instance_mut().update(assets, dt, absolute_time);
+            }
         }
 
         self.update_world_transforms();
@@ -833,7 +836,7 @@ impl Scene {
         }
 
         let node_ref = self.node(node);
-        let (mut entities, index_map) = serialize_world(node_ref.instance().world());
+        let (mut entities, index_map) = serialize_world(node_ref.instance().world(), &self.assets);
         let animations: Vec<_> = node_ref
             .instance()
             .animations()
