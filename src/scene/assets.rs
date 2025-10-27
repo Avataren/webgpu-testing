@@ -383,13 +383,13 @@ impl SceneAsset {
                                 material_data.clone().into(),
                                 resolved_path.clone(),
                             );
-                            let handle = assets.materials.insert(asset);
+                            let handle = assets.insert_material_asset(asset);
                             builder.add(MaterialComponent(handle));
                         }
                     }
                 }
             } else if let Some(material_data) = &entity.material_data {
-                let handle = assets.materials.insert(MaterialAsset::from_material(
+                let handle = assets.insert_material_asset(MaterialAsset::from_material(
                     material_data.clone().into(),
                     PathBuf::new(),
                 ));

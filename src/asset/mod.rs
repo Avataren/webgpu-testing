@@ -87,9 +87,26 @@ impl Assets {
             asset.set_canonical_path(canonical_path.clone());
         }
 
+        Ok(self.insert_material_asset(asset))
+    }
+
+    pub fn insert_material_asset(&mut self, mut asset: MaterialAsset) -> Handle<MaterialAsset> {
+        if asset.canonical_path().as_os_str().is_empty() {
+            return self.materials.insert(asset);
+        }
+
+        let canonical_path = Self::canonicalize_path(asset.canonical_path());
+        if let Some(handle) = self.material_paths.get(&canonical_path) {
+            return *handle;
+        }
+
+        if asset.canonical_path() != canonical_path.as_path() {
+            asset.set_canonical_path(canonical_path.clone());
+        }
+
         let handle = self.materials.insert(asset);
         self.material_paths.insert(canonical_path, handle);
-        Ok(handle)
+        handle
     }
 
     pub fn material_handle_for_path(
