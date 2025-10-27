@@ -6,10 +6,13 @@ pub mod builder;
 pub mod camera;
 pub mod components;
 mod graph;
+mod importer;
 pub(crate) mod internal;
 pub mod loader;
 pub mod picking;
+mod render_bridge;
 mod scene_core;
+pub mod state;
 pub mod transform;
 
 // Re-export commonly used types
@@ -26,9 +29,9 @@ pub use graph::SceneNodeId;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub(crate) use scene_core::SceneSnapshot;
-pub use scene_core::{
-    Scene, SceneStateSnapshot, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode,
-    TransformGizmoSpace,
+pub use scene_core::{Scene, SceneStateSnapshot};
+pub use state::{
+    GizmoState, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
 pub use transform::Transform;
 
