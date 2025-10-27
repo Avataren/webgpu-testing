@@ -13,16 +13,39 @@ use super::components::{
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
 use crate::asset::{Assets, Handle, MaterialAsset, Mesh, MeshData};
+use crate::project::{resolve_project_path, CONTENT_DIR};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+mod path_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::path::PathBuf;
+
+    pub fn serialize<S>(path: &PathBuf, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(path.to_string_lossy().as_ref())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(PathBuf::from(value))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SerializedAnimationOutput {
@@ -250,6 +273,50 @@ impl SceneAsset {
         SceneAssetBuilder::new(name)
     }
 
+    pub fn persist_material_assets(&mut self, project_root: &Path) -> Result<(), std::io::Error> {
+        let materials_dir_rel = PathBuf::from(CONTENT_DIR).join("materials");
+        let materials_dir_abs = project_root.join(&materials_dir_rel);
+        fs::create_dir_all(&materials_dir_abs)?;
+
+        let mut written: HashSet<PathBuf> = HashSet::new();
+
+        for entity in &mut self.entities {
+            let Some(material_data) = entity.material_data.clone() else {
+                continue;
+            };
+
+            let mut material_path = entity
+                .material
+                .as_ref()
+                .map(|handle| normalize_material_path(project_root, handle.path()));
+
+            if material_path
+                .as_ref()
+                .map_or(true, |path| path.as_os_str().is_empty())
+            {
+                let generated =
+                    generate_material_asset_path(&materials_dir_rel, &materials_dir_abs, &written);
+                material_path = Some(generated);
+            }
+
+            let rel_path = material_path.expect("material path must be set");
+            let abs_path = project_root.join(&rel_path);
+
+            let handle = entity
+                .material
+                .get_or_insert_with(|| SceneMaterialHandle::new(rel_path.clone()));
+            handle.set_path(rel_path.clone());
+
+            let first_write = written.insert(rel_path.clone());
+            if first_write || !abs_path.exists() {
+                let json = serde_json::to_string_pretty(&material_data)?;
+                fs::write(&abs_path, json)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn instantiate(
         &self,
         mut renderer: Option<&mut dyn SceneImportDevice>,
@@ -298,9 +365,32 @@ impl SceneAsset {
                 builder.add(MeshBounds::from(bounds));
             }
 
-            if let Some(material) = &entity.material {
+            if let Some(material_ref) = &entity.material {
+                let resolved_path = resolve_project_path(material_ref.path());
+                match assets.get_or_load_material(&resolved_path, load_material_asset_from_file) {
+                    Ok(handle) => {
+                        builder.add(MaterialComponent(handle));
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "Failed to load material asset {:?}: {}",
+                            material_ref.path(),
+                            err
+                        );
+
+                        if let Some(material_data) = &entity.material_data {
+                            let asset = MaterialAsset::from_material(
+                                material_data.clone().into(),
+                                resolved_path.clone(),
+                            );
+                            let handle = assets.materials.insert(asset);
+                            builder.add(MaterialComponent(handle));
+                        }
+                    }
+                }
+            } else if let Some(material_data) = &entity.material_data {
                 let handle = assets.materials.insert(MaterialAsset::from_material(
-                    material.clone().into(),
+                    material_data.clone().into(),
                     PathBuf::new(),
                 ));
                 builder.add(MaterialComponent(handle));
@@ -435,7 +525,7 @@ impl SceneAsset {
             }
 
             // Remap texture indices in materials
-            if let Some(material) = &mut entity.material {
+            if let Some(material) = &mut entity.material_data {
                 material.remap_textures(texture_map);
             }
         }
@@ -457,7 +547,7 @@ impl SceneAsset {
                 }
             }
 
-            if let Some(material) = &mut entity.material {
+            if let Some(material) = &mut entity.material_data {
                 material.remap_textures(texture_map);
             }
         }
@@ -646,7 +736,7 @@ impl SceneAssetBundle {
             if let Some(mesh_handle) = entity.mesh_handle {
                 log::info!("Entity {}: mesh_handle={}", i, mesh_handle);
             }
-            if let Some(material) = &entity.material {
+            if let Some(material) = &entity.material_data {
                 log::info!(
                     "Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}",
                     i,
@@ -667,16 +757,21 @@ impl SceneAssetBundle {
             if let Some(mesh_handle) = entity.mesh_handle {
                 log::info!("Entity {}: mesh_handle={}", i, mesh_handle);
             }
-            if let Some(material) = &entity.material {
-                log::info!("Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}", 
-            i, material.base_color_texture, material.metallic_roughness_texture, material.normal_texture);
+            if let Some(material) = &entity.material_data {
+                log::info!(
+                    "Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}",
+                    i,
+                    material.base_color_texture,
+                    material.metallic_roughness_texture,
+                    material.normal_texture,
+                );
             }
         }
 
         log::info!("=== MESH-MATERIAL ASSOCIATIONS ===");
         for (i, entity) in self.asset.entities.iter().enumerate() {
             if let Some(mesh) = entity.mesh_handle {
-                if let Some(mat) = &entity.material {
+                if let Some(mat) = &entity.material_data {
                     log::info!(
                         "Entity {}: mesh={}, base_texture={}, metallic_texture={}, normal_texture={}, gltf_mat_idx={:?}",
                         i,
@@ -702,6 +797,7 @@ impl SceneAssetBundle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "SceneAssetEntityData", into = "SceneAssetEntityData")]
 pub struct SceneAssetEntity {
     pub name: Option<String>,
     pub transform: SerializedTransform,
@@ -711,7 +807,10 @@ pub struct SceneAssetEntity {
     pub primitive_mesh: Option<PrimitiveMeshDescriptor>,
     #[serde(default)]
     pub mesh_bounds: Option<SerializedMeshBounds>,
-    pub material: Option<SerializedMaterial>,
+    #[serde(default)]
+    pub material: Option<SceneMaterialHandle>,
+    #[serde(skip)]
+    pub material_data: Option<SerializedMaterial>,
     pub parent: Option<usize>,
     pub children: Vec<usize>,
     pub gltf_node: Option<usize>,
@@ -742,6 +841,207 @@ pub struct SceneAssetEntity {
     pub environment: Option<EnvironmentComponent>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SceneMaterialHandle {
+    #[serde(with = "path_serde")]
+    path: PathBuf,
+}
+
+impl SceneMaterialHandle {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn set_path(&mut self, path: PathBuf) {
+        self.path = path;
+    }
+}
+
+impl Default for SceneMaterialHandle {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SceneAssetEntityData {
+    name: Option<String>,
+    transform: SerializedTransform,
+    visible: bool,
+    mesh_handle: Option<usize>,
+    #[serde(default)]
+    primitive_mesh: Option<PrimitiveMeshDescriptor>,
+    #[serde(default)]
+    mesh_bounds: Option<SerializedMeshBounds>,
+    #[serde(default)]
+    material: Option<SceneMaterialField>,
+    parent: Option<usize>,
+    children: Vec<usize>,
+    gltf_node: Option<usize>,
+    gltf_material: Option<usize>,
+    #[serde(default)]
+    gltf_source: Option<PathBuf>,
+    #[serde(default)]
+    gltf_primitive: Option<usize>,
+    #[serde(default)]
+    script: Option<SerializedRuneScript>,
+    #[serde(default)]
+    directional_light: Option<SerializedDirectionalLight>,
+    #[serde(default)]
+    point_light: Option<SerializedPointLight>,
+    #[serde(default)]
+    spot_light: Option<SerializedSpotLight>,
+    #[serde(default)]
+    casts_shadow: Option<bool>,
+    #[serde(default)]
+    editor_id: Option<u128>,
+    #[serde(default)]
+    particle_system: Option<SerializedParticleSystem>,
+    #[serde(default)]
+    particle_emitter: Option<SerializedParticleEmitter>,
+    #[serde(default)]
+    particle_behavior: Option<SerializedParticleBehavior>,
+    #[serde(default)]
+    environment: Option<EnvironmentComponent>,
+    #[serde(default)]
+    camera: Option<CameraComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum SceneMaterialField {
+    Handle(SceneMaterialHandle),
+    Legacy(SerializedMaterial),
+}
+
+impl From<SceneAssetEntityData> for SceneAssetEntity {
+    fn from(data: SceneAssetEntityData) -> Self {
+        let (material, material_data) = match data.material {
+            Some(SceneMaterialField::Handle(handle)) => (Some(handle), None),
+            Some(SceneMaterialField::Legacy(legacy)) => (None, Some(legacy)),
+            None => (None, None),
+        };
+
+        SceneAssetEntity {
+            name: data.name,
+            transform: data.transform,
+            visible: data.visible,
+            mesh_handle: data.mesh_handle,
+            primitive_mesh: data.primitive_mesh,
+            mesh_bounds: data.mesh_bounds,
+            material,
+            material_data,
+            parent: data.parent,
+            children: data.children,
+            gltf_node: data.gltf_node,
+            gltf_material: data.gltf_material,
+            gltf_source: data.gltf_source,
+            gltf_primitive: data.gltf_primitive,
+            script: data.script,
+            directional_light: data.directional_light,
+            point_light: data.point_light,
+            spot_light: data.spot_light,
+            casts_shadow: data.casts_shadow,
+            editor_id: data.editor_id,
+            particle_system: data.particle_system,
+            particle_emitter: data.particle_emitter,
+            particle_behavior: data.particle_behavior,
+            environment: data.environment,
+            camera: data.camera,
+        }
+    }
+}
+
+impl From<SceneAssetEntity> for SceneAssetEntityData {
+    fn from(entity: SceneAssetEntity) -> Self {
+        let material = entity.material.clone().map(SceneMaterialField::Handle);
+
+        SceneAssetEntityData {
+            name: entity.name,
+            transform: entity.transform,
+            visible: entity.visible,
+            mesh_handle: entity.mesh_handle,
+            primitive_mesh: entity.primitive_mesh,
+            mesh_bounds: entity.mesh_bounds,
+            material,
+            parent: entity.parent,
+            children: entity.children,
+            gltf_node: entity.gltf_node,
+            gltf_material: entity.gltf_material,
+            gltf_source: entity.gltf_source,
+            gltf_primitive: entity.gltf_primitive,
+            script: entity.script,
+            directional_light: entity.directional_light,
+            point_light: entity.point_light,
+            spot_light: entity.spot_light,
+            casts_shadow: entity.casts_shadow,
+            editor_id: entity.editor_id,
+            particle_system: entity.particle_system,
+            particle_emitter: entity.particle_emitter,
+            particle_behavior: entity.particle_behavior,
+            environment: entity.environment,
+            camera: entity.camera,
+        }
+    }
+}
+
+fn load_material_asset_from_file(path: &Path) -> Result<MaterialAsset, String> {
+    let data = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read material asset {:?}: {}", path, err))?;
+    let serialized: SerializedMaterial = serde_json::from_str(&data)
+        .map_err(|err| format!("failed to parse material asset {:?}: {}", path, err))?;
+    Ok(MaterialAsset::from_material(
+        serialized.into(),
+        path.to_path_buf(),
+    ))
+}
+
+fn normalize_material_path(project_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        match path.strip_prefix(project_root) {
+            Ok(stripped) => stripped.to_path_buf(),
+            Err(_) => path.to_path_buf(),
+        }
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn generate_material_asset_path(
+    materials_dir_rel: &Path,
+    materials_dir_abs: &Path,
+    used: &HashSet<PathBuf>,
+) -> PathBuf {
+    let mut rng = thread_rng();
+
+    loop {
+        let suffix: String = (&mut rng)
+            .sample_iter(&Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect();
+        let file_name = format!("material_{}.json", suffix);
+        let rel_path = materials_dir_rel.join(&file_name);
+
+        if used.contains(&rel_path) {
+            continue;
+        }
+
+        if materials_dir_abs.join(&file_name).exists() {
+            continue;
+        }
+
+        return rel_path;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -827,11 +1127,22 @@ impl SceneAssetEntity {
             .get::<&MeshBounds>(entity)
             .ok()
             .map(|bounds| SerializedMeshBounds::from(*bounds));
-        let material = world
+        let (material, material_data) = world
             .get::<&MaterialComponent>(entity)
             .ok()
             .and_then(|component| assets.material(component.0))
-            .map(|asset| SerializedMaterial::from(*asset.material()));
+            .map(|asset| {
+                let serialized = SerializedMaterial::from(*asset.material());
+                let handle = if asset.canonical_path().as_os_str().is_empty() {
+                    None
+                } else {
+                    Some(SceneMaterialHandle::new(
+                        asset.canonical_path().to_path_buf(),
+                    ))
+                };
+                (handle, Some(serialized))
+            })
+            .unwrap_or((None, None));
 
         let particle_emitter = world
             .get::<&ParticleEmitterComponent>(entity)
@@ -913,6 +1224,7 @@ impl SceneAssetEntity {
             primitive_mesh,
             mesh_bounds,
             material,
+            material_data,
             parent,
             children,
             gltf_node,
@@ -941,7 +1253,8 @@ pub struct SceneAssetEntityBuilder {
     mesh_handle: Option<usize>,
     primitive_mesh: Option<PrimitiveMeshDescriptor>,
     mesh_bounds: Option<SerializedMeshBounds>,
-    material: Option<SerializedMaterial>,
+    material: Option<SceneMaterialHandle>,
+    material_data: Option<SerializedMaterial>,
     parent: Option<usize>,
     children: Vec<usize>,
     gltf_node: Option<usize>,
@@ -971,6 +1284,7 @@ impl SceneAssetEntityBuilder {
             primitive_mesh: None,
             mesh_bounds: None,
             material: None,
+            material_data: None,
             parent: None,
             children: Vec::new(),
             gltf_node: None,
@@ -1016,8 +1330,13 @@ impl SceneAssetEntityBuilder {
         self
     }
 
-    pub fn with_material(mut self, material: SerializedMaterial) -> Self {
-        self.material = Some(material);
+    pub fn with_material(
+        mut self,
+        handle: SceneMaterialHandle,
+        data: Option<SerializedMaterial>,
+    ) -> Self {
+        self.material = Some(handle);
+        self.material_data = data;
         self
     }
 
@@ -1121,6 +1440,7 @@ impl SceneAssetEntityBuilder {
             primitive_mesh: self.primitive_mesh,
             mesh_bounds: self.mesh_bounds,
             material: self.material,
+            material_data: self.material_data,
             parent: self.parent,
             children: self.children,
             gltf_node: self.gltf_node,
@@ -1758,7 +2078,8 @@ mod tests {
                 mesh_handle: None,
                 primitive_mesh: None,
                 mesh_bounds: None,
-                material: Some(make_material(MaterialFlags::USE_BASE_COLOR_TEXTURE, 10)),
+                material: None,
+                material_data: Some(make_material(MaterialFlags::USE_BASE_COLOR_TEXTURE, 10)),
                 parent: None,
                 children: Vec::new(),
                 gltf_node: None,
@@ -1788,7 +2109,7 @@ mod tests {
         asset.apply_resource_mappings(0, &to_local);
 
         let material = asset.entities[0]
-            .material
+            .material_data
             .as_ref()
             .expect("material present");
         assert_eq!(material.base_color_texture, 0);
@@ -1798,7 +2119,7 @@ mod tests {
         asset.apply_resource_mappings(0, &to_global);
 
         let material = asset.entities[0]
-            .material
+            .material_data
             .as_ref()
             .expect("material present");
         assert_eq!(material.base_color_texture, 42);
