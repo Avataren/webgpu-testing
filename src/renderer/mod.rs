@@ -9,6 +9,7 @@ pub(crate) mod internal;
 pub mod lights;
 pub mod material;
 pub mod objects;
+pub mod passes;
 pub mod pipeline_builder;
 pub mod postprocess;
 pub mod primitives;

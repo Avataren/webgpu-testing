@@ -2,20 +2,21 @@
 use crate::asset::{Assets, Mesh};
 use crate::environment::Environment;
 use crate::renderer::batch::InstanceData;
-use crate::renderer::frame_graph::{
-    FrameGraph, FrameGraphColorAttachment, FrameGraphDepthAttachment, PassPlan,
-};
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, OrderedBatch,
-    PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
-    TextureBindingModel,
+    PreparedBatches, RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
+};
+use crate::renderer::passes::{
+    self, BatchPassOptions, CustomAfterPassContext, CustomBeforePassContext, CustomShadowContext,
+    DepthPrepassContext, MainColorPassContext, ShadowPassContext, SurfaceAttachments,
+    SurfaceBatchPassContext,
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessCamera, PostProcessEffects},
-    CameraUniform, CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData,
-    Material, RenderBatcher, RenderPass, RenderRegion, Vertex,
+    CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
+    RenderPass, RenderRegion, Vertex,
 };
 use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
@@ -322,12 +323,52 @@ impl Renderer {
         &self.camera_buffer.bind_group
     }
 
+    pub fn objects_bind_group(&self) -> &wgpu::BindGroup {
+        &self.objects_buffer.bind_group
+    }
+
     pub fn lights_bind_layout(&self) -> &wgpu::BindGroupLayout {
         &self.lights_buffer.bind_layout
     }
 
     pub fn lights_bind_group(&self) -> &wgpu::BindGroup {
         &self.lights_buffer.bind_group
+    }
+
+    pub(crate) fn render_context(&self) -> &RenderContext {
+        &self.context
+    }
+
+    pub(crate) fn render_pipeline(&self) -> &RenderPipeline {
+        &self.pipeline
+    }
+
+    pub(crate) fn global_texture_bind_group(&self) -> Option<&wgpu::BindGroup> {
+        self.texture_binder.global_bind_group()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_shadow_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &Assets,
+        batches: &[OrderedBatch],
+        lights: &LightsData,
+        materials: &[Material],
+        record_custom_passes: bool,
+        invocations: &mut Vec<ShadowInvocation>,
+    ) {
+        self.shadows.render(
+            &self.context,
+            encoder,
+            assets,
+            batches,
+            lights,
+            &self.objects_buffer,
+            materials,
+            record_custom_passes,
+            invocations,
+        );
     }
 
     pub fn textures_bind_layout(&self) -> &wgpu::BindGroupLayout {
@@ -470,7 +511,6 @@ impl Renderer {
             scene,
             assets,
             environment,
-            lights,
             custom_render,
         };
         let surface = SurfaceTargets {
@@ -478,21 +518,234 @@ impl Renderer {
             view: surface_view,
         };
 
-        let mut frame_context = RenderFrameContext::new(self, batcher, resources, surface)?;
+        let (mut frame_context, mut prepared_batches, mut frame_stats) =
+            RenderFrameContext::new(self, batcher, resources, surface, &lights)?;
 
-        frame_context.render_shadows();
-        frame_context.render_depth_prepass();
-        frame_context.render_main_color_pass();
-        frame_context.render_custom_before_postprocess();
+        let shadow_output = passes::run_shadow_pass(ShadowPassContext {
+            renderer: frame_context.renderer,
+            encoder: &mut frame_context.encoder,
+            assets: frame_context.assets,
+            batches: prepared_batches.all(),
+            lights: &lights,
+            materials: prepared_batches.materials(),
+            record_custom_passes: frame_context.custom_shadow_enabled,
+        });
+
+        if frame_context.custom_shadow_enabled {
+            if let Some(request) = frame_context.custom_render.as_deref_mut() {
+                passes::run_custom_shadow_hooks(
+                    CustomShadowContext {
+                        encoder: &mut frame_context.encoder,
+                        renderer: &*frame_context.renderer,
+                        scene: frame_context.scene,
+                    },
+                    request,
+                    &shadow_output.invocations,
+                );
+            }
+        }
+
+        let depth_draw_calls = passes::run_depth_prepass(DepthPrepassContext {
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            depth_view: &frame_context.depth_view,
+            renderer: &*frame_context.renderer,
+            assets: frame_context.assets,
+            batches: prepared_batches.opaque_mut(),
+        });
+        frame_stats.depth_prepass_draw_calls += depth_draw_calls;
+
+        let (normal_view, normal_resolve, position_view, position_resolve, pick_targets) = {
+            let gbuffer_views = frame_context.renderer.postprocess.gbuffer_views();
+            (
+                gbuffer_views.normal.0.clone(),
+                gbuffer_views.normal.1.cloned(),
+                gbuffer_views.position.0.clone(),
+                gbuffer_views.position.1.cloned(),
+                if frame_context.pick_active {
+                    gbuffer_views
+                        .id
+                        .map(|views| (views.multisample.clone(), views.resolve.cloned()))
+                } else {
+                    None
+                },
+            )
+        };
+
+        let hdr_enabled = frame_context.environment.is_hdr_enabled();
+        let sample_count = frame_context.renderer.context.sample_count;
+
+        let main_draw_calls = passes::run_main_color_pass(MainColorPassContext {
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            scene_view: &frame_context.scene_view,
+            scene_resolve_view: frame_context.scene_resolve_view.as_ref(),
+            normal_view: &normal_view,
+            normal_resolve: normal_resolve.as_ref(),
+            position_view: &position_view,
+            position_resolve: position_resolve.as_ref(),
+            pick_targets: pick_targets
+                .as_ref()
+                .map(|(msaa, resolve)| (msaa, resolve.as_ref())),
+            renderer: frame_context.renderer,
+            assets: frame_context.assets,
+            batches: prepared_batches.opaque(),
+            materials: prepared_batches.materials(),
+            scene_format: frame_context.scene_format,
+            sample_count,
+            write_pick: frame_context.pick_active,
+            hdr_enabled,
+            clear_color: frame_context.environment.clear_color(),
+            depth_view: &frame_context.depth_view,
+        });
+        frame_stats.opaque_draw_calls += main_draw_calls;
+
+        if let Some(request) = frame_context.custom_render.as_deref_mut() {
+            passes::run_custom_before_postprocess(
+                CustomBeforePassContext {
+                    encoder: &mut frame_context.encoder,
+                    renderer: &*frame_context.renderer,
+                    scene: frame_context.scene,
+                    color_view: &frame_context.scene_view,
+                    depth_view: &frame_context.depth_view,
+                    render_region: frame_context.render_region,
+                },
+                request,
+            );
+        }
+
         frame_context.resolve_to_surface();
-        frame_context.render_custom_after_postprocess();
-        frame_context.render_transparents();
-        frame_context.render_overlays();
-        frame_context.render_gizmos();
+
+        if let Some(request) = frame_context.custom_render.as_deref_mut() {
+            let resolved_depth = frame_context
+                .renderer
+                .postprocess
+                .after_postprocess_depth_view()
+                .cloned();
+            passes::run_custom_after_postprocess(
+                CustomAfterPassContext {
+                    encoder: &mut frame_context.encoder,
+                    renderer: &*frame_context.renderer,
+                    scene: frame_context.scene,
+                    color_view: &frame_context.surface_view,
+                    default_depth_view: &frame_context.depth_view,
+                    resolved_depth_view: resolved_depth.as_ref(),
+                    render_region: frame_context.render_region,
+                },
+                request,
+            );
+        }
+
+        let pick_view = if frame_context.pick_active {
+            frame_context
+                .renderer
+                .postprocess
+                .pick_attachment_views()
+                .map(|views| views.single_sample().clone())
+        } else {
+            None
+        };
+
+        let transparent_draw_calls = passes::run_transparent_pass(SurfaceBatchPassContext {
+            label: "TransparentPass",
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            attachments: SurfaceAttachments {
+                color: &frame_context.surface_view,
+                depth: Some(&frame_context.depth_view),
+                pick: pick_view.as_ref(),
+            },
+            renderer: frame_context.renderer,
+            assets: frame_context.assets,
+            batches: prepared_batches.transparent(),
+            materials: prepared_batches.materials(),
+            options: BatchPassOptions {
+                color_format: frame_context.surface_format,
+                color_sample_count: 1,
+                use_gbuffer: false,
+                write_pick: frame_context.pick_active,
+            },
+        });
+        frame_stats.transparent_draw_calls += transparent_draw_calls;
+
+        let overlay_batches = prepared_batches.overlay();
+        let overlay_needs_depth = overlay_batches
+            .iter()
+            .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
+
+        let overlay_draw_calls = passes::run_overlay_pass(SurfaceBatchPassContext {
+            label: "OverlayPass",
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            attachments: SurfaceAttachments {
+                color: &frame_context.surface_view,
+                depth: overlay_needs_depth.then_some(&frame_context.depth_view),
+                pick: pick_view.as_ref(),
+            },
+            renderer: frame_context.renderer,
+            assets: frame_context.assets,
+            batches: overlay_batches,
+            materials: prepared_batches.materials(),
+            options: BatchPassOptions {
+                color_format: frame_context.surface_format,
+                color_sample_count: 1,
+                use_gbuffer: false,
+                write_pick: frame_context.pick_active,
+            },
+        });
+        frame_stats.overlay_draw_calls += overlay_draw_calls;
+
+        let gizmo_draw_calls = passes::run_gizmo_pass(SurfaceBatchPassContext {
+            label: "GizmoPass",
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            attachments: SurfaceAttachments {
+                color: &frame_context.surface_view,
+                depth: None,
+                pick: pick_view.as_ref(),
+            },
+            renderer: frame_context.renderer,
+            assets: frame_context.assets,
+            batches: prepared_batches.gizmos(),
+            materials: prepared_batches.materials(),
+            options: BatchPassOptions {
+                color_format: frame_context.surface_format,
+                color_sample_count: 1,
+                use_gbuffer: false,
+                write_pick: frame_context.pick_active,
+            },
+        }) + passes::run_gizmo_pass(SurfaceBatchPassContext {
+            label: "GizmoSolidPass",
+            encoder: &mut frame_context.encoder,
+            render_region: frame_context.render_region,
+            attachments: SurfaceAttachments {
+                color: &frame_context.surface_view,
+                depth: None,
+                pick: pick_view.as_ref(),
+            },
+            renderer: frame_context.renderer,
+            assets: frame_context.assets,
+            batches: prepared_batches.gizmo_solids(),
+            materials: prepared_batches.materials(),
+            options: BatchPassOptions {
+                color_format: frame_context.surface_format,
+                color_sample_count: 1,
+                use_gbuffer: false,
+                write_pick: frame_context.pick_active,
+            },
+        });
+        frame_stats.gizmo_draw_calls += gizmo_draw_calls;
+
         frame_context.process_pick_request();
         frame_context.render_ui();
 
-        frame_context.finish()
+        frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(
+            prepared_batches.all(),
+            prepared_batches.materials(),
+            &lights,
+        );
+
+        frame_context.finish(frame_stats)
     }
 
     pub fn surface_format(&self) -> wgpu::TextureFormat {
@@ -501,6 +754,10 @@ impl Renderer {
 
     pub fn scene_texture_format(&self) -> wgpu::TextureFormat {
         self.context.scene_texture_format()
+    }
+
+    pub fn depth_prepass_pipeline(&self) -> &wgpu::RenderPipeline {
+        self.pipeline.depth_prepass()
     }
 
     pub fn color_format_for_stage(&self, stage: CustomRenderStage) -> wgpu::TextureFormat {
@@ -602,7 +859,12 @@ impl Renderer {
         self.pick_state.pending_readback = Some(PendingPickReadback::new(buffer));
     }
 
-    fn draw_full_batch(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh, batch: &OrderedBatch) {
+    pub(crate) fn draw_full_batch(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        mesh: &Mesh,
+        batch: &OrderedBatch,
+    ) {
         self.set_geometry_buffers(pass, mesh);
         let instance_count = batch.instances.len() as u32;
         pass.draw_indexed(
@@ -612,7 +874,7 @@ impl Renderer {
         );
     }
 
-    fn draw_classic_batch(
+    pub(crate) fn draw_classic_batch(
         &mut self,
         pass: &mut wgpu::RenderPass<'_>,
         assets: &Assets,
@@ -664,20 +926,16 @@ impl Renderer {
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
     }
 
-    fn draw_environment_background(&self, pass: &mut wgpu::RenderPass<'_>, write_pick: bool) {
+    pub(crate) fn draw_environment_background(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        write_pick: bool,
+    ) {
         pass.set_pipeline(self.pipeline.background(write_pick));
         pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
         pass.set_bind_group(1, &self.lights_buffer.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
-}
-
-#[derive(Clone, Copy)]
-struct BatchPassOptions {
-    color_format: wgpu::TextureFormat,
-    color_sample_count: u32,
-    use_gbuffer: bool,
-    write_pick: bool,
 }
 
 struct FrameResources<'scene, 'custom>
@@ -687,7 +945,6 @@ where
     scene: &'scene Scene,
     assets: &'scene Assets,
     environment: &'scene Environment,
-    lights: LightsData,
     custom_render: Option<&'custom mut CustomRenderRequest<'custom>>,
 }
 
@@ -700,7 +957,6 @@ struct RenderFrameContext<'renderer, 'scene, 'custom> {
     renderer: &'renderer mut Renderer,
     scene: &'scene Scene,
     assets: &'scene Assets,
-    lights: LightsData,
     environment: &'scene Environment,
     custom_render: Option<&'custom mut CustomRenderRequest<'custom>>,
     encoder: wgpu::CommandEncoder,
@@ -712,9 +968,7 @@ struct RenderFrameContext<'renderer, 'scene, 'custom> {
     render_region: Option<RenderRegion>,
     pick_active: bool,
     scene_format: wgpu::TextureFormat,
-    prepared_batches: PreparedBatches,
-    frame_stats: RendererStats,
-    shadow_invocations: Vec<ShadowInvocation>,
+    surface_format: wgpu::TextureFormat,
     custom_shadow_enabled: bool,
 }
 
@@ -727,7 +981,8 @@ where
         batcher: &RenderBatcher,
         resources: FrameResources<'scene, 'custom>,
         surface: SurfaceTargets,
-    ) -> Result<Self, wgpu::SurfaceError> {
+        lights: &LightsData,
+    ) -> Result<(Self, PreparedBatches, RendererStats), wgpu::SurfaceError> {
         let encoder =
             renderer
                 .context
@@ -740,7 +995,6 @@ where
             scene,
             assets,
             environment,
-            lights,
             custom_render,
         } = resources;
         let SurfaceTargets {
@@ -786,7 +1040,7 @@ where
         )?;
         renderer
             .lights_buffer
-            .update(&renderer.context.queue, &lights);
+            .update(&renderer.context.queue, lights);
 
         let custom_shadow_enabled = custom_render
             .as_deref()
@@ -816,360 +1070,30 @@ where
         };
 
         let scene_format = renderer.context.scene_texture_format();
+        let surface_format = renderer.context.config.format;
 
-        Ok(Self {
-            renderer,
-            scene,
-            assets,
-            lights,
-            environment,
-            custom_render,
-            encoder,
-            surface_texture: Some(frame),
-            surface_view,
-            scene_view,
-            scene_resolve_view,
-            depth_view,
-            render_region,
-            pick_active,
-            scene_format,
+        Ok((
+            Self {
+                renderer,
+                scene,
+                assets,
+                environment,
+                custom_render,
+                encoder,
+                surface_texture: Some(frame),
+                surface_view,
+                scene_view,
+                scene_resolve_view,
+                depth_view,
+                render_region,
+                pick_active,
+                scene_format,
+                surface_format,
+                custom_shadow_enabled,
+            },
             prepared_batches,
             frame_stats,
-            shadow_invocations: Vec::new(),
-            custom_shadow_enabled,
-        })
-    }
-
-    fn render_shadows(&mut self) {
-        self.shadow_invocations.clear();
-        self.renderer.shadows.render(
-            &self.renderer.context,
-            &mut self.encoder,
-            self.assets,
-            self.prepared_batches.all(),
-            &self.lights,
-            &self.renderer.objects_buffer,
-            self.prepared_batches.materials(),
-            self.custom_shadow_enabled,
-            &mut self.shadow_invocations,
-        );
-
-        if self.custom_shadow_enabled {
-            if let Some(request) = self.custom_render.as_deref_mut() {
-                for invocation in &self.shadow_invocations {
-                    let mut ctx = CustomRenderContext::new(
-                        &mut self.encoder,
-                        &*self.renderer,
-                        self.scene,
-                        &invocation.view,
-                        &invocation.view,
-                        CustomRenderStage::Shadow(invocation.stage),
-                        Some(invocation.view_proj),
-                        None,
-                    );
-                    (request.callback)(&mut ctx);
-                }
-            }
-        }
-    }
-
-    fn render_depth_prepass(&mut self) {
-        let mut frame_graph = FrameGraph::new(&mut self.encoder);
-        let plan = PassPlan::new("DepthPrepass")
-            .set_depth(FrameGraphDepthAttachment::clear(&self.depth_view, 1.0));
-        let pipeline = self.renderer.pipeline.depth_prepass();
-        let camera_bind_group = &self.renderer.camera_buffer.bind_group;
-        let object_bind_group = &self.renderer.objects_buffer.bind_group;
-        let assets = self.assets;
-        let batches = self.prepared_batches.opaque_mut();
-        let mut draw_calls = 0u32;
-        let renderer = &*self.renderer;
-
-        frame_graph.execute_pass(plan, self.render_region, |pass| {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, camera_bind_group, &[]);
-            pass.set_bind_group(1, object_bind_group, &[]);
-
-            for batch in batches.iter_mut() {
-                if batch.alpha_blend
-                    || !batch.depth_state.depth_write
-                    || !batch.depth_state.depth_test
-                {
-                    continue;
-                }
-
-                let Some(mesh) = mesh_for_batch(assets, batch) else {
-                    continue;
-                };
-
-                renderer.draw_full_batch(pass, mesh, batch);
-                draw_calls += 1;
-                batch.depth_state.depth_write = false;
-            }
-        });
-
-        self.frame_stats.depth_prepass_draw_calls += draw_calls;
-    }
-
-    fn render_main_color_pass(&mut self) {
-        let (normal_view, normal_resolve, position_view, position_resolve, pick_targets) = {
-            let gbuffer_views = self.renderer.postprocess.gbuffer_views();
-            (
-                gbuffer_views.normal.0.clone(),
-                gbuffer_views.normal.1.cloned(),
-                gbuffer_views.position.0.clone(),
-                gbuffer_views.position.1.cloned(),
-                if self.pick_active {
-                    gbuffer_views
-                        .id
-                        .map(|views| (views.multisample.clone(), views.resolve.cloned()))
-                } else {
-                    None
-                },
-            )
-        };
-
-        let mut plan = PassPlan::new("MainPass")
-            .add_color(FrameGraphColorAttachment::clear(
-                &self.scene_view,
-                self.scene_resolve_view.as_ref(),
-                self.environment.clear_color(),
-            ))
-            .add_color(FrameGraphColorAttachment::clear(
-                &normal_view,
-                normal_resolve.as_ref(),
-                wgpu::Color::TRANSPARENT,
-            ))
-            .add_color(FrameGraphColorAttachment::clear(
-                &position_view,
-                position_resolve.as_ref(),
-                wgpu::Color::TRANSPARENT,
-            ))
-            .set_depth(FrameGraphDepthAttachment::load(&self.depth_view));
-
-        if let Some((pick_view, pick_resolve)) = pick_targets.as_ref() {
-            plan = plan.add_color(FrameGraphColorAttachment::clear(
-                pick_view,
-                pick_resolve.as_ref(),
-                wgpu::Color::TRANSPARENT,
-            ));
-        }
-
-        let hdr_enabled = self.environment.is_hdr_enabled();
-        let sample_count = self.renderer.context.sample_count;
-        let batches = self.prepared_batches.opaque();
-        let materials = self.prepared_batches.materials();
-        let mut frame_graph = FrameGraph::new(&mut self.encoder);
-        let mut recorder = BatchRecorder::new(self.renderer, self.assets, materials);
-        let mut draw_calls = 0u32;
-
-        frame_graph.execute_pass(plan, self.render_region, |pass| {
-            if hdr_enabled {
-                recorder.draw_environment_background(pass, self.pick_active);
-            }
-
-            let options = BatchPassOptions {
-                color_format: self.scene_format,
-                color_sample_count: sample_count,
-                use_gbuffer: true,
-                write_pick: self.pick_active,
-            };
-
-            draw_calls += recorder.record(pass, batches, options);
-        });
-
-        self.frame_stats.opaque_draw_calls += draw_calls;
-    }
-
-    fn render_custom_before_postprocess(&mut self) {
-        if let Some(request) = self.custom_render.as_deref_mut() {
-            if request.stage == CustomRenderStage::BeforePostprocess {
-                let mut ctx = CustomRenderContext::new(
-                    &mut self.encoder,
-                    &*self.renderer,
-                    self.scene,
-                    &self.scene_view,
-                    &self.depth_view,
-                    CustomRenderStage::BeforePostprocess,
-                    None,
-                    self.render_region,
-                );
-                (request.callback)(&mut ctx);
-            }
-        }
-    }
-
-    fn resolve_to_surface(&mut self) {
-        self.renderer.postprocess.execute(
-            &mut self.encoder,
-            &self.renderer.context.device,
-            &self.surface_view,
-            self.render_region,
-        );
-    }
-
-    fn render_custom_after_postprocess(&mut self) {
-        if let Some(request) = self.custom_render.as_deref_mut() {
-            if request.stage == CustomRenderStage::AfterPostprocess {
-                let resolved_depth_view = self
-                    .renderer
-                    .postprocess
-                    .after_postprocess_depth_view()
-                    .cloned();
-                let depth_view_after = resolved_depth_view.as_ref().unwrap_or(&self.depth_view);
-                let mut ctx = CustomRenderContext::new(
-                    &mut self.encoder,
-                    &*self.renderer,
-                    self.scene,
-                    &self.surface_view,
-                    depth_view_after,
-                    CustomRenderStage::AfterPostprocess,
-                    None,
-                    self.render_region,
-                );
-                (request.callback)(&mut ctx);
-            }
-        }
-    }
-
-    fn render_transparents(&mut self) {
-        let batches = self.prepared_batches.transparent();
-        if batches.is_empty() {
-            return;
-        }
-
-        let pick_view = if self.pick_active {
-            self.renderer
-                .postprocess
-                .pick_attachment_views()
-                .map(|views| views.single_sample().clone())
-        } else {
-            None
-        };
-
-        let mut plan = PassPlan::new("TransparentPass")
-            .add_color(FrameGraphColorAttachment::load(&self.surface_view, None))
-            .set_depth(FrameGraphDepthAttachment::load(&self.depth_view));
-
-        if let Some(view) = pick_view.as_ref() {
-            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
-        }
-
-        let surface_format = self.renderer.context.config.format;
-        let mut frame_graph = FrameGraph::new(&mut self.encoder);
-        let materials = self.prepared_batches.materials();
-        let mut recorder = BatchRecorder::new(self.renderer, self.assets, materials);
-        let mut draw_calls = 0u32;
-        let options = BatchPassOptions {
-            color_format: surface_format,
-            color_sample_count: 1,
-            use_gbuffer: false,
-            write_pick: self.pick_active,
-        };
-
-        frame_graph.execute_pass(plan, self.render_region, |pass| {
-            draw_calls += recorder.record(pass, batches, options);
-        });
-
-        self.frame_stats.transparent_draw_calls += draw_calls;
-    }
-
-    fn render_overlays(&mut self) {
-        let batches = self.prepared_batches.overlay();
-        if batches.is_empty() {
-            return;
-        }
-
-        let overlay_needs_depth = batches
-            .iter()
-            .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
-
-        let pick_view = if self.pick_active {
-            self.renderer
-                .postprocess
-                .pick_attachment_views()
-                .map(|views| views.single_sample().clone())
-        } else {
-            None
-        };
-
-        let mut plan = PassPlan::new("OverlayPass")
-            .add_color(FrameGraphColorAttachment::load(&self.surface_view, None));
-
-        if let Some(view) = pick_view.as_ref() {
-            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
-        }
-
-        if overlay_needs_depth {
-            plan = plan.set_depth(FrameGraphDepthAttachment::load(&self.depth_view));
-        }
-
-        let surface_format = self.renderer.context.config.format;
-        let mut frame_graph = FrameGraph::new(&mut self.encoder);
-        let materials = self.prepared_batches.materials();
-        let mut recorder = BatchRecorder::new(self.renderer, self.assets, materials);
-        let mut draw_calls = 0u32;
-        let options = BatchPassOptions {
-            color_format: surface_format,
-            color_sample_count: 1,
-            use_gbuffer: false,
-            write_pick: self.pick_active,
-        };
-
-        frame_graph.execute_pass(plan, self.render_region, |pass| {
-            draw_calls += recorder.record(pass, batches, options);
-        });
-
-        self.frame_stats.overlay_draw_calls += draw_calls;
-    }
-
-    fn render_gizmos(&mut self) {
-        self.render_gizmo_pass("GizmoPass", |prepared| prepared.gizmos());
-        self.render_gizmo_pass("GizmoSolidPass", |prepared| prepared.gizmo_solids());
-    }
-
-    fn render_gizmo_pass<F>(&mut self, label: &str, fetch: F)
-    where
-        F: FnOnce(&PreparedBatches) -> &[OrderedBatch],
-    {
-        let batches = fetch(&self.prepared_batches);
-        if batches.is_empty() {
-            return;
-        }
-
-        let pick_view = if self.pick_active {
-            self.renderer
-                .postprocess
-                .pick_attachment_views()
-                .map(|views| views.single_sample().clone())
-        } else {
-            None
-        };
-
-        let mut plan = PassPlan::new(label)
-            .add_color(FrameGraphColorAttachment::load(&self.surface_view, None));
-
-        if let Some(view) = pick_view.as_ref() {
-            plan = plan.add_color(FrameGraphColorAttachment::load(view, None));
-        }
-
-        let surface_format = self.renderer.context.config.format;
-        let mut frame_graph = FrameGraph::new(&mut self.encoder);
-        let materials = self.prepared_batches.materials();
-        let mut recorder = BatchRecorder::new(self.renderer, self.assets, materials);
-        let mut draw_calls = 0u32;
-        let options = BatchPassOptions {
-            color_format: surface_format,
-            color_sample_count: 1,
-            use_gbuffer: false,
-            write_pick: self.pick_active,
-        };
-
-        frame_graph.execute_pass(plan, self.render_region, |pass| {
-            draw_calls += recorder.record(pass, batches, options);
-        });
-
-        self.frame_stats.gizmo_draw_calls += draw_calls;
+        ))
     }
 
     fn process_pick_request(&mut self) {
@@ -1188,14 +1112,17 @@ where
         }
     }
 
-    fn finish(mut self) -> Result<RenderFrame, wgpu::SurfaceError> {
-        self.frame_stats.shadow_draw_calls = estimate_shadow_draw_calls(
-            self.prepared_batches.all(),
-            self.prepared_batches.materials(),
-            &self.lights,
+    fn resolve_to_surface(&mut self) {
+        self.renderer.postprocess.execute(
+            &mut self.encoder,
+            &self.renderer.context.device,
+            &self.surface_view,
+            self.render_region,
         );
+    }
 
-        self.renderer.stats = self.frame_stats;
+    fn finish(mut self, frame_stats: RendererStats) -> Result<RenderFrame, wgpu::SurfaceError> {
+        self.renderer.stats = frame_stats;
 
         self.renderer
             .context
@@ -1212,102 +1139,6 @@ where
             .expect("surface texture consumed early");
 
         Ok(RenderFrame { frame })
-    }
-}
-
-struct BatchRecorder<'a> {
-    renderer: &'a mut Renderer,
-    assets: &'a Assets,
-    materials: &'a [Material],
-}
-
-impl<'a> BatchRecorder<'a> {
-    fn new(renderer: &'a mut Renderer, assets: &'a Assets, materials: &'a [Material]) -> Self {
-        Self {
-            renderer,
-            assets,
-            materials,
-        }
-    }
-
-    fn draw_environment_background(&mut self, pass: &mut wgpu::RenderPass<'_>, write_pick: bool) {
-        self.renderer.draw_environment_background(pass, write_pick);
-    }
-
-    fn record(
-        &mut self,
-        pass: &mut wgpu::RenderPass<'_>,
-        batches: &[OrderedBatch],
-        options: BatchPassOptions,
-    ) -> u32 {
-        if batches.is_empty() {
-            return 0;
-        }
-
-        let mut draw_calls = 0u32;
-
-        if let Some(bindless_group) = self.renderer.texture_binder.global_bind_group() {
-            for batch in batches {
-                let Some(mesh) = mesh_for_batch(self.assets, batch) else {
-                    continue;
-                };
-
-                let wants_wireframe = matches!(batch.pass, RenderPass::Gizmo);
-                let wireframe = wants_wireframe && self.renderer.context.supports_wireframe;
-                let pipeline_key = PipelineKey::new(
-                    batch.depth_state.depth_test,
-                    batch.depth_state.depth_write,
-                    batch.alpha_blend,
-                    options.color_format,
-                    options.color_sample_count,
-                    batch.sampler_filtering,
-                    batch.cull_mode,
-                    options.use_gbuffer,
-                    options.write_pick,
-                    wireframe,
-                );
-                let pipeline = self.renderer.pipeline.pipeline(pipeline_key);
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &self.renderer.camera_buffer.bind_group, &[]);
-                pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
-                pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
-                pass.set_bind_group(3, bindless_group, &[]);
-                self.renderer.draw_full_batch(pass, mesh, batch);
-                draw_calls += 1;
-            }
-        } else {
-            for batch in batches {
-                let Some(mesh) = mesh_for_batch(self.assets, batch) else {
-                    continue;
-                };
-
-                let wants_wireframe = matches!(batch.pass, RenderPass::Gizmo);
-                let wireframe = wants_wireframe && self.renderer.context.supports_wireframe;
-                let pipeline_key = PipelineKey::new(
-                    batch.depth_state.depth_test,
-                    batch.depth_state.depth_write,
-                    batch.alpha_blend,
-                    options.color_format,
-                    options.color_sample_count,
-                    batch.sampler_filtering,
-                    batch.cull_mode,
-                    options.use_gbuffer,
-                    options.write_pick,
-                    wireframe,
-                );
-                let pipeline = self.renderer.pipeline.pipeline(pipeline_key);
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, &self.renderer.camera_buffer.bind_group, &[]);
-                pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
-                pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
-                draw_calls +=
-                    self.renderer
-                        .draw_classic_batch(pass, self.assets, mesh, batch, self.materials)
-                        as u32;
-            }
-        }
-
-        draw_calls
     }
 }
 
@@ -1406,7 +1237,7 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) ->
     draws
 }
 
-fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {
+pub(crate) fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {
     let mesh = assets.meshes.get(batch.mesh);
     if mesh.is_none() {
         log::warn!("Skipping batch with invalid mesh handle");
