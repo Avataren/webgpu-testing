@@ -1,21 +1,26 @@
 pub mod cache;
 pub mod handle;
+pub mod material;
 pub mod mesh;
 
 pub use cache::AssetCache;
 pub use handle::Handle;
+pub use material::{AssetTypeTag, MaterialAsset, MaterialParameterMetadata};
 pub use mesh::{Mesh, MeshData};
 
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::Texture;
 use crate::scene::loader::SceneImportDevice;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct Assets {
     pub meshes: AssetCache<Mesh>,
     pub textures: AssetCache<Texture>,
+    pub materials: AssetCache<MaterialAsset>,
     primitive_meshes: HashMap<PrimitiveMeshDescriptor, Handle<Mesh>>,
+    material_paths: HashMap<PathBuf, Handle<MaterialAsset>>,
 }
 
 impl Assets {
@@ -23,7 +28,9 @@ impl Assets {
         Self {
             meshes: AssetCache::new(),
             textures: AssetCache::new(),
+            materials: AssetCache::new(),
             primitive_meshes: HashMap::new(),
+            material_paths: HashMap::new(),
         }
     }
 
@@ -48,6 +55,50 @@ impl Assets {
         descriptor: PrimitiveMeshDescriptor,
     ) -> Option<Handle<Mesh>> {
         self.primitive_meshes.get(&descriptor).copied()
+    }
+
+    pub fn get_or_load_material<F, E>(
+        &mut self,
+        path: impl AsRef<Path>,
+        mut loader: F,
+    ) -> Result<Handle<MaterialAsset>, E>
+    where
+        F: FnMut(&Path) -> Result<MaterialAsset, E>,
+    {
+        let canonical_path = Self::canonicalize_path(path.as_ref());
+
+        if let Some(handle) = self.material_paths.get(&canonical_path) {
+            return Ok(*handle);
+        }
+
+        let mut asset = loader(&canonical_path)?;
+        if asset.canonical_path() != canonical_path.as_path() {
+            asset.set_canonical_path(canonical_path.clone());
+        }
+
+        let handle = self.materials.insert(asset);
+        self.material_paths.insert(canonical_path, handle);
+        Ok(handle)
+    }
+
+    pub fn material_handle_for_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Option<Handle<MaterialAsset>> {
+        let canonical_path = Self::canonicalize_path(path.as_ref());
+        self.material_paths.get(&canonical_path).copied()
+    }
+
+    pub fn material(&self, handle: Handle<MaterialAsset>) -> Option<&MaterialAsset> {
+        self.materials.get(handle)
+    }
+
+    pub fn material_mut(&mut self, handle: Handle<MaterialAsset>) -> Option<&mut MaterialAsset> {
+        self.materials.get_mut(handle)
+    }
+
+    fn canonicalize_path(path: &Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     }
 }
 
