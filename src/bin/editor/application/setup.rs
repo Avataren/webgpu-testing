@@ -8,6 +8,8 @@ use wgpu_cube::scene::{EntityBuilder, Scene};
 
 use super::core::EditorApplication;
 
+const EDITOR_CUBE_MATERIAL_CANONICAL_PATH: &str = "builtin/editor/editor_cube.material";
+
 impl EditorApplication {
     pub(super) fn ensure_editor_scene_basics(
         &mut self,
@@ -26,8 +28,7 @@ impl EditorApplication {
             let startup_script = Self::load_script("editor_startup.rn");
 
             if let Some(script) = startup_script {
-                let world = scene.main_world_mut();
-                EntityBuilder::new(world)
+                EntityBuilder::new(scene)
                     .with_name("Editor Startup Script")
                     .with_script(script)
                     .spawn();
@@ -83,10 +84,18 @@ impl EditorApplication {
                 world.get::<&MaterialComponent>(entity).is_err()
             };
             if missing_material {
-                let handle = scene.assets.materials.insert(MaterialAsset::from_material(
-                    Material::pbr(),
-                    PathBuf::new(),
-                ));
+                let canonical_path = PathBuf::from(EDITOR_CUBE_MATERIAL_CANONICAL_PATH);
+                let handle = scene
+                    .assets
+                    .material_handle_for_path(&canonical_path)
+                    .unwrap_or_else(|| {
+                        scene
+                            .assets
+                            .insert_material_asset(MaterialAsset::from_material(
+                                Material::pbr(),
+                                canonical_path.clone(),
+                            ))
+                    });
                 if let Err(err) = scene
                     .main_world_mut()
                     .insert_one(entity, MaterialComponent(handle))

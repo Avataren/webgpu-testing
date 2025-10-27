@@ -1167,8 +1167,7 @@ mod tests {
         );
 
         {
-            let world = scene.main_world_mut();
-            EntityBuilder::new(world)
+            EntityBuilder::new(&mut scene)
                 .with_name("Runtime Cube")
                 .with_transform(Transform::default())
                 .with_script(script.clone())

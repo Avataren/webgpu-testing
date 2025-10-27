@@ -51,7 +51,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
         PathBuf::from("examples/bloom/floor"),
     ));
 
-    EntityBuilder::new(scene.world_mut())
+    EntityBuilder::new(scene)
         .with_name("Floor")
         .with_transform(Transform::from_trs(
             Vec3::new(0.0, -1.25, 0.0),
@@ -78,7 +78,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (idx, pos) in column_positions.iter().enumerate() {
-        EntityBuilder::new(scene.world_mut())
+        EntityBuilder::new(scene)
             .with_name(format!("Reflector {}", idx))
             .with_transform(Transform::from_trs(
                 *pos,
@@ -107,7 +107,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     ];
 
     for (idx, (position, color, intensity)) in bloom_emitters.iter().enumerate() {
-        EntityBuilder::new(scene.world_mut())
+        EntityBuilder::new(scene)
             .with_name(format!("Pedestal {}", idx))
             .with_transform(Transform::from_trs(
                 Vec3::new(position.x, -0.4, position.z),
@@ -126,7 +126,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             PathBuf::from(format!("examples/bloom/orb_{idx}")),
         ));
 
-        EntityBuilder::new(scene.world_mut())
+        EntityBuilder::new(scene)
             .with_name(format!("Emitter {}", idx))
             .with_transform(Transform::from_trs(
                 *position,
