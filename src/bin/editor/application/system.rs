@@ -126,11 +126,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         unsafe { self.application.as_mut().asset_browser_system_mut() }
     }
 
-    pub fn project_system(&self) -> &ProjectSystem {
+    pub(super) fn project_system(&self) -> &ProjectSystem {
         unsafe { self.application.as_ref().project_system() }
     }
 
-    pub fn project_system_mut(&mut self) -> &mut ProjectSystem {
+    pub(super) fn project_system_mut(&mut self) -> &mut ProjectSystem {
         unsafe { self.application.as_mut().project_system_mut() }
     }
 

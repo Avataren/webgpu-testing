@@ -39,7 +39,7 @@ enum BehaviorRuntime {
     Physics(PhysicsBehavior),
     Starfield(StarfieldBehavior),
     Boids(BoidsBehavior),
-    OptimizedBoids(OptimizedBoidsBehavior),
+    OptimizedBoids(Box<OptimizedBoidsBehavior>),
 }
 
 impl BehaviorRuntime {
@@ -82,7 +82,7 @@ impl BehaviorRuntime {
                 behavior.bounds = config.bounds;
                 behavior.particle_count = max_particles;
 
-                Self::OptimizedBoids(behavior)
+                Self::OptimizedBoids(Box::new(behavior))
             }
         }
     }
@@ -92,7 +92,7 @@ impl BehaviorRuntime {
             Self::Physics(behavior) => behavior,
             Self::Starfield(behavior) => behavior,
             Self::Boids(behavior) => behavior,
-            Self::OptimizedBoids(behavior) => behavior,
+            Self::OptimizedBoids(behavior) => behavior.as_ref(),
         }
     }
 
