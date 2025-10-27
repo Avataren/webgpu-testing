@@ -332,30 +332,42 @@ fn allocate_cpu_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::asset::Handle;
+    use crate::asset::{Assets, Handle, MaterialAsset};
     use crate::renderer::batch::{CullMode, InstanceSource, RenderObject};
     use crate::renderer::material::Material;
     use crate::scene::components::DepthState;
     use crate::scene::transform::Transform;
     use glam::Vec3;
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
     #[test]
     fn empty_batches_are_skipped() {
         let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
+        let material = Material::white();
+        let handle = assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
 
-        batcher.add(RenderObject {
-            mesh: Handle::new(0),
-            material: Material::white(),
-            transform: Transform::IDENTITY,
-            depth_state: DepthState::default(),
-            force_overlay: false,
-            render_pass: None,
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::Back,
-            pick_id: 0,
-        });
+        batcher
+            .add(
+                RenderObject {
+                    mesh: Handle::new(0),
+                    material: handle,
+                    resolved_material: Some(material),
+                    transform: Transform::IDENTITY,
+                    depth_state: DepthState::default(),
+                    force_overlay: false,
+                    render_pass: None,
+                    instance_source: InstanceSource::Cpu,
+                    gpu_index: None,
+                    cull_mode: CullMode::Back,
+                    pick_id: 0,
+                },
+                &assets,
+            )
+            .unwrap();
 
         batcher.clear();
 
@@ -370,86 +382,120 @@ mod tests {
     #[test]
     fn cpu_and_gpu_batches_do_not_overlap_reserved_ranges() {
         let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
         let mesh = Handle::new(42);
         let material = Material::white();
+        let handle = assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
 
         // CPU opaque batch that should be placed after GPU indices [0, 2).
         for pick_id in 0..3 {
-            batcher.add(RenderObject {
-                mesh,
-                material,
-                transform: Transform::IDENTITY,
-                depth_state: DepthState::default(),
-                force_overlay: false,
-                render_pass: Some(RenderPass::Opaque),
-                instance_source: InstanceSource::Cpu,
-                gpu_index: None,
-                cull_mode: CullMode::Back,
-                pick_id: pick_id as u64,
-            });
+            batcher
+                .add(
+                    RenderObject {
+                        mesh,
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::IDENTITY,
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: Some(RenderPass::Opaque),
+                        instance_source: InstanceSource::Cpu,
+                        gpu_index: None,
+                        cull_mode: CullMode::Back,
+                        pick_id: pick_id as u64,
+                    },
+                    &assets,
+                )
+                .unwrap();
         }
 
         // GPU transparent batch reserving indices [0, 2).
         for (i, gpu_index) in (0..2).enumerate() {
-            batcher.add(RenderObject {
-                mesh,
-                material,
-                transform: Transform::IDENTITY,
-                depth_state: DepthState::default(),
-                force_overlay: false,
-                render_pass: Some(RenderPass::Transparent),
-                instance_source: InstanceSource::Gpu,
-                gpu_index: Some(gpu_index),
-                cull_mode: CullMode::Back,
-                pick_id: 100 + i as u64,
-            });
+            batcher
+                .add(
+                    RenderObject {
+                        mesh,
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::IDENTITY,
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: Some(RenderPass::Transparent),
+                        instance_source: InstanceSource::Gpu,
+                        gpu_index: Some(gpu_index),
+                        cull_mode: CullMode::Back,
+                        pick_id: 100 + i as u64,
+                    },
+                    &assets,
+                )
+                .unwrap();
         }
 
         // GPU gizmo batch reserving indices [5, 8).
         for (i, gpu_index) in (5..8).enumerate() {
-            batcher.add(RenderObject {
-                mesh,
-                material,
-                transform: Transform::IDENTITY,
-                depth_state: DepthState::default(),
-                force_overlay: false,
-                render_pass: Some(RenderPass::Gizmo),
-                instance_source: InstanceSource::Gpu,
-                gpu_index: Some(gpu_index),
-                cull_mode: CullMode::Back,
-                pick_id: 200 + i as u64,
-            });
+            batcher
+                .add(
+                    RenderObject {
+                        mesh,
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::IDENTITY,
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: Some(RenderPass::Gizmo),
+                        instance_source: InstanceSource::Gpu,
+                        gpu_index: Some(gpu_index),
+                        cull_mode: CullMode::Back,
+                        pick_id: 200 + i as u64,
+                    },
+                    &assets,
+                )
+                .unwrap();
         }
 
         // CPU overlay batch that should skip over the [5, 8) GPU reservation.
         for pick_id in 300..302 {
-            batcher.add(RenderObject {
-                mesh,
-                material,
-                transform: Transform::IDENTITY,
-                depth_state: DepthState::default(),
-                force_overlay: false,
-                render_pass: Some(RenderPass::Overlay),
-                instance_source: InstanceSource::Cpu,
-                gpu_index: None,
-                cull_mode: CullMode::Back,
-                pick_id: pick_id as u64,
-            });
+            batcher
+                .add(
+                    RenderObject {
+                        mesh,
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::IDENTITY,
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: Some(RenderPass::Overlay),
+                        instance_source: InstanceSource::Cpu,
+                        gpu_index: None,
+                        cull_mode: CullMode::Back,
+                        pick_id: pick_id as u64,
+                    },
+                    &assets,
+                )
+                .unwrap();
         }
 
         // CPU gizmo solid batch to verify ranges after the final GPU segment.
-        batcher.add(RenderObject {
-            mesh,
-            material,
-            transform: Transform::IDENTITY,
-            depth_state: DepthState::default(),
-            force_overlay: false,
-            render_pass: Some(RenderPass::GizmoSolid),
-            instance_source: InstanceSource::Cpu,
-            gpu_index: None,
-            cull_mode: CullMode::Back,
-            pick_id: 999u64,
-        });
+        batcher
+            .add(
+                RenderObject {
+                    mesh,
+                    material: handle,
+                    resolved_material: Some(material),
+                    transform: Transform::IDENTITY,
+                    depth_state: DepthState::default(),
+                    force_overlay: false,
+                    render_pass: Some(RenderPass::GizmoSolid),
+                    instance_source: InstanceSource::Cpu,
+                    gpu_index: None,
+                    cull_mode: CullMode::Back,
+                    pick_id: 999u64,
+                },
+                &assets,
+            )
+            .unwrap();
 
         let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
 

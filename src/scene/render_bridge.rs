@@ -9,6 +9,7 @@ use crate::renderer::{CustomRenderRequest, LightsData, RenderBatcher, RenderFram
 use crate::scene::components::{SelectedInEditor, WorldTransform};
 use crate::scene::internal::{gizmos, lights, rendering, transform_gizmos};
 use crate::scene::transform::Transform;
+use log::error;
 
 pub struct RenderBridge;
 
@@ -39,14 +40,18 @@ impl RenderBridge {
                 rendering::build_render_objects(world, &scene.assets, camera_vectors).into_iter()
             {
                 object.transform = world_transform.mul_transform(&object.transform);
-                batcher.add(object);
+                if let Err(err) = batcher.add(object, &scene.assets) {
+                    error!("failed to enqueue render object: {err}");
+                }
             }
 
             if let Some(resources) = gizmo_resources {
                 for gizmo in
                     gizmos::build_light_gizmos(world, camera_vectors, world_transform, resources)
                 {
-                    batcher.add(gizmo);
+                    if let Err(err) = batcher.add(gizmo, &scene.assets) {
+                        error!("failed to enqueue light gizmo: {err}");
+                    }
                 }
             }
 
@@ -77,7 +82,9 @@ impl RenderBridge {
                     transform_resources,
                     scene.transform_gizmo_hover(),
                 ) {
-                    batcher.add(gizmo);
+                    if let Err(err) = batcher.add(gizmo, &scene.assets) {
+                        error!("failed to enqueue transform gizmo: {err}");
+                    }
                 }
             }
         }

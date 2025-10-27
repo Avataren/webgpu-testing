@@ -8,6 +8,7 @@ pub use handle::Handle;
 pub use material::{AssetTypeTag, MaterialAsset, MaterialParameterMetadata};
 pub use mesh::{Mesh, MeshData};
 
+use crate::renderer::material::Material;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::Texture;
 use crate::scene::loader::SceneImportDevice;
@@ -21,16 +22,26 @@ pub struct Assets {
     pub materials: AssetCache<MaterialAsset>,
     primitive_meshes: HashMap<PrimitiveMeshDescriptor, Handle<Mesh>>,
     material_paths: HashMap<PathBuf, Handle<MaterialAsset>>,
+    default_material: Handle<MaterialAsset>,
 }
 
 impl Assets {
     pub fn new() -> Self {
+        let meshes = AssetCache::new();
+        let textures = AssetCache::new();
+        let mut materials = AssetCache::new();
+        let default_material = materials.insert(MaterialAsset::from_material(
+            Material::pbr(),
+            PathBuf::new(),
+        ));
+
         Self {
-            meshes: AssetCache::new(),
-            textures: AssetCache::new(),
-            materials: AssetCache::new(),
+            meshes,
+            textures,
+            materials,
             primitive_meshes: HashMap::new(),
             material_paths: HashMap::new(),
+            default_material,
         }
     }
 
@@ -95,6 +106,10 @@ impl Assets {
 
     pub fn material_mut(&mut self, handle: Handle<MaterialAsset>) -> Option<&mut MaterialAsset> {
         self.materials.get_mut(handle)
+    }
+
+    pub fn default_material_handle(&self) -> Handle<MaterialAsset> {
+        self.default_material
     }
 
     fn canonicalize_path(path: &Path) -> PathBuf {

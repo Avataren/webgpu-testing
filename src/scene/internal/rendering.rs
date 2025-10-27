@@ -1,5 +1,5 @@
 use super::lights::safe_normalize;
-use crate::asset::{Assets, Handle, Mesh};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::renderer::{
     batch::{CullMode, InstanceSource},
     Material, PickId, RenderObject, Renderer,
@@ -48,7 +48,8 @@ pub(crate) fn build_render_objects(
 
 struct RenderEntity {
     mesh: Handle<Mesh>,
-    material: Material,
+    material_handle: Handle<MaterialAsset>,
+    base_material: Material,
     visible: bool,
     world_transform: Option<Transform>,
     local_transform: Option<Transform>,
@@ -61,6 +62,8 @@ struct RenderEntity {
 }
 
 fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> {
+    let default_material = assets.default_material_handle();
+
     world
         .query::<(
             &MeshComponent,
@@ -92,21 +95,26 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                     selected_marker,
                     editor_id,
                 ),
-            )| RenderEntity {
-                mesh: mesh.0,
-                material: assets
+            )| {
+                let (material_handle, base_material) = assets
                     .material(material.0)
-                    .map(|asset| *asset.material())
-                    .unwrap_or_else(Material::pbr),
-                visible: visible.0,
-                world_transform: world_transform.map(|t| t.0),
-                local_transform: local_transform.map(|t| t.0),
-                name: name.map(|n| n.0.clone()),
-                billboard: billboard.copied(),
-                depth_state: depth_state.copied(),
-                gpu_instance: gpu_instance.copied(),
-                selected: selected_marker.is_some(),
-                pick_id: encode_pick_id(editor_id.copied()),
+                    .map(|asset| (material.0, *asset.material()))
+                    .unwrap_or((default_material, Material::pbr()));
+
+                RenderEntity {
+                    mesh: mesh.0,
+                    material_handle,
+                    base_material,
+                    visible: visible.0,
+                    world_transform: world_transform.map(|t| t.0),
+                    local_transform: local_transform.map(|t| t.0),
+                    name: name.map(|n| n.0.clone()),
+                    billboard: billboard.copied(),
+                    depth_state: depth_state.copied(),
+                    gpu_instance: gpu_instance.copied(),
+                    selected: selected_marker.is_some(),
+                    pick_id: encode_pick_id(editor_id.copied()),
+                }
             },
         )
         .collect()
@@ -118,7 +126,8 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
     }
 
     let mut transform = select_render_transform(&entity);
-    let mut material = entity.material;
+    let mut material = entity.base_material;
+    let mut override_material = None;
     let billboard = entity.billboard;
 
     let instance_source = if entity.gpu_instance.is_some() {
@@ -142,6 +151,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         } else {
             material.with_unlit()
         };
+        override_material = Some(material);
     }
 
     let depth_state = entity.depth_state.unwrap_or_default();
@@ -157,7 +167,8 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
 
     objects.push(RenderObject {
         mesh: entity.mesh,
-        material,
+        material: entity.material_handle,
+        resolved_material: override_material,
         transform,
         depth_state,
         force_overlay,
@@ -177,7 +188,8 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
 
         objects.push(RenderObject {
             mesh: entity.mesh,
-            material: outline_material,
+            material: entity.material_handle,
+            resolved_material: Some(outline_material),
             transform: outline_transform,
             depth_state: outline_depth,
             force_overlay: true,
