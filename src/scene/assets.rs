@@ -2206,7 +2206,7 @@ impl SerializedMaterial {
 
             let texture_index = if let Some(resolved) = resolved_path.as_deref() {
                 with_import_device(&mut renderer, |device| {
-                    assets.resolve_texture_index(slot, Some(resolved), device, slot.expects_srgb())
+                    assets.resolve_texture_index(slot, Some(resolved), device, false)
                 })
             } else if let Some(index) = slot_data.index {
                 index

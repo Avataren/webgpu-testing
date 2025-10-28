@@ -59,13 +59,6 @@ impl MaterialTextureSlot {
             MaterialTextureSlot::Occlusion,
         ]
     }
-
-    pub const fn expects_srgb(self) -> bool {
-        matches!(
-            self,
-            MaterialTextureSlot::BaseColor | MaterialTextureSlot::Emissive
-        )
-    }
 }
 
 #[derive(Debug, Clone, Default)]
