@@ -38,7 +38,7 @@ fn load_sponza_scene(ctx: &mut StartupContext<'_>) {
         SPONZA_GLTF_PATH, SPONZA_SCALE
     );
 
-    match SceneLoader::load_gltf(SPONZA_GLTF_PATH, scene, renderer, SPONZA_SCALE) {
+    match SceneLoader::load_gltf(SPONZA_GLTF_PATH, scene, renderer, SPONZA_SCALE, None) {
         Ok(_) => {
             scene.add_default_lighting();
             info!("glTF loaded: {} entities", scene.world().len());

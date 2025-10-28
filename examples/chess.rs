@@ -36,7 +36,7 @@ fn load_chess_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Loading glTF: {} (scale: {})", GLTF_PATH, CHESS_SCALE);
 
-    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, CHESS_SCALE) {
+    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, CHESS_SCALE, None) {
         Ok(_) => {
             scene.add_default_lighting();
             info!("glTF loaded: {} entities", scene.world().len());

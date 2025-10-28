@@ -2,8 +2,10 @@
 use glam::{Quat, Vec3, Vec4};
 use std::path::{Path, PathBuf};
 
+use super::assets::{ImportedGltfMeta, SceneMaterialHandle};
 use super::components::*;
 use crate::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh};
+use crate::project::resolve_project_path;
 use crate::renderer::{material::MaterialFlags, Material, Renderer, Texture, Vertex};
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
@@ -13,7 +15,7 @@ use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources, Transform};
 use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 
@@ -128,6 +130,30 @@ impl SceneLoader {
         }
 
         !times.is_empty() && values.len() >= times.len() * components_per_keyframe
+    }
+
+    fn load_imported_meta(path: &Path) -> Option<ImportedGltfMeta> {
+        let parent = path.parent()?;
+        let file_name = path.file_name()?.to_string_lossy().into_owned();
+        let meta_path = parent.join("meta.json");
+
+        let content = match fs::read_to_string(&meta_path) {
+            Ok(content) => content,
+            Err(err) => {
+                if err.kind() != io::ErrorKind::NotFound {
+                    log::warn!("Failed to read glTF meta file {:?}: {}", meta_path, err);
+                }
+                return None;
+            }
+        };
+
+        match serde_json::from_str::<BTreeMap<String, ImportedGltfMeta>>(&content) {
+            Ok(mut map) => map.remove(&file_name),
+            Err(err) => {
+                log::warn!("Failed to parse glTF meta file {:?}: {}", meta_path, err);
+                None
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -307,6 +333,7 @@ impl SceneLoader {
         scene: &mut Scene,
         renderer: &mut impl SceneImportDevice,
         scale: f32,
+        material_meta: Option<&ImportedGltfMeta>,
     ) -> Result<(), String> {
         let path = path.as_ref();
         let path_buf = path.to_path_buf();
@@ -338,7 +365,8 @@ impl SceneLoader {
 
         // Load all materials
         log::info!("Loading materials...");
-        let material_handles = Self::load_materials(&document, &texture_data, scene, path)?;
+        let material_handles =
+            Self::load_materials(&document, &texture_data, scene, path, material_meta)?;
         log::info!("Loaded {} materials", material_handles.len());
 
         let default_material_handle =
@@ -454,7 +482,14 @@ impl SceneLoader {
         let mut temp_scene = Scene::new();
         let source_path = path.as_ref().to_path_buf();
         let resolved_path = crate::project::resolve_project_path(&source_path);
-        Self::load_gltf(&resolved_path, &mut temp_scene, renderer, scale)?;
+        let imported_meta = Self::load_imported_meta(&resolved_path);
+        Self::load_gltf(
+            &resolved_path,
+            &mut temp_scene,
+            renderer,
+            scale,
+            imported_meta.as_ref(),
+        )?;
 
         let default_name = resolved_path
             .file_stem()
@@ -468,6 +503,19 @@ impl SceneLoader {
         for entity in &mut asset.entities {
             if entity.gltf_source.is_some() {
                 entity.gltf_source = Some(source_path.clone());
+            }
+        }
+
+        if let Some(meta) = imported_meta.as_ref() {
+            for entity in &mut asset.entities {
+                if let Some(material_index) = entity.gltf_material {
+                    if let Some(path) = meta.materials.get(&material_index) {
+                        let handle = entity
+                            .material
+                            .get_or_insert_with(|| SceneMaterialHandle::new(path.clone()));
+                        handle.set_path(path.clone());
+                    }
+                }
             }
         }
 
@@ -1190,6 +1238,7 @@ impl SceneLoader {
         textures: &[ImportedTexture],
         scene: &mut Scene,
         source_path: &Path,
+        material_meta: Option<&ImportedGltfMeta>,
     ) -> Result<Vec<Handle<MaterialAsset>>, String> {
         let mut material_handles = Vec::new();
 
@@ -1282,11 +1331,16 @@ impl SceneLoader {
                 pbr.roughness_factor()
             );
 
-            let canonical_path = PathBuf::from(format!(
-                "{}#material{}",
-                source_path.display(),
-                material_index
-            ));
+            let canonical_path = material_meta
+                .and_then(|meta| meta.materials.get(&material_index))
+                .map(|path| resolve_project_path(path))
+                .unwrap_or_else(|| {
+                    PathBuf::from(format!(
+                        "{}#material{}",
+                        source_path.display(),
+                        material_index
+                    ))
+                });
             let mut asset = MaterialAsset::from_material(material, canonical_path);
 
             let mut apply_reference =

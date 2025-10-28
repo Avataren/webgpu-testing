@@ -30,7 +30,7 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Loading glTF: {} (scale: {})", GLTF_PATH, SCENE_SCALE);
 
-    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, SCENE_SCALE) {
+    match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, SCENE_SCALE, None) {
         Ok(_) => {
             scene.add_default_lighting();
             let mut camera = Camera::default();
