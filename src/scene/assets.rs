@@ -26,6 +26,7 @@ use crate::renderer::texture::{
     DEFAULT_WHITE_TEXTURE_INDEX,
 };
 use crate::renderer::{Material, Texture};
+use crate::scene::gltf_material_registry::GltfMaterialRegistry;
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
@@ -88,17 +89,121 @@ mod material_map_serde {
     }
 }
 
+mod material_key_map_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    pub fn serialize<S>(value: &BTreeMap<String, PathBuf>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mapped: BTreeMap<&str, String> = value
+            .iter()
+            .map(|(key, path)| (key.as_str(), path.to_string_lossy().into_owned()))
+            .collect();
+        serde::Serialize::serialize(&mapped, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<String, PathBuf>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mapped = BTreeMap::<String, String>::deserialize(deserializer)?;
+        Ok(mapped
+            .into_iter()
+            .map(|(key, value)| (key, PathBuf::from(value)))
+            .collect())
+    }
+}
+
+pub(crate) fn flatten_gltf_material_key(
+    node: Option<usize>,
+    primitive: Option<usize>,
+    material_index: Option<usize>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(node) = node {
+        parts.push(format!("node:{node}"));
+    }
+
+    if let Some(primitive) = primitive {
+        parts.push(format!("primitive:{primitive}"));
+    }
+
+    if let Some(material_index) = material_index {
+        parts.push(format!("material:{material_index}"));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
 /// Metadata recorded for a glTF import to preserve material assignments across reloads.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportedGltfMeta {
     /// Map of glTF material indices to relative material asset paths.
     #[serde(default, with = "material_map_serde")]
     pub materials: BTreeMap<usize, PathBuf>,
+    /// Map of glTF material bindings keyed by a flattened [`GltfMaterialKey`].
+    #[serde(default, with = "material_key_map_serde")]
+    pub materials_by_key: BTreeMap<String, PathBuf>,
 }
 
 impl ImportedGltfMeta {
     pub fn record_material(&mut self, index: usize, path: PathBuf) {
         self.materials.insert(index, path);
+    }
+
+    pub fn record_material_key(
+        &mut self,
+        key: &crate::scene::gltf_material_registry::GltfMaterialKey,
+        path: PathBuf,
+    ) {
+        if let Some(flattened) =
+            flatten_gltf_material_key(key.node, key.primitive, key.material_index)
+        {
+            self.materials_by_key.insert(flattened, path);
+        }
+    }
+
+    pub fn lookup_material_path(
+        &self,
+        node: Option<usize>,
+        primitive: Option<usize>,
+        material_index: Option<usize>,
+    ) -> Option<&PathBuf> {
+        if let Some(material_index) = material_index {
+            if let Some(key) = flatten_gltf_material_key(node, primitive, Some(material_index)) {
+                if let Some(path) = self.materials_by_key.get(&key) {
+                    return Some(path);
+                }
+            }
+        }
+
+        if let Some(key) = flatten_gltf_material_key(node, primitive, None) {
+            if let Some(path) = self.materials_by_key.get(&key) {
+                return Some(path);
+            }
+        }
+
+        if let Some(material_index) = material_index {
+            if let Some(path) = self.materials.get(&material_index) {
+                return Some(path);
+            }
+
+            if let Some(key) = flatten_gltf_material_key(None, None, Some(material_index)) {
+                if let Some(path) = self.materials_by_key.get(&key) {
+                    return Some(path);
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -335,9 +440,8 @@ impl SceneAsset {
 
         let mut written: HashSet<PathBuf> = HashSet::new();
         let mut material_cache: HashMap<(PathBuf, usize), PathBuf> = HashMap::new();
-        let mut meta_updates: HashMap<PathBuf, BTreeMap<String, ImportedGltfMeta>> = HashMap::new();
         let canonical_project_root = std::fs::canonicalize(project_root)
-            .map(|root| normalize_absolute_path(root))
+            .map(normalize_absolute_path)
             .ok();
         let canonical_project_root_ref = canonical_project_root.as_deref();
 
@@ -371,7 +475,7 @@ impl SceneAsset {
                 }
             }
 
-            let needs_regen = material_path.as_ref().map_or(true, |path| {
+            let needs_regen = material_path.as_ref().is_none_or(|path| {
                 if path.as_os_str().is_empty() {
                     return true;
                 }
@@ -433,25 +537,51 @@ impl SceneAsset {
                 fs::write(&abs_path, json)?;
             }
 
-            if let (Some(source), Some(material_index)) =
-                (entity.gltf_source.as_ref(), entity.gltf_material)
-            {
-                if let Some(file_name) = source
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                {
-                    if let Some(parent) = project_root.join(source).parent() {
-                        let entry = meta_updates
-                            .entry(parent.to_path_buf())
-                            .or_insert_with(BTreeMap::new)
-                            .entry(file_name)
-                            .or_insert_with(ImportedGltfMeta::default);
-                        entry.record_material(material_index, rel_path.clone());
-                    }
-                }
+            entity.material_data = Some(material_data);
+        }
+
+        let registry = GltfMaterialRegistry::collect_from_asset(self, project_root);
+        let mut meta_updates: HashMap<PathBuf, BTreeMap<String, ImportedGltfMeta>> = HashMap::new();
+
+        for (key, binding) in registry.iter_bindings() {
+            let Some(handle) = binding.handle.as_ref() else {
+                continue;
+            };
+
+            let path = handle.path();
+            if path.as_os_str().is_empty() {
+                continue;
             }
 
-            entity.material_data = Some(material_data);
+            let relative_path = relativize_path_to_project(
+                path.to_path_buf(),
+                project_root,
+                canonical_project_root_ref,
+            );
+
+            let Some(source_file) = key
+                .source
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+
+            let Some(parent_dir) = key.source.parent() else {
+                continue;
+            };
+
+            let entry = meta_updates
+                .entry(parent_dir.to_path_buf())
+                .or_default()
+                .entry(source_file)
+                .or_default();
+
+            if let Some(material_index) = key.material_index {
+                entry.record_material(material_index, relative_path.clone());
+            }
+
+            entry.record_material_key(key, relative_path);
         }
 
         for (meta_dir, sources) in meta_updates {
@@ -488,8 +618,7 @@ impl SceneAsset {
                 existing.insert(source_name, meta);
             }
 
-            let json = serde_json::to_string_pretty(&existing)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            let json = serde_json::to_string_pretty(&existing).map_err(std::io::Error::other)?;
             fs::write(meta_path, json)?;
         }
 
@@ -2977,6 +3106,36 @@ mod tests {
             meta.materials.get(&0),
             Some(&material_handle.path().to_path_buf()),
             "meta should point at generated material path"
+        );
+        assert_eq!(
+            meta.materials_by_key.get("material:0"),
+            Some(&material_handle.path().to_path_buf()),
+            "keyed meta should point at generated material path"
+        );
+    }
+
+    #[test]
+    fn imported_meta_prefers_specific_binding() {
+        let mut meta = ImportedGltfMeta::default();
+        meta.record_material(1, PathBuf::from("by_index.mat.json"));
+
+        let key = crate::scene::gltf_material_registry::GltfMaterialKey::new(
+            PathBuf::from("content/models/sample/scene.gltf"),
+            Some(4),
+            Some(2),
+            Some(1),
+        );
+        meta.record_material_key(&key, PathBuf::from("by_key.mat.json"));
+
+        assert_eq!(
+            meta.lookup_material_path(Some(4), Some(2), Some(1))
+                .cloned(),
+            Some(PathBuf::from("by_key.mat.json")),
+        );
+
+        assert_eq!(
+            meta.lookup_material_path(None, None, Some(1)).cloned(),
+            Some(PathBuf::from("by_index.mat.json")),
         );
     }
 
