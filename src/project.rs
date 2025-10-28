@@ -1,5 +1,6 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::renderer::Renderer;
+use crate::scene::assets::SceneMaterialHandle;
 use crate::scene::{
     Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader, SerializedMaterial,
 };
@@ -125,8 +126,16 @@ impl ProjectManifest {
         let mut referenced_mesh_indices: HashSet<usize> = HashSet::new();
 
         for entity in &mut asset.entities {
-            if let Some(source) = &entity.gltf_source {
-                imports_set.insert(source.clone());
+            if let Some(source) = entity.gltf_source.clone() {
+                let normalized = if source.is_absolute() {
+                    std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone())
+                } else {
+                    let resolved = resolve_project_path(&source);
+                    std::fs::canonicalize(&resolved).unwrap_or(resolved)
+                };
+
+                entity.gltf_source = Some(normalized.clone());
+                imports_set.insert(normalized);
             }
 
             if entity.primitive_mesh.is_some() {
@@ -239,7 +248,11 @@ impl ProjectManifest {
 
         let mut mesh_lookup: HashMap<(PathBuf, Option<usize>, Option<usize>), usize> =
             HashMap::new();
-        let mut material_lookup: HashMap<(PathBuf, usize), SerializedMaterial> = HashMap::new();
+        let mut material_lookup: HashMap<
+            (PathBuf, usize),
+            (SerializedMaterial, Option<SceneMaterialHandle>),
+        > = HashMap::new();
+
         let normalize_path = |path: &Path| -> PathBuf {
             let resolved = resolve_project_path(path);
             std::fs::canonicalize(&resolved).unwrap_or(resolved)
@@ -266,9 +279,10 @@ impl ProjectManifest {
                         }
 
                         if let Some(gltf_material) = entity.gltf_material {
-                            if let Some(material) = &entity.material_data {
+                            if let Some(material_data) = &entity.material_data {
                                 let key = (normalize_path(source), gltf_material);
-                                material_lookup.insert(key, material.clone());
+                                material_lookup
+                                    .insert(key, (material_data.clone(), entity.material.clone()));
                             }
                         }
                     }
@@ -308,9 +322,11 @@ impl ProjectManifest {
             }
 
             if let Some(gltf_material) = entity.gltf_material {
-                if let Some(material) = material_lookup.get(&(normalized_source, gltf_material)) {
-                    let serialized = material.clone();
-                    entity.material_data = Some(serialized.clone());
+                if let Some((material_data, material_handle)) =
+                    material_lookup.get(&(normalized_source, gltf_material))
+                {
+                    entity.material_data = Some(material_data.clone());
+                    entity.material = material_handle.clone();
 
                     if let Some(handle) = entity.material.as_ref() {
                         let material_path = handle.path();
@@ -326,7 +342,7 @@ impl ProjectManifest {
                                 }
                             }
 
-                            match serde_json::to_string_pretty(&serialized) {
+                            match serde_json::to_string_pretty(&material_data) {
                                 Ok(json) => {
                                     if let Err(err) = fs::write(&absolute_path, json) {
                                         log::error!(

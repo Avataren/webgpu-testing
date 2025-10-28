@@ -1,7 +1,7 @@
 // scene/mod.rs
 
 pub mod animation;
-mod assets;
+pub(crate) mod assets;
 pub mod builder;
 pub mod camera;
 pub mod components;
