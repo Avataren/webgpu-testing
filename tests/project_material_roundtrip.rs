@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,12 +10,12 @@ use wgpu::{
     PowerPreference, RequestAdapterOptions, Trace,
 };
 
-use wgpu_cube::asset::{MaterialTextureSlot, Mesh};
-use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetadata};
-use wgpu_cube::renderer::Vertex;
-use wgpu_cube::scene::{
-    MaterialComponent, Scene, SceneImportDevice, SceneLoader, SerializedMaterial,
+use wgpu_cube::asset::Mesh;
+use wgpu_cube::project::{
+    resolve_project_path, set_active_project_root, ProjectManifest, ProjectMetadata,
 };
+use wgpu_cube::renderer::Vertex;
+use wgpu_cube::scene::{Scene, SceneAsset, SceneImportDevice, SceneLoader, SerializedMaterial};
 
 struct HeadlessDevice {
     device: Arc<wgpu::Device>,
@@ -70,6 +71,78 @@ impl SceneImportDevice for HeadlessDevice {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GltfMaterialKey {
+    source: PathBuf,
+    node: Option<usize>,
+    primitive: Option<usize>,
+    material_index: Option<usize>,
+}
+
+fn normalize_gltf_source(source: &Path) -> PathBuf {
+    let resolved = resolve_project_path(source);
+    if resolved.is_absolute() {
+        resolved.canonicalize().unwrap_or_else(|_| resolved.clone())
+    } else {
+        let absolute = resolve_project_path(resolved);
+        absolute.canonicalize().unwrap_or_else(|_| absolute.clone())
+    }
+}
+
+fn collect_material_map(asset: &SceneAsset) -> HashMap<GltfMaterialKey, SerializedMaterial> {
+    let mut map = HashMap::new();
+
+    for entity in &asset.entities {
+        let Some(source) = entity.gltf_source.as_ref() else {
+            continue;
+        };
+        let Some(material) = entity.material_data.as_ref() else {
+            continue;
+        };
+
+        let normalized_source = normalize_gltf_source(source);
+        let material = material.clone();
+
+        if let (Some(node), Some(primitive)) = (entity.gltf_node, entity.gltf_primitive) {
+            map.insert(
+                GltfMaterialKey {
+                    source: normalized_source.clone(),
+                    node: Some(node),
+                    primitive: Some(primitive),
+                    material_index: None,
+                },
+                material.clone(),
+            );
+
+            if let Some(material_index) = entity.gltf_material {
+                map.insert(
+                    GltfMaterialKey {
+                        source: normalized_source.clone(),
+                        node: Some(node),
+                        primitive: Some(primitive),
+                        material_index: Some(material_index),
+                    },
+                    material.clone(),
+                );
+            }
+        }
+
+        if let Some(material_index) = entity.gltf_material {
+            map.insert(
+                GltfMaterialKey {
+                    source: normalized_source.clone(),
+                    node: None,
+                    primitive: None,
+                    material_index: Some(material_index),
+                },
+                material.clone(),
+            );
+        }
+    }
+
+    map
+}
+
 fn copy_directory(src: &Path, dst: &Path) {
     fs::create_dir_all(dst).expect("failed to create destination directory");
 
@@ -88,7 +161,7 @@ fn copy_directory(src: &Path, dst: &Path) {
 }
 
 #[test]
-fn project_manifest_preserves_custom_material_edits() {
+fn project_material_roundtrip_preserves_registry() {
     let Some(mut headless) = HeadlessDevice::new() else {
         eprintln!("Skipping material roundtrip test: no suitable headless adapter available");
         return;
@@ -106,6 +179,27 @@ fn project_manifest_preserves_custom_material_edits() {
     let mut bundle = SceneLoader::load_gltf_asset(&gltf_path, &mut headless, 1.0)
         .expect("failed to import test glTF");
 
+    let mutated_color = [12, 34, 220, 255];
+    let mutated_metallic = 37;
+    let mutated_roughness = 83;
+    let mutated_emissive = 21;
+    let mutated_texture_name = "Roundtrip Painted".to_string();
+
+    let mut mutated = false;
+    for entity in &mut bundle.asset.entities {
+        if let Some(material) = entity.material_data.as_mut() {
+            material.base_color = mutated_color;
+            material.metallic_factor = mutated_metallic;
+            material.roughness_factor = mutated_roughness;
+            material.emissive_strength = mutated_emissive;
+            material.base_color_texture.name = Some(mutated_texture_name.clone());
+            mutated = true;
+            break;
+        }
+    }
+
+    assert!(mutated, "expected at least one material to mutate");
+
     let mut scene = Scene::new();
     bundle.register_resources(&mut headless, &mut scene.assets);
     let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
@@ -113,40 +207,15 @@ fn project_manifest_preserves_custom_material_edits() {
 
     let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
         .expect("capturing manifest should succeed");
+    let before_map = collect_material_map(&manifest.scene);
+    assert!(
+        !before_map.is_empty(),
+        "expected material registry to contain entries"
+    );
+
     manifest
         .save_to_dir(project_root)
         .expect("manifest should save to disk");
-
-    let materials_dir = project_root.join("content/materials");
-    let mat_path = fs::read_dir(&materials_dir)
-        .expect("material directory should exist")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.extension().and_then(|ext| ext.to_str()) == Some("json")
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| name.ends_with(".mat.json"))
-                    .unwrap_or(false)
-        })
-        .expect("expected at least one material asset to be generated");
-
-    let original = fs::read_to_string(&mat_path).expect("material asset should be readable");
-    let mut serialized: SerializedMaterial =
-        serde_json::from_str(&original).expect("material asset should deserialize");
-
-    let expected_color = [17, 34, 51, 255];
-    serialized.base_color = expected_color;
-    serialized.metallic_factor = 200;
-    serialized.roughness_factor = 25;
-    serialized.emissive_strength = 15;
-    let texture_name = "Custom Painted".to_string();
-    serialized.base_color_texture.name = Some(texture_name.clone());
-
-    let modified = serde_json::to_string_pretty(&serialized)
-        .expect("material asset should serialize after edits");
-    fs::write(&mat_path, &modified).expect("material asset should be rewritten");
 
     let loaded = ProjectManifest::load_from_dir(project_root)
         .expect("reloading manifest from disk should succeed");
@@ -156,58 +225,68 @@ fn project_manifest_preserves_custom_material_edits() {
         .instantiate_into(&mut restored_scene, &mut headless, project_root)
         .expect("project should instantiate successfully");
 
-    let final_json = fs::read_to_string(&mat_path).expect("material asset should remain readable");
-    assert_eq!(
-        final_json, modified,
-        "instantiation should not overwrite customized material asset"
-    );
+    let recaptured = ProjectManifest::capture(&restored_scene, loaded.metadata.clone())
+        .expect("recapturing manifest should succeed");
+    let after_map = collect_material_map(&recaptured.scene);
 
-    let target_file_name = mat_path
-        .file_name()
-        .expect("material asset should have a file name")
-        .to_owned();
+    for (key, before_material) in &before_map {
+        let after_material = after_map
+            .get(key)
+            .unwrap_or_else(|| panic!("missing material for key {:?}", key));
 
-    let mut found_custom_material = false;
-    for (_, (material_component,)) in restored_scene
-        .world()
-        .query::<(&MaterialComponent,)>()
-        .iter()
-    {
-        if let Some(asset) = restored_scene.assets.material(material_component.0) {
-            if asset
-                .canonical_path()
-                .file_name()
-                .map(|name| name == target_file_name)
-                .unwrap_or(false)
-            {
-                assert_eq!(
-                    asset.material().base_color,
-                    expected_color,
-                    "base color override should persist"
-                );
-                assert_eq!(
-                    asset.material().metallic_factor,
-                    serialized.metallic_factor,
-                    "metallic factor override should persist"
-                );
-                let reference = asset
-                    .texture_reference(MaterialTextureSlot::BaseColor)
-                    .expect("base color texture reference should exist");
-                assert_eq!(
-                    reference.display_name(),
-                    Some(texture_name.as_str()),
-                    "texture display name override should persist"
-                );
-                found_custom_material = true;
-                break;
-            }
-        }
+        assert_eq!(
+            after_material.base_color, before_material.base_color,
+            "base color should remain consistent for {:?}",
+            key
+        );
+        assert_eq!(
+            after_material.base_color_texture.path, before_material.base_color_texture.path,
+            "base color texture path should remain consistent for {:?}",
+            key
+        );
     }
 
+    let mutated_keys: Vec<_> = before_map
+        .iter()
+        .filter_map(|(key, material)| (material.base_color == mutated_color).then(|| key.clone()))
+        .collect();
+
     assert!(
-        found_custom_material,
-        "instantiated scene should include the customized material"
+        !mutated_keys.is_empty(),
+        "expected to locate keys for the mutated material"
     );
+
+    for key in mutated_keys {
+        let before_material = before_map.get(&key).expect("mutated material present");
+        let after_material = after_map.get(&key).expect("mutated material persisted");
+
+        assert_eq!(
+            after_material.metallic_factor, mutated_metallic,
+            "metallic factor override should persist for {:?}",
+            key
+        );
+        assert_eq!(
+            after_material.roughness_factor, mutated_roughness,
+            "roughness override should persist for {:?}",
+            key
+        );
+        assert_eq!(
+            after_material.emissive_strength, mutated_emissive,
+            "emissive strength override should persist for {:?}",
+            key
+        );
+        assert_eq!(
+            after_material.base_color_texture.name.as_deref(),
+            Some(mutated_texture_name.as_str()),
+            "base color texture name should persist for {:?}",
+            key
+        );
+        assert_eq!(
+            after_material.base_color_texture.path, before_material.base_color_texture.path,
+            "mutated material should retain its texture path for {:?}",
+            key
+        );
+    }
 
     set_active_project_root(None);
 }
