@@ -5,6 +5,7 @@ pub(crate) mod assets;
 pub mod builder;
 pub mod camera;
 pub mod components;
+pub(crate) mod gltf_material_registry;
 mod graph;
 mod import_state;
 mod importer;
