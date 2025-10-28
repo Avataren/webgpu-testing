@@ -602,7 +602,7 @@ fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<boo
         let source_meta = fs::metadata(source)?;
         let target_meta = fs::metadata(target)?;
 
-        return Ok(source_meta.ino() == target_meta.ino() && source_meta.dev() == target_meta.dev());
+        Ok(source_meta.ino() == target_meta.ino() && source_meta.dev() == target_meta.dev())
     }
 
     #[cfg(not(unix))]

@@ -508,13 +508,23 @@ impl SceneLoader {
 
         if let Some(meta) = imported_meta.as_ref() {
             for entity in &mut asset.entities {
-                if let Some(material_index) = entity.gltf_material {
-                    if let Some(path) = meta.materials.get(&material_index) {
-                        let handle = entity
-                            .material
-                            .get_or_insert_with(|| SceneMaterialHandle::new(path.clone()));
-                        handle.set_path(path.clone());
-                    }
+                if entity.gltf_source.is_none() {
+                    continue;
+                }
+
+                let resolved = meta
+                    .lookup_material_path(
+                        entity.gltf_node,
+                        entity.gltf_primitive,
+                        entity.gltf_material,
+                    )
+                    .cloned();
+
+                if let Some(path) = resolved {
+                    let handle = entity
+                        .material
+                        .get_or_insert_with(|| SceneMaterialHandle::new(path.clone()));
+                    handle.set_path(path);
                 }
             }
         }
@@ -1242,6 +1252,20 @@ impl SceneLoader {
     ) -> Result<Vec<Handle<MaterialAsset>>, String> {
         let mut material_handles = Vec::new();
 
+        let mut material_usage: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+        for node in document.nodes() {
+            if let Some(mesh) = node.mesh() {
+                for (primitive_index, primitive) in mesh.primitives().enumerate() {
+                    if let Some(material) = primitive.material().index() {
+                        material_usage
+                            .entry(material)
+                            .or_default()
+                            .push((node.index(), primitive_index));
+                    }
+                }
+            }
+        }
+
         for (material_index, gltf_mat) in document.materials().enumerate() {
             let mat_name = gltf_mat.name().unwrap_or("Unnamed");
             let pbr = gltf_mat.pbr_metallic_roughness();
@@ -1331,9 +1355,39 @@ impl SceneLoader {
                 pbr.roughness_factor()
             );
 
-            let canonical_path = material_meta
-                .and_then(|meta| meta.materials.get(&material_index))
-                .map(|path| resolve_project_path(path))
+            let resolved_binding = material_meta.and_then(|meta| {
+                if let Some(usages) = material_usage.get(&material_index) {
+                    for &(node_index, primitive_index) in usages {
+                        if let Some(path) = meta.lookup_material_path(
+                            Some(node_index),
+                            Some(primitive_index),
+                            Some(material_index),
+                        ) {
+                            return Some(path.clone());
+                        }
+
+                        if let Some(path) =
+                            meta.lookup_material_path(Some(node_index), None, Some(material_index))
+                        {
+                            return Some(path.clone());
+                        }
+
+                        if let Some(path) = meta.lookup_material_path(
+                            None,
+                            Some(primitive_index),
+                            Some(material_index),
+                        ) {
+                            return Some(path.clone());
+                        }
+                    }
+                }
+
+                meta.lookup_material_path(None, None, Some(material_index))
+                    .cloned()
+            });
+
+            let canonical_path = resolved_binding
+                .map(|path| resolve_project_path(&path))
                 .unwrap_or_else(|| {
                     PathBuf::from(format!(
                         "{}#material{}",

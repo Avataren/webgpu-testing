@@ -72,6 +72,18 @@ impl GltfMaterialRegistry {
                     ),
                     binding.clone(),
                 );
+
+                if let Some(material_index) = entity.gltf_material {
+                    registry.bindings.insert(
+                        GltfMaterialKey::new(
+                            normalized_source.clone(),
+                            Some(node_index),
+                            Some(primitive_index),
+                            Some(material_index),
+                        ),
+                        binding.clone(),
+                    );
+                }
             }
 
             if let Some(material_index) = entity.gltf_material {
@@ -88,6 +100,10 @@ impl GltfMaterialRegistry {
         }
 
         registry
+    }
+
+    pub fn iter_bindings(&self) -> impl Iterator<Item = (&GltfMaterialKey, &MaterialBinding)> {
+        self.bindings.iter()
     }
 
     pub fn merge(
@@ -167,6 +183,10 @@ impl GltfMaterialRegistry {
     }
 
     fn lookup_binding(&self, key: &GltfMaterialKey) -> Option<&MaterialBinding> {
+        if let Some(binding) = self.bindings.get(key) {
+            return Some(binding);
+        }
+
         if let (Some(node), Some(primitive)) = (key.node, key.primitive) {
             let primitive_key =
                 GltfMaterialKey::new(key.source.clone(), Some(node), Some(primitive), None);
