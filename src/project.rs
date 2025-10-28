@@ -157,7 +157,12 @@ fn apply_material_record(
     project_root: &Path,
 ) {
     entity.material_data = Some(record.data.clone());
-    entity.material = record.handle.clone();
+
+    if let Some(handle) = record.handle.as_ref() {
+        if !handle.path().as_os_str().is_empty() {
+            entity.material = Some(handle.clone());
+        }
+    }
 
     if let Some(handle) = entity.material.as_ref() {
         let material_path = handle.path();
@@ -534,12 +539,47 @@ impl ProjectManifest {
             HashMap::new();
         let mut material_lookup_by_primitive: HashMap<MaterialPrimitiveKey, MaterialRecord> =
             HashMap::new();
+        let mut saved_material_lookup_by_material: HashMap<MaterialIndexKey, MaterialRecord> =
+            HashMap::new();
+        let mut saved_material_lookup_by_primitive: HashMap<MaterialPrimitiveKey, MaterialRecord> =
+            HashMap::new();
 
         let normalize_path = |path: &Path| -> PathBuf {
             let resolved = resolve_project_path(path);
             let canonical = std::fs::canonicalize(&resolved).unwrap_or(resolved);
             normalize_absolute_path(canonical)
         };
+
+        for entity in &self.scene.entities {
+            let Some(source) = entity.gltf_source.as_ref() else {
+                continue;
+            };
+            let Some(material_data) = entity.material_data.as_ref() else {
+                continue;
+            };
+
+            let normalized_source = normalize_path(source);
+            let record = MaterialRecord {
+                data: material_data.clone(),
+                handle: entity.material.clone(),
+            };
+
+            if let Some(gltf_material) = entity.gltf_material {
+                let key = MaterialIndexKey::new(normalized_source.clone(), gltf_material);
+                saved_material_lookup_by_material.insert(key, record.clone());
+            }
+
+            if let (Some(node_index), Some(primitive_index)) =
+                (entity.gltf_node, entity.gltf_primitive)
+            {
+                let key = MaterialPrimitiveKey::new(
+                    normalized_source.clone(),
+                    node_index,
+                    primitive_index,
+                );
+                saved_material_lookup_by_primitive.insert(key, record);
+            }
+        }
 
         for import in &self.imports {
             match SceneLoader::load_gltf_asset(&import.path, renderer, 1.0) {
@@ -564,19 +604,52 @@ impl ProjectManifest {
                         }
 
                         if let Some(material_data) = &entity.material_data {
-                            let mut resolved_data = material_data.clone();
+                            let fallback_record = lookup_material_record(
+                                normalized_source.as_path(),
+                                entity.gltf_node,
+                                entity.gltf_primitive,
+                                entity.gltf_material,
+                                &saved_material_lookup_by_primitive,
+                                &saved_material_lookup_by_material,
+                            )
+                            .cloned();
 
-                            if let Some(handle) = entity.material.as_ref() {
+                            let mut resolved_data = material_data.clone();
+                            let mut handle = entity.material.clone();
+                            let mut loaded_from_disk = false;
+
+                            if let Some(candidate_handle) = handle.as_ref() {
                                 if let Some(overridden) =
-                                    load_material_from_disk(handle, project_root)
+                                    load_material_from_disk(candidate_handle, project_root)
                                 {
                                     resolved_data = overridden;
+                                    loaded_from_disk = true;
+                                }
+                            }
+
+                            if !loaded_from_disk {
+                                if let Some(saved_record) = fallback_record {
+                                    let fallback_handle = saved_record.handle.clone();
+
+                                    if let Some(candidate_handle) = fallback_handle.as_ref() {
+                                        if let Some(overridden) =
+                                            load_material_from_disk(candidate_handle, project_root)
+                                        {
+                                            resolved_data = overridden;
+                                        } else {
+                                            resolved_data = saved_record.data;
+                                        }
+                                    } else {
+                                        resolved_data = saved_record.data;
+                                    }
+
+                                    handle = fallback_handle;
                                 }
                             }
 
                             let record = MaterialRecord {
                                 data: resolved_data,
-                                handle: entity.material.clone(),
+                                handle,
                             };
 
                             if let Some(gltf_material) = entity.gltf_material {
