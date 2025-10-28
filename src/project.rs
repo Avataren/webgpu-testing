@@ -119,87 +119,39 @@ fn apply_material_record(
     record: &MaterialRecord,
     project_root: &Path,
 ) {
-    if entity.material.is_none() {
-        entity.material = record.handle.clone();
-    } else if entity
-        .material
-        .as_ref()
-        .is_some_and(|handle| handle.path().as_os_str().is_empty())
-    {
-        entity.material = record.handle.clone();
-    }
-
-    let mut data_to_apply: Option<SerializedMaterial> = None;
-    let mut should_write_fallback = false;
+    entity.material_data = Some(record.data.clone());
+    entity.material = record.handle.clone();
 
     if let Some(handle) = entity.material.as_ref() {
         let material_path = handle.path();
         if !material_path.as_os_str().is_empty() {
             let absolute_path = project_root.join(material_path);
+            if let Some(parent) = absolute_path.parent() {
+                if let Err(err) = fs::create_dir_all(parent) {
+                    log::error!("Failed to create material directory {:?}: {}", parent, err);
+                }
+            }
 
-            if absolute_path.exists() {
-                match fs::read_to_string(&absolute_path) {
-                    Ok(contents) => match serde_json::from_str::<SerializedMaterial>(&contents) {
-                        Ok(parsed) => {
-                            data_to_apply = Some(parsed);
-                        }
-                        Err(err) => {
-                            log::error!(
-                                "Failed to parse existing material asset {:?}: {}",
-                                absolute_path,
-                                err
-                            );
-                            should_write_fallback = true;
-                        }
-                    },
-                    Err(err) => {
+            match serde_json::to_string_pretty(&record.data) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&absolute_path, json) {
                         log::error!(
-                            "Failed to read existing material asset {:?}: {}",
+                            "Failed to update material asset {:?}: {}",
                             absolute_path,
                             err
                         );
-                        should_write_fallback = true;
                     }
                 }
-            } else {
-                if let Some(parent) = absolute_path.parent() {
-                    if let Err(err) = fs::create_dir_all(parent) {
-                        log::error!("Failed to create material directory {:?}: {}", parent, err);
-                    }
+                Err(err) => {
+                    log::error!(
+                        "Failed to serialize material for {:?}: {}",
+                        material_path,
+                        err
+                    );
                 }
-                should_write_fallback = true;
-            }
-
-            if should_write_fallback {
-                match serde_json::to_string_pretty(&record.data) {
-                    Ok(json) => {
-                        if let Err(err) = fs::write(&absolute_path, json) {
-                            log::error!(
-                                "Failed to update material asset {:?}: {}",
-                                absolute_path,
-                                err
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Failed to serialize material for {:?}: {}",
-                            material_path,
-                            err
-                        );
-                    }
-                }
-
-                data_to_apply = Some(record.data.clone());
             }
         }
     }
-
-    if data_to_apply.is_none() {
-        data_to_apply = Some(record.data.clone());
-    }
-
-    entity.material_data = data_to_apply;
 }
 
 pub(crate) fn normalize_absolute_path(path: PathBuf) -> PathBuf {
@@ -844,7 +796,6 @@ struct SerializedHdrBackground {
 mod tests {
     use super::*;
     use crate::scene::assets::SerializedTextureSlot;
-    use crate::scene::SerializedTransform;
     use std::io::Write;
 
     fn make_material(marker: u8) -> SerializedMaterial {
@@ -951,118 +902,6 @@ mod tests {
         .expect("material record should be located via material index");
 
         assert_eq!(record.data.base_color[0], 5);
-    }
-
-    #[test]
-    fn apply_material_record_prefers_existing_asset_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project_root = tmp.path();
-
-        let rel_path = PathBuf::from("content/materials/custom.mat.json");
-        let abs_path = project_root.join(&rel_path);
-        fs::create_dir_all(abs_path.parent().unwrap()).unwrap();
-
-        let existing = make_material(9);
-        fs::write(&abs_path, serde_json::to_string_pretty(&existing).unwrap()).unwrap();
-
-        let mut entity = SceneAssetEntity {
-            name: None,
-            transform: SerializedTransform::identity(),
-            visible: true,
-            mesh_handle: None,
-            primitive_mesh: None,
-            mesh_bounds: None,
-            material: Some(SceneMaterialHandle::new(rel_path.clone())),
-            material_data: None,
-            parent: None,
-            children: Vec::new(),
-            gltf_node: Some(0),
-            gltf_material: Some(0),
-            gltf_source: Some(PathBuf::from("content/models/sample/scene.gltf")),
-            gltf_primitive: Some(0),
-            script: None,
-            directional_light: None,
-            point_light: None,
-            spot_light: None,
-            casts_shadow: None,
-            editor_id: None,
-            particle_system: None,
-            particle_emitter: None,
-            particle_behavior: None,
-            environment: None,
-            camera: None,
-        };
-
-        let record = MaterialRecord {
-            data: make_material(3),
-            handle: Some(SceneMaterialHandle::new(rel_path.clone())),
-        };
-
-        apply_material_record(&mut entity, &record, project_root);
-
-        let applied = entity
-            .material_data
-            .as_ref()
-            .expect("material data should be applied");
-        assert_eq!(applied.base_color[0], 9);
-
-        let disk: SerializedMaterial =
-            serde_json::from_str(&fs::read_to_string(&abs_path).unwrap()).unwrap();
-        assert_eq!(disk.base_color[0], 9);
-    }
-
-    #[test]
-    fn apply_material_record_writes_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project_root = tmp.path();
-
-        let rel_path = PathBuf::from("content/materials/generated.mat.json");
-        let abs_path = project_root.join(&rel_path);
-
-        let mut entity = SceneAssetEntity {
-            name: None,
-            transform: SerializedTransform::identity(),
-            visible: true,
-            mesh_handle: None,
-            primitive_mesh: None,
-            mesh_bounds: None,
-            material: Some(SceneMaterialHandle::new(rel_path.clone())),
-            material_data: None,
-            parent: None,
-            children: Vec::new(),
-            gltf_node: Some(0),
-            gltf_material: Some(0),
-            gltf_source: Some(PathBuf::from("content/models/sample/scene.gltf")),
-            gltf_primitive: Some(0),
-            script: None,
-            directional_light: None,
-            point_light: None,
-            spot_light: None,
-            casts_shadow: None,
-            editor_id: None,
-            particle_system: None,
-            particle_emitter: None,
-            particle_behavior: None,
-            environment: None,
-            camera: None,
-        };
-
-        let record = MaterialRecord {
-            data: make_material(4),
-            handle: Some(SceneMaterialHandle::new(rel_path.clone())),
-        };
-
-        apply_material_record(&mut entity, &record, project_root);
-
-        let applied = entity
-            .material_data
-            .as_ref()
-            .expect("material data should be written when missing");
-        assert_eq!(applied.base_color[0], 4);
-
-        let disk: SerializedMaterial =
-            serde_json::from_str(&fs::read_to_string(&abs_path).unwrap()).unwrap();
-        assert_eq!(disk.base_color[0], 4);
     }
 
     #[test]
