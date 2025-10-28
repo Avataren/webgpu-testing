@@ -1,9 +1,7 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::renderer::Renderer;
-use crate::scene::assets::SceneMaterialHandle;
-use crate::scene::{
-    Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader, SerializedMaterial,
-};
+use crate::scene::assets::{SceneAssetEntity, SceneMaterialHandle, SerializedMaterial};
+use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -54,6 +52,106 @@ pub fn resolve_project_path(path: impl AsRef<Path>) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+#[derive(Clone)]
+struct MaterialRecord {
+    data: SerializedMaterial,
+    handle: Option<SceneMaterialHandle>,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct MaterialPrimitiveKey {
+    source: PathBuf,
+    node: usize,
+    primitive: usize,
+}
+
+impl MaterialPrimitiveKey {
+    fn new(source: PathBuf, node: usize, primitive: usize) -> Self {
+        Self {
+            source,
+            node,
+            primitive,
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct MaterialIndexKey {
+    source: PathBuf,
+    material: usize,
+}
+
+impl MaterialIndexKey {
+    fn new(source: PathBuf, material: usize) -> Self {
+        Self { source, material }
+    }
+}
+
+fn lookup_material_record<'a>(
+    source: &Path,
+    node: Option<usize>,
+    primitive: Option<usize>,
+    material_index: Option<usize>,
+    primitive_lookup: &'a HashMap<MaterialPrimitiveKey, MaterialRecord>,
+    material_lookup: &'a HashMap<MaterialIndexKey, MaterialRecord>,
+) -> Option<&'a MaterialRecord> {
+    if let (Some(node), Some(primitive)) = (node, primitive) {
+        let key = MaterialPrimitiveKey::new(source.to_path_buf(), node, primitive);
+        if let Some(record) = primitive_lookup.get(&key) {
+            return Some(record);
+        }
+    }
+
+    if let Some(material_index) = material_index {
+        let key = MaterialIndexKey::new(source.to_path_buf(), material_index);
+        if let Some(record) = material_lookup.get(&key) {
+            return Some(record);
+        }
+    }
+
+    None
+}
+
+fn apply_material_record(
+    entity: &mut SceneAssetEntity,
+    record: &MaterialRecord,
+    project_root: &Path,
+) {
+    entity.material_data = Some(record.data.clone());
+    entity.material = record.handle.clone();
+
+    if let Some(handle) = entity.material.as_ref() {
+        let material_path = handle.path();
+        if !material_path.as_os_str().is_empty() {
+            let absolute_path = project_root.join(material_path);
+            if let Some(parent) = absolute_path.parent() {
+                if let Err(err) = fs::create_dir_all(parent) {
+                    log::error!("Failed to create material directory {:?}: {}", parent, err);
+                }
+            }
+
+            match serde_json::to_string_pretty(&record.data) {
+                Ok(json) => {
+                    if let Err(err) = fs::write(&absolute_path, json) {
+                        log::error!(
+                            "Failed to update material asset {:?}: {}",
+                            absolute_path,
+                            err
+                        );
+                    }
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to serialize material for {:?}: {}",
+                        material_path,
+                        err
+                    );
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn normalize_absolute_path(path: PathBuf) -> PathBuf {
@@ -379,10 +477,10 @@ impl ProjectManifest {
 
         let mut mesh_lookup: HashMap<(PathBuf, Option<usize>, Option<usize>), usize> =
             HashMap::new();
-        let mut material_lookup: HashMap<
-            (PathBuf, usize),
-            (SerializedMaterial, Option<SceneMaterialHandle>),
-        > = HashMap::new();
+        let mut material_lookup_by_material: HashMap<MaterialIndexKey, MaterialRecord> =
+            HashMap::new();
+        let mut material_lookup_by_primitive: HashMap<MaterialPrimitiveKey, MaterialRecord> =
+            HashMap::new();
 
         let normalize_path = |path: &Path| -> PathBuf {
             let resolved = resolve_project_path(path);
@@ -401,20 +499,38 @@ impl ProjectManifest {
                             continue;
                         };
 
+                        let normalized_source = normalize_path(source);
+
                         if let Some(mesh_handle) = entity.mesh_handle {
                             let key = (
-                                normalize_path(source),
+                                normalized_source.clone(),
                                 entity.gltf_node,
                                 entity.gltf_primitive,
                             );
                             mesh_lookup.insert(key, mesh_handle);
                         }
 
-                        if let Some(gltf_material) = entity.gltf_material {
-                            if let Some(material_data) = &entity.material_data {
-                                let key = (normalize_path(source), gltf_material);
-                                material_lookup
-                                    .insert(key, (material_data.clone(), entity.material.clone()));
+                        if let Some(material_data) = &entity.material_data {
+                            let record = MaterialRecord {
+                                data: material_data.clone(),
+                                handle: entity.material.clone(),
+                            };
+
+                            if let Some(gltf_material) = entity.gltf_material {
+                                let key =
+                                    MaterialIndexKey::new(normalized_source.clone(), gltf_material);
+                                material_lookup_by_material.insert(key, record.clone());
+                            }
+
+                            if let (Some(node_index), Some(primitive_index)) =
+                                (entity.gltf_node, entity.gltf_primitive)
+                            {
+                                let key = MaterialPrimitiveKey::new(
+                                    normalized_source.clone(),
+                                    node_index,
+                                    primitive_index,
+                                );
+                                material_lookup_by_primitive.insert(key, record);
                             }
                         }
                     }
@@ -453,48 +569,19 @@ impl ProjectManifest {
                 );
             }
 
-            if let Some(gltf_material) = entity.gltf_material {
-                if let Some((material_data, material_handle)) =
-                    material_lookup.get(&(normalized_source, gltf_material))
-                {
-                    entity.material_data = Some(material_data.clone());
-                    entity.material = material_handle.clone();
+            let material_record = lookup_material_record(
+                normalized_source.as_path(),
+                entity.gltf_node,
+                entity.gltf_primitive,
+                entity.gltf_material,
+                &material_lookup_by_primitive,
+                &material_lookup_by_material,
+            );
 
-                    if let Some(handle) = entity.material.as_ref() {
-                        let material_path = handle.path();
-                        if !material_path.as_os_str().is_empty() {
-                            let absolute_path = project_root.join(material_path);
-                            if let Some(parent) = absolute_path.parent() {
-                                if let Err(err) = fs::create_dir_all(parent) {
-                                    log::error!(
-                                        "Failed to create material directory {:?}: {}",
-                                        parent,
-                                        err
-                                    );
-                                }
-                            }
-
-                            match serde_json::to_string_pretty(&material_data) {
-                                Ok(json) => {
-                                    if let Err(err) = fs::write(&absolute_path, json) {
-                                        log::error!(
-                                            "Failed to update material asset {:?}: {}",
-                                            absolute_path,
-                                            err
-                                        );
-                                    }
-                                }
-                                Err(err) => {
-                                    log::error!(
-                                        "Failed to serialize material for {:?}: {}",
-                                        material_path,
-                                        err
-                                    );
-                                }
-                            }
-                        }
-                    }
-                } else if entity.material_data.is_some() {
+            if let Some(record) = material_record {
+                apply_material_record(entity, record, project_root);
+            } else if let Some(gltf_material) = entity.gltf_material {
+                if entity.material_data.is_some() {
                     log::warn!(
                         "Missing reimported material for {:?} (material index {})",
                         source,
@@ -708,7 +795,114 @@ struct SerializedHdrBackground {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::assets::SerializedTextureSlot;
     use std::io::Write;
+
+    fn make_material(marker: u8) -> SerializedMaterial {
+        SerializedMaterial {
+            base_color: [marker, 0, 0, 255],
+            flags: 0,
+            base_color_texture: SerializedTextureSlot {
+                path: None,
+                name: None,
+                index: None,
+            },
+            metallic_roughness_texture: SerializedTextureSlot {
+                path: None,
+                name: None,
+                index: None,
+            },
+            normal_texture: SerializedTextureSlot {
+                path: None,
+                name: None,
+                index: None,
+            },
+            emissive_texture: SerializedTextureSlot {
+                path: None,
+                name: None,
+                index: None,
+            },
+            occlusion_texture: SerializedTextureSlot {
+                path: None,
+                name: None,
+                index: None,
+            },
+            metallic_factor: 0,
+            roughness_factor: 0,
+            emissive_strength: 0,
+        }
+    }
+
+    #[test]
+    fn lookup_prefers_node_primitive_keys() {
+        let source = PathBuf::from("content/models/sample/scene.gltf");
+        let mut primitive_lookup = HashMap::new();
+        let mut material_lookup = HashMap::new();
+
+        let primitive_record = MaterialRecord {
+            data: make_material(1),
+            handle: Some(SceneMaterialHandle::new(PathBuf::from(
+                "materials/primitive.mat.json",
+            ))),
+        };
+
+        let material_record = MaterialRecord {
+            data: make_material(2),
+            handle: Some(SceneMaterialHandle::new(PathBuf::from(
+                "materials/material.mat.json",
+            ))),
+        };
+
+        primitive_lookup.insert(
+            MaterialPrimitiveKey::new(source.clone(), 4, 2),
+            primitive_record,
+        );
+        material_lookup.insert(
+            MaterialIndexKey::new(source.clone(), 7),
+            material_record.clone(),
+        );
+
+        let record = lookup_material_record(
+            source.as_path(),
+            Some(4),
+            Some(2),
+            Some(7),
+            &primitive_lookup,
+            &material_lookup,
+        )
+        .expect("material record should be found");
+
+        assert_eq!(record.data.base_color[0], 1);
+    }
+
+    #[test]
+    fn lookup_falls_back_to_material_index() {
+        let source = PathBuf::from("content/models/sample/scene.gltf");
+        let primitive_lookup = HashMap::new();
+        let mut material_lookup = HashMap::new();
+
+        material_lookup.insert(
+            MaterialIndexKey::new(source.clone(), 3),
+            MaterialRecord {
+                data: make_material(5),
+                handle: Some(SceneMaterialHandle::new(PathBuf::from(
+                    "materials/fallback.mat.json",
+                ))),
+            },
+        );
+
+        let record = lookup_material_record(
+            source.as_path(),
+            Some(1),
+            Some(0),
+            Some(3),
+            &primitive_lookup,
+            &material_lookup,
+        )
+        .expect("material record should be located via material index");
+
+        assert_eq!(record.data.base_color[0], 5);
+    }
 
     #[test]
     fn environment_roundtrip_preserves_hdr_path() {
