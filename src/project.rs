@@ -494,13 +494,9 @@ impl SerializedEnvironment {
 }
 
 fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<bool> {
-    let source_meta = match fs::metadata(source) {
-        Ok(meta) => meta,
-        Err(err) => return Err(err),
-    };
-
-    let target_meta = match fs::metadata(target) {
-        Ok(meta) => meta,
+    // Check if target exists first
+    match fs::metadata(target) {
+        Ok(_) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(err) => return Err(err),
     };
@@ -508,25 +504,17 @@ fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<boo
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+
+        let source_meta = fs::metadata(source)?;
+        let target_meta = fs::metadata(target)?;
+
         return Ok(source_meta.ino() == target_meta.ino() && source_meta.dev() == target_meta.dev());
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     {
-        use std::os::windows::fs::MetadataExt;
-        let source_index = ((source_meta.file_index_high() as u64) << 32)
-            | u64::from(source_meta.file_index_low());
-        let target_index = ((target_meta.file_index_high() as u64) << 32)
-            | u64::from(target_meta.file_index_low());
-
-        return Ok(
-            source_meta.volume_serial_number() == target_meta.volume_serial_number()
-                && source_index == target_index,
-        );
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
+        // For Windows and other platforms, use canonicalization
+        // This is the most reliable cross-platform approach using only stable APIs
         let source_path = std::fs::canonicalize(source)?;
         let target_path = std::fs::canonicalize(target)?;
         Ok(source_path == target_path)
