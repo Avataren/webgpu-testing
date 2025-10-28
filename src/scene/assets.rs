@@ -12,15 +12,23 @@ use super::components::{
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
-use crate::asset::{Assets, Handle, MaterialAsset, Mesh, MeshData};
+use crate::asset::{
+    Assets, Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh, MeshData,
+};
 use crate::project::{resolve_project_path, CONTENT_DIR};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
+use crate::renderer::texture::{
+    DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX, DEFAULT_NORMAL_TEXTURE_INDEX,
+    DEFAULT_WHITE_TEXTURE_INDEX,
+};
 use crate::renderer::{Material, Texture};
 use crate::scene::transform::Transform;
 use crate::scripting::{RuneScriptComponent, RuneScriptSource};
 use hecs::{Entity, World};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use serde::de::{self, MapAccess, Visitor};
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
@@ -340,14 +348,20 @@ impl SceneAsset {
             builder.add(Visible(entity.visible));
 
             if let Some(descriptor) = entity.primitive_mesh {
-                let handle = assets
-                    .primitive_mesh_handle(descriptor)
-                    .or_else(|| {
-                        renderer
-                            .as_deref_mut()
-                            .map(|device| assets.ensure_primitive_mesh(device, descriptor))
-                    })
-                    .or_else(|| entity.mesh_handle.map(Handle::new));
+                let mut handle = assets.primitive_mesh_handle(descriptor);
+
+                if handle.is_none() {
+                    let ensured = with_import_device(&mut renderer, |device| {
+                        device.map(|device| assets.ensure_primitive_mesh(device, descriptor))
+                    });
+                    if let Some(primitive) = ensured {
+                        handle = Some(primitive);
+                    }
+                }
+
+                if handle.is_none() {
+                    handle = entity.mesh_handle.map(Handle::new);
+                }
 
                 if let Some(handle) = handle {
                     builder.add(MeshComponent(handle));
@@ -372,6 +386,7 @@ impl SceneAsset {
                 entity.material_data.as_ref(),
                 entity.gltf_source.as_deref(),
                 entity.gltf_material,
+                &mut renderer,
                 assets,
                 &mut material_cache,
             );
@@ -572,11 +587,22 @@ fn canonicalize_material_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+fn with_import_device<R>(
+    renderer: &mut Option<&mut dyn SceneImportDevice>,
+    f: impl FnOnce(Option<&mut dyn SceneImportDevice>) -> R,
+) -> R {
+    match renderer.as_mut() {
+        Some(device) => f(Some(&mut **device)),
+        None => f(None),
+    }
+}
+
 fn resolve_material_handle(
     material_ref: Option<&SceneMaterialHandle>,
     material_data: Option<&SerializedMaterial>,
     gltf_source: Option<&Path>,
     gltf_material: Option<usize>,
+    renderer: &mut Option<&mut dyn SceneImportDevice>,
     assets: &mut Assets,
     cache: &mut HashMap<PathBuf, Handle<MaterialAsset>>,
 ) -> Option<Handle<MaterialAsset>> {
@@ -587,24 +613,28 @@ fn resolve_material_handle(
         let key = canonicalize_material_path(path);
 
         if let Some(&handle) = cache.get(&key) {
+            if let Some(serialized) = material_data {
+                with_import_device(renderer, |device| {
+                    apply_serialized_material_to_handle(assets, handle, serialized, device)
+                });
+            } else {
+                with_import_device(renderer, |device| {
+                    ensure_asset_textures_from_metadata(assets, handle, device)
+                });
+            }
             return Some(handle);
         }
 
         if let Some(handle) = assets.material_handle_for_path(path) {
             if let Some(serialized) = material_data {
-                let desired: Material = serialized.clone().into();
-                let needs_update = assets
-                    .material(handle)
-                    .map(|asset| asset.material() != &desired)
-                    .unwrap_or(true);
-
-                if needs_update {
-                    if let Some(asset) = assets.material_mut(handle) {
-                        *asset.material_mut() = desired;
-                    }
-                }
+                with_import_device(renderer, |device| {
+                    apply_serialized_material_to_handle(assets, handle, serialized, device)
+                });
+            } else {
+                with_import_device(renderer, |device| {
+                    ensure_asset_textures_from_metadata(assets, handle, device)
+                });
             }
-
             cache.insert(key, handle);
             return Some(handle);
         }
@@ -615,9 +645,13 @@ fn resolve_material_handle(
             match assets.get_or_load_material(path, load_material_asset_from_file) {
                 Ok(handle) => {
                     if let Some(serialized) = material_data {
-                        if let Some(asset) = assets.material_mut(handle) {
-                            *asset.material_mut() = serialized.clone().into();
-                        }
+                        with_import_device(renderer, |device| {
+                            apply_serialized_material_to_handle(assets, handle, serialized, device)
+                        });
+                    } else {
+                        with_import_device(renderer, |device| {
+                            ensure_asset_textures_from_metadata(assets, handle, device)
+                        });
                     }
 
                     let key = canonicalize_material_path(path);
@@ -632,16 +666,38 @@ fn resolve_material_handle(
     }
 
     if let Some(serialized) = material_data {
-        let material: Material = serialized.clone().into();
-
         if let Some(path) = canonical_path.clone() {
             let key = canonicalize_material_path(&path);
-            let handle = assets.insert_material_asset(MaterialAsset::from_material(material, path));
+            let mut asset = MaterialAsset::from_material(Material::from(serialized.clone()), path);
+            let (material, references) = with_import_device(renderer, |device| {
+                serialized.resolve_material(assets, device)
+            });
+            for (slot, reference) in references {
+                if let Some(reference) = reference {
+                    asset.set_texture_reference(slot, reference);
+                } else {
+                    asset.clear_texture_reference(slot);
+                }
+            }
+            *asset.material_mut() = material;
+            let handle = assets.insert_material_asset(asset);
             cache.insert(key, handle);
             return Some(handle);
         } else {
-            let handle = assets
-                .insert_material_asset(MaterialAsset::from_material(material, PathBuf::new()));
+            let mut asset =
+                MaterialAsset::from_material(Material::from(serialized.clone()), PathBuf::new());
+            let (material, references) = with_import_device(renderer, |device| {
+                serialized.resolve_material(assets, device)
+            });
+            for (slot, reference) in references {
+                if let Some(reference) = reference {
+                    asset.set_texture_reference(slot, reference);
+                } else {
+                    asset.clear_texture_reference(slot);
+                }
+            }
+            *asset.material_mut() = material;
+            let handle = assets.insert_material_asset(asset);
             return Some(handle);
         }
     }
@@ -653,7 +709,54 @@ fn resolve_material_handle(
         );
     }
 
-    Some(assets.default_material_handle())
+    let handle = assets.default_material_handle();
+    with_import_device(renderer, |device| {
+        ensure_asset_textures_from_metadata(assets, handle, device)
+    });
+    Some(handle)
+}
+
+fn update_material_asset_from_references(
+    assets: &mut Assets,
+    handle: Handle<MaterialAsset>,
+    material: Material,
+    references: Vec<(MaterialTextureSlot, Option<MaterialTextureReference>)>,
+) {
+    if let Some(asset) = assets.material_mut(handle) {
+        *asset.material_mut() = material;
+        for (slot, reference) in references {
+            if let Some(reference) = reference {
+                asset.set_texture_reference(slot, reference);
+            } else {
+                asset.clear_texture_reference(slot);
+            }
+        }
+    }
+}
+
+fn apply_serialized_material_to_handle(
+    assets: &mut Assets,
+    handle: Handle<MaterialAsset>,
+    serialized: &SerializedMaterial,
+    renderer: Option<&mut dyn SceneImportDevice>,
+) {
+    let (material, references) = serialized.resolve_material(assets, renderer);
+    update_material_asset_from_references(assets, handle, material, references);
+}
+
+fn ensure_asset_textures_from_metadata(
+    assets: &mut Assets,
+    handle: Handle<MaterialAsset>,
+    renderer: Option<&mut dyn SceneImportDevice>,
+) {
+    let serialized = if let Some(asset) = assets.material(handle) {
+        SerializedMaterial::from_material_asset(asset)
+    } else {
+        return;
+    };
+
+    let (material, references) = serialized.resolve_material(assets, renderer);
+    update_material_asset_from_references(assets, handle, material, references);
 }
 
 impl SceneAssetResources {
@@ -834,7 +937,7 @@ impl SceneAssetBundle {
             }
             if let Some(material) = &entity.material_data {
                 log::info!(
-                    "Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}",
+                    "Entity {}: base_color_texture={:?}, metallic_roughness_texture={:?}, normal_texture={:?}",
                     i,
                     material.base_color_texture,
                     material.metallic_roughness_texture,
@@ -855,7 +958,7 @@ impl SceneAssetBundle {
             }
             if let Some(material) = &entity.material_data {
                 log::info!(
-                    "Entity {}: base_color_texture={}, metallic_roughness_texture={}, normal_texture={}",
+                    "Entity {}: base_color_texture={:?}, metallic_roughness_texture={:?}, normal_texture={:?}",
                     i,
                     material.base_color_texture,
                     material.metallic_roughness_texture,
@@ -869,7 +972,7 @@ impl SceneAssetBundle {
             if let Some(mesh) = entity.mesh_handle {
                 if let Some(mat) = &entity.material_data {
                     log::info!(
-                        "Entity {}: mesh={}, base_texture={}, metallic_texture={}, normal_texture={}, gltf_mat_idx={:?}",
+                        "Entity {}: mesh={}, base_texture={:?}, metallic_texture={:?}, normal_texture={:?}, gltf_mat_idx={:?}",
                         i,
                         mesh,
                         mat.base_color_texture,
@@ -1016,14 +1119,14 @@ struct SceneAssetEntityData {
 #[serde(untagged)]
 enum SceneMaterialField {
     Handle(SceneMaterialHandle),
-    Legacy(SerializedMaterial),
+    Legacy(Box<SerializedMaterial>),
 }
 
 impl From<SceneAssetEntityData> for SceneAssetEntity {
     fn from(data: SceneAssetEntityData) -> Self {
         let (material, material_data) = match data.material {
             Some(SceneMaterialField::Handle(handle)) => (Some(handle), None),
-            Some(SceneMaterialField::Legacy(legacy)) => (None, Some(legacy)),
+            Some(SceneMaterialField::Legacy(legacy)) => (None, Some(*legacy)),
             None => (None, None),
         };
 
@@ -1059,7 +1162,16 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
 
 impl From<SceneAssetEntity> for SceneAssetEntityData {
     fn from(entity: SceneAssetEntity) -> Self {
-        let material = entity.material.clone().map(SceneMaterialField::Handle);
+        let material = entity
+            .material
+            .clone()
+            .map(SceneMaterialField::Handle)
+            .or_else(|| {
+                entity
+                    .material_data
+                    .clone()
+                    .map(|data| SceneMaterialField::Legacy(Box::new(data)))
+            });
 
         SceneAssetEntityData {
             name: entity.name,
@@ -1095,10 +1207,10 @@ fn load_material_asset_from_file(path: &Path) -> Result<MaterialAsset, String> {
         .map_err(|err| format!("failed to read material asset {:?}: {}", path, err))?;
     let serialized: SerializedMaterial = serde_json::from_str(&data)
         .map_err(|err| format!("failed to parse material asset {:?}: {}", path, err))?;
-    Ok(MaterialAsset::from_material(
-        serialized.into(),
-        path.to_path_buf(),
-    ))
+    let mut asset =
+        MaterialAsset::from_material(Material::from(serialized.clone()), path.to_path_buf());
+    serialized.apply_metadata_to_asset(&mut asset);
+    Ok(asset)
 }
 
 fn normalize_material_path(project_root: &Path, path: &Path) -> PathBuf {
@@ -1228,7 +1340,7 @@ impl SceneAssetEntity {
             .ok()
             .and_then(|component| assets.material(component.0))
             .map(|asset| {
-                let serialized = SerializedMaterial::from(*asset.material());
+                let serialized = SerializedMaterial::from_material_asset(asset);
                 let handle = if asset.canonical_path().as_os_str().is_empty() {
                     None
                 } else {
@@ -1826,15 +1938,186 @@ impl From<SerializedSpotLight> for SpotLight {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SerializedTextureSlot {
+    pub path: Option<PathBuf>,
+    pub name: Option<String>,
+    pub index: Option<u32>,
+}
+
+impl SerializedTextureSlot {
+    fn from_index(index: u32) -> Self {
+        Self {
+            path: None,
+            name: None,
+            index: Some(index),
+        }
+    }
+
+    fn remap(&mut self, mapping: &std::collections::HashMap<u32, u32>) {
+        if let Some(index) = self.index {
+            if let Some(&mapped) = mapping.get(&index) {
+                self.index = Some(mapped);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.path.is_none() && self.name.is_none() && self.index.is_none()
+    }
+}
+
+impl Serialize for SerializedTextureSlot {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.path.is_none() && self.name.is_none() {
+            if let Some(index) = self.index {
+                serializer.serialize_u32(index)
+            } else {
+                serializer.serialize_none()
+            }
+        } else {
+            let mut entries = 0;
+            if self.path.is_some() {
+                entries += 1;
+            }
+            if self.name.is_some() {
+                entries += 1;
+            }
+            if self.path.is_none() && self.index.is_some() {
+                entries += 1;
+            }
+
+            let mut map = serializer.serialize_map(Some(entries))?;
+            if let Some(path) = &self.path {
+                map.serialize_entry("path", &path.to_string_lossy().to_string())?;
+            }
+            if let Some(name) = &self.name {
+                map.serialize_entry("name", name)?;
+            }
+            if self.path.is_none() {
+                if let Some(index) = self.index {
+                    map.serialize_entry("index", &index)?;
+                }
+            }
+            map.end()
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SerializedTextureSlot {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SlotVisitor;
+
+        impl<'de> Visitor<'de> for SlotVisitor {
+            type Value = SerializedTextureSlot;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a texture index or metadata map")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(SerializedTextureSlot::from_index(value as u32))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                if value < 0 {
+                    return Err(E::custom("negative texture index"));
+                }
+                Ok(SerializedTextureSlot::from_index(value as u32))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(SerializedTextureSlot {
+                    path: Some(PathBuf::from(value)),
+                    name: None,
+                    index: None,
+                })
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_str(&value)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(SerializedTextureSlot::default())
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(SerializedTextureSlot::default())
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut path: Option<PathBuf> = None;
+                let mut name: Option<String> = None;
+                let mut index: Option<u32> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "path" => {
+                            let value: String = map.next_value()?;
+                            path = Some(PathBuf::from(value));
+                        }
+                        "name" => {
+                            name = Some(map.next_value()?);
+                        }
+                        "index" => {
+                            index = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: serde_json::Value = map.next_value()?;
+                        }
+                    }
+                }
+
+                Ok(SerializedTextureSlot { path, name, index })
+            }
+        }
+
+        deserializer.deserialize_any(SlotVisitor)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedMaterial {
     pub base_color: [u8; 4],
     pub flags: u32,
-    pub base_color_texture: u32,
-    pub metallic_roughness_texture: u32,
-    pub normal_texture: u32,
-    pub emissive_texture: u32,
-    pub occlusion_texture: u32,
+    #[serde(default, skip_serializing_if = "SerializedTextureSlot::is_empty")]
+    pub base_color_texture: SerializedTextureSlot,
+    #[serde(default, skip_serializing_if = "SerializedTextureSlot::is_empty")]
+    pub metallic_roughness_texture: SerializedTextureSlot,
+    #[serde(default, skip_serializing_if = "SerializedTextureSlot::is_empty")]
+    pub normal_texture: SerializedTextureSlot,
+    #[serde(default, skip_serializing_if = "SerializedTextureSlot::is_empty")]
+    pub emissive_texture: SerializedTextureSlot,
+    #[serde(default, skip_serializing_if = "SerializedTextureSlot::is_empty")]
+    pub occlusion_texture: SerializedTextureSlot,
     pub metallic_factor: u8,
     pub roughness_factor: u8,
     pub emissive_strength: u8,
@@ -1845,11 +2128,13 @@ impl From<Material> for SerializedMaterial {
         Self {
             base_color: material.base_color,
             flags: material.flags.bits(),
-            base_color_texture: material.base_color_texture,
-            metallic_roughness_texture: material.metallic_roughness_texture,
-            normal_texture: material.normal_texture,
-            emissive_texture: material.emissive_texture,
-            occlusion_texture: material.occlusion_texture,
+            base_color_texture: SerializedTextureSlot::from_index(material.base_color_texture),
+            metallic_roughness_texture: SerializedTextureSlot::from_index(
+                material.metallic_roughness_texture,
+            ),
+            normal_texture: SerializedTextureSlot::from_index(material.normal_texture),
+            emissive_texture: SerializedTextureSlot::from_index(material.emissive_texture),
+            occlusion_texture: SerializedTextureSlot::from_index(material.occlusion_texture),
             metallic_factor: material.metallic_factor,
             roughness_factor: material.roughness_factor,
             emissive_strength: material.emissive_strength,
@@ -1859,20 +2144,123 @@ impl From<Material> for SerializedMaterial {
 
 impl SerializedMaterial {
     fn remap_textures(&mut self, mapping: &std::collections::HashMap<u32, u32>) {
-        if let Some(&mapped) = mapping.get(&self.base_color_texture) {
-            self.base_color_texture = mapped;
+        self.base_color_texture.remap(mapping);
+        self.metallic_roughness_texture.remap(mapping);
+        self.normal_texture.remap(mapping);
+        self.emissive_texture.remap(mapping);
+        self.occlusion_texture.remap(mapping);
+    }
+
+    fn texture_slot(&self, slot: MaterialTextureSlot) -> &SerializedTextureSlot {
+        match slot {
+            MaterialTextureSlot::BaseColor => &self.base_color_texture,
+            MaterialTextureSlot::MetallicRoughness => &self.metallic_roughness_texture,
+            MaterialTextureSlot::Normal => &self.normal_texture,
+            MaterialTextureSlot::Emissive => &self.emissive_texture,
+            MaterialTextureSlot::Occlusion => &self.occlusion_texture,
         }
-        if let Some(&mapped) = mapping.get(&self.metallic_roughness_texture) {
-            self.metallic_roughness_texture = mapped;
+    }
+
+    fn texture_slot_mut(&mut self, slot: MaterialTextureSlot) -> &mut SerializedTextureSlot {
+        match slot {
+            MaterialTextureSlot::BaseColor => &mut self.base_color_texture,
+            MaterialTextureSlot::MetallicRoughness => &mut self.metallic_roughness_texture,
+            MaterialTextureSlot::Normal => &mut self.normal_texture,
+            MaterialTextureSlot::Emissive => &mut self.emissive_texture,
+            MaterialTextureSlot::Occlusion => &mut self.occlusion_texture,
         }
-        if let Some(&mapped) = mapping.get(&self.normal_texture) {
-            self.normal_texture = mapped;
+    }
+
+    pub fn from_material_asset(asset: &MaterialAsset) -> Self {
+        let mut serialized = SerializedMaterial::from(*asset.material());
+
+        for slot in MaterialTextureSlot::all() {
+            if let Some(reference) = asset.texture_reference(slot) {
+                let slot_mut = serialized.texture_slot_mut(slot);
+                if let Some(path) = reference.canonical_path() {
+                    slot_mut.path = Some(path.to_path_buf());
+                }
+                if let Some(name) = reference.display_name() {
+                    slot_mut.name = Some(name.to_string());
+                }
+            }
         }
-        if let Some(&mapped) = mapping.get(&self.emissive_texture) {
-            self.emissive_texture = mapped;
+
+        serialized
+    }
+
+    pub fn resolve_material(
+        &self,
+        assets: &mut Assets,
+        mut renderer: Option<&mut dyn SceneImportDevice>,
+    ) -> (
+        Material,
+        Vec<(MaterialTextureSlot, Option<MaterialTextureReference>)>,
+    ) {
+        let mut material = Material::from(self.clone());
+        let mut references = Vec::new();
+
+        for slot in MaterialTextureSlot::all() {
+            let slot_data = self.texture_slot(slot);
+            let mut resolved_path = slot_data.path.as_ref().map(resolve_project_path);
+
+            let texture_index = if let Some(resolved) = resolved_path.as_deref() {
+                with_import_device(&mut renderer, |device| {
+                    assets.resolve_texture_index(slot, Some(resolved), device, false)
+                })
+            } else if let Some(index) = slot_data.index {
+                index
+            } else {
+                Assets::default_texture_index(slot)
+            };
+
+            match slot {
+                MaterialTextureSlot::BaseColor => material.base_color_texture = texture_index,
+                MaterialTextureSlot::MetallicRoughness => {
+                    material.metallic_roughness_texture = texture_index
+                }
+                MaterialTextureSlot::Normal => material.normal_texture = texture_index,
+                MaterialTextureSlot::Emissive => material.emissive_texture = texture_index,
+                MaterialTextureSlot::Occlusion => material.occlusion_texture = texture_index,
+            }
+
+            let reference = if let Some(path_buf) = resolved_path.take() {
+                let canonical = path_buf.canonicalize().unwrap_or_else(|_| path_buf.clone());
+                Some(MaterialTextureReference::new(
+                    Some(canonical),
+                    slot_data.name.clone(),
+                ))
+            } else if slot_data.name.is_some() {
+                let mut reference = MaterialTextureReference::default();
+                reference.set_display_name(slot_data.name.clone());
+                Some(reference)
+            } else {
+                None
+            };
+
+            references.push((slot, reference));
         }
-        if let Some(&mapped) = mapping.get(&self.occlusion_texture) {
-            self.occlusion_texture = mapped;
+
+        (material, references)
+    }
+
+    pub fn apply_metadata_to_asset(&self, asset: &mut MaterialAsset) {
+        for slot in MaterialTextureSlot::all() {
+            let slot_data = self.texture_slot(slot);
+            if let Some(path) = slot_data.path.as_ref() {
+                let resolved = resolve_project_path(path);
+                let canonical = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
+                asset.set_texture_reference(
+                    slot,
+                    MaterialTextureReference::new(Some(canonical), slot_data.name.clone()),
+                );
+            } else if slot_data.name.is_some() {
+                let mut reference = MaterialTextureReference::default();
+                reference.set_display_name(slot_data.name.clone());
+                asset.set_texture_reference(slot, reference);
+            } else {
+                asset.clear_texture_reference(slot);
+            }
         }
     }
 }
@@ -1882,11 +2270,26 @@ impl From<SerializedMaterial> for Material {
         Material {
             base_color: serialized.base_color,
             flags: MaterialFlags::from_bits(serialized.flags),
-            base_color_texture: serialized.base_color_texture,
-            metallic_roughness_texture: serialized.metallic_roughness_texture,
-            normal_texture: serialized.normal_texture,
-            emissive_texture: serialized.emissive_texture,
-            occlusion_texture: serialized.occlusion_texture,
+            base_color_texture: serialized
+                .base_color_texture
+                .index
+                .unwrap_or(DEFAULT_WHITE_TEXTURE_INDEX),
+            metallic_roughness_texture: serialized
+                .metallic_roughness_texture
+                .index
+                .unwrap_or(DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX),
+            normal_texture: serialized
+                .normal_texture
+                .index
+                .unwrap_or(DEFAULT_NORMAL_TEXTURE_INDEX),
+            emissive_texture: serialized
+                .emissive_texture
+                .index
+                .unwrap_or(DEFAULT_WHITE_TEXTURE_INDEX),
+            occlusion_texture: serialized
+                .occlusion_texture
+                .index
+                .unwrap_or(DEFAULT_WHITE_TEXTURE_INDEX),
             metallic_factor: serialized.metallic_factor,
             roughness_factor: serialized.roughness_factor,
             emissive_strength: serialized.emissive_strength,
@@ -2133,11 +2536,11 @@ mod tests {
         SerializedMaterial {
             base_color: [255, 255, 255, 255],
             flags: flags.bits(),
-            base_color_texture: base_texture,
-            metallic_roughness_texture: 0,
-            normal_texture: 0,
-            emissive_texture: 0,
-            occlusion_texture: 0,
+            base_color_texture: SerializedTextureSlot::from_index(base_texture),
+            metallic_roughness_texture: SerializedTextureSlot::from_index(0),
+            normal_texture: SerializedTextureSlot::from_index(0),
+            emissive_texture: SerializedTextureSlot::from_index(0),
+            occlusion_texture: SerializedTextureSlot::from_index(0),
             metallic_factor: 0,
             roughness_factor: 0,
             emissive_strength: 0,
@@ -2208,7 +2611,7 @@ mod tests {
             .material_data
             .as_ref()
             .expect("material present");
-        assert_eq!(material.base_color_texture, 0);
+        assert_eq!(material.base_color_texture.index, Some(0));
 
         let mut to_global = std::collections::HashMap::new();
         to_global.insert(0, 42);
@@ -2218,6 +2621,6 @@ mod tests {
             .material_data
             .as_ref()
             .expect("material present");
-        assert_eq!(material.base_color_texture, 42);
+        assert_eq!(material.base_color_texture.index, Some(42));
     }
 }
