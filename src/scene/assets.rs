@@ -15,7 +15,10 @@ use super::loader::SceneImportDevice;
 use crate::asset::{
     Assets, Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh, MeshData,
 };
-use crate::project::{resolve_project_path, CONTENT_DIR};
+use crate::project::{
+    active_project_root, normalize_absolute_path, relativize_path_to_project, resolve_project_path,
+    CONTENT_DIR,
+};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::texture::{
@@ -333,11 +336,21 @@ impl SceneAsset {
         let mut written: HashSet<PathBuf> = HashSet::new();
         let mut material_cache: HashMap<(PathBuf, usize), PathBuf> = HashMap::new();
         let mut meta_updates: HashMap<PathBuf, BTreeMap<String, ImportedGltfMeta>> = HashMap::new();
+        let canonical_project_root = std::fs::canonicalize(project_root)
+            .map(|root| normalize_absolute_path(root))
+            .ok();
+        let canonical_project_root_ref = canonical_project_root.as_deref();
 
         for entity in &mut self.entities {
-            let Some(material_data) = entity.material_data.clone() else {
+            let Some(mut material_data) = entity.material_data.take() else {
                 continue;
             };
+
+            relativize_material_texture_paths(
+                &mut material_data,
+                project_root,
+                canonical_project_root_ref,
+            );
 
             let gltf_cache_key = entity.gltf_source.as_ref().and_then(|source| {
                 entity.gltf_material.map(|material_index| {
@@ -437,6 +450,8 @@ impl SceneAsset {
                     }
                 }
             }
+
+            entity.material_data = Some(material_data);
         }
 
         for (meta_dir, sources) in meta_updates {
@@ -1376,6 +1391,21 @@ fn normalize_material_path(project_root: &Path, path: &Path) -> PathBuf {
         }
     } else {
         path.to_path_buf()
+    }
+}
+
+fn relativize_material_texture_paths(
+    material: &mut SerializedMaterial,
+    project_root: &Path,
+    canonical_project_root: Option<&Path>,
+) {
+    for slot in MaterialTextureSlot::all() {
+        let slot_data = material.texture_slot_mut(slot);
+        if let Some(path) = slot_data.path.as_mut() {
+            let relative =
+                relativize_path_to_project(path.clone(), project_root, canonical_project_root);
+            *path = relative;
+        }
     }
 }
 
@@ -2413,12 +2443,25 @@ impl SerializedMaterial {
 
     pub fn from_material_asset(asset: &MaterialAsset) -> Self {
         let mut serialized = SerializedMaterial::from(*asset.material());
+        let project_root = active_project_root();
+        let canonical_project_root = project_root
+            .as_ref()
+            .and_then(|root| std::fs::canonicalize(root).ok())
+            .map(normalize_absolute_path);
 
         for slot in MaterialTextureSlot::all() {
             if let Some(reference) = asset.texture_reference(slot) {
                 let slot_mut = serialized.texture_slot_mut(slot);
                 if let Some(path) = reference.canonical_path() {
-                    slot_mut.path = Some(path.to_path_buf());
+                    let mut stored_path = path.to_path_buf();
+                    if let Some(root) = project_root.as_deref() {
+                        stored_path = relativize_path_to_project(
+                            stored_path,
+                            root,
+                            canonical_project_root.as_deref(),
+                        );
+                    }
+                    slot_mut.path = Some(stored_path);
                 }
                 if let Some(name) = reference.display_name() {
                     slot_mut.name = Some(name.to_string());
@@ -2772,6 +2815,7 @@ mod tests {
     use super::*;
     use glam::Vec3;
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -2933,6 +2977,111 @@ mod tests {
             meta.materials.get(&0),
             Some(&material_handle.path().to_path_buf()),
             "meta should point at generated material path"
+        );
+    }
+
+    #[test]
+    fn persist_material_assets_serializes_relative_texture_paths() {
+        let project_dir = tempdir().unwrap();
+        let project_root = project_dir.path();
+
+        let texture_dir = project_root.join(CONTENT_DIR).join("textures");
+        fs::create_dir_all(&texture_dir).unwrap();
+        let texture_path = texture_dir.join("albedo.png");
+        fs::write(&texture_path, b"dummy").unwrap();
+
+        let mut material = make_material(MaterialFlags::USE_BASE_COLOR_TEXTURE, 0);
+        material.base_color_texture.path = Some(texture_path.clone());
+        material
+            .base_color_texture
+            .name
+            .get_or_insert_with(|| "albedo.png".to_string());
+
+        let mut asset = SceneAsset {
+            name: "Test".into(),
+            root_transform: SerializedTransform::identity(),
+            entities: vec![SceneAssetEntity {
+                name: Some("Entity".into()),
+                transform: SerializedTransform::identity(),
+                visible: true,
+                mesh_handle: None,
+                primitive_mesh: None,
+                mesh_bounds: None,
+                material: None,
+                material_data: Some(material),
+                parent: None,
+                children: Vec::new(),
+                gltf_node: None,
+                gltf_material: Some(0),
+                gltf_source: Some(PathBuf::from("content/models/sample/scene.gltf")),
+                gltf_primitive: None,
+                script: None,
+                directional_light: None,
+                point_light: None,
+                spot_light: None,
+                casts_shadow: None,
+                editor_id: None,
+                particle_system: None,
+                particle_emitter: None,
+                particle_behavior: None,
+                environment: None,
+                camera: None,
+            }],
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        asset.persist_material_assets(project_root).unwrap();
+
+        let entity = &asset.entities[0];
+        let expected_rel = PathBuf::from(CONTENT_DIR)
+            .join("textures")
+            .join("albedo.png");
+
+        let stored_material = entity
+            .material_data
+            .as_ref()
+            .expect("material data should be restored");
+        assert_eq!(
+            stored_material
+                .base_color_texture
+                .path
+                .as_ref()
+                .expect("path should be present"),
+            &expected_rel
+        );
+        assert!(
+            stored_material
+                .base_color_texture
+                .path
+                .as_ref()
+                .unwrap()
+                .is_relative(),
+            "stored material data should be relative"
+        );
+
+        let material_handle = entity.material.as_ref().expect("material handle assigned");
+        let abs_material_path = project_root.join(material_handle.path());
+        let contents = fs::read_to_string(abs_material_path).unwrap();
+        let parsed: SerializedMaterial = serde_json::from_str(&contents).unwrap();
+        assert_eq!(
+            parsed
+                .base_color_texture
+                .path
+                .as_ref()
+                .expect("serialized material should contain texture path"),
+            &expected_rel
+        );
+        assert!(
+            parsed
+                .base_color_texture
+                .path
+                .as_ref()
+                .unwrap()
+                .is_relative(),
+            "material file should contain relative texture path"
         );
     }
 

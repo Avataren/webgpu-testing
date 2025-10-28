@@ -21,13 +21,19 @@ fn active_project_root_cell() -> &'static RwLock<Option<PathBuf>> {
     ACTIVE_PROJECT_ROOT.get_or_init(|| RwLock::new(None))
 }
 
+#[cfg(windows)]
+const VERBATIM_PREFIX: &str = r"\\?\";
+#[cfg(windows)]
+const VERBATIM_UNC_PREFIX: &str = r"\\?\UNC\";
+
 /// Sets the active project root used to resolve relative asset paths at runtime.
 ///
 /// Passing `None` clears the project root, causing relative paths to resolve
 /// against the current working directory instead.
 pub fn set_active_project_root(root: Option<PathBuf>) {
     let cell = active_project_root_cell();
-    *cell.write().expect("project root lock poisoned") = root;
+    let normalized = root.map(normalize_absolute_path);
+    *cell.write().expect("project root lock poisoned") = normalized;
 }
 
 /// Returns the active project root if one has been configured.
@@ -48,6 +54,93 @@ pub fn resolve_project_path(path: impl AsRef<Path>) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+pub(crate) fn normalize_absolute_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::borrow::Cow;
+
+        match path.as_os_str().to_string_lossy() {
+            Cow::Owned(s) => strip_verbatim_prefix(&s),
+            Cow::Borrowed(s) => strip_verbatim_prefix(s),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        path
+    }
+}
+
+pub(crate) fn relativize_path_to_project(
+    path: PathBuf,
+    project_root: &Path,
+    canonical_project_root: Option<&Path>,
+) -> PathBuf {
+    if path.is_relative() {
+        return path;
+    }
+
+    let normalized_path = normalize_absolute_path(path);
+    let normalized_project_root = normalize_absolute_path(project_root.to_path_buf());
+
+    let mut candidate_roots: Vec<PathBuf> = vec![normalized_project_root.clone()];
+
+    if let Some(root) = canonical_project_root {
+        candidate_roots.push(normalize_absolute_path(root.to_path_buf()));
+    } else if let Ok(canonical) = std::fs::canonicalize(&normalized_project_root) {
+        candidate_roots.push(normalize_absolute_path(canonical));
+    }
+
+    candidate_roots.dedup();
+
+    for root in &candidate_roots {
+        if let Ok(stripped) = normalized_path.strip_prefix(root) {
+            return stripped.to_path_buf();
+        }
+    }
+
+    let canonicalized_path = std::fs::canonicalize(&normalized_path)
+        .map(normalize_absolute_path)
+        .ok();
+
+    if let Some(ref canonical_path) = canonicalized_path {
+        for root in &candidate_roots {
+            if let Ok(stripped) = canonical_path.strip_prefix(root) {
+                return stripped.to_path_buf();
+            }
+        }
+        return canonical_path.clone();
+    }
+
+    normalized_path
+}
+
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix(VERBATIM_UNC_PREFIX) {
+        let mut parts = stripped.splitn(3, '\\');
+        let server = parts.next().unwrap_or_default();
+        let share = parts.next().unwrap_or_default();
+        let rest = parts.next().unwrap_or_default();
+
+        let mut rebuilt = String::from(r"\\");
+        rebuilt.push_str(server);
+        if !share.is_empty() {
+            rebuilt.push('\\');
+            rebuilt.push_str(share);
+        }
+        if !rest.is_empty() {
+            rebuilt.push('\\');
+            rebuilt.push_str(rest);
+        }
+        PathBuf::from(rebuilt)
+    } else if let Some(stripped) = path.strip_prefix(VERBATIM_PREFIX) {
+        PathBuf::from(stripped)
+    } else {
+        PathBuf::from(path)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -123,19 +216,57 @@ impl ProjectManifest {
             .ok_or(ProjectError::EmptyScene)?;
         let environment = SerializedEnvironment::from_environment(scene.environment());
         let mut imports_set: BTreeSet<PathBuf> = BTreeSet::new();
+        let mut canonical_imports: HashSet<PathBuf> = HashSet::new();
         let mut referenced_mesh_indices: HashSet<usize> = HashSet::new();
+        let project_root = active_project_root();
+        let canonical_project_root = project_root
+            .as_ref()
+            .and_then(|root| std::fs::canonicalize(root).ok());
 
         for entity in &mut asset.entities {
             if let Some(source) = entity.gltf_source.clone() {
-                let normalized = if source.is_absolute() {
+                let canonical_abs = if source.is_absolute() {
                     std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone())
                 } else {
                     let resolved = resolve_project_path(&source);
                     std::fs::canonicalize(&resolved).unwrap_or(resolved)
                 };
 
-                entity.gltf_source = Some(normalized.clone());
-                imports_set.insert(normalized);
+                let manifest_path = canonical_project_root
+                    .as_ref()
+                    .and_then(|root| {
+                        canonical_abs
+                            .strip_prefix(root)
+                            .ok()
+                            .map(|rel| rel.to_path_buf())
+                    })
+                    .or_else(|| {
+                        project_root.as_ref().and_then(|root| {
+                            canonical_abs
+                                .strip_prefix(root)
+                                .ok()
+                                .map(|rel| rel.to_path_buf())
+                        })
+                    })
+                    .unwrap_or_else(|| {
+                        if canonical_abs.is_absolute() {
+                            normalize_absolute_path(canonical_abs.clone())
+                        } else {
+                            canonical_abs.clone()
+                        }
+                    });
+
+                let canonical_key = if canonical_abs.is_absolute() {
+                    normalize_absolute_path(canonical_abs)
+                } else {
+                    canonical_abs
+                };
+
+                entity.gltf_source = Some(manifest_path.clone());
+
+                if canonical_imports.insert(canonical_key) {
+                    imports_set.insert(manifest_path);
+                }
             }
 
             if entity.primitive_mesh.is_some() {
@@ -255,7 +386,8 @@ impl ProjectManifest {
 
         let normalize_path = |path: &Path| -> PathBuf {
             let resolved = resolve_project_path(path);
-            std::fs::canonicalize(&resolved).unwrap_or(resolved)
+            let canonical = std::fs::canonicalize(&resolved).unwrap_or(resolved);
+            normalize_absolute_path(canonical)
         };
 
         for import in &self.imports {
