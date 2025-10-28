@@ -9,7 +9,7 @@ use std::ops::RangeInclusive;
 
 use hecs::Entity;
 
-use wgpu_cube::asset::{Handle, MaterialAsset};
+use wgpu_cube::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
 use wgpu_cube::scene::{
@@ -110,7 +110,7 @@ pub fn show_entity_inspector(
         show_mesh_section(ui, mesh);
     }
 
-    if let Some(material) = data.components.material {
+    if let Some(material) = data.components.material.clone() {
         begin_section(ui, &mut first_section);
         show_material_section(ui, data.entity, material, &mut actions);
     }
@@ -388,6 +388,14 @@ fn show_material_section(
         let mut material = material_data.material;
         let mut changed = false;
 
+        let reference_for = |slot: MaterialTextureSlot| -> Option<&MaterialTextureReference> {
+            material_data
+                .textures
+                .iter()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, reference)| reference)
+        };
+
         Grid::new("material_component_grid")
             .num_columns(2)
             .striped(true)
@@ -434,21 +442,86 @@ fn show_material_section(
                 ui.monospace(format!("{}", material.base_color_texture));
                 ui.end_row();
 
+                if let Some(reference) = reference_for(MaterialTextureSlot::BaseColor) {
+                    if let Some(name) = reference.display_name() {
+                        ui.label("   ↳ Name");
+                        ui.monospace(name.to_string());
+                        ui.end_row();
+                    }
+                    if let Some(path) = reference.canonical_path() {
+                        ui.label("   ↳ Path");
+                        ui.monospace(path.display().to_string());
+                        ui.end_row();
+                    }
+                }
+
                 ui.label("Metallic/Roughness texture");
                 ui.monospace(format!("{}", material.metallic_roughness_texture));
                 ui.end_row();
+
+                if let Some(reference) = reference_for(MaterialTextureSlot::MetallicRoughness) {
+                    if let Some(name) = reference.display_name() {
+                        ui.label("   ↳ Name");
+                        ui.monospace(name.to_string());
+                        ui.end_row();
+                    }
+                    if let Some(path) = reference.canonical_path() {
+                        ui.label("   ↳ Path");
+                        ui.monospace(path.display().to_string());
+                        ui.end_row();
+                    }
+                }
 
                 ui.label("Normal texture");
                 ui.monospace(format!("{}", material.normal_texture));
                 ui.end_row();
 
+                if let Some(reference) = reference_for(MaterialTextureSlot::Normal) {
+                    if let Some(name) = reference.display_name() {
+                        ui.label("   ↳ Name");
+                        ui.monospace(name.to_string());
+                        ui.end_row();
+                    }
+                    if let Some(path) = reference.canonical_path() {
+                        ui.label("   ↳ Path");
+                        ui.monospace(path.display().to_string());
+                        ui.end_row();
+                    }
+                }
+
                 ui.label("Emissive texture");
                 ui.monospace(format!("{}", material.emissive_texture));
                 ui.end_row();
 
+                if let Some(reference) = reference_for(MaterialTextureSlot::Emissive) {
+                    if let Some(name) = reference.display_name() {
+                        ui.label("   ↳ Name");
+                        ui.monospace(name.to_string());
+                        ui.end_row();
+                    }
+                    if let Some(path) = reference.canonical_path() {
+                        ui.label("   ↳ Path");
+                        ui.monospace(path.display().to_string());
+                        ui.end_row();
+                    }
+                }
+
                 ui.label("Occlusion texture");
                 ui.monospace(format!("{}", material.occlusion_texture));
                 ui.end_row();
+
+                if let Some(reference) = reference_for(MaterialTextureSlot::Occlusion) {
+                    if let Some(name) = reference.display_name() {
+                        ui.label("   ↳ Name");
+                        ui.monospace(name.to_string());
+                        ui.end_row();
+                    }
+                    if let Some(path) = reference.canonical_path() {
+                        ui.label("   ↳ Path");
+                        ui.monospace(path.display().to_string());
+                        ui.end_row();
+                    }
+                }
             });
 
         if changed {
