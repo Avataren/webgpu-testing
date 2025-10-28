@@ -422,7 +422,13 @@ impl SerializedEnvironment {
             let environment_dir = content_dir.join("environment");
             fs::create_dir_all(&environment_dir)?;
             let target = environment_dir.join(file_name);
-            if source != target {
+            let requires_copy = match paths_refer_to_same_file(&source, &target) {
+                Ok(true) => false,
+                Ok(false) => true,
+                Err(err) => return Err(ProjectError::Io(err)),
+            };
+
+            if requires_copy {
                 fs::copy(&source, &target)?;
             }
 
@@ -484,6 +490,46 @@ impl SerializedEnvironment {
         }
 
         Ok(environment)
+    }
+}
+
+fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<bool> {
+    let source_meta = match fs::metadata(source) {
+        Ok(meta) => meta,
+        Err(err) => return Err(err),
+    };
+
+    let target_meta = match fs::metadata(target) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Ok(source_meta.ino() == target_meta.ino() && source_meta.dev() == target_meta.dev());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let source_index = ((source_meta.file_index_high() as u64) << 32)
+            | u64::from(source_meta.file_index_low());
+        let target_index = ((target_meta.file_index_high() as u64) << 32)
+            | u64::from(target_meta.file_index_low());
+
+        return Ok(
+            source_meta.volume_serial_number() == target_meta.volume_serial_number()
+                && source_index == target_index,
+        );
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let source_path = std::fs::canonicalize(source)?;
+        let target_path = std::fs::canonicalize(target)?;
+        Ok(source_path == target_path)
     }
 }
 
@@ -569,5 +615,28 @@ mod tests {
         let environment = loaded_env.into_environment(tmp_dir.path()).unwrap();
         let background = environment.hdr_background().unwrap();
         assert!(background.path().ends_with("env.hdr"));
+    }
+
+    #[test]
+    fn same_file_detection_handles_equivalent_paths() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("env.hdr");
+        fs::write(&file_path, b"dummy").unwrap();
+
+        let via_parent = tmp_dir
+            .path()
+            .parent()
+            .unwrap()
+            .join(tmp_dir.path().file_name().unwrap())
+            .join("env.hdr");
+
+        assert!(super::paths_refer_to_same_file(&file_path, &via_parent).unwrap());
+
+        let missing = tmp_dir.path().join("missing.hdr");
+        assert!(!super::paths_refer_to_same_file(&file_path, &missing).unwrap());
+
+        let other = tmp_dir.path().join("other.hdr");
+        fs::write(&other, b"dummy").unwrap();
+        assert!(!super::paths_refer_to_same_file(&file_path, &other).unwrap());
     }
 }
