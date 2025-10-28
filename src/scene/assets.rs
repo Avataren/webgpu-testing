@@ -30,7 +30,7 @@ use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,6 +52,50 @@ mod path_serde {
     {
         let value = String::deserialize(deserializer)?;
         Ok(PathBuf::from(value))
+    }
+}
+
+mod material_map_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    pub fn serialize<S>(value: &BTreeMap<usize, PathBuf>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mapped: BTreeMap<String, String> = value
+            .iter()
+            .map(|(index, path)| (index.to_string(), path.to_string_lossy().into_owned()))
+            .collect();
+        serde::Serialize::serialize(&mapped, serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<usize, PathBuf>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mapped = BTreeMap::<String, String>::deserialize(deserializer)?;
+        let mut result = BTreeMap::new();
+        for (key, value) in mapped {
+            let index = key.parse::<usize>().map_err(serde::de::Error::custom)?;
+            result.insert(index, PathBuf::from(value));
+        }
+        Ok(result)
+    }
+}
+
+/// Metadata recorded for a glTF import to preserve material assignments across reloads.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImportedGltfMeta {
+    /// Map of glTF material indices to relative material asset paths.
+    #[serde(default, with = "material_map_serde")]
+    pub materials: BTreeMap<usize, PathBuf>,
+}
+
+impl ImportedGltfMeta {
+    pub fn record_material(&mut self, index: usize, path: PathBuf) {
+        self.materials.insert(index, path);
     }
 }
 
@@ -287,6 +331,7 @@ impl SceneAsset {
         fs::create_dir_all(&materials_dir_abs)?;
 
         let mut written: HashSet<PathBuf> = HashSet::new();
+        let mut meta_updates: HashMap<PathBuf, BTreeMap<String, ImportedGltfMeta>> = HashMap::new();
 
         for entity in &mut self.entities {
             let Some(material_data) = entity.material_data.clone() else {
@@ -321,6 +366,63 @@ impl SceneAsset {
                 let json = serde_json::to_string_pretty(&material_data)?;
                 fs::write(&abs_path, json)?;
             }
+
+            if let (Some(source), Some(material_index)) =
+                (entity.gltf_source.as_ref(), entity.gltf_material)
+            {
+                if let Some(file_name) = source
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                {
+                    if let Some(parent) = project_root.join(source).parent() {
+                        let entry = meta_updates
+                            .entry(parent.to_path_buf())
+                            .or_insert_with(BTreeMap::new)
+                            .entry(file_name)
+                            .or_insert_with(ImportedGltfMeta::default);
+                        entry.record_material(material_index, rel_path.clone());
+                    }
+                }
+            }
+        }
+
+        for (meta_dir, sources) in meta_updates {
+            fs::create_dir_all(&meta_dir)?;
+            let meta_path = meta_dir.join("meta.json");
+
+            let mut existing: BTreeMap<String, ImportedGltfMeta> = if meta_path.exists() {
+                match fs::read_to_string(&meta_path) {
+                    Ok(content) => match serde_json::from_str(&content) {
+                        Ok(map) => map,
+                        Err(err) => {
+                            log::warn!(
+                                "Failed to parse existing meta file {:?}: {}. Rebuilding.",
+                                meta_path,
+                                err
+                            );
+                            BTreeMap::new()
+                        }
+                    },
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to read existing meta file {:?}: {}. Rebuilding.",
+                            meta_path,
+                            err
+                        );
+                        BTreeMap::new()
+                    }
+                }
+            } else {
+                BTreeMap::new()
+            };
+
+            for (source_name, meta) in sources {
+                existing.insert(source_name, meta);
+            }
+
+            let json = serde_json::to_string_pretty(&existing)
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            fs::write(meta_path, json)?;
         }
 
         Ok(())
@@ -2531,6 +2633,9 @@ impl SceneAssetBuilder {
 mod tests {
     use super::*;
     use glam::Vec3;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn make_material(flags: MaterialFlags, base_texture: u32) -> SerializedMaterial {
         SerializedMaterial {
@@ -2622,5 +2727,67 @@ mod tests {
             .as_ref()
             .expect("material present");
         assert_eq!(material.base_color_texture.index, Some(42));
+    }
+
+    #[test]
+    fn persist_material_assets_writes_meta_mapping() {
+        let project_dir = tempdir().unwrap();
+        let project_root = project_dir.path();
+        let gltf_dir = project_root.join("content/models/sample");
+        std::fs::create_dir_all(&gltf_dir).unwrap();
+
+        let mut asset = SceneAsset {
+            name: "Test".into(),
+            root_transform: SerializedTransform::identity(),
+            entities: vec![SceneAssetEntity {
+                name: Some("Entity".into()),
+                transform: SerializedTransform::identity(),
+                visible: true,
+                mesh_handle: None,
+                primitive_mesh: None,
+                mesh_bounds: None,
+                material: None,
+                material_data: Some(make_material(MaterialFlags::NONE, 0)),
+                parent: None,
+                children: Vec::new(),
+                gltf_node: None,
+                gltf_material: Some(0),
+                gltf_source: Some(PathBuf::from("content/models/sample/scene.gltf")),
+                gltf_primitive: None,
+                script: None,
+                directional_light: None,
+                point_light: None,
+                spot_light: None,
+                casts_shadow: None,
+                editor_id: None,
+                particle_system: None,
+                particle_emitter: None,
+                particle_behavior: None,
+                environment: None,
+                camera: None,
+            }],
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        asset.persist_material_assets(project_root).unwrap();
+
+        let entity = &asset.entities[0];
+        let material_handle = entity.material.as_ref().expect("material handle assigned");
+        let meta_path = gltf_dir.join("meta.json");
+        assert!(meta_path.exists(), "meta file should be created");
+
+        let contents = std::fs::read_to_string(meta_path).unwrap();
+        let parsed: BTreeMap<String, ImportedGltfMeta> = serde_json::from_str(&contents).unwrap();
+        let meta = parsed
+            .get("scene.gltf")
+            .expect("meta entry for glTF present");
+        assert_eq!(
+            meta.materials.get(&0),
+            Some(&material_handle.path().to_path_buf()),
+            "meta should point at generated material path"
+        );
     }
 }
