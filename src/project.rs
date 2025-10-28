@@ -1,10 +1,11 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
-use crate::renderer::Renderer;
 use crate::scene::assets::{SceneAssetEntity, SceneMaterialHandle, SerializedMaterial};
+use crate::scene::loader::SceneImportDevice;
 use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use thiserror::Error;
@@ -114,6 +115,42 @@ fn lookup_material_record<'a>(
     None
 }
 
+fn load_material_from_disk(
+    handle: &SceneMaterialHandle,
+    project_root: &Path,
+) -> Option<SerializedMaterial> {
+    let material_path = handle.path();
+    if material_path.as_os_str().is_empty() {
+        return None;
+    }
+
+    let absolute_path = if material_path.is_absolute() {
+        material_path.to_path_buf()
+    } else {
+        project_root.join(material_path)
+    };
+
+    match fs::read(&absolute_path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(material) => Some(material),
+            Err(err) => {
+                log::warn!(
+                    "Failed to deserialize material asset {:?}: {}",
+                    absolute_path,
+                    err
+                );
+                None
+            }
+        },
+        Err(err) => {
+            if err.kind() != ErrorKind::NotFound {
+                log::warn!("Failed to read material asset {:?}: {}", absolute_path, err);
+            }
+            None
+        }
+    }
+}
+
 fn apply_material_record(
     entity: &mut SceneAssetEntity,
     record: &MaterialRecord,
@@ -132,14 +169,30 @@ fn apply_material_record(
                 }
             }
 
-            match serde_json::to_string_pretty(&record.data) {
+            match serde_json::to_vec_pretty(&record.data) {
                 Ok(json) => {
-                    if let Err(err) = fs::write(&absolute_path, json) {
-                        log::error!(
-                            "Failed to update material asset {:?}: {}",
-                            absolute_path,
-                            err
-                        );
+                    let needs_write = match fs::read(&absolute_path) {
+                        Ok(existing) => existing != json,
+                        Err(err) => {
+                            if err.kind() != ErrorKind::NotFound {
+                                log::warn!(
+                                    "Failed to read existing material asset {:?}: {}",
+                                    absolute_path,
+                                    err
+                                );
+                            }
+                            true
+                        }
+                    };
+
+                    if needs_write {
+                        if let Err(err) = fs::write(&absolute_path, &json) {
+                            log::error!(
+                                "Failed to update material asset {:?}: {}",
+                                absolute_path,
+                                err
+                            );
+                        }
                     }
                 }
                 Err(err) => {
@@ -464,7 +517,7 @@ impl ProjectManifest {
     pub fn instantiate_into(
         &self,
         scene: &mut Scene,
-        renderer: &mut Renderer,
+        renderer: &mut impl SceneImportDevice,
         project_root: &Path,
     ) -> Result<bool, ProjectError> {
         set_active_project_root(Some(project_root.to_path_buf()));
@@ -511,8 +564,18 @@ impl ProjectManifest {
                         }
 
                         if let Some(material_data) = &entity.material_data {
+                            let mut resolved_data = material_data.clone();
+
+                            if let Some(handle) = entity.material.as_ref() {
+                                if let Some(overridden) =
+                                    load_material_from_disk(handle, project_root)
+                                {
+                                    resolved_data = overridden;
+                                }
+                            }
+
                             let record = MaterialRecord {
-                                data: material_data.clone(),
+                                data: resolved_data,
                                 handle: entity.material.clone(),
                             };
 
