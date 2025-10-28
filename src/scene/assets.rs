@@ -331,6 +331,7 @@ impl SceneAsset {
         fs::create_dir_all(&materials_dir_abs)?;
 
         let mut written: HashSet<PathBuf> = HashSet::new();
+        let mut material_cache: HashMap<(PathBuf, usize), PathBuf> = HashMap::new();
         let mut meta_updates: HashMap<PathBuf, BTreeMap<String, ImportedGltfMeta>> = HashMap::new();
 
         for entity in &mut self.entities {
@@ -338,19 +339,71 @@ impl SceneAsset {
                 continue;
             };
 
+            let gltf_cache_key = entity.gltf_source.as_ref().and_then(|source| {
+                entity.gltf_material.map(|material_index| {
+                    (absolute_gltf_source(project_root, source), material_index)
+                })
+            });
+
+            let sanitized_stem = entity.gltf_source.as_deref().map(sanitize_gltf_stem);
+
             let mut material_path = entity
                 .material
                 .as_ref()
                 .map(|handle| normalize_material_path(project_root, handle.path()));
 
-            if material_path.as_ref().is_none_or(|path| {
-                path.as_os_str().is_empty()
-                    || path.extension().map(|ext| ext != "json").unwrap_or(true)
-                    || path.to_string_lossy().contains('#')
-            }) {
-                let generated =
-                    generate_material_asset_path(&materials_dir_rel, &materials_dir_abs, &written);
+            if let Some(ref key) = gltf_cache_key {
+                if let Some(cached) = material_cache.get(key) {
+                    material_path = Some(cached.clone());
+                }
+            }
+
+            let needs_regen = material_path.as_ref().map_or(true, |path| {
+                if path.as_os_str().is_empty() {
+                    return true;
+                }
+
+                if path.to_string_lossy().contains('#') {
+                    return true;
+                }
+
+                if !path.to_string_lossy().ends_with(".mat.json") {
+                    return true;
+                }
+
+                if let (Some(file_name), Some(stem), Some(material_index)) = (
+                    path.file_name().and_then(|name| name.to_str()),
+                    sanitized_stem.as_ref(),
+                    entity.gltf_material,
+                ) {
+                    if !material_file_matches_pattern(file_name, stem, material_index) {
+                        return true;
+                    }
+                }
+
+                false
+            });
+
+            if needs_regen {
+                let generated = generate_material_asset_path(
+                    &materials_dir_rel,
+                    &materials_dir_abs,
+                    entity.gltf_source.as_deref(),
+                    entity.gltf_material,
+                    &written,
+                );
+
+                if let Some(ref key) = gltf_cache_key {
+                    material_cache.insert(key.clone(), generated.clone());
+                }
+
                 material_path = Some(generated);
+            }
+
+            if let (Some(ref key), Some(ref path)) = (&gltf_cache_key, &material_path) {
+                material_cache
+                    .entry(key.clone())
+                    .or_insert_with(|| path.clone());
             }
 
             let rel_path = material_path.expect("material path must be set");
@@ -1326,11 +1379,96 @@ fn normalize_material_path(project_root: &Path, path: &Path) -> PathBuf {
     }
 }
 
+fn absolute_gltf_source(project_root: &Path, source: &Path) -> PathBuf {
+    if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        project_root.join(source)
+    }
+}
+
+fn sanitize_gltf_stem(source: &Path) -> String {
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("material");
+
+    let mut sanitized = String::with_capacity(stem.len());
+    let mut last_was_separator = false;
+
+    for ch in stem.chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            sanitized.push(lower);
+            last_was_separator = false;
+        } else if !last_was_separator {
+            sanitized.push('_');
+            last_was_separator = true;
+        }
+    }
+
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        "material".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn material_file_matches_pattern(
+    file_name: &str,
+    sanitized_stem: &str,
+    material_index: usize,
+) -> bool {
+    if !file_name.ends_with(".mat.json") {
+        return false;
+    }
+
+    let expected_prefix = format!("{}_{:03}", sanitized_stem, material_index);
+    match file_name.strip_suffix(".mat.json") {
+        Some(prefix) if prefix == expected_prefix => true,
+        Some(prefix) => prefix
+            .strip_prefix(&(expected_prefix + "_"))
+            .map(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false),
+        None => false,
+    }
+}
+
 fn generate_material_asset_path(
     materials_dir_rel: &Path,
     materials_dir_abs: &Path,
+    gltf_source: Option<&Path>,
+    material_index: Option<usize>,
     used: &HashSet<PathBuf>,
 ) -> PathBuf {
+    if let (Some(source), Some(index)) = (gltf_source, material_index) {
+        let sanitized = sanitize_gltf_stem(source);
+        let base = format!("{}_{:03}", sanitized, index);
+        let mut suffix: u32 = 0;
+
+        loop {
+            let file_name = if suffix == 0 {
+                format!("{}.mat.json", base)
+            } else {
+                format!("{}_{}.mat.json", base, suffix)
+            };
+            let rel_path = materials_dir_rel.join(&file_name);
+
+            if used.contains(&rel_path) {
+                suffix += 1;
+                continue;
+            }
+
+            if materials_dir_abs.join(&file_name).exists() {
+                suffix += 1;
+                continue;
+            }
+
+            return rel_path;
+        }
+    }
+
     let mut rng = thread_rng();
 
     loop {
@@ -1339,7 +1477,7 @@ fn generate_material_asset_path(
             .take(12)
             .map(char::from)
             .collect();
-        let file_name = format!("material_{}.json", suffix);
+        let file_name = format!("material_{}.mat.json", suffix);
         let rel_path = materials_dir_rel.join(&file_name);
 
         if used.contains(&rel_path) {
@@ -2779,6 +2917,13 @@ mod tests {
         let meta_path = gltf_dir.join("meta.json");
         assert!(meta_path.exists(), "meta file should be created");
 
+        let material_file = material_handle
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("material file name available");
+        assert_eq!(material_file, "scene_000.mat.json");
+
         let contents = std::fs::read_to_string(meta_path).unwrap();
         let parsed: BTreeMap<String, ImportedGltfMeta> = serde_json::from_str(&contents).unwrap();
         let meta = parsed
@@ -2789,5 +2934,201 @@ mod tests {
             Some(&material_handle.path().to_path_buf()),
             "meta should point at generated material path"
         );
+    }
+
+    #[test]
+    fn persist_material_assets_reuses_cached_paths_for_duplicate_materials() {
+        let project_dir = tempdir().unwrap();
+        let project_root = project_dir.path();
+        let gltf_dir = project_root.join("content/models/sample");
+        std::fs::create_dir_all(&gltf_dir).unwrap();
+
+        let gltf_source = PathBuf::from("content/models/sample/My Scene 01.gltf");
+
+        let mut asset = SceneAsset {
+            name: "Test".into(),
+            root_transform: SerializedTransform::identity(),
+            entities: vec![
+                SceneAssetEntity {
+                    name: Some("Entity A".into()),
+                    transform: SerializedTransform::identity(),
+                    visible: true,
+                    mesh_handle: None,
+                    primitive_mesh: None,
+                    mesh_bounds: None,
+                    material: None,
+                    material_data: Some(make_material(MaterialFlags::NONE, 0)),
+                    parent: None,
+                    children: Vec::new(),
+                    gltf_node: None,
+                    gltf_material: Some(0),
+                    gltf_source: Some(gltf_source.clone()),
+                    gltf_primitive: None,
+                    script: None,
+                    directional_light: None,
+                    point_light: None,
+                    spot_light: None,
+                    casts_shadow: None,
+                    editor_id: None,
+                    particle_system: None,
+                    particle_emitter: None,
+                    particle_behavior: None,
+                    environment: None,
+                    camera: None,
+                },
+                SceneAssetEntity {
+                    name: Some("Entity B".into()),
+                    transform: SerializedTransform::identity(),
+                    visible: true,
+                    mesh_handle: None,
+                    primitive_mesh: None,
+                    mesh_bounds: None,
+                    material: None,
+                    material_data: Some(make_material(MaterialFlags::NONE, 0)),
+                    parent: None,
+                    children: Vec::new(),
+                    gltf_node: None,
+                    gltf_material: Some(0),
+                    gltf_source: Some(gltf_source.clone()),
+                    gltf_primitive: None,
+                    script: None,
+                    directional_light: None,
+                    point_light: None,
+                    spot_light: None,
+                    casts_shadow: None,
+                    editor_id: None,
+                    particle_system: None,
+                    particle_emitter: None,
+                    particle_behavior: None,
+                    environment: None,
+                    camera: None,
+                },
+            ],
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        asset.persist_material_assets(project_root).unwrap();
+
+        let first = asset.entities[0]
+            .material
+            .as_ref()
+            .expect("first material assigned")
+            .path()
+            .to_path_buf();
+        let second = asset.entities[1]
+            .material
+            .as_ref()
+            .expect("second material assigned")
+            .path()
+            .to_path_buf();
+
+        assert_eq!(first, second, "materials should reuse cached path");
+        assert_eq!(
+            first
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("file name present"),
+            "my_scene_01_000.mat.json"
+        );
+    }
+
+    #[test]
+    fn persist_material_assets_adds_suffix_when_colliding() {
+        let project_dir = tempdir().unwrap();
+        let project_root = project_dir.path();
+        let gltf_dir_a = project_root.join("content/models/a");
+        let gltf_dir_b = project_root.join("content/models/b");
+        std::fs::create_dir_all(&gltf_dir_a).unwrap();
+        std::fs::create_dir_all(&gltf_dir_b).unwrap();
+
+        let mut asset = SceneAsset {
+            name: "Test".into(),
+            root_transform: SerializedTransform::identity(),
+            entities: vec![
+                SceneAssetEntity {
+                    name: Some("Entity A".into()),
+                    transform: SerializedTransform::identity(),
+                    visible: true,
+                    mesh_handle: None,
+                    primitive_mesh: None,
+                    mesh_bounds: None,
+                    material: None,
+                    material_data: Some(make_material(MaterialFlags::NONE, 0)),
+                    parent: None,
+                    children: Vec::new(),
+                    gltf_node: None,
+                    gltf_material: Some(0),
+                    gltf_source: Some(PathBuf::from("content/models/a/Scene.gltf")),
+                    gltf_primitive: None,
+                    script: None,
+                    directional_light: None,
+                    point_light: None,
+                    spot_light: None,
+                    casts_shadow: None,
+                    editor_id: None,
+                    particle_system: None,
+                    particle_emitter: None,
+                    particle_behavior: None,
+                    environment: None,
+                    camera: None,
+                },
+                SceneAssetEntity {
+                    name: Some("Entity B".into()),
+                    transform: SerializedTransform::identity(),
+                    visible: true,
+                    mesh_handle: None,
+                    primitive_mesh: None,
+                    mesh_bounds: None,
+                    material: None,
+                    material_data: Some(make_material(MaterialFlags::NONE, 0)),
+                    parent: None,
+                    children: Vec::new(),
+                    gltf_node: None,
+                    gltf_material: Some(0),
+                    gltf_source: Some(PathBuf::from("content/models/b/Scene.gltf")),
+                    gltf_primitive: None,
+                    script: None,
+                    directional_light: None,
+                    point_light: None,
+                    spot_light: None,
+                    casts_shadow: None,
+                    editor_id: None,
+                    particle_system: None,
+                    particle_emitter: None,
+                    particle_behavior: None,
+                    environment: None,
+                    camera: None,
+                },
+            ],
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        asset.persist_material_assets(project_root).unwrap();
+
+        let first_name = asset.entities[0]
+            .material
+            .as_ref()
+            .expect("first material assigned")
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("file name present");
+        let second_name = asset.entities[1]
+            .material
+            .as_ref()
+            .expect("second material assigned")
+            .path()
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("file name present");
+
+        assert_eq!(first_name, "scene_000.mat.json");
+        assert_eq!(second_name, "scene_000_1.mat.json");
     }
 }
