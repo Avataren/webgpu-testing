@@ -3073,7 +3073,10 @@ impl SceneAssetBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::{ProjectManifest, ProjectMetadata};
+    use crate::scene::Scene;
     use glam::Vec3;
+    use serde_json::Value;
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
@@ -3110,6 +3113,264 @@ mod tests {
             .abs_diff_eq(transform.translation, 1e-5));
         assert!(restored.rotation.abs_diff_eq(transform.rotation, 1e-5));
         assert!(restored.scale.abs_diff_eq(transform.scale, 1e-5));
+    }
+
+    #[test]
+    fn billboard_component_roundtrip() {
+        let billboard_component = Billboard::new(BillboardOrientation::FaceCameraYAxis)
+            .with_space(BillboardSpace::View {
+                offset: Vec3::new(1.0, 2.0, -3.5),
+            })
+            .with_lighting(true);
+        let serialized_billboard = SerializedBillboard::from(billboard_component);
+
+        let entity = SceneAssetEntity::builder(SerializedTransform::identity())
+            .with_name("Billboard")
+            .with_billboard(serialized_billboard)
+            .build();
+
+        let asset = SceneAsset::builder("BillboardScene")
+            .add_entity(entity)
+            .build();
+
+        let json = asset.to_json().expect("serialize scene asset");
+        let parsed: Value = serde_json::from_str(&json).expect("parse asset json");
+        assert_eq!(
+            parsed["entities"][0]["billboard"]["orientation"],
+            Value::String("FaceCameraYAxis".into())
+        );
+        let restored = SceneAsset::from_json(&json).expect("deserialize scene asset");
+
+        assert_eq!(restored.entities.len(), 1);
+        let restored_billboard = restored.entities[0]
+            .billboard
+            .expect("billboard should deserialize");
+        let restored_component = Billboard::from(restored_billboard);
+
+        assert_eq!(
+            restored_component.orientation,
+            billboard_component.orientation
+        );
+        assert_eq!(restored_component.lit, billboard_component.lit);
+
+        match (restored_component.space, billboard_component.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => {
+                assert!(restored_offset.abs_diff_eq(original_offset, 1e-5));
+            }
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("mismatched billboard spaces: {other:?}"),
+        }
+
+        let mut assets = Assets::new();
+        let instance = restored.instantiate(None, &mut assets);
+        let mut query = instance.world().query::<&Billboard>();
+        let billboards: Vec<_> = query.iter().map(|(_, component)| *component).collect();
+        assert_eq!(billboards.len(), 1);
+        assert_eq!(billboards[0].orientation, billboard_component.orientation);
+        assert_eq!(billboards[0].lit, billboard_component.lit);
+        match (billboards[0].space, billboard_component.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => {
+                assert!(restored_offset.abs_diff_eq(original_offset, 1e-5));
+            }
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("mismatched billboard spaces after instantiate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serialize_world_preserves_billboard() {
+        let mut world = World::new();
+        let billboard = Billboard::new(BillboardOrientation::FaceCamera)
+            .with_space(BillboardSpace::View {
+                offset: Vec3::new(-4.0, 0.5, 2.25),
+            })
+            .with_lighting(false);
+
+        world.spawn((
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+            billboard,
+        ));
+
+        let assets = Assets::new();
+        let (entities, _) = serialize_world(&world, &assets);
+        assert_eq!(entities.len(), 1);
+
+        let serialized_billboard = entities[0]
+            .billboard
+            .expect("serialized world should contain billboard");
+        let roundtrip = Billboard::from(serialized_billboard);
+        assert_eq!(roundtrip.orientation, billboard.orientation);
+        assert_eq!(roundtrip.lit, billboard.lit);
+        match (roundtrip.space, billboard.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => assert!(restored_offset.abs_diff_eq(original_offset, 1e-5)),
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("unexpected spaces from serialize_world: {other:?}"),
+        }
+
+        let mut asset = SceneAsset {
+            name: "BillboardSerializeWorld".into(),
+            root_transform: SerializedTransform::identity(),
+            entities,
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        let project_root = tempdir().unwrap();
+        asset
+            .persist_material_assets(project_root.path())
+            .expect("persist materials");
+
+        let mut assets = Assets::new();
+        let instance = asset.instantiate(None, &mut assets);
+        let mut query = instance.world().query::<&Billboard>();
+        let instances: Vec<_> = query.iter().map(|(_, component)| *component).collect();
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].orientation, billboard.orientation);
+        assert_eq!(instances[0].lit, billboard.lit);
+        match (instances[0].space, billboard.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => assert!(restored_offset.abs_diff_eq(original_offset, 1e-5)),
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("unexpected spaces after instantiate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn project_manifest_roundtrip_preserves_billboard() {
+        let billboard_component = Billboard::new(BillboardOrientation::FaceCameraYAxis)
+            .with_space(BillboardSpace::View {
+                offset: Vec3::new(0.0, 3.0, 1.0),
+            })
+            .with_lighting(true);
+        let serialized_billboard = SerializedBillboard::from(billboard_component);
+
+        let entity = SceneAssetEntity::builder(SerializedTransform::identity())
+            .with_billboard(serialized_billboard)
+            .build();
+
+        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+        manifest.scene = SceneAsset::builder("BillboardProject")
+            .add_entity(entity)
+            .build();
+
+        let dir = tempdir().unwrap();
+        manifest.save_to_dir(dir.path()).expect("save project");
+
+        let reloaded = ProjectManifest::load_from_dir(dir.path()).expect("load project");
+        assert_eq!(reloaded.scene.entities.len(), 1);
+        let serialized = reloaded.scene.entities[0]
+            .billboard
+            .expect("billboard should persist in project");
+        let restored = Billboard::from(serialized);
+
+        assert_eq!(restored.orientation, billboard_component.orientation);
+        assert_eq!(restored.lit, billboard_component.lit);
+        match (restored.space, billboard_component.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => assert!(restored_offset.abs_diff_eq(original_offset, 1e-5)),
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("unexpected billboard space after project roundtrip: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scene_capture_roundtrip_preserves_billboard() {
+        let billboard_component = Billboard::new(BillboardOrientation::FaceCamera)
+            .with_space(BillboardSpace::View {
+                offset: Vec3::new(2.0, -1.0, 0.5),
+            })
+            .with_lighting(false);
+        let serialized_billboard = SerializedBillboard::from(billboard_component);
+
+        let entity = SceneAssetEntity::builder(SerializedTransform::identity())
+            .with_billboard(serialized_billboard)
+            .build();
+
+        let scene_asset = SceneAsset::builder("CapturedBillboard")
+            .add_entity(entity)
+            .build();
+
+        let tree = SceneTreeAsset::new(
+            "Root",
+            SceneTreeAssetNode {
+                name: "Root".into(),
+                transform: SerializedTransform::identity(),
+                asset: Some(scene_asset.clone()),
+                children: Vec::new(),
+            },
+        );
+
+        let mut scene = Scene::new();
+        let root_node = scene.instantiate_tree_asset(&tree, None);
+        scene.set_main_scene(root_node);
+
+        let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
+            .expect("capture project manifest");
+
+        let dir = tempdir().unwrap();
+        manifest
+            .save_to_dir(dir.path())
+            .expect("save captured project");
+        let reloaded = ProjectManifest::load_from_dir(dir.path()).expect("load captured project");
+
+        let mut new_scene = Scene::new();
+        let instantiated = new_scene.instantiate_asset(&reloaded.scene, None);
+        new_scene.set_main_scene(instantiated);
+        new_scene.propagate_transforms();
+
+        let mut query = new_scene.main_world().query::<&Billboard>();
+        let billboards: Vec<_> = query.iter().map(|(_, component)| *component).collect();
+        assert_eq!(billboards.len(), 1);
+        assert_eq!(billboards[0].orientation, billboard_component.orientation);
+        assert_eq!(billboards[0].lit, billboard_component.lit);
+        match (billboards[0].space, billboard_component.space) {
+            (
+                BillboardSpace::View {
+                    offset: restored_offset,
+                },
+                BillboardSpace::View {
+                    offset: original_offset,
+                },
+            ) => assert!(restored_offset.abs_diff_eq(original_offset, 1e-5)),
+            (BillboardSpace::World, BillboardSpace::World) => {}
+            other => panic!("scene capture lost billboard space: {other:?}"),
+        }
     }
 
     #[test]
