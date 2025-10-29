@@ -12,6 +12,7 @@ use super::{EditorContext, EditorSystem};
 pub(super) struct ProjectSystem {
     controller: ProjectController,
     aux_windows_enabled: bool,
+    pending_gltf_imports: Vec<PathBuf>,
 }
 
 impl ProjectSystem {
@@ -19,7 +20,95 @@ impl ProjectSystem {
         Self {
             controller,
             aux_windows_enabled: true,
+            pending_gltf_imports: Vec::new(),
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn process_import_queue<'app, 'ctx, 'scene>(
+        &mut self,
+        ctx: &mut EditorContext<'app, 'ctx, 'scene>,
+    ) {
+        if self.pending_gltf_imports.is_empty() {
+            return;
+        }
+
+        let Some(project_dir) = self.controller.current_dir().cloned() else {
+            ctx.asset_browser()
+                .report_error("Open or create a project before importing assets.");
+            warn!("Discarding queued glTF imports: no project directory is active");
+            self.pending_gltf_imports.clear();
+            return;
+        };
+
+        let Some(content_root) = self.controller.content_root() else {
+            ctx.asset_browser()
+                .report_error("The project's content folder is unavailable.");
+            warn!("Discarding queued glTF imports: project content folder missing");
+            self.pending_gltf_imports.clear();
+            return;
+        };
+
+        let pending = std::mem::take(&mut self.pending_gltf_imports);
+        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
+            let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
+            let mut any_spawned = false;
+
+            for source_path in &pending {
+                match native::copy_gltf_into_project(
+                    &project_dir,
+                    &content_root,
+                    &destination_root,
+                    source_path.as_path(),
+                    gpu_ctx.renderer,
+                    1.0,
+                ) {
+                    Ok(mut package) => {
+                        let registration = package
+                            .bundle
+                            .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
+
+                        if !package.bundle.asset.entities.is_empty() {
+                            let node = gpu_ctx.scene.instantiate_asset_with_renderer(
+                                &package.bundle.asset,
+                                None,
+                                gpu_ctx.renderer,
+                            );
+                            gpu_ctx.scene.set_main_scene(node);
+                        }
+
+                        if registration.textures_changed() {
+                            gpu_ctx
+                                .renderer
+                                .update_texture_bind_group(&gpu_ctx.scene.assets);
+                        }
+
+                        any_spawned = true;
+
+                        app.asset_browser_state_mut().report_info(format!(
+                            "Imported package to {}",
+                            package.project_relative_package.display()
+                        ));
+                    }
+                    Err(err) => {
+                        error!("Failed to import glTF asset {:?}: {}", source_path, err);
+                        app.asset_browser_state_mut().report_error(err.to_string());
+                    }
+                }
+            }
+
+            if matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
+                gpu_ctx.scene.set_animation_playback(false);
+                gpu_ctx.scene.update(0.0);
+            }
+
+            if any_spawned {
+                app.record_scene_change(gpu_ctx.scene);
+            }
+        }) else {
+            self.pending_gltf_imports = pending;
+            return;
+        };
     }
 
     pub(super) fn controller_mut(&mut self) -> &mut ProjectController {
@@ -67,78 +156,21 @@ impl ProjectSystem {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let Some(project_dir) = self.controller.current_dir().cloned() else {
+            if self.controller.current_dir().is_none() {
                 ctx.asset_browser()
                     .report_error("Open or create a project before importing assets.");
                 warn!("Ignoring glTF import request: no project directory is active");
                 return;
-            };
+            }
 
-            let Some(content_root) = self.controller.content_root() else {
+            if self.controller.content_root().is_none() {
                 ctx.asset_browser()
                     .report_error("The project's content folder is unavailable.");
                 warn!("Ignoring glTF import request: project content folder missing");
                 return;
-            };
+            }
 
-            let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
-                let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
-                let mut any_spawned = false;
-
-                for source_path in pending {
-                    match native::copy_gltf_into_project(
-                        &project_dir,
-                        &content_root,
-                        &destination_root,
-                        &source_path,
-                        gpu_ctx.renderer,
-                        1.0,
-                    ) {
-                        Ok(mut package) => {
-                            let registration = package
-                                .bundle
-                                .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
-
-                            if !package.bundle.asset.entities.is_empty() {
-                                let node = gpu_ctx.scene.instantiate_asset_with_renderer(
-                                    &package.bundle.asset,
-                                    None,
-                                    gpu_ctx.renderer,
-                                );
-                                gpu_ctx.scene.set_main_scene(node);
-                            }
-
-                            if registration.textures_changed() {
-                                gpu_ctx
-                                    .renderer
-                                    .update_texture_bind_group(&gpu_ctx.scene.assets);
-                            }
-
-                            any_spawned = true;
-
-                            app.asset_browser_state_mut().report_info(format!(
-                                "Imported package to {}",
-                                package.project_relative_package.display()
-                            ));
-                        }
-                        Err(err) => {
-                            error!("Failed to import glTF asset {:?}: {}", source_path, err);
-                            app.asset_browser_state_mut().report_error(err.to_string());
-                        }
-                    }
-                }
-
-                if matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
-                    gpu_ctx.scene.set_animation_playback(false);
-                    gpu_ctx.scene.update(0.0);
-                }
-
-                if any_spawned {
-                    app.record_scene_change(gpu_ctx.scene);
-                }
-            }) else {
-                return;
-            };
+            self.pending_gltf_imports.extend(pending);
         }
     }
     fn handle_project_create(
@@ -318,6 +350,9 @@ impl ProjectSystem {
 }
 impl EditorSystem for ProjectSystem {
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.process_import_queue(ctx);
+
         if let Some(request) = self.controller_mut().take_pending_create() {
             self.handle_project_create(ctx, request);
         }
@@ -375,9 +410,10 @@ mod native {
     use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
     use wgpu_cube::scene::{
         gltf_package::{
-            PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION,
+            PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture,
+            PACKAGED_GLTF_VERSION,
         },
-        SceneImportDevice, SceneLoader, SerializedRuneScriptSource,
+        SceneImportDevice, SceneLoader, SerializedMaterial, SerializedRuneScriptSource,
     };
 
     use crate::project::NewProjectRequest;
@@ -469,6 +505,13 @@ mod native {
         pub(super) project_relative_package: PathBuf,
         pub(super) descriptor_path: PathBuf,
         pub(super) bundle: wgpu_cube::scene::SceneAssetBundle,
+    }
+
+    #[derive(Clone)]
+    struct PackagedTexturePaths {
+        package_relative: PathBuf,
+        project_relative: PathBuf,
+        display_name: Option<String>,
     }
 
     pub(super) fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError> {
@@ -684,6 +727,232 @@ mod native {
             let mut stored_asset = bundle.asset.clone();
             stored_asset.mesh_data.clear();
 
+            let (document, buffers, _) =
+                SceneLoader::import_gltf_native(&source_path).map_err(|source| {
+                    ImportAssetError::Parse {
+                        path: source_path.clone(),
+                        source,
+                    }
+                })?;
+
+            let mut texture_entries: HashMap<u32, PackagedTexturePaths> = HashMap::new();
+            let mut packaged_textures: Vec<PackagedTexture> = Vec::new();
+
+            let textures_dir_rel = PathBuf::from("textures");
+            let textures_dir_abs = asset_folder.join(&textures_dir_rel);
+            let mut created_texture_dir = false;
+            let mut used_texture_names: HashSet<String> = HashSet::new();
+
+            for texture in document.textures() {
+                let texture_index = texture.index() as u32;
+                if texture_entries.contains_key(&texture_index) {
+                    continue;
+                }
+
+                let image = texture.source();
+                match image.source() {
+                    ImageSource::Uri { uri, .. } => {
+                        let trimmed = uri.trim();
+                        if !trimmed.starts_with("data:") {
+                            continue;
+                        }
+
+                        let (mime, data) = decode_embedded_data_uri(trimmed)?;
+
+                        if !created_texture_dir {
+                            fs::create_dir_all(&textures_dir_abs).map_err(|source| {
+                                ImportAssetError::CreateDir {
+                                    path: textures_dir_abs.clone(),
+                                    source,
+                                }
+                            })?;
+                            created_texture_dir = true;
+                        }
+
+                        let extension = extension_for_mime_type(mime.as_deref());
+                        let file_name = unique_texture_file_name(
+                            &mut used_texture_names,
+                            texture.name().or_else(|| image.name()),
+                            texture.index(),
+                            &extension,
+                        );
+
+                        let texture_rel = textures_dir_rel.join(&file_name);
+                        let texture_abs = asset_folder.join(&texture_rel);
+                        fs::write(&texture_abs, &data).map_err(|error| {
+                            ImportAssetError::Write {
+                                path: texture_abs.clone(),
+                                error,
+                            }
+                        })?;
+
+                        let project_relative_texture = project_relative_package.join(&texture_rel);
+                        let display_name = texture
+                            .name()
+                            .or_else(|| image.name())
+                            .map(|name| name.to_string());
+
+                        texture_entries.insert(
+                            texture_index,
+                            PackagedTexturePaths {
+                                package_relative: texture_rel.clone(),
+                                project_relative: project_relative_texture,
+                                display_name: display_name.clone(),
+                            },
+                        );
+
+                        packaged_textures.push(PackagedTexture {
+                            index: texture_index,
+                            path: texture_rel,
+                            name: display_name,
+                        });
+                    }
+                    ImageSource::View { view, mime_type } => {
+                        let buffer_index = view.buffer().index();
+                        let Some(buffer) = buffers.get(buffer_index) else {
+                            return Err(ImportAssetError::SceneImport {
+                                path: source_path.clone(),
+                                error: format!(
+                                    "Missing buffer {} for embedded texture {}",
+                                    buffer_index,
+                                    texture.index()
+                                ),
+                            });
+                        };
+
+                        let start = view.offset();
+                        let end = start + view.length();
+                        if end > buffer.len() {
+                            return Err(ImportAssetError::SceneImport {
+                                path: source_path.clone(),
+                                error: format!(
+                                    "Embedded texture {} buffer range {}..{} exceeds buffer size {}",
+                                    texture.index(),
+                                    start,
+                                    end,
+                                    buffer.len()
+                                ),
+                            });
+                        }
+
+                        if !created_texture_dir {
+                            fs::create_dir_all(&textures_dir_abs).map_err(|source| {
+                                ImportAssetError::CreateDir {
+                                    path: textures_dir_abs.clone(),
+                                    source,
+                                }
+                            })?;
+                            created_texture_dir = true;
+                        }
+
+                        let extension = extension_for_mime_type(mime_type);
+                        let file_name = unique_texture_file_name(
+                            &mut used_texture_names,
+                            texture.name().or_else(|| image.name()),
+                            texture.index(),
+                            &extension,
+                        );
+
+                        let texture_rel = textures_dir_rel.join(&file_name);
+                        let texture_abs = asset_folder.join(&texture_rel);
+                        fs::write(&texture_abs, &buffer[start..end]).map_err(|error| {
+                            ImportAssetError::Write {
+                                path: texture_abs.clone(),
+                                error,
+                            }
+                        })?;
+
+                        let project_relative_texture = project_relative_package.join(&texture_rel);
+                        let display_name = texture
+                            .name()
+                            .or_else(|| image.name())
+                            .map(|name| name.to_string());
+
+                        texture_entries.insert(
+                            texture_index,
+                            PackagedTexturePaths {
+                                package_relative: texture_rel.clone(),
+                                project_relative: project_relative_texture,
+                                display_name: display_name.clone(),
+                            },
+                        );
+
+                        packaged_textures.push(PackagedTexture {
+                            index: texture_index,
+                            path: texture_rel,
+                            name: display_name,
+                        });
+                    }
+                }
+            }
+
+            packaged_textures.sort_by_key(|entry| entry.index);
+
+            if !texture_entries.is_empty() {
+                let materials: Vec<_> = document.materials().collect();
+
+                for entity in &mut stored_asset.entities {
+                    let Some(material_data) = entity.material_data.as_mut() else {
+                        continue;
+                    };
+
+                    let Some(material_index) = entity.gltf_material else {
+                        continue;
+                    };
+
+                    let Some(gltf_material) = materials.get(material_index) else {
+                        continue;
+                    };
+
+                    let pbr = gltf_material.pbr_metallic_roughness();
+
+                    if let Some(info) = pbr.base_color_texture() {
+                        apply_packaged_texture_slot(
+                            material_data,
+                            MaterialTextureSlot::BaseColor,
+                            info.texture().index(),
+                            &texture_entries,
+                        );
+                    }
+
+                    if let Some(info) = pbr.metallic_roughness_texture() {
+                        apply_packaged_texture_slot(
+                            material_data,
+                            MaterialTextureSlot::MetallicRoughness,
+                            info.texture().index(),
+                            &texture_entries,
+                        );
+                    }
+
+                    if let Some(normal) = gltf_material.normal_texture() {
+                        apply_packaged_texture_slot(
+                            material_data,
+                            MaterialTextureSlot::Normal,
+                            normal.texture().index(),
+                            &texture_entries,
+                        );
+                    }
+
+                    if let Some(emissive) = gltf_material.emissive_texture() {
+                        apply_packaged_texture_slot(
+                            material_data,
+                            MaterialTextureSlot::Emissive,
+                            emissive.texture().index(),
+                            &texture_entries,
+                        );
+                    }
+
+                    if let Some(occlusion) = gltf_material.occlusion_texture() {
+                        apply_packaged_texture_slot(
+                            material_data,
+                            MaterialTextureSlot::Occlusion,
+                            occlusion.texture().index(),
+                            &texture_entries,
+                        );
+                    }
+                }
+            }
+
             let scene_rel = PathBuf::from("scene.asset.json");
             let scene_abs = asset_folder.join(&scene_rel);
             let scene_json = stored_asset
@@ -727,6 +996,7 @@ mod native {
                 scene: Some(PackagedScene {
                     json: scene_rel,
                     meshes,
+                    textures: packaged_textures,
                 }),
             };
 
@@ -815,6 +1085,35 @@ mod native {
         }
 
         candidate
+    }
+
+    fn apply_packaged_texture_slot(
+        material: &mut SerializedMaterial,
+        slot: MaterialTextureSlot,
+        texture_index: usize,
+        textures: &HashMap<u32, PackagedTexturePaths>,
+    ) {
+        let Some(entry) = textures.get(&(texture_index as u32)) else {
+            return;
+        };
+
+        let slot_data = match slot {
+            MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
+            MaterialTextureSlot::MetallicRoughness => &mut material.metallic_roughness_texture,
+            MaterialTextureSlot::Normal => &mut material.normal_texture,
+            MaterialTextureSlot::Emissive => &mut material.emissive_texture,
+            MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
+        };
+
+        if slot_data.path.is_none() {
+            slot_data.path = Some(entry.project_relative.clone());
+        }
+
+        if slot_data.name.is_none() {
+            slot_data.name = entry.display_name.clone();
+        }
+
+        slot_data.index = None;
     }
 
     fn extension_for_mime_type(mime: Option<&str>) -> String {

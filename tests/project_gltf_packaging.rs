@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -17,7 +17,9 @@ use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetada
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
     components::MeshComponent,
-    gltf_package::{PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION},
+    gltf_package::{
+        PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture, PACKAGED_GLTF_VERSION,
+    },
     loader::SceneImportDevice,
     Scene, SceneAssetBundle, SceneLoader,
 };
@@ -128,6 +130,62 @@ fn safe_join(base: &Path, relative: &Path, original: &str) -> PathBuf {
     }
 
     result
+}
+
+fn decode_embedded_data_uri(uri: &str) -> (Option<String>, Vec<u8>) {
+    let rest = uri
+        .strip_prefix("data:")
+        .unwrap_or_else(|| panic!("unsupported data URI {uri}"));
+
+    let mut parts = rest.splitn(2, ',');
+    let meta = parts.next().unwrap_or("");
+    let data = parts
+        .next()
+        .unwrap_or_else(|| panic!("data URI {uri} is missing payload"));
+
+    let mut mime: Option<String> = None;
+    let mut is_base64 = false;
+
+    if !meta.is_empty() {
+        for token in meta.split(';') {
+            if token.eq_ignore_ascii_case("base64") {
+                is_base64 = true;
+            } else if mime.is_none() && !token.is_empty() {
+                mime = Some(token.to_string());
+            }
+        }
+    }
+
+    assert!(is_base64, "unsupported non-base64 data URI {uri}");
+
+    let decoded = base64::decode(data).expect("base64 data URI should decode");
+    (mime, decoded)
+}
+
+fn extension_for_mime_type(mime: Option<&str>) -> String {
+    let mime = mime
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    match mime.as_str() {
+        "image/png" => "png".to_string(),
+        "image/jpeg" | "image/jpg" => "jpg".to_string(),
+        "image/webp" => "webp".to_string(),
+        "image/bmp" => "bmp".to_string(),
+        "image/gif" => "gif".to_string(),
+        "image/tga" => "tga".to_string(),
+        "image/vnd.microsoft.icon" | "image/x-icon" => "ico".to_string(),
+        "image/ktx" => "ktx".to_string(),
+        "image/ktx2" => "ktx2".to_string(),
+        "image/vnd.ms-dds" | "image/vnd-ms.dds" | "image/x-dds" | "application/vnd.ms-dds" => {
+            "dds".to_string()
+        }
+        _ => "bin".to_string(),
+    }
+}
+
+fn texture_file_name(index: usize, extension: &str) -> String {
+    format!("embedded_{index:04}.{extension}")
 }
 
 fn package_gltf_into_project(
@@ -256,6 +314,151 @@ fn package_gltf_into_project(
     let mut stored_asset = bundle.asset.clone();
     stored_asset.mesh_data.clear();
 
+    let (document, buffers, _) =
+        SceneLoader::import_gltf_native(&source_path).expect("import glTF for textures");
+
+    let textures_dir_rel = PathBuf::from("textures");
+    let textures_dir_abs = asset_folder.join(&textures_dir_rel);
+    let mut packaged_textures: Vec<PackagedTexture> = Vec::new();
+    let mut texture_remap: HashMap<usize, (PathBuf, Option<String>)> = HashMap::new();
+    let mut created_texture_dir = false;
+
+    for texture in document.textures() {
+        let image = texture.source();
+        match image.source() {
+            gltf::image::Source::Uri { uri, .. } => {
+                let trimmed = uri.trim();
+                if !trimmed.starts_with("data:") {
+                    continue;
+                }
+
+                let (mime, data) = decode_embedded_data_uri(trimmed);
+
+                if !created_texture_dir {
+                    fs::create_dir_all(&textures_dir_abs).expect("create texture directory");
+                    created_texture_dir = true;
+                }
+
+                let extension = extension_for_mime_type(mime.as_deref());
+                let file_name = texture_file_name(texture.index(), &extension);
+                let texture_rel = textures_dir_rel.join(&file_name);
+                let texture_abs = asset_folder.join(&texture_rel);
+                fs::write(&texture_abs, &data).expect("write embedded texture");
+
+                let project_relative = project_relative_package.join(&texture_rel);
+                let display_name = texture
+                    .name()
+                    .or_else(|| image.name())
+                    .map(|name| name.to_string());
+
+                texture_remap.insert(texture.index(), (project_relative, display_name.clone()));
+                packaged_textures.push(PackagedTexture {
+                    index: texture.index() as u32,
+                    path: texture_rel,
+                    name: display_name,
+                });
+            }
+            gltf::image::Source::View { view, mime_type } => {
+                let buffer_index = view.buffer().index();
+                let buffer = &buffers[buffer_index];
+                let start = view.offset();
+                let end = start + view.length();
+                assert!(end <= buffer.len(), "embedded texture view out of bounds");
+
+                if !created_texture_dir {
+                    fs::create_dir_all(&textures_dir_abs).expect("create texture directory");
+                    created_texture_dir = true;
+                }
+
+                let extension = extension_for_mime_type(Some(mime_type));
+                let file_name = texture_file_name(texture.index(), &extension);
+                let texture_rel = textures_dir_rel.join(&file_name);
+                let texture_abs = asset_folder.join(&texture_rel);
+                fs::write(&texture_abs, &buffer[start..end]).expect("write embedded view texture");
+
+                let project_relative = project_relative_package.join(&texture_rel);
+                let display_name = texture
+                    .name()
+                    .or_else(|| image.name())
+                    .map(|name| name.to_string());
+
+                texture_remap.insert(texture.index(), (project_relative, display_name.clone()));
+                packaged_textures.push(PackagedTexture {
+                    index: texture.index() as u32,
+                    path: texture_rel,
+                    name: display_name,
+                });
+            }
+        }
+    }
+
+    packaged_textures.sort_by_key(|entry| entry.index);
+
+    if !texture_remap.is_empty() {
+        let materials: Vec<_> = document.materials().collect();
+
+        for entity in &mut stored_asset.entities {
+            let Some(material) = entity.material_data.as_mut() else {
+                continue;
+            };
+
+            let Some(material_index) = entity.gltf_material else {
+                continue;
+            };
+
+            let Some(gltf_material) = materials.get(material_index) else {
+                continue;
+            };
+
+            let pbr = gltf_material.pbr_metallic_roughness();
+
+            if let Some(info) = pbr.base_color_texture() {
+                if let Some((path, name)) = texture_remap.get(&info.texture().index()) {
+                    let slot = &mut material.base_color_texture;
+                    slot.path = Some(path.clone());
+                    slot.name = name.clone();
+                    slot.index = None;
+                }
+            }
+
+            if let Some(info) = pbr.metallic_roughness_texture() {
+                if let Some((path, name)) = texture_remap.get(&info.texture().index()) {
+                    let slot = &mut material.metallic_roughness_texture;
+                    slot.path = Some(path.clone());
+                    slot.name = name.clone();
+                    slot.index = None;
+                }
+            }
+
+            if let Some(normal) = gltf_material.normal_texture() {
+                if let Some((path, name)) = texture_remap.get(&normal.texture().index()) {
+                    let slot = &mut material.normal_texture;
+                    slot.path = Some(path.clone());
+                    slot.name = name.clone();
+                    slot.index = None;
+                }
+            }
+
+            if let Some(emissive) = gltf_material.emissive_texture() {
+                if let Some((path, name)) = texture_remap.get(&emissive.texture().index()) {
+                    let slot = &mut material.emissive_texture;
+                    slot.path = Some(path.clone());
+                    slot.name = name.clone();
+                    slot.index = None;
+                }
+            }
+
+            if let Some(occlusion) = gltf_material.occlusion_texture() {
+                if let Some((path, name)) = texture_remap.get(&occlusion.texture().index()) {
+                    let slot = &mut material.occlusion_texture;
+                    slot.path = Some(path.clone());
+                    slot.name = name.clone();
+                    slot.index = None;
+                }
+            }
+        }
+    }
+
     let scene_rel = PathBuf::from("scene.asset.json");
     let scene_abs = asset_folder.join(&scene_rel);
     let scene_json = stored_asset.to_json().expect("serialize scene asset");
@@ -285,6 +488,7 @@ fn package_gltf_into_project(
         scene: Some(PackagedScene {
             json: scene_rel,
             meshes,
+            textures: packaged_textures,
         }),
     };
 

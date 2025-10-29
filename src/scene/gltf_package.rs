@@ -25,6 +25,9 @@ pub struct PackagedScene {
     /// Individual mesh payloads stored alongside the descriptor.
     #[serde(default)]
     pub meshes: Vec<PackagedMesh>,
+    /// Texture payloads extracted from the source glTF and stored next to the descriptor.
+    #[serde(default)]
+    pub textures: Vec<PackagedTexture>,
 }
 
 /// A single mesh payload that belongs to a packaged glTF scene.
@@ -34,4 +37,16 @@ pub struct PackagedMesh {
     pub index: usize,
     /// Relative path to the serialized mesh data blob.
     pub path: PathBuf,
+}
+
+/// A single texture payload that belongs to a packaged glTF scene.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackagedTexture {
+    /// Index of the texture within the source glTF document.
+    pub index: u32,
+    /// Relative path to the stored texture file within the packaged directory.
+    pub path: PathBuf,
+    /// Optional display name to associate with the texture reference in materials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
