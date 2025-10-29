@@ -17,9 +17,7 @@ use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetada
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
     components::MeshComponent,
-    gltf_package::{
-        PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture, PACKAGED_GLTF_VERSION,
-    },
+    gltf_package::{PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION},
     loader::SceneImportDevice,
     Scene, SceneAssetBundle, SceneLoader,
 };
@@ -212,84 +210,10 @@ fn package_gltf_into_project(
     let mut bundle = SceneLoader::load_gltf_asset(&source_path, device, 1.0)
         .expect("load glTF asset for packaging");
 
-    let mut lookup = HashMap::new();
+    let mut lookup = std::collections::HashMap::new();
     for (original, packaged) in &mapping {
         lookup.insert(original.clone(), packaged.clone());
     }
-
-    let (document, buffers, _) =
-        SceneLoader::import_gltf_native(&source_path).expect("import glTF for packaging");
-
-    let mut image_package_paths: HashMap<usize, PathBuf> = HashMap::new();
-    let mut image_payloads: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-    let mut used_texture_names: HashSet<String> = HashSet::new();
-    let texture_dir_rel = PathBuf::from("textures");
-
-    for image in document.images() {
-        match image.source() {
-            gltf::image::Source::View { view, mime_type } => {
-                let buffer = &buffers[view.buffer().index()].0;
-                let start = view.offset();
-                let end = start + view.length();
-                if end > buffer.len() {
-                    panic!("embedded texture view {} exceeds buffer", image.index());
-                }
-
-                let payload = buffer[start..end].to_vec();
-                let extension = extension_for_mime_type(Some(mime_type));
-                let file_name = unique_texture_file_name(
-                    &mut used_texture_names,
-                    image.name(),
-                    image.index(),
-                    &extension,
-                );
-                let package_relative = texture_dir_rel.join(&file_name);
-                image_package_paths.insert(image.index(), package_relative.clone());
-                image_payloads.push((package_relative, payload));
-            }
-            gltf::image::Source::Uri { uri, mime_type } => {
-                let trimmed = uri.trim();
-                if !trimmed.starts_with("data:") {
-                    continue;
-                }
-
-                let (inferred_mime, payload) = decode_embedded_data_uri(trimmed);
-                let mime = mime_type
-                    .map(|value| value.to_string())
-                    .or(inferred_mime)
-                    .unwrap_or_else(|| "application/octet-stream".to_string());
-                let extension = extension_for_mime_type(Some(&mime));
-                let file_name = unique_texture_file_name(
-                    &mut used_texture_names,
-                    image.name(),
-                    image.index(),
-                    &extension,
-                );
-                let package_relative = texture_dir_rel.join(&file_name);
-                image_package_paths.insert(image.index(), package_relative.clone());
-                image_payloads.push((package_relative, payload));
-            }
-        }
-    }
-
-    let mut texture_package_paths: HashMap<usize, PathBuf> = HashMap::new();
-    let mut texture_project_paths: HashMap<usize, PathBuf> = HashMap::new();
-
-    for texture in document.textures() {
-        let image_index = texture.source().index();
-        if let Some(package_relative) = image_package_paths.get(&image_index) {
-            let absolute = asset_folder.join(package_relative);
-            let project_relative = absolute
-                .strip_prefix(project_dir)
-                .expect("packaged texture should remain inside project")
-                .to_path_buf();
-            texture_package_paths.insert(texture.index(), package_relative.clone());
-            texture_project_paths.insert(texture.index(), project_relative);
-        }
-    }
-
-    let materials: Vec<_> = document.materials().collect();
-    let mut packaged_local_textures: BTreeMap<u32, PathBuf> = BTreeMap::new();
 
     for entity in &mut bundle.asset.entities {
         if entity.gltf_source.is_some() {
@@ -297,7 +221,6 @@ fn package_gltf_into_project(
         }
 
         if let Some(material) = entity.material_data.as_mut() {
-            let gltf_material = entity.gltf_material.and_then(|index| materials.get(index));
             for slot in MaterialTextureSlot::all() {
                 let slot_data = match slot {
                     MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
@@ -308,28 +231,6 @@ fn package_gltf_into_project(
                     MaterialTextureSlot::Emissive => &mut material.emissive_texture,
                     MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
                 };
-
-                if slot_data.path.is_none() {
-                    if let Some(gltf_material) = gltf_material {
-                        if let Some(texture_index) = texture_index_for_slot(gltf_material, slot) {
-                            if let Some(project_relative) =
-                                texture_project_paths.get(&texture_index)
-                            {
-                                slot_data.path = Some(project_relative.clone());
-                                if let Some(local_index) = slot_data.index {
-                                    if let Some(package_relative) =
-                                        texture_package_paths.get(&texture_index)
-                                    {
-                                        packaged_local_textures
-                                            .entry(local_index)
-                                            .or_insert_with(|| package_relative.clone());
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                }
 
                 let Some(existing_path) = slot_data.path.as_ref() else {
                     continue;
@@ -350,14 +251,6 @@ fn package_gltf_into_project(
                 }
             }
         }
-    }
-
-    for (relative, payload) in image_payloads {
-        let absolute = asset_folder.join(&relative);
-        if let Some(parent) = absolute.parent() {
-            fs::create_dir_all(parent).expect("texture dir exists");
-        }
-        fs::write(&absolute, &payload).expect("write packaged texture");
     }
 
     let mut stored_asset = bundle.asset.clone();
@@ -386,18 +279,12 @@ fn package_gltf_into_project(
         }
     }
 
-    let textures: Vec<PackagedTexture> = packaged_local_textures
-        .into_iter()
-        .map(|(index, path)| PackagedTexture { index, path })
-        .collect();
-
     let descriptor = PackagedGltfDescriptor {
         version: PACKAGED_GLTF_VERSION,
         source: None,
         scene: Some(PackagedScene {
             json: scene_rel,
             meshes,
-            textures,
         }),
     };
 
@@ -405,121 +292,6 @@ fn package_gltf_into_project(
     fs::write(&descriptor_absolute, descriptor_json).expect("write descriptor");
 
     (project_relative_package, descriptor_relative, bundle)
-}
-
-fn texture_index_for_slot(material: &gltf::Material, slot: MaterialTextureSlot) -> Option<usize> {
-    match slot {
-        MaterialTextureSlot::BaseColor => material
-            .pbr_metallic_roughness()
-            .base_color_texture()
-            .map(|info| info.texture().index()),
-        MaterialTextureSlot::MetallicRoughness => material
-            .pbr_metallic_roughness()
-            .metallic_roughness_texture()
-            .map(|info| info.texture().index()),
-        MaterialTextureSlot::Normal => material.normal_texture().map(|info| info.texture().index()),
-        MaterialTextureSlot::Emissive => material
-            .emissive_texture()
-            .map(|info| info.texture().index()),
-        MaterialTextureSlot::Occlusion => material
-            .occlusion_texture()
-            .map(|info| info.texture().index()),
-    }
-}
-
-fn sanitize_texture_stem(name: &str) -> String {
-    let mut stem = String::new();
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' {
-            stem.push(ch);
-        } else if !stem.ends_with('_') {
-            stem.push('_');
-        }
-    }
-
-    let trimmed = stem.trim_matches('_');
-    if trimmed.is_empty() {
-        String::new()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-fn unique_texture_file_name(
-    used: &mut HashSet<String>,
-    original_name: Option<&str>,
-    index: usize,
-    extension: &str,
-) -> String {
-    let base = original_name
-        .map(sanitize_texture_stem)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| format!("embedded_{index:04}"));
-
-    let mut candidate = format!("{base}.{extension}");
-    let mut suffix = 1usize;
-    while !used.insert(candidate.clone()) {
-        candidate = format!("{base}_{suffix:02}.{}", extension);
-        suffix += 1;
-    }
-
-    candidate
-}
-
-fn extension_for_mime_type(mime: Option<&str>) -> String {
-    let mime = mime
-        .map(|value| value.to_ascii_lowercase())
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let ext = match mime.as_str() {
-        "image/png" => "png",
-        "image/jpeg" | "image/jpg" => "jpg",
-        "image/webp" => "webp",
-        "image/bmp" => "bmp",
-        "image/gif" => "gif",
-        "image/tga" => "tga",
-        "image/vnd.microsoft.icon" | "image/x-icon" => "ico",
-        "image/ktx" => "ktx",
-        "image/ktx2" => "ktx2",
-        "image/vnd.ms-dds" | "image/vnd-ms.dds" | "image/x-dds" | "application/vnd.ms-dds" => "dds",
-        _ => "bin",
-    };
-
-    ext.to_string()
-}
-
-fn decode_embedded_data_uri(uri: &str) -> (Option<String>, Vec<u8>) {
-    let rest = uri
-        .strip_prefix("data:")
-        .unwrap_or_else(|| panic!("{uri:?} is not a data URI"));
-    let mut parts = rest.splitn(2, ',');
-    let meta = parts.next().unwrap_or("");
-    let data = parts
-        .next()
-        .unwrap_or_else(|| panic!("data URI {uri:?} missing payload"));
-
-    let mut mime: Option<String> = None;
-    let mut is_base64 = false;
-
-    if !meta.is_empty() {
-        for token in meta.split(';') {
-            if token.eq_ignore_ascii_case("base64") {
-                is_base64 = true;
-            } else if mime.is_none() && !token.is_empty() {
-                mime = Some(token.to_string());
-            }
-        }
-    }
-
-    if !is_base64 {
-        panic!("data URI {uri:?} is not base64 encoded");
-    }
-
-    let decoded = base64::decode(data).unwrap_or_else(|error| {
-        panic!("failed to decode data URI {uri:?}: {error}");
-    });
-
-    (mime, decoded)
 }
 
 #[test]
@@ -588,43 +360,6 @@ fn packaged_gltf_roundtrip_without_source() {
         );
     }
 
-    let mut packaged_texture_paths = Vec::new();
-    for entity in &bundle.asset.entities {
-        if let Some(material) = &entity.material_data {
-            for slot in MaterialTextureSlot::all() {
-                let slot_data = match slot {
-                    MaterialTextureSlot::BaseColor => &material.base_color_texture,
-                    MaterialTextureSlot::MetallicRoughness => &material.metallic_roughness_texture,
-                    MaterialTextureSlot::Normal => &material.normal_texture,
-                    MaterialTextureSlot::Emissive => &material.emissive_texture,
-                    MaterialTextureSlot::Occlusion => &material.occlusion_texture,
-                };
-
-                if let Some(path) = slot_data.path.as_ref() {
-                    packaged_texture_paths.push(path.clone());
-                }
-            }
-        }
-    }
-
-    assert!(
-        packaged_texture_paths
-            .iter()
-            .any(|path| path.to_string_lossy().contains("textures")),
-        "serialized materials should reference packaged texture paths"
-    );
-    for relative in packaged_texture_paths
-        .iter()
-        .filter(|path| path.to_string_lossy().contains("textures"))
-    {
-        let absolute = project_root.join(relative);
-        assert!(
-            absolute.exists(),
-            "packaged material texture {:?} should exist",
-            absolute
-        );
-    }
-
     let mut scene = Scene::new();
     let registration = bundle.register_resources(&mut headless, &mut scene.assets);
     if registration.textures_changed() {
@@ -644,15 +379,12 @@ fn packaged_gltf_roundtrip_without_source() {
 
     fs::remove_dir_all(source_root).expect("remove source directory");
 
+    let descriptor_path = project_root.join(&descriptor_rel);
     let mut packaged_bundle = SceneLoader::load_gltf_asset(&descriptor_path, &mut headless, 1.0)
         .expect("load packaged descriptor");
     let mut packaged_scene = Scene::new();
     let packaged_registration =
         packaged_bundle.register_resources(&mut headless, &mut packaged_scene.assets);
-    assert!(
-        packaged_registration.textures_changed(),
-        "packaged resources should register embedded textures"
-    );
     if packaged_registration.textures_changed() {
         headless
             .queue()

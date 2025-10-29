@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Version of the packaged glTF descriptor format.
-pub const PACKAGED_GLTF_VERSION: u32 = 3;
+pub const PACKAGED_GLTF_VERSION: u32 = 2;
 
 /// Describes the assets that comprise a packaged glTF import.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,9 +25,6 @@ pub struct PackagedScene {
     /// Individual mesh payloads stored alongside the descriptor.
     #[serde(default)]
     pub meshes: Vec<PackagedMesh>,
-    /// Individual texture payloads stored alongside the descriptor.
-    #[serde(default)]
-    pub textures: Vec<PackagedTexture>,
 }
 
 /// A single mesh payload that belongs to a packaged glTF scene.
@@ -36,14 +33,5 @@ pub struct PackagedMesh {
     /// Local mesh index within the scene asset.
     pub index: usize,
     /// Relative path to the serialized mesh data blob.
-    pub path: PathBuf,
-}
-
-/// A single texture payload that belongs to a packaged glTF scene.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackagedTexture {
-    /// Local texture index within the scene asset.
-    pub index: u32,
-    /// Relative path to the encoded texture image on disk.
     pub path: PathBuf,
 }

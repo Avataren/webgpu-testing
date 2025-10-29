@@ -669,17 +669,11 @@ impl SceneLoader {
                 asset.mesh_data = Self::read_packaged_meshes(&scene, parent)?;
             }
 
-            let texture_resources = if !scene.textures.is_empty() {
-                Self::read_packaged_textures(&scene, parent, renderer)?
-            } else {
-                Vec::new()
-            };
-
             Self::apply_packaged_dependencies(&mut asset, descriptor_path, &descriptor);
 
             Ok(SceneAssetBundle::new(
                 asset,
-                SceneAssetResources::new(Vec::new(), texture_resources),
+                SceneAssetResources::new(Vec::new(), Vec::new()),
             ))
         } else if let Some(source) = descriptor.source.as_ref() {
             let parent = descriptor_path.parent().ok_or_else(|| {
@@ -732,36 +726,6 @@ impl SceneLoader {
                 })
             })
             .collect())
-    }
-
-    fn read_packaged_textures(
-        scene: &PackagedScene,
-        base_dir: &Path,
-        renderer: &impl SceneImportDevice,
-    ) -> Result<Vec<(u32, Texture)>, String> {
-        if scene.textures.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut entries = scene.textures.clone();
-        entries.sort_by_key(|texture| texture.index);
-
-        let mut textures = Vec::new();
-        for texture in entries {
-            let texture_path = base_dir.join(&texture.path);
-            let texture_data =
-                Texture::from_path(renderer.device(), renderer.queue(), &texture_path, false)
-                    .map_err(|err| {
-                        format!(
-                            "Failed to load packaged texture {:?}: {}",
-                            texture_path, err
-                        )
-                    })?;
-
-            textures.push((texture.index, texture_data));
-        }
-
-        Ok(textures)
     }
 
     fn apply_packaged_dependencies(

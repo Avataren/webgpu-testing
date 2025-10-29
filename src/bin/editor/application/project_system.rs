@@ -375,8 +375,7 @@ mod native {
     use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
     use wgpu_cube::scene::{
         gltf_package::{
-            PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture,
-            PACKAGED_GLTF_VERSION,
+            PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION,
         },
         SceneAssetBundle, SceneImportDevice, SceneLoader, SerializedRuneScriptSource,
     };
@@ -452,14 +451,6 @@ mod native {
             #[source]
             error: std::io::Error,
         },
-        #[error("Failed to decode embedded texture data URI '{uri}': {source}")]
-        DecodeDataUri {
-            uri: String,
-            #[source]
-            source: base64::DecodeError,
-        },
-        #[error("Embedded texture data URI '{uri}' does not contain a base64 payload")]
-        UnsupportedDataUri { uri: String },
         #[error("Failed to serialize packaged glTF data: {0}")]
         Serialize(#[from] serde_json::Error),
         #[error("Failed to import glTF asset {path:?}: {error}")]
@@ -468,7 +459,8 @@ mod native {
 
     pub(super) struct ImportedGltf {
         pub(super) project_relative_package: PathBuf,
-        pub(super) bundle: SceneAssetBundle,
+        pub(super) descriptor_path: PathBuf,
+        pub(super) bundle: wgpu_cube::scene::SceneAssetBundle,
     }
 
     pub(super) fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError> {
@@ -626,16 +618,8 @@ mod native {
                     destination: descriptor_absolute.clone(),
                 })?;
 
-            let (document, buffers, _) =
-                SceneLoader::import_gltf_native(&source_path).map_err(|source| {
-                    ImportAssetError::Parse {
-                        path: source_path.clone(),
-                        source,
-                    }
-                })?;
-
             let mut bundle =
-                SceneLoader::load_gltf_asset(&source_path, renderer, scale).map_err(|error| {
+                SceneLoader::load_gltf_asset(source_path, renderer, scale).map_err(|error| {
                     ImportAssetError::SceneImport {
                         path: source_path.clone(),
                         error,
@@ -651,91 +635,12 @@ mod native {
 
             let lookup: std::collections::HashMap<_, _> = dependency_map.iter().cloned().collect();
 
-            let mut image_package_paths: HashMap<usize, PathBuf> = HashMap::new();
-            let mut image_payloads: Vec<(PathBuf, Vec<u8>)> = Vec::new();
-            let mut used_texture_names: HashSet<String> = HashSet::new();
-            let texture_dir_rel = PathBuf::from("textures");
-
-            for image in document.images() {
-                match image.source() {
-                    ImageSource::View { view, mime_type } => {
-                        let buffer_index = view.buffer().index();
-                        let buffer = &buffers[buffer_index].0;
-                        let start = view.offset();
-                        let end = start + view.length();
-                        if end > buffer.len() {
-                            log::warn!(
-                                "Embedded texture view {} exceeds buffer bounds; skipping",
-                                image.index()
-                            );
-                            continue;
-                        }
-
-                        let payload = buffer[start..end].to_vec();
-                        let extension = extension_for_mime_type(Some(mime_type));
-                        let file_name = unique_texture_file_name(
-                            &mut used_texture_names,
-                            image.name(),
-                            image.index(),
-                            &extension,
-                        );
-                        let package_relative = texture_dir_rel.join(&file_name);
-                        image_package_paths.insert(image.index(), package_relative.clone());
-                        image_payloads.push((package_relative, payload));
-                    }
-                    ImageSource::Uri { uri, mime_type } => {
-                        let trimmed = uri.trim();
-                        if !trimmed.starts_with("data:") {
-                            continue;
-                        }
-
-                        let (inferred_mime, payload) = decode_embedded_data_uri(trimmed)?;
-                        let mime = mime_type
-                            .map(|value| value.to_string())
-                            .or(inferred_mime)
-                            .unwrap_or_else(|| "application/octet-stream".to_string());
-                        let extension = extension_for_mime_type(Some(&mime));
-                        let file_name = unique_texture_file_name(
-                            &mut used_texture_names,
-                            image.name(),
-                            image.index(),
-                            &extension,
-                        );
-                        let package_relative = texture_dir_rel.join(&file_name);
-                        image_package_paths.insert(image.index(), package_relative.clone());
-                        image_payloads.push((package_relative, payload));
-                    }
-                }
-            }
-
-            let mut texture_package_paths: HashMap<usize, PathBuf> = HashMap::new();
-            let mut texture_project_paths: HashMap<usize, PathBuf> = HashMap::new();
-
-            for texture in document.textures() {
-                let image_index = texture.source().index();
-                if let Some(package_relative) = image_package_paths.get(&image_index) {
-                    let absolute_path = asset_folder.join(package_relative);
-                    let project_relative = absolute_path
-                        .strip_prefix(project_dir)
-                        .map(Path::to_path_buf)
-                        .map_err(|_| ImportAssetError::DestinationOutside {
-                            destination: absolute_path.clone(),
-                        })?;
-                    texture_package_paths.insert(texture.index(), package_relative.clone());
-                    texture_project_paths.insert(texture.index(), project_relative);
-                }
-            }
-
-            let materials: Vec<_> = document.materials().collect();
-            let mut packaged_local_textures: BTreeMap<u32, PathBuf> = BTreeMap::new();
-
             for entity in &mut bundle.asset.entities {
                 if entity.gltf_source.is_some() {
                     entity.gltf_source = Some(descriptor_relative.clone());
                 }
 
                 if let Some(material) = entity.material_data.as_mut() {
-                    let gltf_material = entity.gltf_material.and_then(|index| materials.get(index));
                     for slot in MaterialTextureSlot::all() {
                         let slot_data = match slot {
                             MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
@@ -746,30 +651,6 @@ mod native {
                             MaterialTextureSlot::Emissive => &mut material.emissive_texture,
                             MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
                         };
-
-                        if slot_data.path.is_none() {
-                            if let Some(material_ref) = gltf_material {
-                                if let Some(texture_index) =
-                                    texture_index_for_slot(material_ref, slot)
-                                {
-                                    if let Some(project_relative) =
-                                        texture_project_paths.get(&texture_index)
-                                    {
-                                        slot_data.path = Some(project_relative.clone());
-                                        if let Some(local_index) = slot_data.index {
-                                            if let Some(package_relative) =
-                                                texture_package_paths.get(&texture_index)
-                                            {
-                                                packaged_local_textures
-                                                    .entry(local_index)
-                                                    .or_insert_with(|| package_relative.clone());
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
 
                         let Some(existing_path) = slot_data.path.as_ref() else {
                             continue;
@@ -790,20 +671,6 @@ mod native {
                         }
                     }
                 }
-            }
-
-            for (package_relative, payload) in image_payloads {
-                let absolute = asset_folder.join(&package_relative);
-                if let Some(parent) = absolute.parent() {
-                    fs::create_dir_all(parent).map_err(|source| ImportAssetError::CreateDir {
-                        path: parent.to_path_buf(),
-                        source,
-                    })?;
-                }
-                fs::write(&absolute, &payload).map_err(|error| ImportAssetError::Write {
-                    path: absolute,
-                    error,
-                })?;
             }
 
             let mut stored_asset = bundle.asset.clone();
@@ -846,18 +713,12 @@ mod native {
                 }
             }
 
-            let textures: Vec<PackagedTexture> = packaged_local_textures
-                .into_iter()
-                .map(|(index, path)| PackagedTexture { index, path })
-                .collect();
-
             let descriptor = PackagedGltfDescriptor {
                 version: PACKAGED_GLTF_VERSION,
                 source: None,
                 scene: Some(PackagedScene {
                     json: scene_rel,
                     meshes,
-                    textures,
                 }),
             };
 
@@ -872,6 +733,7 @@ mod native {
 
             Ok(ImportedGltf {
                 project_relative_package,
+                descriptor_path: descriptor_relative,
                 bundle,
             })
         })();
