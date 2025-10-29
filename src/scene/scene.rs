@@ -1,4 +1,4 @@
-use super::animation::{AnimationClip, AnimationState};
+use super::animation::{AnimationClip, AnimationState, AnimationTarget};
 use super::assets::{
     build_tree_asset_node, serialize_world, SceneAsset, SceneTreeAsset, SceneTreeAssetNode,
     SerializedAnimationClip, SerializedTransform,
@@ -25,7 +25,7 @@ use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use glam::Vec3;
 use hecs::{Entity, World};
-use log::error;
+use log::{error, warn};
 use std::collections::HashMap;
 
 pub struct Scene {
@@ -387,6 +387,63 @@ impl Scene {
 
     pub fn main_world_mut(&mut self) -> &mut World {
         self.main_instance_mut().world_mut()
+    }
+
+    pub fn merge_world_as_child(
+        &mut self,
+        parent: Entity,
+        world: World,
+    ) -> HashMap<hecs::Entity, hecs::Entity> {
+        super::internal::composition::merge_world_as_child(self.main_world_mut(), parent, world)
+    }
+
+    pub fn attach_imported_animations(
+        &mut self,
+        mut animations: Vec<AnimationClip>,
+        animation_states: Vec<AnimationState>,
+        entity_map: &HashMap<hecs::Entity, hecs::Entity>,
+    ) {
+        if animations.is_empty() && animation_states.is_empty() {
+            return;
+        }
+
+        for clip in &mut animations {
+            for channel in &mut clip.channels {
+                if let AnimationTarget::Transform { entity, .. } = &mut channel.target {
+                    if let Some(&mapped) = entity_map.get(entity) {
+                        *entity = mapped;
+                    } else {
+                        warn!(
+                            "Skipping animation channel targeting missing entity {:?}",
+                            entity
+                        );
+                    }
+                }
+            }
+        }
+
+        let main_instance = self.main_instance_mut();
+        let mut clip_indices = Vec::with_capacity(animations.len());
+
+        for clip in animations.into_iter() {
+            let index = main_instance.add_animation_clip(clip);
+            clip_indices.push(index);
+        }
+
+        for mut state in animation_states.into_iter() {
+            let Some(&new_index) = clip_indices.get(state.clip_index) else {
+                warn!(
+                    "Skipping animation state referencing missing clip index {}",
+                    state.clip_index
+                );
+                continue;
+            };
+
+            state.clip_index = new_index;
+            if main_instance.push_animation_state(state).is_none() {
+                warn!("Failed to attach animation state for clip {}", new_index);
+            }
+        }
     }
 
     pub(crate) fn gizmo_resources(&self) -> Option<gizmos::GizmoResources> {
