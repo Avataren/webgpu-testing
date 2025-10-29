@@ -360,7 +360,7 @@ impl EditorSystem for ProjectSystem {
 }
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+    use std::collections::{BTreeSet, HashMap, HashSet};
     use std::fs;
     use std::io::{BufRead, BufReader};
     use std::path::{Component, Path, PathBuf};
@@ -377,7 +377,7 @@ mod native {
         gltf_package::{
             PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION,
         },
-        SceneAssetBundle, SceneImportDevice, SceneLoader, SerializedRuneScriptSource,
+        SceneImportDevice, SceneLoader, SerializedRuneScriptSource,
     };
 
     use crate::project::NewProjectRequest;
@@ -432,6 +432,14 @@ mod native {
         MalformedUri { uri: String },
         #[error("glTF reference '{uri}' could not be resolved at {resolved:?}.")]
         MissingDependency { uri: String, resolved: PathBuf },
+        #[error("glTF data URI '{uri}' is not supported.")]
+        UnsupportedDataUri { uri: String },
+        #[error("Failed to decode glTF data URI '{uri}': {source}")]
+        DecodeDataUri {
+            uri: String,
+            #[source]
+            source: base64::DecodeError,
+        },
         #[error("Failed to create folder {path:?}: {source}")]
         CreateDir {
             path: PathBuf,
@@ -619,7 +627,7 @@ mod native {
                 })?;
 
             let mut bundle =
-                SceneLoader::load_gltf_asset(source_path, renderer, scale).map_err(|error| {
+                SceneLoader::load_gltf_asset(&source_path, renderer, scale).map_err(|error| {
                     ImportAssetError::SceneImport {
                         path: source_path.clone(),
                         error,

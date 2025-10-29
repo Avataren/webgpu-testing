@@ -96,6 +96,38 @@ fn load_material_from_disk(path: &Path) -> SerializedMaterial {
         .unwrap_or_else(|err| panic!("failed to parse material asset {:?}: {}", path, err))
 }
 
+fn hydrate_material_data(asset: &mut SceneAsset, project_root: &Path) {
+    let mut cache: HashMap<PathBuf, SerializedMaterial> = HashMap::new();
+
+    for entity in &mut asset.entities {
+        if entity.material_data.is_some() {
+            continue;
+        }
+
+        let Some(handle) = entity.material.as_ref() else {
+            continue;
+        };
+
+        let path = handle.path();
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        };
+
+        let material = cache
+            .entry(resolved.clone())
+            .or_insert_with(|| load_material_from_disk(&resolved))
+            .clone();
+
+        entity.material_data = Some(material);
+    }
+}
+
 fn collect_material_map(
     asset: &SceneAsset,
     project_root: &Path,
@@ -247,7 +279,9 @@ fn project_material_roundtrip_preserves_registry() {
 
     let recaptured = ProjectManifest::capture(&restored_scene, loaded.metadata.clone())
         .expect("recapturing manifest should succeed");
-    let after_map = collect_material_map(&recaptured.scene, project_root);
+    let mut deserialized_scene = recaptured.scene.clone();
+    hydrate_material_data(&mut deserialized_scene, project_root);
+    let after_map = collect_material_map(&deserialized_scene, project_root);
 
     for (key, before_material) in &before_map {
         let after_material = after_map
