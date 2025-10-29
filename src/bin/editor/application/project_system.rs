@@ -95,7 +95,11 @@ impl ProjectSystem {
                         &source_path,
                     ) {
                         Ok(package) => {
-                            match SceneLoader::load_gltf_asset(&source_path, gpu_ctx.renderer, 1.0) {
+                            match SceneLoader::load_gltf_asset(
+                                &source_path,
+                                update_ctx.renderer,
+                                1.0,
+                            ) {
                                 Ok(mut bundle) => {
                                     let file_stem = source_path
                                         .file_stem()
@@ -115,24 +119,9 @@ impl ProjectSystem {
                                         }
 
                                         if let Some(material) = entity.material_data.as_mut() {
-                                            for slot in
-                                                wgpu_cube::asset::MaterialTextureSlot::all()
+                                            for slot in wgpu_cube::asset::MaterialTextureSlot::all()
                                             {
-                                                let slot_data = match slot {
-                                                    wgpu_cube::asset::MaterialTextureSlot::BaseColor =>
-                                                        &mut material.base_color_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::MetallicRoughness =>
-                                                        &mut material.metallic_roughness_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::Normal => {
-                                                        &mut material.normal_texture
-                                                    }
-                                                    wgpu_cube::asset::MaterialTextureSlot::Emissive => {
-                                                        &mut material.emissive_texture
-                                                    }
-                                                    wgpu_cube::asset::MaterialTextureSlot::Occlusion => {
-                                                        &mut material.occlusion_texture
-                                                    }
-                                                };
+                                                let slot_data = material.texture_slot_mut(slot);
                                                 let Some(existing_path) = slot_data.path.as_ref()
                                                 else {
                                                     continue;
@@ -160,22 +149,25 @@ impl ProjectSystem {
 
                                     bundle.asset.name = format!("{} (glTF)", file_stem);
 
-                                    let registration = bundle
-                                        .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
+                                    let registration = bundle.register_resources(
+                                        update_ctx.renderer,
+                                        &mut update_ctx.scene.assets,
+                                    );
 
                                     if !bundle.asset.entities.is_empty() {
-                                        let node = gpu_ctx.scene.instantiate_asset_with_renderer(
-                                            &bundle.asset,
-                                            None,
-                                            gpu_ctx.renderer,
-                                        );
-                                        gpu_ctx.scene.set_main_scene(node);
+                                        let node =
+                                            update_ctx.scene.instantiate_asset_with_renderer(
+                                                &bundle.asset,
+                                                None,
+                                                update_ctx.renderer,
+                                            );
+                                        update_ctx.scene.set_main_scene(node);
                                     }
 
                                     if registration.textures_changed() {
-                                        gpu_ctx
+                                        update_ctx
                                             .renderer
-                                            .update_texture_bind_group(&gpu_ctx.scene.assets);
+                                            .update_texture_bind_group(&update_ctx.scene.assets);
                                     }
 
                                     any_spawned = true;
