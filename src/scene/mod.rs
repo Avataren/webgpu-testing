@@ -23,9 +23,9 @@ pub mod transform;
 
 // Re-export commonly used types
 pub use assets::{
-    SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity, SceneAssetEntityBuilder,
-    SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset, SceneTreeAssetNode,
-    SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleBehavior,
+    InstantiatedSceneAsset, SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity,
+    SceneAssetEntityBuilder, SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset,
+    SceneTreeAssetNode, SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleBehavior,
     SerializedParticleEmitter, SerializedParticleSystem, SerializedRuneScript,
     SerializedRuneScriptSource, SerializedTransform,
 };

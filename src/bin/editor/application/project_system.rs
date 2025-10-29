@@ -4,7 +4,7 @@ use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::project::{ProjectError, ProjectManifest};
-use wgpu_cube::scene::{Name, Transform, TransformComponent, Visible};
+use wgpu_cube::scene::{InstantiatedSceneAsset, Name, Transform, TransformComponent, Visible};
 
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, ProjectController};
 
@@ -85,17 +85,19 @@ impl ProjectSystem {
                                 Visible(true),
                             ));
 
-                            let mut instance = package.bundle.asset.instantiate(
+                            let InstantiatedSceneAsset {
+                                world,
+                                animations,
+                                animation_states,
+                            } = package.bundle.asset.instantiate_into_world(
                                 Some(
                                     gpu_ctx.renderer
                                         as &mut dyn wgpu_cube::scene::SceneImportDevice,
                                 ),
                                 &mut gpu_ctx.scene.assets,
                             );
-                            let (animations, animation_states) = instance.take_animation_data();
-                            let entity_map = gpu_ctx
-                                .scene
-                                .merge_world_as_child(parent_entity, instance.into_world());
+                            let entity_map =
+                                gpu_ctx.scene.merge_world_as_child(parent_entity, world);
                             gpu_ctx.scene.attach_imported_animations(
                                 animations,
                                 animation_states,

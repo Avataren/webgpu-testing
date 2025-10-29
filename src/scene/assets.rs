@@ -404,6 +404,12 @@ pub struct SceneAsset {
     pub active_camera: Option<usize>,
 }
 
+pub struct InstantiatedSceneAsset {
+    pub world: World,
+    pub animations: Vec<AnimationClip>,
+    pub animation_states: Vec<AnimationState>,
+}
+
 impl SceneAsset {
     pub fn new(
         name: impl Into<String>,
@@ -796,6 +802,21 @@ impl SceneAsset {
 
         instance.set_animation_data(animations, animation_states);
         instance
+    }
+
+    pub fn instantiate_into_world(
+        &self,
+        renderer: Option<&mut dyn SceneImportDevice>,
+        assets: &mut Assets,
+    ) -> InstantiatedSceneAsset {
+        let mut instance = self.instantiate(renderer, assets);
+        let (animations, animation_states) = instance.take_animation_data();
+        let world = instance.into_world();
+        InstantiatedSceneAsset {
+            world,
+            animations,
+            animation_states,
+        }
     }
 
     pub(crate) fn apply_resource_mappings_from_maps(
