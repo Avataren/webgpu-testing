@@ -89,19 +89,39 @@ fn normalize_gltf_source(source: &Path) -> PathBuf {
     }
 }
 
-fn collect_material_map(asset: &SceneAsset) -> HashMap<GltfMaterialKey, SerializedMaterial> {
+fn load_material_from_disk(path: &Path) -> SerializedMaterial {
+    let data = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read material asset {:?}: {}", path, err));
+    serde_json::from_str(&data)
+        .unwrap_or_else(|err| panic!("failed to parse material asset {:?}: {}", path, err))
+}
+
+fn collect_material_map(
+    asset: &SceneAsset,
+    project_root: &Path,
+) -> HashMap<GltfMaterialKey, SerializedMaterial> {
     let mut map = HashMap::new();
 
     for entity in &asset.entities {
         let Some(source) = entity.gltf_source.as_ref() else {
             continue;
         };
-        let Some(material) = entity.material_data.as_ref() else {
+
+        let material = if let Some(material) = entity.material_data.as_ref() {
+            material.clone()
+        } else if let Some(handle) = entity.material.as_ref() {
+            let path = handle.path();
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                project_root.join(path)
+            };
+            load_material_from_disk(&resolved)
+        } else {
             continue;
         };
 
         let normalized_source = normalize_gltf_source(source);
-        let material = material.clone();
 
         if let (Some(node), Some(primitive)) = (entity.gltf_node, entity.gltf_primitive) {
             map.insert(
@@ -207,7 +227,7 @@ fn project_material_roundtrip_preserves_registry() {
 
     let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
         .expect("capturing manifest should succeed");
-    let before_map = collect_material_map(&manifest.scene);
+    let before_map = collect_material_map(&manifest.scene, project_root);
     assert!(
         !before_map.is_empty(),
         "expected material registry to contain entries"
@@ -227,7 +247,7 @@ fn project_material_roundtrip_preserves_registry() {
 
     let recaptured = ProjectManifest::capture(&restored_scene, loaded.metadata.clone())
         .expect("recapturing manifest should succeed");
-    let after_map = collect_material_map(&recaptured.scene);
+    let after_map = collect_material_map(&recaptured.scene, project_root);
 
     for (key, before_material) in &before_map {
         let after_material = after_map
