@@ -6,6 +6,7 @@ pub mod builder;
 pub mod camera;
 pub mod components;
 pub(crate) mod gltf_material_registry;
+pub mod gltf_package;
 mod graph;
 mod import_state;
 mod importer;
@@ -21,6 +22,7 @@ pub mod state;
 pub mod transform;
 
 // Re-export commonly used types
+
 pub use assets::{
     SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity, SceneAssetEntityBuilder,
     SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset, SceneTreeAssetNode,
@@ -30,6 +32,7 @@ pub use assets::{
 };
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};
+pub use gltf_package::{PackagedGltfDependency, PackagedGltfDescriptor};
 pub use graph::SceneNodeId;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;

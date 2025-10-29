@@ -11,7 +11,10 @@ use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
 };
-use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources, Transform};
+use crate::scene::{
+    gltf_package::PackagedGltfDescriptor, Scene, SceneAsset, SceneAssetBundle, SceneAssetResources,
+    Transform,
+};
 use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
@@ -482,16 +485,39 @@ impl SceneLoader {
         let mut temp_scene = Scene::new();
         let source_path = path.as_ref().to_path_buf();
         let resolved_path = crate::project::resolve_project_path(&source_path);
+
+        let (gltf_path, packaged_descriptor) =
+            match PackagedGltfDescriptor::load_from_path(&resolved_path) {
+                Ok(Some(descriptor)) => {
+                    let resolved_source = crate::project::resolve_project_path(&descriptor.source);
+                    (resolved_source, Some(descriptor))
+                }
+                Ok(None) => (resolved_path.clone(), None),
+                Err(err) => {
+                    log::warn!(
+                        "Failed to inspect packaged glTF descriptor {:?}: {}",
+                        resolved_path,
+                        err
+                    );
+                    (resolved_path.clone(), None)
+                }
+            };
+
         let imported_meta = Self::load_imported_meta(&resolved_path);
         Self::load_gltf(
-            &resolved_path,
+            &gltf_path,
             &mut temp_scene,
             renderer,
             scale,
             imported_meta.as_ref(),
         )?;
 
-        let default_name = resolved_path
+        let naming_path = if packaged_descriptor.is_some() {
+            &gltf_path
+        } else {
+            &resolved_path
+        };
+        let default_name = naming_path
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Scene".to_string());
@@ -499,6 +525,10 @@ impl SceneLoader {
         let mut asset = temp_scene
             .export_main_asset(default_name)
             .ok_or_else(|| "Scene export produced no asset".to_string())?;
+
+        if let Some(descriptor) = packaged_descriptor.as_ref() {
+            Self::apply_packaged_dependencies(&mut asset, &gltf_path, descriptor);
+        }
 
         for entity in &mut asset.entities {
             if entity.gltf_source.is_some() {
@@ -613,6 +643,60 @@ impl SceneLoader {
             asset,
             SceneAssetResources::new(mesh_resources, textures),
         ))
+    }
+
+    fn apply_packaged_dependencies(
+        asset: &mut SceneAsset,
+        source_path: &Path,
+        descriptor: &PackagedGltfDescriptor,
+    ) {
+        let mut dependency_lookup = std::collections::HashMap::new();
+
+        for dependency in &descriptor.dependencies {
+            let canonical = dependency
+                .original
+                .canonicalize()
+                .unwrap_or_else(|_| dependency.original.clone());
+            dependency_lookup.insert(canonical, dependency.packaged.clone());
+        }
+
+        let source_dir = source_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        for entity in &mut asset.entities {
+            let Some(material) = entity.material_data.as_mut() else {
+                continue;
+            };
+
+            for slot in MaterialTextureSlot::all() {
+                let slot_data = match slot {
+                    MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
+                    MaterialTextureSlot::MetallicRoughness => {
+                        &mut material.metallic_roughness_texture
+                    }
+                    MaterialTextureSlot::Normal => &mut material.normal_texture,
+                    MaterialTextureSlot::Emissive => &mut material.emissive_texture,
+                    MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
+                };
+
+                let Some(existing_path) = slot_data.path.as_ref() else {
+                    continue;
+                };
+
+                let resolved = if existing_path.is_absolute() {
+                    existing_path.clone()
+                } else {
+                    source_dir.join(existing_path)
+                };
+                let canonical = resolved.canonicalize().unwrap_or(resolved);
+
+                if let Some(new_rel) = dependency_lookup.get(&canonical) {
+                    slot_data.path = Some(new_rel.clone());
+                }
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
