@@ -10,6 +10,7 @@ use wgpu::{
     PowerPreference, RequestAdapterOptions, Trace,
 };
 
+use serde_json::to_value;
 use wgpu_cube::asset::Mesh;
 use wgpu_cube::project::{
     resolve_project_path, set_active_project_root, ProjectManifest, ProjectMetadata,
@@ -284,6 +285,38 @@ fn project_material_roundtrip_preserves_registry() {
         assert_eq!(
             after_material.base_color_texture.path, before_material.base_color_texture.path,
             "mutated material should retain its texture path for {:?}",
+            key
+        );
+    }
+
+    let serialized_scene = recaptured
+        .scene
+        .to_json()
+        .expect("serializing captured scene should succeed");
+    let mut deserialized_scene = SceneAsset::from_json(&serialized_scene)
+        .expect("deserializing captured scene should succeed");
+
+    for entity in &mut deserialized_scene.entities {
+        entity.material_data = None;
+    }
+
+    deserialized_scene
+        .persist_material_assets(project_root)
+        .expect("persisting materials should succeed");
+
+    let recovered_from_disk = collect_material_map(&deserialized_scene);
+
+    for (key, expected_material) in &after_map {
+        let recovered = recovered_from_disk
+            .get(key)
+            .unwrap_or_else(|| panic!("missing recovered material for key {:?}", key));
+
+        let recovered_json = to_value(recovered).expect("material should serialize");
+        let expected_json = to_value(expected_material).expect("material should serialize");
+
+        assert_eq!(
+            recovered_json, expected_json,
+            "recovered material overrides should match for {:?}",
             key
         );
     }
