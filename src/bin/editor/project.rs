@@ -55,8 +55,16 @@ impl ProjectController {
         let path = dir.join(CONTENT_DIR);
 
         #[cfg(not(target_arch = "wasm32"))]
-        if !path.exists() {
-            return None;
+        {
+            if !path.exists() {
+                if let Err(err) = std::fs::create_dir_all(&path) {
+                    log::error!(
+                        "Failed to create missing project content directory {:?}: {err}",
+                        path
+                    );
+                    return None;
+                }
+            }
         }
 
         Some(path)
@@ -511,5 +519,31 @@ impl BuildDialogState {
     fn close(&mut self) {
         self.open = false;
         self.last_error = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn content_root_creates_missing_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project_dir = temp.path().join("project");
+        std::fs::create_dir_all(&project_dir).expect("project dir");
+
+        let mut controller = ProjectController::new();
+        controller.set_current_dir(project_dir.clone());
+
+        let content_root = controller
+            .content_root()
+            .expect("content directory should be created");
+
+        assert_eq!(content_root, project_dir.join(CONTENT_DIR));
+        assert!(
+            content_root.exists(),
+            "content directory should exist after querying content_root"
+        );
     }
 }
