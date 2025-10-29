@@ -50,13 +50,20 @@ impl GltfMaterialRegistry {
                 continue;
             };
 
-            let Some(material_data) = entity.material_data.as_ref() else {
+            let material_data = if let Some(material_data) = entity.material_data.as_ref() {
+                material_data.clone()
+            } else if let Some(handle) = entity.material.as_ref() {
+                match load_material_from_disk(handle, project_root) {
+                    Some(material) => material,
+                    None => continue,
+                }
+            } else {
                 continue;
             };
 
             let normalized_source = normalize_gltf_source(source, project_root);
             let binding = MaterialBinding {
-                data: material_data.clone(),
+                data: material_data,
                 handle: entity.material.clone(),
             };
 
