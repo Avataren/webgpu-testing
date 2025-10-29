@@ -2298,16 +2298,13 @@ impl From<SerializedBillboardOrientation> for BillboardOrientation {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum SerializedBillboardSpace {
+    #[default]
     World,
-    View { offset: [f32; 3] },
-}
-
-impl Default for SerializedBillboardSpace {
-    fn default() -> Self {
-        SerializedBillboardSpace::World
-    }
+    View {
+        offset: [f32; 3],
+    },
 }
 
 impl From<BillboardSpace> for SerializedBillboardSpace {
