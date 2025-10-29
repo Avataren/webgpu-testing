@@ -4,6 +4,7 @@ use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::project::{ProjectError, ProjectManifest};
+use wgpu_cube::scene::{Name, Transform, TransformComponent, Visible};
 
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, ProjectController};
 
@@ -69,12 +70,37 @@ impl ProjectSystem {
                             .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
 
                         if !package.bundle.asset.entities.is_empty() {
-                            let node = gpu_ctx.scene.instantiate_asset_with_renderer(
-                                &package.bundle.asset,
-                                None,
-                                gpu_ctx.renderer,
+                            let root_name = source_path
+                                .file_stem()
+                                .and_then(|stem| stem.to_str())
+                                .filter(|name| !name.is_empty())
+                                .unwrap_or("Imported glTF");
+
+                            let root_transform =
+                                Transform::from(package.bundle.asset.root_transform.clone());
+
+                            let parent_entity = gpu_ctx.scene.main_world_mut().spawn((
+                                Name::new(root_name),
+                                TransformComponent(root_transform),
+                                Visible(true),
+                            ));
+
+                            let mut instance = package.bundle.asset.instantiate(
+                                Some(
+                                    gpu_ctx.renderer
+                                        as &mut dyn wgpu_cube::scene::SceneImportDevice,
+                                ),
+                                &mut gpu_ctx.scene.assets,
                             );
-                            gpu_ctx.scene.set_main_scene(node);
+                            let (animations, animation_states) = instance.take_animation_data();
+                            let entity_map = gpu_ctx
+                                .scene
+                                .merge_world_as_child(parent_entity, instance.into_world());
+                            gpu_ctx.scene.attach_imported_animations(
+                                animations,
+                                animation_states,
+                                &entity_map,
+                            );
                         }
 
                         if registration.textures_changed() {

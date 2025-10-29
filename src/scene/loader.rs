@@ -171,7 +171,17 @@ impl SceneLoader {
         node_entities: &mut [Option<hecs::Entity>],
         source_path: &PathBuf,
     ) -> Result<hecs::Entity, String> {
-        let node_name = node.name().unwrap_or("Unnamed");
+        let node_name = node.name().map(|name| name.to_string()).unwrap_or_else(|| {
+            if parent.is_none() {
+                source_path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "Imported glTF".to_string())
+            } else {
+                "Unnamed".to_string()
+            }
+        });
         log::debug!(
             "Loading node: {} (index: {}, parent: {:?})",
             node_name,
@@ -203,7 +213,7 @@ impl SceneLoader {
         let mut entity_builder = hecs::EntityBuilder::new();
 
         // Add core components
-        entity_builder.add(Name::new(node_name));
+        entity_builder.add(Name::new(node_name.clone()));
         entity_builder.add(TransformComponent(transform));
         entity_builder.add(Visible(true));
         entity_builder.add(GltfNode(node.index()));

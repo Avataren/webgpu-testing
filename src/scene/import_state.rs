@@ -25,13 +25,8 @@ impl SceneImports {
         if let Some(asset) = other.export_main_asset("MergedScene") {
             let mut instance = asset.instantiate(Some(renderer), &mut scene.assets);
             let (animations, animation_states) = instance.take_animation_data();
-            let entity_map = super::internal::composition::merge_world_as_child(
-                scene.main_world_mut(),
-                parent_entity,
-                instance.into_world(),
-            );
-            self.queue
-                .attach_imported_animations(scene, animations, animation_states, &entity_map);
+            let entity_map = scene.merge_world_as_child(parent_entity, instance.into_world());
+            scene.attach_imported_animations(animations, animation_states, &entity_map);
             scene.refresh_environment_state();
         }
     }

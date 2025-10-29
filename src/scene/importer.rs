@@ -6,11 +6,9 @@
 
 use super::scene::Scene;
 use crate::renderer::Renderer;
-use crate::scene::animation::{AnimationClip, AnimationState, AnimationTarget};
 use crate::scene::loader::{SceneImportDevice, SceneLoader};
 use crate::scripting::PendingGltfImport;
 use log::{error, warn};
-use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct ImportQueue;
@@ -54,18 +52,9 @@ impl ImportQueue {
                         &mut scene.assets,
                     );
                     let (animations, animation_states) = instance.take_animation_data();
-                    let entity_map = super::internal::composition::merge_world_as_child(
-                        scene.main_world_mut(),
-                        parent,
-                        instance.into_world(),
-                    );
+                    let entity_map = scene.merge_world_as_child(parent, instance.into_world());
 
-                    self.attach_imported_animations(
-                        scene,
-                        animations,
-                        animation_states,
-                        &entity_map,
-                    );
+                    scene.attach_imported_animations(animations, animation_states, &entity_map);
                 }
                 Err(err) => {
                     error!("Failed to import glTF {:?}: {err}", path);
@@ -85,69 +74,20 @@ impl ImportQueue {
             instance.restore_rest_pose();
         }
     }
-
-    pub(super) fn attach_imported_animations(
-        &mut self,
-        scene: &mut Scene,
-        mut animations: Vec<AnimationClip>,
-        animation_states: Vec<AnimationState>,
-        entity_map: &HashMap<hecs::Entity, hecs::Entity>,
-    ) {
-        if animations.is_empty() && animation_states.is_empty() {
-            return;
-        }
-
-        for clip in &mut animations {
-            for channel in &mut clip.channels {
-                if let AnimationTarget::Transform { entity, .. } = &mut channel.target {
-                    if let Some(&mapped) = entity_map.get(entity) {
-                        *entity = mapped;
-                    } else {
-                        warn!(
-                            "Skipping animation channel targeting missing entity {:?}",
-                            entity
-                        );
-                    }
-                }
-            }
-        }
-
-        let main_instance = scene.main_instance_mut();
-        let mut clip_indices = Vec::with_capacity(animations.len());
-
-        for clip in animations.into_iter() {
-            let index = main_instance.add_animation_clip(clip);
-            clip_indices.push(index);
-        }
-
-        for mut state in animation_states.into_iter() {
-            let Some(&new_index) = clip_indices.get(state.clip_index) else {
-                warn!(
-                    "Skipping animation state referencing missing clip index {}",
-                    state.clip_index
-                );
-                continue;
-            };
-
-            state.clip_index = new_index;
-            if main_instance.push_animation_state(state).is_none() {
-                warn!("Failed to attach animation state for clip {}", new_index);
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::scene::animation::{
-        AnimationChannel, AnimationInterpolation, AnimationOutput, AnimationSampler,
-        TransformProperty,
+        AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
+        AnimationTarget, TransformProperty,
     };
     use crate::scene::components::{TransformComponent, Visible};
     use crate::scene::transform::Transform;
     use glam::Vec3;
     use hecs::Entity;
+    use std::collections::HashMap;
 
     #[test]
     fn imported_animations_remap_entities() {
@@ -170,11 +110,10 @@ mod tests {
             },
         });
 
-        let mut queue = ImportQueue::new();
         let mut map = HashMap::new();
         map.insert(old_entity, new_entity);
 
-        queue.attach_imported_animations(&mut scene, vec![clip], Vec::new(), &map);
+        scene.attach_imported_animations(vec![clip], Vec::new(), &map);
         assert_eq!(scene.animation_states().len(), 0);
         assert_eq!(scene.animations().len(), 1);
 
