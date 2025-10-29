@@ -1,7 +1,9 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
-use crate::scene::gltf_material_registry::GltfMaterialRegistry;
 use crate::scene::loader::SceneImportDevice;
-use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SceneLoader};
+use crate::scene::{
+    Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SerializedRuneScript,
+    SerializedRuneScriptSource,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -13,6 +15,30 @@ pub const PROJECT_FILE_NAME: &str = "project.json";
 pub const SCENE_FILE_NAME: &str = "scene.json";
 pub const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
+
+fn collect_metadata_files(dir: &Path) -> Vec<PathBuf> {
+    let mut stack = vec![dir.to_path_buf()];
+    let mut files = Vec::new();
+
+    while let Some(current) = stack.pop() {
+        if let Ok(entries) = fs::read_dir(&current) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match entry.file_type() {
+                    Ok(file_type) if file_type.is_dir() => stack.push(path),
+                    Ok(file_type) if file_type.is_file() => {
+                        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                            files.push(path);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    files
+}
 
 fn active_project_root_cell() -> &'static RwLock<Option<PathBuf>> {
     static ACTIVE_PROJECT_ROOT: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
@@ -173,7 +199,9 @@ impl Default for ProjectMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProjectImport {
-    pub path: PathBuf,
+    pub package: PathBuf,
+    #[serde(default)]
+    pub metadata: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,64 +241,57 @@ impl ProjectManifest {
             .export_main_asset(metadata.name.clone())
             .ok_or(ProjectError::EmptyScene)?;
         let environment = SerializedEnvironment::from_environment(scene.environment());
-        let mut imports_set: BTreeSet<PathBuf> = BTreeSet::new();
-        let mut canonical_imports: HashSet<PathBuf> = HashSet::new();
+        let mut package_dirs: BTreeSet<PathBuf> = BTreeSet::new();
         let mut referenced_mesh_indices: HashSet<usize> = HashSet::new();
         let project_root = active_project_root();
         let canonical_project_root = project_root
             .as_ref()
             .and_then(|root| std::fs::canonicalize(root).ok());
 
+        let script_references_gltf = |script: &SerializedRuneScript| -> bool {
+            match &script.source {
+                SerializedRuneScriptSource::Inline { source, .. } => source.contains("import_gltf"),
+                SerializedRuneScriptSource::File { path } => path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name == "editor_import_gltf.rn")
+                    .unwrap_or(false),
+            }
+        };
+
         for entity in &mut asset.entities {
             if let Some(source) = entity.gltf_source.clone() {
-                let canonical_abs = if source.is_absolute() {
-                    std::fs::canonicalize(&source).unwrap_or_else(|_| source.clone())
-                } else {
-                    let resolved = resolve_project_path(&source);
-                    std::fs::canonicalize(&resolved).unwrap_or(resolved)
-                };
+                let mut manifest_path = source.clone();
 
-                let manifest_path = canonical_project_root
-                    .as_ref()
-                    .and_then(|root| {
-                        canonical_abs
-                            .strip_prefix(root)
-                            .ok()
-                            .map(|rel| rel.to_path_buf())
-                    })
-                    .or_else(|| {
-                        project_root.as_ref().and_then(|root| {
-                            canonical_abs
-                                .strip_prefix(root)
-                                .ok()
-                                .map(|rel| rel.to_path_buf())
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        if canonical_abs.is_absolute() {
-                            normalize_absolute_path(canonical_abs.clone())
-                        } else {
-                            canonical_abs.clone()
-                        }
-                    });
-
-                let canonical_key = if canonical_abs.is_absolute() {
-                    normalize_absolute_path(canonical_abs)
-                } else {
-                    canonical_abs
-                };
-
-                entity.gltf_source = Some(manifest_path.clone());
-
-                if canonical_imports.insert(canonical_key) {
-                    imports_set.insert(manifest_path);
+                if source.is_absolute() {
+                    if let Some(root) = project_root.as_ref() {
+                        manifest_path = relativize_path_to_project(
+                            source.clone(),
+                            root,
+                            canonical_project_root.as_deref(),
+                        );
+                    }
                 }
+
+                if let Some(parent) = manifest_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        package_dirs.insert(parent.to_path_buf());
+                    }
+                }
+
+                entity.gltf_source = Some(manifest_path);
             }
 
             if entity.primitive_mesh.is_some() {
                 entity.mesh_handle = None;
             } else if let Some(mesh_handle) = entity.mesh_handle {
                 referenced_mesh_indices.insert(mesh_handle);
+            }
+
+            if let Some(script) = entity.script.as_ref() {
+                if script_references_gltf(script) {
+                    entity.script = None;
+                }
             }
         }
 
@@ -304,10 +325,27 @@ impl ProjectManifest {
             }
         }
 
-        let imports = imports_set
-            .into_iter()
-            .map(|path| ProjectImport { path })
-            .collect();
+        let mut imports: Vec<ProjectImport> = Vec::new();
+
+        for package in package_dirs.into_iter() {
+            let mut metadata_paths: Vec<PathBuf> = Vec::new();
+
+            if let Some(root) = project_root.as_ref() {
+                let absolute_package = root.join(&package);
+                for metadata in collect_metadata_files(&absolute_package) {
+                    if let Ok(relative) = metadata.strip_prefix(root) {
+                        metadata_paths.push(relative.to_path_buf());
+                    }
+                }
+            }
+
+            metadata_paths.sort();
+
+            imports.push(ProjectImport {
+                package,
+                metadata: metadata_paths,
+            });
+        }
         Ok(Self {
             version: PROJECT_VERSION,
             metadata,
@@ -373,51 +411,18 @@ impl ProjectManifest {
         let environment = self.environment.clone().into_environment(project_root)?;
         new_scene.set_environment(environment);
 
-        let mut textures_changed = false;
-
-        let mut mesh_lookup: HashMap<(PathBuf, Option<usize>, Option<usize>), usize> =
-            HashMap::new();
-        let saved_registry = GltfMaterialRegistry::collect_from_asset(&self.scene, project_root);
-        let mut merged_registry = saved_registry.clone();
-
-        let normalize_path = |path: &Path| -> PathBuf {
-            let resolved = resolve_project_path(path);
-            let canonical = std::fs::canonicalize(&resolved).unwrap_or(resolved);
-            normalize_absolute_path(canonical)
-        };
-
         for import in &self.imports {
-            match SceneLoader::load_gltf_asset(&import.path, renderer, 1.0) {
-                Ok(mut bundle) => {
-                    let fresh_registry =
-                        GltfMaterialRegistry::collect_from_asset(&bundle.asset, project_root);
-                    let registration = bundle.register_resources(renderer, &mut new_scene.assets);
-                    textures_changed |= registration.textures_changed;
+            for meta in &import.metadata {
+                let path = if meta.is_absolute() {
+                    meta.clone()
+                } else {
+                    project_root.join(meta)
+                };
 
-                    for entity in &bundle.asset.entities {
-                        let Some(source) = &entity.gltf_source else {
-                            continue;
-                        };
-
-                        let normalized_source = normalize_path(source);
-
-                        if let Some(mesh_handle) = entity.mesh_handle {
-                            let key = (
-                                normalized_source.clone(),
-                                entity.gltf_node,
-                                entity.gltf_primitive,
-                            );
-                            mesh_lookup.insert(key, mesh_handle);
-                        }
-                    }
-
-                    merged_registry.merge(fresh_registry, &saved_registry, project_root);
-                }
-                Err(err) => {
-                    log::error!(
-                        "Failed to reimport glTF {:?} while instantiating project: {}",
-                        import.path,
-                        err
+                if !path.exists() {
+                    log::warn!(
+                        "Missing metadata file referenced by project import: {:?}",
+                        path
                     );
                 }
             }
@@ -425,33 +430,8 @@ impl ProjectManifest {
 
         let mut bundle = SceneAssetBundle::new(self.scene.clone(), SceneAssetResources::default());
 
-        for entity in &mut bundle.asset.entities {
-            let Some(source) = entity.gltf_source.clone() else {
-                continue;
-            };
-            let normalized_source = normalize_path(&source);
-
-            let mesh_key = (
-                normalized_source.clone(),
-                entity.gltf_node,
-                entity.gltf_primitive,
-            );
-            if let Some(&mesh_handle) = mesh_lookup.get(&mesh_key) {
-                entity.mesh_handle = Some(mesh_handle);
-            } else if entity.mesh_handle.is_some() {
-                log::warn!(
-                    "Missing reimported mesh for {:?} (node {:?}, primitive {:?})",
-                    source,
-                    entity.gltf_node,
-                    entity.gltf_primitive
-                );
-            }
-        }
-
-        merged_registry.apply_to_asset(&mut bundle.asset, project_root);
-
         let registration = bundle.register_resources(renderer, &mut new_scene.assets);
-        textures_changed |= registration.textures_changed;
+        let textures_changed = registration.textures_changed;
 
         if !bundle.asset.entities.is_empty() {
             let main = new_scene.instantiate_asset_with_renderer(&bundle.asset, None, renderer);
