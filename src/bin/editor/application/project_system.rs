@@ -360,7 +360,7 @@ impl EditorSystem for ProjectSystem {
 }
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use std::fs;
     use std::io::{BufRead, BufReader};
     use std::path::{Component, Path, PathBuf};
@@ -458,7 +458,6 @@ mod native {
     }
 
     pub(super) struct ImportedGltf {
-        pub(super) package_dir: PathBuf,
         pub(super) project_relative_package: PathBuf,
         pub(super) descriptor_path: PathBuf,
         pub(super) bundle: wgpu_cube::scene::SceneAssetBundle,
@@ -733,7 +732,6 @@ mod native {
             })?;
 
             Ok(ImportedGltf {
-                package_dir: asset_folder.clone(),
                 project_relative_package,
                 descriptor_path: descriptor_relative,
                 bundle,
@@ -745,6 +743,136 @@ mod native {
         }
 
         result
+    }
+
+    fn texture_index_for_slot(
+        material: &gltf::Material,
+        slot: MaterialTextureSlot,
+    ) -> Option<usize> {
+        match slot {
+            MaterialTextureSlot::BaseColor => material
+                .pbr_metallic_roughness()
+                .base_color_texture()
+                .map(|info| info.texture().index()),
+            MaterialTextureSlot::MetallicRoughness => material
+                .pbr_metallic_roughness()
+                .metallic_roughness_texture()
+                .map(|info| info.texture().index()),
+            MaterialTextureSlot::Normal => {
+                material.normal_texture().map(|info| info.texture().index())
+            }
+            MaterialTextureSlot::Emissive => material
+                .emissive_texture()
+                .map(|info| info.texture().index()),
+            MaterialTextureSlot::Occlusion => material
+                .occlusion_texture()
+                .map(|info| info.texture().index()),
+        }
+    }
+
+    fn sanitize_texture_stem(name: &str) -> String {
+        let mut stem = String::new();
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                stem.push(ch);
+            } else if !stem.ends_with('_') {
+                stem.push('_');
+            }
+        }
+
+        let trimmed = stem.trim_matches('_');
+        if trimmed.is_empty() {
+            String::new()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    fn unique_texture_file_name(
+        used: &mut HashSet<String>,
+        original_name: Option<&str>,
+        index: usize,
+        extension: &str,
+    ) -> String {
+        let base = original_name
+            .map(sanitize_texture_stem)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("embedded_{index:04}"));
+
+        let mut candidate = format!("{base}.{extension}");
+        let mut suffix = 1usize;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{base}_{suffix:02}.{}", extension);
+            suffix += 1;
+        }
+
+        candidate
+    }
+
+    fn extension_for_mime_type(mime: Option<&str>) -> String {
+        let mime = mime
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        let ext = match mime.as_str() {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/webp" => "webp",
+            "image/bmp" => "bmp",
+            "image/gif" => "gif",
+            "image/tga" => "tga",
+            "image/vnd.microsoft.icon" | "image/x-icon" => "ico",
+            "image/ktx" => "ktx",
+            "image/ktx2" => "ktx2",
+            "image/vnd.ms-dds" | "image/vnd-ms.dds" | "image/x-dds" | "application/vnd.ms-dds" => {
+                "dds"
+            }
+            _ => "bin",
+        };
+
+        ext.to_string()
+    }
+
+    fn decode_embedded_data_uri(uri: &str) -> Result<(Option<String>, Vec<u8>), ImportAssetError> {
+        let Some(rest) = uri.strip_prefix("data:") else {
+            return Err(ImportAssetError::UnsupportedDataUri {
+                uri: uri.to_string(),
+            });
+        };
+
+        let mut parts = rest.splitn(2, ',');
+        let meta = parts.next().unwrap_or("");
+        let data = parts
+            .next()
+            .ok_or_else(|| ImportAssetError::UnsupportedDataUri {
+                uri: uri.to_string(),
+            })?;
+
+        let mut mime: Option<String> = None;
+        let mut is_base64 = false;
+
+        if !meta.is_empty() {
+            for token in meta.split(';') {
+                if token.eq_ignore_ascii_case("base64") {
+                    is_base64 = true;
+                } else if mime.is_none() && !token.is_empty() {
+                    mime = Some(token.to_string());
+                }
+            }
+        }
+
+        if !is_base64 {
+            return Err(ImportAssetError::UnsupportedDataUri {
+                uri: uri.to_string(),
+            });
+        }
+
+        let decoded = base64::decode(data).map_err(|source| ImportAssetError::DecodeDataUri {
+            uri: uri.to_string(),
+            source,
+        })?;
+
+        Ok((mime, decoded))
     }
 
     fn collect_gltf_dependencies(path: &Path) -> Result<BTreeSet<String>, ImportAssetError> {

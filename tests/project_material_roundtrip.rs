@@ -248,7 +248,8 @@ fn project_material_roundtrip_preserves_registry() {
 
     let mutated_keys: Vec<_> = before_map
         .iter()
-        .filter_map(|(key, material)| (material.base_color == mutated_color).then(|| key.clone()))
+        .filter(|(_, material)| material.base_color == mutated_color)
+        .map(|(key, _)| key.clone())
         .collect();
 
     assert!(

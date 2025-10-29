@@ -794,7 +794,7 @@ impl SceneLoader {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn import_gltf_native(path: &Path) -> Result<GltfImport, gltf::Error> {
+    pub fn import_gltf_native(path: &Path) -> Result<GltfImport, gltf::Error> {
         match gltf::import(path) {
             Ok(result) => Ok(result),
             Err(gltf::Error::Deserialize(original))

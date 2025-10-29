@@ -1,8 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use base64::encode;
 use pollster::block_on;
 use tempfile::tempdir;
 use wgpu::{
@@ -322,6 +323,15 @@ fn packaged_gltf_roundtrip_without_source() {
     )
     .expect("copy texture");
 
+    let gltf_copy_path = source_root.join("AnimatedColorsCube.gltf");
+    let texture_copy_path = source_root.join("AnimatedCube_BaseColor.png");
+    let texture_bytes = fs::read(&texture_copy_path).expect("read embedded texture source");
+    let data_uri = format!("data:image/png;base64,{}", encode(&texture_bytes));
+    let mut gltf_json = fs::read_to_string(&gltf_copy_path).expect("read glTF source");
+    gltf_json = gltf_json.replace("AnimatedCube_BaseColor.png", &data_uri);
+    fs::write(&gltf_copy_path, gltf_json).expect("embed texture in glTF");
+    fs::remove_file(&texture_copy_path).expect("remove texture source");
+
     set_active_project_root(Some(project_root.to_path_buf()));
 
     let gltf_path = source_root.join("AnimatedColorsCube.gltf");
@@ -329,6 +339,26 @@ fn packaged_gltf_roundtrip_without_source() {
         package_gltf_into_project(project_root, &content_root, &gltf_path, &mut headless);
 
     let package_dir = project_root.join(&package_rel);
+    let descriptor_path = project_root.join(&descriptor_rel);
+
+    let descriptor_text = fs::read_to_string(&descriptor_path).expect("read packaged descriptor");
+    let descriptor: PackagedGltfDescriptor =
+        serde_json::from_str(&descriptor_text).expect("parse packaged descriptor");
+    let packaged_scene = descriptor
+        .scene
+        .expect("descriptor should contain scene payload");
+    assert!(
+        !packaged_scene.textures.is_empty(),
+        "packaged descriptor should record embedded textures"
+    );
+    for texture in &packaged_scene.textures {
+        let texture_path = package_dir.join(&texture.path);
+        assert!(
+            texture_path.exists(),
+            "packaged texture {:?} should exist on disk",
+            texture_path
+        );
+    }
 
     let mut scene = Scene::new();
     let registration = bundle.register_resources(&mut headless, &mut scene.assets);
