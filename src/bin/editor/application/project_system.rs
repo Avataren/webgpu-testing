@@ -4,7 +4,6 @@ use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::project::{ProjectError, ProjectManifest};
-use wgpu_cube::scene::SceneLoader;
 
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, ProjectController};
 
@@ -92,111 +91,35 @@ impl ProjectSystem {
                         &content_root,
                         &destination_root,
                         &source_path,
+                        gpu_ctx.renderer,
+                        1.0,
                     ) {
-                        Ok(package) => {
-                            match SceneLoader::load_gltf_asset(
-                                &source_path,
-                                gpu_ctx.renderer,
-                                1.0,
-                            ) {
-                                Ok(mut bundle) => {
-                                    let file_stem = source_path
-                                        .file_stem()
-                                        .map(|stem| stem.to_string_lossy().into_owned())
-                                        .filter(|name| !name.is_empty())
-                                        .unwrap_or_else(|| "Imported glTF".to_string());
+                        Ok(mut package) => {
+                            let registration = package
+                                .bundle
+                                .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
 
-                                    let mut dependency_lookup = std::collections::HashMap::new();
-                                    for (original, rel) in &package.dependency_map {
-                                        dependency_lookup.insert(original.clone(), rel.clone());
-                                    }
-
-                                    for entity in &mut bundle.asset.entities {
-                                        if entity.gltf_source.is_some() {
-                                            entity.gltf_source =
-                                                Some(package.placeholder_gltf.clone());
-                                        }
-
-                                        if let Some(material) = entity.material_data.as_mut() {
-                                            for slot in wgpu_cube::asset::MaterialTextureSlot::all()
-                                            {
-                                                let slot_data = match slot {
-                                                    wgpu_cube::asset::MaterialTextureSlot::BaseColor =>
-                                                        &mut material.base_color_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::MetallicRoughness =>
-                                                        &mut material.metallic_roughness_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::Normal =>
-                                                        &mut material.normal_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::Emissive =>
-                                                        &mut material.emissive_texture,
-                                                    wgpu_cube::asset::MaterialTextureSlot::Occlusion =>
-                                                        &mut material.occlusion_texture,
-                                                };
-
-                                                let Some(existing_path) = slot_data.path.as_ref()
-                                                else {
-                                                    continue;
-                                                };
-
-                                                let resolved = if existing_path.is_absolute() {
-                                                    existing_path.clone()
-                                                } else {
-                                                    source_path
-                                                        .parent()
-                                                        .map(|parent| parent.join(existing_path))
-                                                        .unwrap_or_else(|| existing_path.clone())
-                                                };
-                                                let canonical =
-                                                    resolved.canonicalize().unwrap_or(resolved);
-
-                                                if let Some(new_rel) =
-                                                    dependency_lookup.get(&canonical)
-                                                {
-                                                    slot_data.path = Some(new_rel.clone());
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    bundle.asset.name = format!("{} (glTF)", file_stem);
-
-                                    let registration = bundle.register_resources(
-                                        gpu_ctx.renderer,
-                                        &mut gpu_ctx.scene.assets,
-                                    );
-
-                                    if !bundle.asset.entities.is_empty() {
-                                        let node =
-                                            gpu_ctx.scene.instantiate_asset_with_renderer(
-                                                &bundle.asset,
-                                                None,
-                                                gpu_ctx.renderer,
-                                            );
-                                        gpu_ctx.scene.set_main_scene(node);
-                                    }
-
-                                    if registration.textures_changed() {
-                                        gpu_ctx
-                                            .renderer
-                                            .update_texture_bind_group(&gpu_ctx.scene.assets);
-                                    }
-
-                                    any_spawned = true;
-
-                                    app.asset_browser_state_mut().report_info(format!(
-                                        "Imported package to {}",
-                                        package.project_relative_package.display()
-                                    ));
-                                }
-                                Err(err) => {
-                                    error!(
-                                        "Failed to import glTF asset {:?}: {}",
-                                        source_path, err
-                                    );
-                                    app.asset_browser_state_mut().report_error(err.to_string());
-                                    let _ = std::fs::remove_dir_all(&package.package_dir);
-                                }
+                            if !package.bundle.asset.entities.is_empty() {
+                                let node = gpu_ctx.scene.instantiate_asset_with_renderer(
+                                    &package.bundle.asset,
+                                    None,
+                                    gpu_ctx.renderer,
+                                );
+                                gpu_ctx.scene.set_main_scene(node);
                             }
+
+                            if registration.textures_changed() {
+                                gpu_ctx
+                                    .renderer
+                                    .update_texture_bind_group(&gpu_ctx.scene.assets);
+                            }
+
+                            any_spawned = true;
+
+                            app.asset_browser_state_mut().report_info(format!(
+                                "Imported package to {}",
+                                package.project_relative_package.display()
+                            ));
                         }
                         Err(err) => {
                             error!("Failed to import glTF asset {:?}: {}", source_path, err);
@@ -447,9 +370,15 @@ mod native {
     use gltf::{buffer::Source as BufferSource, image::Source as ImageSource, Gltf};
     use log::{error, info};
     use thiserror::Error;
+    use wgpu_cube::asset::MaterialTextureSlot;
     use wgpu_cube::io::percent_decode_uri;
     use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
-    use wgpu_cube::scene::SerializedRuneScriptSource;
+    use wgpu_cube::scene::{
+        gltf_package::{
+            PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION,
+        },
+        SceneAssetBundle, SceneImportDevice, SceneLoader, SerializedRuneScriptSource,
+    };
 
     use crate::project::NewProjectRequest;
 
@@ -516,13 +445,23 @@ mod native {
             #[source]
             error: std::io::Error,
         },
+        #[error("Failed to write file {path:?}: {error}")]
+        Write {
+            path: PathBuf,
+            #[source]
+            error: std::io::Error,
+        },
+        #[error("Failed to serialize packaged glTF data: {0}")]
+        Serialize(#[from] serde_json::Error),
+        #[error("Failed to import glTF asset {path:?}: {error}")]
+        SceneImport { path: PathBuf, error: String },
     }
 
     pub(super) struct ImportedGltf {
         pub(super) package_dir: PathBuf,
         pub(super) project_relative_package: PathBuf,
-        pub(super) dependency_map: Vec<(PathBuf, PathBuf)>,
-        pub(super) placeholder_gltf: PathBuf,
+        pub(super) descriptor_path: PathBuf,
+        pub(super) bundle: wgpu_cube::scene::SceneAssetBundle,
     }
 
     pub(super) fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError> {
@@ -553,6 +492,8 @@ mod native {
         content_root: &Path,
         destination_root: &Path,
         source_path: &Path,
+        renderer: &mut impl SceneImportDevice,
+        scale: f32,
     ) -> Result<ImportedGltf, ImportAssetError> {
         if !destination_root.starts_with(content_root) {
             return Err(ImportAssetError::DestinationOutside {
@@ -663,25 +604,139 @@ mod native {
                         path: source_path.clone(),
                     })?;
 
-            let placeholder_absolute = asset_folder.join(file_name);
+            let descriptor_name = format!("{}.import", file_name.to_string_lossy());
+            let descriptor_absolute = asset_folder.join(&descriptor_name);
             let project_relative_package = asset_folder
                 .strip_prefix(project_dir)
                 .map(Path::to_path_buf)
                 .map_err(|_| ImportAssetError::DestinationOutside {
                     destination: asset_folder.clone(),
                 })?;
-            let project_relative_placeholder = placeholder_absolute
+            let descriptor_relative = descriptor_absolute
                 .strip_prefix(project_dir)
                 .map(Path::to_path_buf)
                 .map_err(|_| ImportAssetError::DestinationOutside {
-                    destination: placeholder_absolute.clone(),
+                    destination: descriptor_absolute.clone(),
                 })?;
+
+            let mut bundle =
+                SceneLoader::load_gltf_asset(source_path, renderer, scale).map_err(|error| {
+                    ImportAssetError::SceneImport {
+                        path: source_path.clone(),
+                        error,
+                    }
+                })?;
+
+            let file_stem = source_path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Imported glTF".to_string());
+            bundle.asset.name = format!("{} (glTF)", file_stem);
+
+            let lookup: std::collections::HashMap<_, _> = dependency_map.iter().cloned().collect();
+
+            for entity in &mut bundle.asset.entities {
+                if entity.gltf_source.is_some() {
+                    entity.gltf_source = Some(descriptor_relative.clone());
+                }
+
+                if let Some(material) = entity.material_data.as_mut() {
+                    for slot in MaterialTextureSlot::all() {
+                        let slot_data = match slot {
+                            MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
+                            MaterialTextureSlot::MetallicRoughness => {
+                                &mut material.metallic_roughness_texture
+                            }
+                            MaterialTextureSlot::Normal => &mut material.normal_texture,
+                            MaterialTextureSlot::Emissive => &mut material.emissive_texture,
+                            MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
+                        };
+
+                        let Some(existing_path) = slot_data.path.as_ref() else {
+                            continue;
+                        };
+
+                        let resolved = if existing_path.is_absolute() {
+                            existing_path.clone()
+                        } else {
+                            source_path
+                                .parent()
+                                .map(|parent| parent.join(existing_path))
+                                .unwrap_or_else(|| existing_path.clone())
+                        };
+                        let canonical = resolved.canonicalize().unwrap_or(resolved);
+
+                        if let Some(new_rel) = lookup.get(&canonical) {
+                            slot_data.path = Some(new_rel.clone());
+                        }
+                    }
+                }
+            }
+
+            let mut stored_asset = bundle.asset.clone();
+            stored_asset.mesh_data.clear();
+
+            let scene_rel = PathBuf::from("scene.asset.json");
+            let scene_abs = asset_folder.join(&scene_rel);
+            let scene_json = stored_asset
+                .to_json()
+                .map_err(ImportAssetError::Serialize)?;
+            fs::write(&scene_abs, scene_json).map_err(|error| ImportAssetError::Write {
+                path: scene_abs.clone(),
+                error,
+            })?;
+
+            let mut meshes = Vec::new();
+            if !bundle.asset.mesh_data.is_empty() {
+                let mesh_dir_rel = PathBuf::from("meshes");
+                let mesh_dir_abs = asset_folder.join(&mesh_dir_rel);
+                fs::create_dir_all(&mesh_dir_abs).map_err(|source| {
+                    ImportAssetError::CreateDir {
+                        path: mesh_dir_abs.clone(),
+                        source,
+                    }
+                })?;
+
+                for (index, data) in bundle.asset.mesh_data.iter().enumerate() {
+                    let mesh_rel = mesh_dir_rel.join(format!("mesh_{index:04}.json"));
+                    let mesh_abs = asset_folder.join(&mesh_rel);
+                    let mesh_json =
+                        serde_json::to_string_pretty(data).map_err(ImportAssetError::Serialize)?;
+                    fs::write(&mesh_abs, mesh_json).map_err(|error| ImportAssetError::Write {
+                        path: mesh_abs.clone(),
+                        error,
+                    })?;
+                    meshes.push(PackagedMesh {
+                        index,
+                        path: mesh_rel,
+                    });
+                }
+            }
+
+            let descriptor = PackagedGltfDescriptor {
+                version: PACKAGED_GLTF_VERSION,
+                source: None,
+                scene: Some(PackagedScene {
+                    json: scene_rel,
+                    meshes,
+                }),
+            };
+
+            let descriptor_json =
+                serde_json::to_string_pretty(&descriptor).map_err(ImportAssetError::Serialize)?;
+            fs::write(&descriptor_absolute, descriptor_json).map_err(|error| {
+                ImportAssetError::Write {
+                    path: descriptor_absolute.clone(),
+                    error,
+                }
+            })?;
 
             Ok(ImportedGltf {
                 package_dir: asset_folder.clone(),
                 project_relative_package,
-                dependency_map,
-                placeholder_gltf: project_relative_placeholder,
+                descriptor_path: descriptor_relative,
+                bundle,
             })
         })();
 

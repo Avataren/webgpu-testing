@@ -14,7 +14,12 @@ use wgpu_cube::asset::{MaterialTextureSlot, Mesh};
 use wgpu_cube::io::percent_decode_uri;
 use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetadata, CONTENT_DIR};
 use wgpu_cube::renderer::Vertex;
-use wgpu_cube::scene::{components::MeshComponent, loader::SceneImportDevice, Scene, SceneLoader};
+use wgpu_cube::scene::{
+    components::MeshComponent,
+    gltf_package::{PackagedGltfDescriptor, PackagedMesh, PackagedScene, PACKAGED_GLTF_VERSION},
+    loader::SceneImportDevice,
+    Scene, SceneAssetBundle, SceneLoader,
+};
 
 struct HeadlessDevice {
     device: Arc<wgpu::Device>,
@@ -128,7 +133,8 @@ fn package_gltf_into_project(
     project_dir: &Path,
     destination_root: &Path,
     source_path: &Path,
-) -> (PathBuf, Vec<(PathBuf, PathBuf)>, PathBuf) {
+    device: &mut impl SceneImportDevice,
+) -> (PathBuf, PathBuf, SceneAssetBundle) {
     assert!(destination_root.starts_with(project_dir.join(CONTENT_DIR)));
 
     let source_path = source_path.to_path_buf();
@@ -188,18 +194,103 @@ fn package_gltf_into_project(
         mapping.push((canonical_source, project_relative));
     }
 
-    let placeholder_absolute =
-        asset_folder.join(source_path.file_name().expect("gltf should have file name"));
+    let file_name = source_path.file_name().expect("gltf should have file name");
+    let descriptor_name = format!("{}.import", file_name.to_string_lossy());
+    let descriptor_absolute = asset_folder.join(&descriptor_name);
     let project_relative_package = asset_folder
         .strip_prefix(project_dir)
         .expect("package dir should be inside project")
         .to_path_buf();
-    let placeholder_relative = placeholder_absolute
+    let descriptor_relative = descriptor_absolute
         .strip_prefix(project_dir)
         .expect("placeholder should reside within project")
         .to_path_buf();
 
-    (project_relative_package, mapping, placeholder_relative)
+    let mut bundle = SceneLoader::load_gltf_asset(&source_path, device, 1.0)
+        .expect("load glTF asset for packaging");
+
+    let mut lookup = std::collections::HashMap::new();
+    for (original, packaged) in &mapping {
+        lookup.insert(original.clone(), packaged.clone());
+    }
+
+    for entity in &mut bundle.asset.entities {
+        if entity.gltf_source.is_some() {
+            entity.gltf_source = Some(descriptor_relative.clone());
+        }
+
+        if let Some(material) = entity.material_data.as_mut() {
+            for slot in MaterialTextureSlot::all() {
+                let slot_data = match slot {
+                    MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
+                    MaterialTextureSlot::MetallicRoughness => {
+                        &mut material.metallic_roughness_texture
+                    }
+                    MaterialTextureSlot::Normal => &mut material.normal_texture,
+                    MaterialTextureSlot::Emissive => &mut material.emissive_texture,
+                    MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
+                };
+
+                let Some(existing_path) = slot_data.path.as_ref() else {
+                    continue;
+                };
+
+                let resolved = if existing_path.is_absolute() {
+                    existing_path.clone()
+                } else {
+                    source_path
+                        .parent()
+                        .map(|parent| parent.join(existing_path))
+                        .unwrap_or_else(|| existing_path.clone())
+                };
+                let canonical = resolved.canonicalize().unwrap_or(resolved);
+
+                if let Some(new_rel) = lookup.get(&canonical) {
+                    slot_data.path = Some(new_rel.clone());
+                }
+            }
+        }
+    }
+
+    let mut stored_asset = bundle.asset.clone();
+    stored_asset.mesh_data.clear();
+
+    let scene_rel = PathBuf::from("scene.asset.json");
+    let scene_abs = asset_folder.join(&scene_rel);
+    let scene_json = stored_asset.to_json().expect("serialize scene asset");
+    fs::write(&scene_abs, scene_json).expect("write packaged scene asset");
+
+    let mut meshes = Vec::new();
+    if !bundle.asset.mesh_data.is_empty() {
+        let mesh_dir_rel = PathBuf::from("meshes");
+        let mesh_dir_abs = asset_folder.join(&mesh_dir_rel);
+        fs::create_dir_all(&mesh_dir_abs).expect("mesh dir exists");
+
+        for (index, data) in bundle.asset.mesh_data.iter().enumerate() {
+            let mesh_rel = mesh_dir_rel.join(format!("mesh_{index:04}.json"));
+            let mesh_abs = asset_folder.join(&mesh_rel);
+            let mesh_json = serde_json::to_string_pretty(data).expect("serialize mesh");
+            fs::write(&mesh_abs, mesh_json).expect("write mesh payload");
+            meshes.push(PackagedMesh {
+                index,
+                path: mesh_rel,
+            });
+        }
+    }
+
+    let descriptor = PackagedGltfDescriptor {
+        version: PACKAGED_GLTF_VERSION,
+        source: None,
+        scene: Some(PackagedScene {
+            json: scene_rel,
+            meshes,
+        }),
+    };
+
+    let descriptor_json = serde_json::to_string_pretty(&descriptor).expect("serialize descriptor");
+    fs::write(&descriptor_absolute, descriptor_json).expect("write descriptor");
+
+    (project_relative_package, descriptor_relative, bundle)
 }
 
 #[test]
@@ -234,51 +325,10 @@ fn packaged_gltf_roundtrip_without_source() {
     set_active_project_root(Some(project_root.to_path_buf()));
 
     let gltf_path = source_root.join("AnimatedColorsCube.gltf");
-    let packaged = package_gltf_into_project(project_root, &content_root, &gltf_path);
+    let (package_rel, descriptor_rel, mut bundle) =
+        package_gltf_into_project(project_root, &content_root, &gltf_path, &mut headless);
 
-    let (package_rel, dependency_map, placeholder_rel) = packaged;
     let package_dir = project_root.join(&package_rel);
-
-    let mut bundle =
-        SceneLoader::load_gltf_asset(&gltf_path, &mut headless, 1.0).expect("load gltf asset");
-
-    let lookup = dependency_map
-        .into_iter()
-        .collect::<std::collections::HashMap<_, _>>();
-
-    for entity in &mut bundle.asset.entities {
-        if entity.gltf_source.is_some() {
-            entity.gltf_source = Some(placeholder_rel.clone());
-        }
-
-        if let Some(material) = entity.material_data.as_mut() {
-            for slot in MaterialTextureSlot::all() {
-                let slot_data = match slot {
-                    MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
-                    MaterialTextureSlot::MetallicRoughness => {
-                        &mut material.metallic_roughness_texture
-                    }
-                    MaterialTextureSlot::Normal => &mut material.normal_texture,
-                    MaterialTextureSlot::Emissive => &mut material.emissive_texture,
-                    MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
-                };
-
-                if let Some(path) = slot_data.path.as_ref() {
-                    let resolved = if path.is_absolute() {
-                        path.clone()
-                    } else {
-                        source_root.join(path)
-                    };
-                    let canonical = resolved.canonicalize().unwrap_or(resolved);
-                    if let Some(new_rel) = lookup.get(&canonical) {
-                        slot_data.path = Some(new_rel.clone());
-                    }
-                }
-            }
-        }
-    }
-
-    bundle.asset.name = "AnimatedColorsCube (glTF)".to_string();
 
     let mut scene = Scene::new();
     let registration = bundle.register_resources(&mut headless, &mut scene.assets);
@@ -298,6 +348,38 @@ fn packaged_gltf_roundtrip_without_source() {
     drop(bundle);
 
     fs::remove_dir_all(source_root).expect("remove source directory");
+
+    let descriptor_path = project_root.join(&descriptor_rel);
+    let mut packaged_bundle = SceneLoader::load_gltf_asset(&descriptor_path, &mut headless, 1.0)
+        .expect("load packaged descriptor");
+    let mut packaged_scene = Scene::new();
+    let packaged_registration =
+        packaged_bundle.register_resources(&mut headless, &mut packaged_scene.assets);
+    if packaged_registration.textures_changed() {
+        headless
+            .queue()
+            .submit(std::iter::empty::<wgpu::CommandBuffer>());
+    }
+    let packaged_node =
+        packaged_scene.instantiate_asset_with_renderer(&packaged_bundle.asset, None, &mut headless);
+    packaged_scene.set_main_scene(packaged_node);
+
+    let packaged_mesh_count = packaged_scene
+        .main_world()
+        .query::<&MeshComponent>()
+        .iter()
+        .count();
+    assert!(
+        packaged_mesh_count > 0,
+        "packaged descriptor should produce meshes"
+    );
+    assert!(
+        !packaged_scene.animations().is_empty(),
+        "packaged descriptor should include animation clips"
+    );
+
+    drop(packaged_scene);
+    drop(packaged_bundle);
 
     let loaded = ProjectManifest::load_from_dir(project_root).expect("load manifest");
     let mut restored_scene = Scene::new();
