@@ -4,14 +4,17 @@ use std::path::{Path, PathBuf};
 
 use super::assets::{ImportedGltfMeta, SceneMaterialHandle};
 use super::components::*;
-use crate::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh};
+use crate::asset::{
+    Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh, MeshData,
+};
 use crate::project::resolve_project_path;
 use crate::renderer::{material::MaterialFlags, Material, Renderer, Texture, Vertex};
 use crate::scene::animation::{
     AnimationChannel, AnimationClip, AnimationInterpolation, AnimationOutput, AnimationSampler,
     AnimationTarget, MaterialProperty, TransformProperty,
 };
-use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources, Transform};
+use crate::scene::gltf_package::{PackagedGltfDescriptor, PackagedScene};
+use crate::scene::{Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, Transform};
 use bytemuck::cast_slice;
 use gltf::json::validation::Checked;
 use serde_json::Value;
@@ -479,9 +482,19 @@ impl SceneLoader {
         renderer: &mut impl SceneImportDevice,
         scale: f32,
     ) -> Result<SceneAssetBundle, String> {
-        let mut temp_scene = Scene::new();
         let source_path = path.as_ref().to_path_buf();
         let resolved_path = crate::project::resolve_project_path(&source_path);
+
+        if resolved_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("import"))
+            .unwrap_or(false)
+        {
+            return Self::load_packaged_descriptor(&resolved_path, renderer, scale);
+        }
+
+        let mut temp_scene = Scene::new();
         let imported_meta = Self::load_imported_meta(&resolved_path);
         Self::load_gltf(
             &resolved_path,
@@ -615,8 +628,209 @@ impl SceneLoader {
         ))
     }
 
+    fn load_packaged_descriptor(
+        descriptor_path: &Path,
+        renderer: &mut impl SceneImportDevice,
+        scale: f32,
+    ) -> Result<SceneAssetBundle, String> {
+        let descriptor_text = fs::read_to_string(descriptor_path).map_err(|err| {
+            format!(
+                "Failed to read packaged glTF descriptor {:?}: {}",
+                descriptor_path, err
+            )
+        })?;
+
+        let descriptor: PackagedGltfDescriptor =
+            serde_json::from_str(&descriptor_text).map_err(|err| {
+                format!(
+                    "Failed to parse packaged glTF descriptor {:?}: {}",
+                    descriptor_path, err
+                )
+            })?;
+
+        if let Some(scene) = descriptor.scene.clone() {
+            let parent = descriptor_path.parent().ok_or_else(|| {
+                format!(
+                    "Packaged glTF descriptor {:?} is missing a parent directory",
+                    descriptor_path
+                )
+            })?;
+
+            let scene_path = parent.join(&scene.json);
+            let scene_json = fs::read_to_string(&scene_path).map_err(|err| {
+                format!("Failed to read packaged scene {:?}: {}", scene_path, err)
+            })?;
+
+            let mut asset = SceneAsset::from_json(&scene_json).map_err(|err| {
+                format!("Failed to parse packaged scene {:?}: {}", scene_path, err)
+            })?;
+
+            if !scene.meshes.is_empty() {
+                asset.mesh_data = Self::read_packaged_meshes(&scene, parent)?;
+            }
+
+            let texture_resources = if !scene.textures.is_empty() {
+                Self::read_packaged_textures(&scene, parent, renderer)?
+            } else {
+                Vec::new()
+            };
+
+            Self::apply_packaged_dependencies(&mut asset, descriptor_path, &descriptor);
+
+            Ok(SceneAssetBundle::new(
+                asset,
+                SceneAssetResources::new(Vec::new(), texture_resources),
+            ))
+        } else if let Some(source) = descriptor.source.as_ref() {
+            let parent = descriptor_path.parent().ok_or_else(|| {
+                format!(
+                    "Packaged glTF descriptor {:?} is missing a parent directory",
+                    descriptor_path
+                )
+            })?;
+            let forwarded = parent.join(source);
+            Self::load_gltf_asset(forwarded, renderer, scale)
+        } else {
+            Err(format!(
+                "Packaged glTF descriptor {:?} does not include scene data",
+                descriptor_path
+            ))
+        }
+    }
+
+    fn read_packaged_meshes(
+        scene: &PackagedScene,
+        base_dir: &Path,
+    ) -> Result<Vec<MeshData>, String> {
+        if scene.meshes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = scene.meshes.clone();
+        entries.sort_by_key(|mesh| mesh.index);
+
+        let mut slots: Vec<Option<MeshData>> = Vec::new();
+        for mesh in entries {
+            let mesh_path = base_dir.join(&mesh.path);
+            let mesh_json = fs::read_to_string(&mesh_path)
+                .map_err(|err| format!("Failed to read packaged mesh {:?}: {}", mesh_path, err))?;
+            let data: MeshData = serde_json::from_str(&mesh_json)
+                .map_err(|err| format!("Failed to parse packaged mesh {:?}: {}", mesh_path, err))?;
+
+            if slots.len() <= mesh.index {
+                slots.resize(mesh.index + 1, None);
+            }
+            slots[mesh.index] = Some(data);
+        }
+
+        Ok(slots
+            .into_iter()
+            .map(|entry| {
+                entry.unwrap_or_else(|| MeshData {
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                })
+            })
+            .collect())
+    }
+
+    fn read_packaged_textures(
+        scene: &PackagedScene,
+        base_dir: &Path,
+        renderer: &impl SceneImportDevice,
+    ) -> Result<Vec<(u32, Texture)>, String> {
+        if scene.textures.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut entries = scene.textures.clone();
+        entries.sort_by_key(|texture| texture.index);
+
+        let mut textures = Vec::new();
+        for texture in entries {
+            let texture_path = base_dir.join(&texture.path);
+            let texture_data =
+                Texture::from_path(renderer.device(), renderer.queue(), &texture_path, false)
+                    .map_err(|err| {
+                        format!(
+                            "Failed to load packaged texture {:?}: {}",
+                            texture_path, err
+                        )
+                    })?;
+
+            textures.push((texture.index, texture_data));
+        }
+
+        Ok(textures)
+    }
+
+    fn apply_packaged_dependencies(
+        asset: &mut SceneAsset,
+        descriptor_path: &Path,
+        descriptor: &PackagedGltfDescriptor,
+    ) {
+        if descriptor.scene.is_none() {
+            return;
+        }
+
+        let descriptor_relative = crate::project::active_project_root()
+            .and_then(|root| {
+                descriptor_path
+                    .strip_prefix(&root)
+                    .ok()
+                    .map(Path::to_path_buf)
+            })
+            .unwrap_or_else(|| descriptor_path.to_path_buf());
+
+        for entity in &mut asset.entities {
+            if entity.gltf_source.is_some() {
+                entity.gltf_source = Some(descriptor_relative.clone());
+            }
+
+            if let Some(material_handle) = entity.material.as_mut() {
+                let material_path = material_handle.path().to_path_buf();
+                if material_path.is_absolute() {
+                    if let Some(relative) = crate::project::active_project_root().and_then(|root| {
+                        material_path
+                            .strip_prefix(&root)
+                            .ok()
+                            .map(Path::to_path_buf)
+                    }) {
+                        material_handle.set_path(relative);
+                    }
+                }
+            }
+
+            if let Some(material) = entity.material_data.as_mut() {
+                for slot in MaterialTextureSlot::all() {
+                    let slot_data = match slot {
+                        MaterialTextureSlot::BaseColor => &mut material.base_color_texture,
+                        MaterialTextureSlot::MetallicRoughness => {
+                            &mut material.metallic_roughness_texture
+                        }
+                        MaterialTextureSlot::Normal => &mut material.normal_texture,
+                        MaterialTextureSlot::Emissive => &mut material.emissive_texture,
+                        MaterialTextureSlot::Occlusion => &mut material.occlusion_texture,
+                    };
+
+                    if let Some(existing) = slot_data.path.as_ref() {
+                        if existing.is_absolute() {
+                            if let Some(relative) =
+                                crate::project::active_project_root().and_then(|root| {
+                                    existing.strip_prefix(&root).ok().map(Path::to_path_buf)
+                                })
+                            {
+                                slot_data.path = Some(relative);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
-    fn import_gltf_native(path: &Path) -> Result<GltfImport, gltf::Error> {
+    pub fn import_gltf_native(path: &Path) -> Result<GltfImport, gltf::Error> {
         match gltf::import(path) {
             Ok(result) => Ok(result),
             Err(gltf::Error::Deserialize(original))
