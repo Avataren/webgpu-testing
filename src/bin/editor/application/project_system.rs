@@ -845,7 +845,7 @@ mod native {
                             created_texture_dir = true;
                         }
 
-                        let extension = extension_for_mime_type(mime_type);
+                        let extension = extension_for_mime_type(Some(mime_type));
                         let file_name = unique_texture_file_name(
                             &mut used_texture_names,
                             texture.name().or_else(|| image.name()),
