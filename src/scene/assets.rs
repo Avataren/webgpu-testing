@@ -1547,10 +1547,16 @@ fn absolute_gltf_source(project_root: &Path, source: &Path) -> PathBuf {
 }
 
 fn sanitize_gltf_stem(source: &Path) -> String {
-    let stem = source
+    let mut stem = source
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("material");
+
+    for suffix in [".gltf", ".glb"] {
+        if let Some(stripped) = stem.strip_suffix(suffix) {
+            stem = stripped;
+        }
+    }
 
     let mut sanitized = String::with_capacity(stem.len());
     let mut last_was_separator = false;

@@ -14,7 +14,10 @@ use wgpu_cube::asset::{MaterialTextureSlot, Mesh};
 use wgpu_cube::io::percent_decode_uri;
 use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetadata, CONTENT_DIR};
 use wgpu_cube::renderer::Vertex;
-use wgpu_cube::scene::{components::MeshComponent, loader::SceneImportDevice, Scene, SceneLoader};
+use wgpu_cube::scene::{
+    components::MeshComponent, gltf_package::PackagedGltfDescriptor, loader::SceneImportDevice,
+    Scene, SceneLoader,
+};
 
 struct HeadlessDevice {
     device: Arc<wgpu::Device>,
@@ -188,18 +191,33 @@ fn package_gltf_into_project(
         mapping.push((canonical_source, project_relative));
     }
 
-    let placeholder_absolute =
-        asset_folder.join(source_path.file_name().expect("gltf should have file name"));
+    let file_name = source_path.file_name().expect("gltf should have file name");
+    let mut descriptor_name = file_name.to_os_string();
+    descriptor_name.push(".import");
+    let descriptor_absolute = asset_folder.join(&descriptor_name);
+
+    let mut descriptor = PackagedGltfDescriptor::new(
+        source_path
+            .canonicalize()
+            .unwrap_or_else(|_| source_path.clone()),
+    );
+    for (original, packaged) in &mapping {
+        descriptor.add_dependency(original.clone(), packaged.clone());
+    }
+    descriptor
+        .save_to_path(&descriptor_absolute)
+        .expect("descriptor should serialize");
+
     let project_relative_package = asset_folder
         .strip_prefix(project_dir)
         .expect("package dir should be inside project")
         .to_path_buf();
-    let placeholder_relative = placeholder_absolute
+    let descriptor_relative = descriptor_absolute
         .strip_prefix(project_dir)
-        .expect("placeholder should reside within project")
+        .expect("descriptor should reside within project")
         .to_path_buf();
 
-    (project_relative_package, mapping, placeholder_relative)
+    (project_relative_package, mapping, descriptor_relative)
 }
 
 #[test]

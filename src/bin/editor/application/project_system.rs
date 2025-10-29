@@ -114,7 +114,7 @@ impl ProjectSystem {
                                     for entity in &mut bundle.asset.entities {
                                         if entity.gltf_source.is_some() {
                                             entity.gltf_source =
-                                                Some(package.placeholder_gltf.clone());
+                                                Some(package.descriptor_path.clone());
                                         }
 
                                         if let Some(material) = entity.material_data.as_mut() {
@@ -449,6 +449,7 @@ mod native {
     use thiserror::Error;
     use wgpu_cube::io::percent_decode_uri;
     use wgpu_cube::project::{ProjectError, ProjectManifest, CONTENT_DIR};
+    use wgpu_cube::scene::gltf_package::PackagedGltfDescriptor;
     use wgpu_cube::scene::SerializedRuneScriptSource;
 
     use crate::project::NewProjectRequest;
@@ -516,13 +517,19 @@ mod native {
             #[source]
             error: std::io::Error,
         },
+        #[error("Failed to write glTF package descriptor {path:?}: {source}")]
+        DescriptorWrite {
+            path: PathBuf,
+            #[source]
+            source: std::io::Error,
+        },
     }
 
     pub(super) struct ImportedGltf {
         pub(super) package_dir: PathBuf,
         pub(super) project_relative_package: PathBuf,
         pub(super) dependency_map: Vec<(PathBuf, PathBuf)>,
-        pub(super) placeholder_gltf: PathBuf,
+        pub(super) descriptor_path: PathBuf,
     }
 
     pub(super) fn create_new_project(request: &NewProjectRequest) -> Result<(), NewProjectError> {
@@ -663,25 +670,44 @@ mod native {
                         path: source_path.clone(),
                     })?;
 
-            let placeholder_absolute = asset_folder.join(file_name);
+            let mut descriptor_name = file_name.to_os_string();
+            descriptor_name.push(".import");
+            let descriptor_absolute = asset_folder.join(&descriptor_name);
+
+            let mut descriptor = PackagedGltfDescriptor::new(
+                source_path
+                    .canonicalize()
+                    .unwrap_or_else(|_| source_path.clone()),
+            );
+            for (original, packaged) in &dependency_map {
+                descriptor.add_dependency(original.clone(), packaged.clone());
+            }
+
+            descriptor
+                .save_to_path(&descriptor_absolute)
+                .map_err(|source| ImportAssetError::DescriptorWrite {
+                    path: descriptor_absolute.clone(),
+                    source,
+                })?;
+
             let project_relative_package = asset_folder
                 .strip_prefix(project_dir)
                 .map(Path::to_path_buf)
                 .map_err(|_| ImportAssetError::DestinationOutside {
                     destination: asset_folder.clone(),
                 })?;
-            let project_relative_placeholder = placeholder_absolute
+            let project_relative_descriptor = descriptor_absolute
                 .strip_prefix(project_dir)
                 .map(Path::to_path_buf)
                 .map_err(|_| ImportAssetError::DestinationOutside {
-                    destination: placeholder_absolute.clone(),
+                    destination: descriptor_absolute.clone(),
                 })?;
 
             Ok(ImportedGltf {
                 package_dir: asset_folder.clone(),
                 project_relative_package,
                 dependency_map,
-                placeholder_gltf: project_relative_placeholder,
+                descriptor_path: project_relative_descriptor,
             })
         })();
 
