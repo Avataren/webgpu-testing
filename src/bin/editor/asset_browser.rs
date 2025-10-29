@@ -117,143 +117,155 @@ impl AssetBrowserState {
             .clone()
             .unwrap_or_else(|| root.to_path_buf());
 
-        ui.horizontal(|ui| {
-            ui.set_height(ui.available_height());
+        let available_size = ui.available_size();
+        ui.allocate_ui_with_layout(
+            available_size,
+            egui::Layout::left_to_right(egui::Align::TOP),
+            |ui| {
+                ui.set_min_size(available_size);
 
-            ui.vertical(|ui| {
-                ui.set_min_width(180.0);
-                ui.heading("Folders");
-                ui.separator();
+                ui.vertical(|ui| {
+                    ui.set_min_width(180.0);
+                    ui.heading("Folders");
+                    ui.separator();
 
-                egui::ScrollArea::vertical()
-                    .id_salt("asset_browser_folders")
-                    .show(ui, |ui| {
-                        self.show_folder_node(ui, &selected_folder, root, root);
-                    });
-            });
-
-            ui.separator();
-
-            ui.vertical(|ui| {
-                let relative = selected_folder
-                    .strip_prefix(root)
-                    .ok()
-                    .filter(|path| !path.as_os_str().is_empty())
-                    .map(|path| path.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "content".to_string());
-
-                ui.heading(format!("Folder: {relative}"));
-                ui.separator();
-
-                if let Some(feedback) = &self.feedback {
-                    match feedback {
-                        Feedback::Info(message) => {
-                            ui.colored_label(egui::Color32::from_rgb(120, 180, 120), message);
-                        }
-                        Feedback::Error(message) => {
-                            ui.colored_label(egui::Color32::from_rgb(200, 80, 80), message);
-                        }
-                    }
-                }
-
-                ui.horizontal(|ui| {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut self.new_folder_name)
-                            .hint_text("New folder name"),
-                    );
-
-                    if response.changed() {
-                        self.feedback = None;
-                    }
-
-                    let create_clicked = ui.button("Create Folder").clicked()
-                        || (response.lost_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter)));
-
-                    if create_clicked {
-                        self.create_folder(&selected_folder);
-                    }
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .max_height(ui.available_height())
+                        .id_salt("asset_browser_folders")
+                        .show(ui, |ui| {
+                            self.show_folder_node(ui, &selected_folder, root, root);
+                        });
                 });
 
                 ui.separator();
 
-                egui::ScrollArea::vertical()
-                    .id_salt("asset_browser_files")
-                    .show(ui, |ui| {
-                        if let Some(pending) = self.pending_move.as_ref() {
-                            if let Some(name) = pending
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .map(|name| name.to_string())
-                            {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Moving: {name}"));
-                                    if ui.button("Move Here").clicked()
-                                        && self.apply_move(&selected_folder)
-                                    {
-                                        ui.ctx().request_repaint();
-                                    }
-                                    if ui.button("Cancel").clicked() {
-                                        self.pending_move = None;
-                                        self.feedback = None;
-                                    }
-                                });
-                                ui.separator();
+                ui.vertical(|ui| {
+                    let relative = selected_folder
+                        .strip_prefix(root)
+                        .ok()
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .map(|path| path.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "content".to_string());
+
+                    ui.heading(format!("Folder: {relative}"));
+                    ui.separator();
+
+                    if let Some(feedback) = &self.feedback {
+                        match feedback {
+                            Feedback::Info(message) => {
+                                ui.colored_label(egui::Color32::from_rgb(120, 180, 120), message);
                             }
-                        }
-
-                        if let Some(selected_item) = self.selected_item.clone() {
-                            if selected_item.starts_with(&selected_folder) {
-                                let display = display_name(&selected_item);
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("Selected: {display}"));
-                                    if ui.button("Rename").clicked() {
-                                        self.start_rename(&selected_item);
-                                    }
-                                    if ui.button("Duplicate").clicked()
-                                        && self.duplicate_entry(&selected_item)
-                                    {
-                                        ui.ctx().request_repaint();
-                                    }
-                                    if ui.button("Move").clicked() {
-                                        self.begin_move(&selected_item);
-                                    }
-                                    if ui.button("Delete").clicked()
-                                        && self.delete_entry(root, &selected_item)
-                                    {
-                                        ui.ctx().request_repaint();
-                                    }
-                                });
-                                ui.separator();
-                            }
-                        }
-
-                        match self.load_directory_contents(&selected_folder) {
-                            Ok(contents) => {
-                                if contents.directories.is_empty() && contents.files.is_empty() {
-                                    ui.label("This folder is empty.");
-                                    return;
-                                }
-
-                                for dir in &contents.directories {
-                                    self.show_entry(ui, root, dir.as_path(), true);
-                                }
-
-                                if !contents.directories.is_empty() && !contents.files.is_empty() {
-                                    ui.separator();
-                                }
-
-                                for file in &contents.files {
-                                    self.show_entry(ui, root, file.as_path(), false);
-                                }
-                            }
-                            Err(message) => {
+                            Feedback::Error(message) => {
                                 ui.colored_label(egui::Color32::from_rgb(200, 80, 80), message);
                             }
                         }
+                    }
+
+                    ui.horizontal(|ui| {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.new_folder_name)
+                                .hint_text("New folder name"),
+                        );
+
+                        if response.changed() {
+                            self.feedback = None;
+                        }
+
+                        let create_clicked = ui.button("Create Folder").clicked()
+                            || (response.lost_focus()
+                                && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+
+                        if create_clicked {
+                            self.create_folder(&selected_folder);
+                        }
                     });
-            });
-        });
+
+                    ui.separator();
+
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .max_height(ui.available_height())
+                        .id_salt("asset_browser_files")
+                        .show(ui, |ui| {
+                            if let Some(pending) = self.pending_move.as_ref() {
+                                if let Some(name) = pending
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .map(|name| name.to_string())
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Moving: {name}"));
+                                        if ui.button("Move Here").clicked()
+                                            && self.apply_move(&selected_folder)
+                                        {
+                                            ui.ctx().request_repaint();
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            self.pending_move = None;
+                                            self.feedback = None;
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            }
+
+                            if let Some(selected_item) = self.selected_item.clone() {
+                                if selected_item.starts_with(&selected_folder) {
+                                    let display = display_name(&selected_item);
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("Selected: {display}"));
+                                        if ui.button("Rename").clicked() {
+                                            self.start_rename(&selected_item);
+                                        }
+                                        if ui.button("Duplicate").clicked()
+                                            && self.duplicate_entry(&selected_item)
+                                        {
+                                            ui.ctx().request_repaint();
+                                        }
+                                        if ui.button("Move").clicked() {
+                                            self.begin_move(&selected_item);
+                                        }
+                                        if ui.button("Delete").clicked()
+                                            && self.delete_entry(root, &selected_item)
+                                        {
+                                            ui.ctx().request_repaint();
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            }
+
+                            match self.load_directory_contents(&selected_folder) {
+                                Ok(contents) => {
+                                    if contents.directories.is_empty() && contents.files.is_empty()
+                                    {
+                                        ui.label("This folder is empty.");
+                                        return;
+                                    }
+
+                                    for dir in &contents.directories {
+                                        self.show_entry(ui, root, dir.as_path(), true);
+                                    }
+
+                                    if !contents.directories.is_empty()
+                                        && !contents.files.is_empty()
+                                    {
+                                        ui.separator();
+                                    }
+
+                                    for file in &contents.files {
+                                        self.show_entry(ui, root, file.as_path(), false);
+                                    }
+                                }
+                                Err(message) => {
+                                    ui.colored_label(egui::Color32::from_rgb(200, 80, 80), message);
+                                }
+                            }
+                        });
+                });
+            },
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
