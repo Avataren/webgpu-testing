@@ -3,12 +3,12 @@ use super::animation::{
     AnimationState, AnimationTarget, MaterialProperty, TransformProperty,
 };
 use super::components::{
-    CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
-    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
-    MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
-    ParticleColorGradient, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
-    ParticleRenderBlendMode, ParticleSizeCurve, ParticleSystemComponent, ParticleVec3Range,
-    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
+    Billboard, BillboardOrientation, BillboardSpace, CameraComponent, CanCastShadow, Children,
+    DirectionalLight, EditorEntityId, EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive,
+    GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent, ParticleBehaviorConfig,
+    ParticleBehaviorPreset, ParticleColorGradient, ParticleEmissionShape, ParticleEmitterComponent,
+    ParticleFloatRange, ParticleRenderBlendMode, ParticleSizeCurve, ParticleSystemComponent,
+    ParticleVec3Range, PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
@@ -736,6 +736,10 @@ impl SceneAsset {
                 builder.add(CanCastShadow(casts_shadow));
             }
 
+            if let Some(billboard) = entity.billboard {
+                builder.add(Billboard::from(billboard));
+            }
+
             if let Some(camera) = entity.camera {
                 builder.add(camera);
             }
@@ -1349,6 +1353,8 @@ pub struct SceneAssetEntity {
     #[serde(default)]
     pub casts_shadow: Option<bool>,
     #[serde(default)]
+    pub billboard: Option<SerializedBillboard>,
+    #[serde(default)]
     pub editor_id: Option<u128>,
     #[serde(default)]
     pub particle_system: Option<SerializedParticleSystem>,
@@ -1422,6 +1428,8 @@ struct SceneAssetEntityData {
     #[serde(default)]
     casts_shadow: Option<bool>,
     #[serde(default)]
+    billboard: Option<SerializedBillboard>,
+    #[serde(default)]
     editor_id: Option<u128>,
     #[serde(default)]
     particle_system: Option<SerializedParticleSystem>,
@@ -1470,6 +1478,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             point_light: data.point_light,
             spot_light: data.spot_light,
             casts_shadow: data.casts_shadow,
+            billboard: data.billboard,
             editor_id: data.editor_id,
             particle_system: data.particle_system,
             particle_emitter: data.particle_emitter,
@@ -1512,6 +1521,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             point_light: entity.point_light,
             spot_light: entity.spot_light,
             casts_shadow: entity.casts_shadow,
+            billboard: entity.billboard,
             editor_id: entity.editor_id,
             particle_system: entity.particle_system,
             particle_emitter: entity.particle_emitter,
@@ -1833,6 +1843,11 @@ impl SceneAssetEntity {
             .ok()
             .map(|light| SerializedSpotLight::from(*light));
 
+        let billboard = world
+            .get::<&Billboard>(entity)
+            .ok()
+            .map(|component| SerializedBillboard::from(*component));
+
         let casts_shadow = world.get::<&CanCastShadow>(entity).ok().map(|flag| flag.0);
         let editor_id = world.get::<&EditorEntityId>(entity).ok().map(|id| id.0);
         let environment = world
@@ -1864,6 +1879,7 @@ impl SceneAssetEntity {
             point_light,
             spot_light,
             casts_shadow,
+            billboard,
             editor_id,
             particle_system,
             particle_emitter,
@@ -1894,6 +1910,7 @@ pub struct SceneAssetEntityBuilder {
     point_light: Option<SerializedPointLight>,
     spot_light: Option<SerializedSpotLight>,
     casts_shadow: Option<bool>,
+    billboard: Option<SerializedBillboard>,
     editor_id: Option<u128>,
     particle_system: Option<SerializedParticleSystem>,
     particle_emitter: Option<SerializedParticleEmitter>,
@@ -1924,6 +1941,7 @@ impl SceneAssetEntityBuilder {
             point_light: None,
             spot_light: None,
             casts_shadow: None,
+            billboard: None,
             editor_id: None,
             particle_system: None,
             particle_emitter: None,
@@ -2026,6 +2044,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_billboard(mut self, billboard: SerializedBillboard) -> Self {
+        self.billboard = Some(billboard);
+        self
+    }
+
     pub fn with_editor_id(mut self, editor_id: u128) -> Self {
         self.editor_id = Some(editor_id);
         self
@@ -2080,6 +2103,7 @@ impl SceneAssetEntityBuilder {
             point_light: self.point_light,
             spot_light: self.spot_light,
             casts_shadow: self.casts_shadow,
+            billboard: self.billboard,
             editor_id: self.editor_id,
             particle_system: self.particle_system,
             particle_emitter: self.particle_emitter,
@@ -2243,6 +2267,95 @@ impl From<SerializedParticleEmitter> for ParticleEmitterComponent {
             radial_velocity: serialized.radial_velocity,
             auto_respawn: serialized.auto_respawn,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum SerializedBillboardOrientation {
+    FaceCamera,
+    FaceCameraYAxis,
+}
+
+impl From<BillboardOrientation> for SerializedBillboardOrientation {
+    fn from(orientation: BillboardOrientation) -> Self {
+        match orientation {
+            BillboardOrientation::FaceCamera => SerializedBillboardOrientation::FaceCamera,
+            BillboardOrientation::FaceCameraYAxis => {
+                SerializedBillboardOrientation::FaceCameraYAxis
+            }
+        }
+    }
+}
+
+impl From<SerializedBillboardOrientation> for BillboardOrientation {
+    fn from(orientation: SerializedBillboardOrientation) -> Self {
+        match orientation {
+            SerializedBillboardOrientation::FaceCamera => BillboardOrientation::FaceCamera,
+            SerializedBillboardOrientation::FaceCameraYAxis => {
+                BillboardOrientation::FaceCameraYAxis
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum SerializedBillboardSpace {
+    World,
+    View { offset: [f32; 3] },
+}
+
+impl Default for SerializedBillboardSpace {
+    fn default() -> Self {
+        SerializedBillboardSpace::World
+    }
+}
+
+impl From<BillboardSpace> for SerializedBillboardSpace {
+    fn from(space: BillboardSpace) -> Self {
+        match space {
+            BillboardSpace::World => SerializedBillboardSpace::World,
+            BillboardSpace::View { offset } => SerializedBillboardSpace::View {
+                offset: offset.to_array(),
+            },
+        }
+    }
+}
+
+impl From<SerializedBillboardSpace> for BillboardSpace {
+    fn from(space: SerializedBillboardSpace) -> Self {
+        match space {
+            SerializedBillboardSpace::World => BillboardSpace::World,
+            SerializedBillboardSpace::View { offset } => BillboardSpace::View {
+                offset: glam::Vec3::from_array(offset),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SerializedBillboard {
+    pub orientation: SerializedBillboardOrientation,
+    #[serde(default)]
+    pub space: SerializedBillboardSpace,
+    #[serde(default)]
+    pub lit: bool,
+}
+
+impl From<Billboard> for SerializedBillboard {
+    fn from(component: Billboard) -> Self {
+        SerializedBillboard {
+            orientation: SerializedBillboardOrientation::from(component.orientation),
+            space: SerializedBillboardSpace::from(component.space),
+            lit: component.lit,
+        }
+    }
+}
+
+impl From<SerializedBillboard> for Billboard {
+    fn from(serialized: SerializedBillboard) -> Self {
+        let mut billboard = Billboard::new(serialized.orientation.into());
+        billboard = billboard.with_space(serialized.space.into());
+        billboard.with_lighting(serialized.lit)
     }
 }
 
@@ -3027,6 +3140,7 @@ mod tests {
                 point_light: None,
                 spot_light: None,
                 casts_shadow: None,
+                billboard: None,
                 editor_id: None,
                 particle_system: None,
                 particle_emitter: None,
@@ -3091,6 +3205,7 @@ mod tests {
                 point_light: None,
                 spot_light: None,
                 casts_shadow: None,
+                billboard: None,
                 editor_id: None,
                 particle_system: None,
                 particle_emitter: None,
@@ -3200,6 +3315,7 @@ mod tests {
                 point_light: None,
                 spot_light: None,
                 casts_shadow: None,
+                billboard: None,
                 editor_id: None,
                 particle_system: None,
                 particle_emitter: None,
@@ -3298,6 +3414,7 @@ mod tests {
                     point_light: None,
                     spot_light: None,
                     casts_shadow: None,
+                    billboard: None,
                     editor_id: None,
                     particle_system: None,
                     particle_emitter: None,
@@ -3325,6 +3442,7 @@ mod tests {
                     point_light: None,
                     spot_light: None,
                     casts_shadow: None,
+                    billboard: None,
                     editor_id: None,
                     particle_system: None,
                     particle_emitter: None,
@@ -3397,6 +3515,7 @@ mod tests {
                     point_light: None,
                     spot_light: None,
                     casts_shadow: None,
+                    billboard: None,
                     editor_id: None,
                     particle_system: None,
                     particle_emitter: None,
@@ -3424,6 +3543,7 @@ mod tests {
                     point_light: None,
                     spot_light: None,
                     casts_shadow: None,
+                    billboard: None,
                     editor_id: None,
                     particle_system: None,
                     particle_emitter: None,
