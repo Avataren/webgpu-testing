@@ -83,7 +83,7 @@ impl ProjectSystem {
                 return;
             };
 
-            let Some(()) = ctx.with_update(|app, update_ctx| {
+            let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
                 let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
                 let mut any_spawned = false;
 
@@ -194,13 +194,13 @@ impl ProjectSystem {
                     }
                 }
 
-                if matches!(update_ctx.runtime, RuntimeMode::Editor) {
-                    update_ctx.scene.set_animation_playback(false);
-                    update_ctx.scene.update(0.0);
+                if matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
+                    gpu_ctx.scene.set_animation_playback(false);
+                    gpu_ctx.scene.update(0.0);
                 }
 
                 if any_spawned {
-                    app.record_scene_change(update_ctx.scene);
+                    app.record_scene_change(gpu_ctx.scene);
                 }
             }) else {
                 return;
