@@ -28,7 +28,9 @@ use std::path::PathBuf;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
-use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
+use wgpu_cube::asset::{
+    AssetTypeTag, Handle, MaterialAsset, MaterialKind, Mesh, ShaderMaterialMetadata,
+};
 use wgpu_cube::gpu_particles::ParticleEmitter;
 use wgpu_cube::renderer::primitives::{quad_mesh, PrimitiveMeshDescriptor};
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
@@ -372,6 +374,37 @@ impl EditorApplication {
                                 "Inspector material asset missing for handle {:?}",
                                 handle.index()
                             );
+                        }
+                    }
+                }
+                InspectorAction::CreateShaderMaterial { entity, source } => {
+                    let Some(source_asset) = ctx.scene.assets.material(source).cloned() else {
+                        log::warn!(
+                            "Inspector shader material source missing for handle {:?}",
+                            source.index()
+                        );
+                        continue;
+                    };
+
+                    let mut shader_asset = source_asset;
+                    shader_asset.set_kind(MaterialKind::Shader(
+                        ShaderMaterialMetadata::default_template(),
+                    ));
+                    shader_asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                    shader_asset.set_canonical_path(PathBuf::new());
+
+                    let new_handle = ctx.scene.assets.insert_material_asset(shader_asset);
+
+                    match ctx
+                        .scene
+                        .main_world_mut()
+                        .insert_one(entity, MaterialComponent(new_handle))
+                    {
+                        Ok(_) => {
+                            self.record_scene_change(ctx.scene);
+                        }
+                        Err(err) => {
+                            log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
                         }
                     }
                 }

@@ -1,5 +1,7 @@
 #[cfg(feature = "egui")]
-use crate::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot};
+use crate::asset::{
+    Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+};
 #[cfg(feature = "egui")]
 use crate::renderer::Material;
 #[cfg(feature = "egui")]
@@ -95,6 +97,7 @@ pub struct InspectorMaterial {
     pub handle: Handle<MaterialAsset>,
     pub material: Material,
     pub textures: Vec<(MaterialTextureSlot, MaterialTextureReference)>,
+    pub kind: MaterialKind,
 }
 
 #[cfg(feature = "egui")]
@@ -164,6 +167,7 @@ impl SceneHierarchySnapshot {
                                 .texture_references()
                                 .map(|(slot, reference)| (slot, reference.clone()))
                                 .collect(),
+                            kind: asset.kind().clone(),
                         })
                 });
             let script = entity_ref

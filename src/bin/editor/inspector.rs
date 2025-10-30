@@ -9,7 +9,9 @@ use std::ops::RangeInclusive;
 
 use hecs::Entity;
 
-use wgpu_cube::asset::{Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot};
+use wgpu_cube::asset::{
+    Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+};
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
 use wgpu_cube::scene::{
@@ -44,6 +46,10 @@ pub enum InspectorAction {
         entity: Entity,
         handle: Handle<MaterialAsset>,
         material: Material,
+    },
+    CreateShaderMaterial {
+        entity: Entity,
+        source: Handle<MaterialAsset>,
     },
     UpdatePointLight {
         entity: Entity,
@@ -387,6 +393,30 @@ fn show_material_section(
     ui.collapsing("Material", |ui| {
         let mut material = material_data.material;
         let mut changed = false;
+
+        ui.horizontal(|ui| {
+            ui.label("Kind");
+            let kind_label = match &material_data.kind {
+                MaterialKind::Pbr => "PBR",
+                MaterialKind::Shader(_) => "Shader",
+            };
+            ui.monospace(kind_label);
+
+            if matches!(material_data.kind, MaterialKind::Pbr)
+                && ui
+                    .button("Create shader material")
+                    .on_hover_text(
+                        "Duplicate this material as a shader asset using the default template.",
+                    )
+                    .clicked()
+            {
+                actions.push(InspectorAction::CreateShaderMaterial {
+                    entity,
+                    source: material_data.handle,
+                });
+            }
+        });
+        ui.add_space(4.0);
 
         let reference_for = |slot: MaterialTextureSlot| -> Option<&MaterialTextureReference> {
             material_data
