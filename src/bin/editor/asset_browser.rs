@@ -131,7 +131,6 @@ impl AssetBrowserState {
 
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
-                        .max_height(ui.available_height())
                         .id_salt("asset_browser_folders")
                         .show(ui, |ui| {
                             self.show_folder_node(ui, &selected_folder, root, root);
@@ -141,6 +140,7 @@ impl AssetBrowserState {
                 ui.separator();
 
                 ui.vertical(|ui| {
+                    ui.set_min_width(220.0);
                     let relative = selected_folder
                         .strip_prefix(root)
                         .ok()
@@ -185,7 +185,6 @@ impl AssetBrowserState {
 
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
-                        .max_height(ui.available_height())
                         .id_salt("asset_browser_files")
                         .show(ui, |ui| {
                             if let Some(pending) = self.pending_move.as_ref() {
