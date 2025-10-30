@@ -550,11 +550,11 @@ mod native {
     impl ImportPaths {
         fn new(
             project_dir: &Path,
-            destination_root: &Path,
+            gltf_root: &Path,
             source_path: &Path,
         ) -> Result<Self, ImportAssetError> {
-            fs::create_dir_all(destination_root).map_err(|source| ImportAssetError::CreateDir {
-                path: destination_root.to_path_buf(),
+            fs::create_dir_all(gltf_root).map_err(|source| ImportAssetError::CreateDir {
+                path: gltf_root.to_path_buf(),
                 source,
             })?;
 
@@ -563,7 +563,7 @@ mod native {
                 .and_then(|stem| stem.to_str())
                 .filter(|name| !name.is_empty())
                 .unwrap_or("asset");
-            let asset_folder = unique_asset_folder(destination_root, base_name);
+            let asset_folder = unique_asset_folder(gltf_root, base_name);
 
             fs::create_dir_all(&asset_folder).map_err(|source| ImportAssetError::CreateDir {
                 path: asset_folder.clone(),
@@ -672,7 +672,9 @@ mod native {
             }
         }
 
-        let paths = ImportPaths::new(project_dir, destination_root, &source_path)?;
+        let gltf_root = content_root.join("gltf");
+
+        let paths = ImportPaths::new(project_dir, &gltf_root, &source_path)?;
 
         let result =
             (|| -> Result<ImportedGltf, ImportAssetError> {
@@ -1283,8 +1285,44 @@ mod native {
             if !path.exists() {
                 return path;
             }
-            candidate = format!("{sanitized}_{counter:02}");
+            candidate = format!("{counter:02}_{sanitized}");
             counter += 1;
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::fs;
+        use tempfile::tempdir;
+
+        #[test]
+        fn gltf_assets_are_packaged_under_gltf_folder() {
+            let temp = tempdir().expect("temp project");
+            let project_root = temp.path();
+            let content_root = project_root.join(CONTENT_DIR);
+            fs::create_dir_all(&content_root).expect("create content root");
+
+            let gltf_root = content_root.join("gltf");
+            let source_path = project_root.join("MyAsset.gltf");
+            fs::write(&source_path, b"{}").expect("write glTF placeholder");
+
+            let paths =
+                ImportPaths::new(project_root, &gltf_root, &source_path).expect("first import");
+            let expected_first = gltf_root.join("MyAsset");
+
+            assert_eq!(paths.asset_folder(), expected_first.as_path());
+
+            let duplicate_source = project_root.join("other").join("MyAsset.gltf");
+            fs::create_dir_all(duplicate_source.parent().unwrap())
+                .expect("create duplicate parent");
+            fs::write(&duplicate_source, b"{}").expect("write duplicate glTF");
+
+            let duplicate_paths = ImportPaths::new(project_root, &gltf_root, &duplicate_source)
+                .expect("second import");
+            let expected_second = gltf_root.join("01_MyAsset");
+
+            assert_eq!(duplicate_paths.asset_folder(), expected_second.as_path());
         }
     }
 
