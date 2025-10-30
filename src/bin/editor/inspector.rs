@@ -1931,12 +1931,11 @@ fn show_shader_controls(
                     let shaders_dir = root.join("shaders");
                     dialog = dialog.set_directory(shaders_dir);
                 }
-                let select_button = ui.add_enabled(
-                    has_root,
-                    egui::Button::new("Select shader...").on_hover_text(
+                let select_button = ui
+                    .add_enabled(has_root, egui::Button::new("Select shader..."))
+                    .on_hover_text(
                         "Assign an existing WGSL shader file from the project contents.",
-                    ),
-                );
+                    );
                 if select_button.clicked() {
                     if let Some(path) = dialog.pick_file() {
                         actions.push(InspectorAction::AssignShaderSource {
@@ -1955,12 +1954,11 @@ fn show_shader_controls(
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let create_button = ui.add_enabled(
-                    has_root,
-                    egui::Button::new("Create new shader").on_hover_text(
+                let create_button = ui
+                    .add_enabled(has_root, egui::Button::new("Create new shader"))
+                    .on_hover_text(
                         "Create a WGSL shader file in content/shaders using the default template.",
-                    ),
-                );
+                    );
                 if create_button.clicked() {
                     let suggested = suggested_shader_stem(material, entity_name);
                     actions.push(InspectorAction::CreateShaderSource {

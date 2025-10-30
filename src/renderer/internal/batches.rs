@@ -18,7 +18,6 @@ pub(crate) struct OrderedBatch {
     pub first_instance: u32,
     pub sampler_filtering: SamplerFilterMode,
     pub cull_mode: CullMode,
-    pub material_pipeline_key: MaterialPipelineKey,
 }
 
 pub(crate) struct PreparedBatches {
@@ -83,7 +82,6 @@ impl PreparedBatches {
                     SamplerFilterMode::Linear
                 },
                 cull_mode: batch.cull_mode,
-                material_pipeline_key: batch.material_pipeline_key,
             };
 
             if ordered

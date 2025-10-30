@@ -224,7 +224,7 @@ impl ShaderBuilder {
 
 impl ShaderBuilder {
     fn ensure_module(&mut self, module: &'static str) {
-        if !self.modules.iter().any(|existing| *existing == module) {
+        if !self.modules.contains(&module) {
             self.modules.push(module);
         }
     }
