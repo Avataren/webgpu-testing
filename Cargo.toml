@@ -36,6 +36,7 @@ half = "2.4"
 rune = { version = "0.14", features = ["std"] }
 rune-modules = { version = "0.14", features = ["json"] }
 thiserror = "1.0"
+naga = { version = "27", features = ["wgsl-in"] }
 egui = { version = "0.33", optional = true }
 egui-wgpu = { version = "0.33", optional = true }
 egui-winit = { version = "0.33", optional = true, default-features=false }
@@ -76,7 +77,6 @@ rfd = "0.14"
 notify = "6.1"
 
 [dev-dependencies]
-naga = { version = "27", features = ["wgsl-in"] }
 tempfile = "3.10"
 
 
