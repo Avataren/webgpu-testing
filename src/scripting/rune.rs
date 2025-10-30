@@ -1,8 +1,7 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -263,16 +262,16 @@ impl RuneScriptInstance {
         }
     }
 
-    fn command_buffer(&self) -> ScriptCommands {
-        ScriptCommands::new(self.handles.clone())
+    fn command_buffer(&self) -> Rc<RefCell<ScriptCommands>> {
+        Rc::new(RefCell::new(ScriptCommands::new(self.handles.clone())))
     }
 
     fn call_on_created(
         &mut self,
         entity_bits: i64,
-        commands: &mut ScriptCommands,
+        commands: Rc<RefCell<ScriptCommands>>,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
-        let _commands_guard = CommandGuard::enter(commands);
+        let _commands_guard = CommandGuard::enter(commands.clone());
         let state = Rc::clone(&self.state_store);
         let _state_guard = StateGuard::enter(&state);
         self.call_function(["on_created"], (entity_bits,))
@@ -282,9 +281,9 @@ impl RuneScriptInstance {
         &mut self,
         entity_bits: i64,
         dt: f64,
-        commands: &mut ScriptCommands,
+        commands: Rc<RefCell<ScriptCommands>>,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
-        let _commands_guard = CommandGuard::enter(commands);
+        let _commands_guard = CommandGuard::enter(commands.clone());
         let state = Rc::clone(&self.state_store);
         let _state_guard = StateGuard::enter(&state);
         self.call_function(["update"], (entity_bits, dt))
@@ -316,11 +315,11 @@ fn is_missing_entry(err: &rune::runtime::VmError) -> bool {
 
 /// Tracks the active command queue while executing a script.
 #[derive(Default)]
-struct ActiveCommands(Option<NonNull<ScriptCommands>>);
+struct ActiveCommands(Option<Rc<RefCell<ScriptCommands>>>);
 
 impl ActiveCommands {
-    fn set(&mut self, commands: &mut ScriptCommands) {
-        self.0 = Some(NonNull::from(commands));
+    fn set(&mut self, commands: Rc<RefCell<ScriptCommands>>) {
+        self.0 = Some(commands);
     }
 
     fn clear(&mut self) {
@@ -328,24 +327,24 @@ impl ActiveCommands {
     }
 
     fn with<R>(&mut self, f: impl FnOnce(&mut ScriptCommands) -> VmResult<R>) -> VmResult<R> {
-        let mut ptr = match self.0 {
-            Some(ptr) => ptr,
+        let rc = match &self.0 {
+            Some(rc) => rc.clone(),
             None => return VmResult::panic("script command context missing"),
         };
-        // Safety: The pointer is valid for the duration of the script execution.
-        unsafe { f(ptr.as_mut()) }
+    let mut guard = rc.borrow_mut();
+    f(&mut guard)
     }
 }
 
 thread_local! {
     static ACTIVE_COMMANDS: RefCell<ActiveCommands> = RefCell::new(ActiveCommands::default());
-    static ACTIVE_STATE: RefCell<Option<NonNull<ScriptStateMap>>> = const { RefCell::new(None) };
+    static ACTIVE_STATE: RefCell<Option<Rc<RefCell<ScriptStateMap>>>> = const { RefCell::new(None) };
 }
 
 struct CommandGuard;
 
 impl CommandGuard {
-    fn enter(commands: &mut ScriptCommands) -> Self {
+    fn enter(commands: Rc<RefCell<ScriptCommands>>) -> Self {
         ACTIVE_COMMANDS.with(|cell| cell.borrow_mut().set(commands));
         Self
     }
@@ -357,20 +356,24 @@ impl Drop for CommandGuard {
     }
 }
 
-struct StateGuard<'a> {
-    _state: RefMut<'a, ScriptStateMap>,
+struct StateGuard {
+    // Keep an Rc clone around so the state remains available while the guard
+    // exists. We don't hold a RefMut here to avoid double-borrow issues when
+    // `with_active_state` borrows the map later.
+    _state: Rc<RefCell<ScriptStateMap>>,
 }
 
-impl<'a> StateGuard<'a> {
-    fn enter(state: &'a Rc<RefCell<ScriptStateMap>>) -> Self {
-        let mut state_ref = state.borrow_mut();
-        let ptr = NonNull::from(&mut *state_ref);
-        ACTIVE_STATE.with(|cell| *cell.borrow_mut() = Some(ptr));
-        Self { _state: state_ref }
+impl StateGuard {
+    fn enter(state: &Rc<RefCell<ScriptStateMap>>) -> Self {
+        let state_clone = Rc::clone(state);
+        ACTIVE_STATE.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&state_clone)));
+        Self {
+            _state: state_clone,
+        }
     }
 }
 
-impl Drop for StateGuard<'_> {
+impl Drop for StateGuard {
     fn drop(&mut self) {
         ACTIVE_STATE.with(|cell| *cell.borrow_mut() = None);
     }
@@ -378,13 +381,12 @@ impl Drop for StateGuard<'_> {
 
 fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> VmResult<R> {
     ACTIVE_STATE.with(|cell| {
-        let opt = *cell.borrow();
-        let Some(mut mut_ptr) = opt else {
+        let opt = cell.borrow();
+        let Some(rc) = opt.as_ref() else {
             return VmResult::panic("state store missing");
         };
-        // Safety: populated by `StateGuard` for the duration of the script call.
-        let map = unsafe { mut_ptr.as_mut() };
-        f(map)
+    let mut borrow = rc.borrow_mut();
+    f(&mut borrow)
     })
 }
 
@@ -795,7 +797,7 @@ impl ScriptingState {
 
     fn process_on_created(&mut self, world: &mut World) -> Result<(), RuneScriptingError> {
         loop {
-            let mut pending_commands = Vec::new();
+            let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
             {
                 let mut query = world.query::<&mut RuneScriptComponent>();
@@ -805,12 +807,12 @@ impl ScriptingState {
                     }
 
                     let instance = self.ensure_instance(entity, component)?;
-                    let mut commands = instance.command_buffer();
-                    instance.call_on_created(entity_bits(entity), &mut commands)?;
+                    let commands = instance.command_buffer();
+                    instance.call_on_created(entity_bits(entity), commands.clone())?;
                     component.mark_created();
 
-                    if !commands.is_empty() {
-                        pending_commands.push(commands);
+                    if !commands.borrow().is_empty() {
+                        pending_commands.push(commands.clone());
                     }
                 }
             }
@@ -821,7 +823,8 @@ impl ScriptingState {
 
             let mut any_scripts_added = false;
             for commands in pending_commands.iter_mut() {
-                let result = commands.apply(world)?;
+                let mut borrow = commands.borrow_mut();
+                let result = borrow.apply(world)?;
                 if !result.scripts_added.is_empty() {
                     any_scripts_added = true;
                 }
@@ -840,7 +843,7 @@ impl ScriptingState {
     }
 
     fn process_updates(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
-        let mut pending_commands = Vec::new();
+        let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
         {
             let mut query = world.query::<&mut RuneScriptComponent>();
@@ -850,11 +853,11 @@ impl ScriptingState {
                 }
 
                 let instance = self.ensure_instance(entity, component)?;
-                let mut commands = instance.command_buffer();
-                instance.call_update(entity_bits(entity), dt, &mut commands)?;
+                let commands = instance.command_buffer();
+                instance.call_update(entity_bits(entity), dt, commands.clone())?;
 
-                if !commands.is_empty() {
-                    pending_commands.push(commands);
+                if !commands.borrow().is_empty() {
+                    pending_commands.push(commands.clone());
                 }
             }
         }
@@ -864,7 +867,8 @@ impl ScriptingState {
         }
 
         for commands in pending_commands.iter_mut() {
-            let result = commands.apply(world)?;
+            let mut borrow = commands.borrow_mut();
+            let result = borrow.apply(world)?;
             if !result.gltf_imports.is_empty() {
                 self.pending_gltf_imports
                     .extend(result.gltf_imports.into_iter());

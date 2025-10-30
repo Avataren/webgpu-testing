@@ -8,7 +8,9 @@ use std::rc::Rc;
 /// RAII guard that returns pooled object on drop
 pub struct PooledVec<T> {
     vec: Option<Vec<T>>,
-    pool: *const RefCell<VecPool<T>>,
+    // Callback invoked on drop to return the vec to the pool. Using a boxed
+    // FnMut avoids storing raw pointers to the thread-local pools.
+    return_callback: Option<Box<dyn FnMut(Vec<T>)>>,
     _not_send_sync: PhantomData<Rc<RefCell<VecPool<T>>>>,
 }
 
@@ -37,8 +39,8 @@ impl<T> Drop for PooledVec<T> {
     fn drop(&mut self) {
         if let Some(mut vec) = self.vec.take() {
             vec.clear();
-            unsafe {
-                (*self.pool).borrow_mut().return_vec(vec);
+            if let Some(cb) = self.return_callback.as_mut() {
+                cb(vec);
             }
         }
     }
@@ -134,9 +136,14 @@ thread_local! {
 pub fn acquire_particle_vec() -> PooledVec<Particle> {
     PARTICLE_VEC_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();
+        // Build a small callback that returns the vec into the thread-local pool.
+        let cb = Box::new(|vec: Vec<Particle>| {
+            PARTICLE_VEC_POOL.with(|pool| pool.borrow_mut().return_vec(vec));
+        });
+
         PooledVec {
             vec: Some(vec),
-            pool: pool as *const _, // ✅ Explicit cast instead of as_ptr()
+            return_callback: Some(cb),
             _not_send_sync: PhantomData,
         }
     })
@@ -146,9 +153,13 @@ pub fn acquire_particle_vec() -> PooledVec<Particle> {
 pub fn acquire_u32_vec() -> PooledVec<u32> {
     U32_VEC_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();
+        let cb = Box::new(|vec: Vec<u32>| {
+            U32_VEC_POOL.with(|pool| pool.borrow_mut().return_vec(vec));
+        });
+
         PooledVec {
             vec: Some(vec),
-            pool: pool as *const _, // ✅ Explicit cast
+            return_callback: Some(cb),
             _not_send_sync: PhantomData,
         }
     })
@@ -158,9 +169,13 @@ pub fn acquire_u32_vec() -> PooledVec<u32> {
 pub fn acquire_spawn_request_vec() -> PooledVec<(u32, Particle)> {
     SPAWN_REQUEST_POOL.with(|pool| {
         let vec = pool.borrow_mut().acquire();
+        let cb = Box::new(|vec: Vec<(u32, Particle)>| {
+            SPAWN_REQUEST_POOL.with(|pool| pool.borrow_mut().return_vec(vec));
+        });
+
         PooledVec {
             vec: Some(vec),
-            pool: pool as *const _, // ✅ Explicit cast
+            return_callback: Some(cb),
             _not_send_sync: PhantomData,
         }
     })

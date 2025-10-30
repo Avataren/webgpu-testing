@@ -75,7 +75,7 @@ impl ShaderWatcher {
                                 if path
                                     .extension()
                                     .and_then(|ext| ext.to_str())
-                                    .map_or(false, |ext| ext.eq_ignore_ascii_case("wgsl"))
+                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("wgsl"))
                                     && path.exists()
                                 {
                                     changed.insert(path);

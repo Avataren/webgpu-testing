@@ -177,7 +177,7 @@ impl RenderApplication for BoidsOptimizedApp {
         if let (Some(particle_system), Some(behavior)) =
             (&mut self.particle_system, &mut self.behavior)
         {
-            if self.frame_count % 60 == 0 {
+            if self.frame_count.is_multiple_of(60) {
                 println!("dt = {} seconds", ctx.dt);
             }
             let frame_start = std::time::Instant::now();
@@ -210,7 +210,7 @@ impl RenderApplication for BoidsOptimizedApp {
             let submit_time = before_submit.elapsed();
 
             let total_time = frame_start.elapsed();
-            if self.frame_count % 60 == 0 {
+            if self.frame_count.is_multiple_of(60) {
                 log::info!(
                     "Frame {}: Submit took {:?}, Total {:?}",
                     self.frame_count,

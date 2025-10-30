@@ -1,0 +1,12 @@
+{
+  "Avocado.gltf": {
+    "materials": {
+      "0": "content/materials/avocado_000.mat.json"
+    },
+    "materials_by_key": {
+      "material:0": "content/materials/avocado_000.mat.json",
+      "node:0/primitive:0": "content/materials/avocado_000.mat.json",
+      "node:0/primitive:0/material:0": "content/materials/avocado_000.mat.json"
+    }
+  }
+}
