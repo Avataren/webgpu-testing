@@ -614,6 +614,36 @@ impl RenderPipeline {
         }
     }
 
+    pub(crate) fn invalidate_material_shader_modules(
+        &mut self,
+        handle: Handle<MaterialAsset>,
+        filter: Option<SamplerFilterMode>,
+    ) {
+        match filter {
+            Some(mode) => {
+                self.shader_modules
+                    .remove(&(MaterialPipelineKey::Shader(handle), mode));
+                self.pipelines.retain(|(material_key, pipeline_key), _| {
+                    if let MaterialPipelineKey::Shader(existing) = material_key {
+                        if *existing == handle {
+                            return pipeline_key.sampler_filtering != mode;
+                        }
+                    }
+                    true
+                });
+            }
+            None => {
+                for mode in [SamplerFilterMode::Linear, SamplerFilterMode::Nearest] {
+                    self.shader_modules
+                        .remove(&(MaterialPipelineKey::Shader(handle), mode));
+                }
+                self.pipelines.retain(|(material_key, _), _| {
+                    !matches!(material_key, MaterialPipelineKey::Shader(existing) if *existing == handle)
+                });
+            }
+        }
+    }
+
     fn create_depth_prepass_pipeline(
         context: &RenderContext,
         pipeline_layout: &wgpu::PipelineLayout,

@@ -1,5 +1,5 @@
 // renderer/renderer.rs
-use crate::asset::{Assets, Mesh};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::environment::Environment;
 #[path = "passes/mod.rs"]
 pub(crate) mod passes;
@@ -12,7 +12,7 @@ use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessCamera, PostProcessEffects},
     CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
-    RenderPass, RenderRegion, Vertex,
+    RenderPass, RenderRegion, SamplerFilterMode, Vertex,
 };
 use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
@@ -259,6 +259,15 @@ impl Renderer {
 
     pub fn is_pick_active(&self) -> bool {
         self.pick_active
+    }
+
+    pub fn invalidate_material_shader_modules(
+        &mut self,
+        handle: Handle<MaterialAsset>,
+        filter: Option<SamplerFilterMode>,
+    ) {
+        self.pipeline
+            .invalidate_material_shader_modules(handle, filter);
     }
 
     pub fn request_pick(&mut self, coords: [u32; 2]) -> bool {

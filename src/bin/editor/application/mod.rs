@@ -14,6 +14,8 @@ mod script_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
+#[cfg(not(target_arch = "wasm32"))]
+mod shader_watcher;
 mod ui;
 
 use self::asset_browser_system::AssetBrowserSystem;
@@ -134,6 +136,9 @@ impl EditorApplication {
     }
 
     fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.process_shader_file_changes(ctx);
+
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
 
