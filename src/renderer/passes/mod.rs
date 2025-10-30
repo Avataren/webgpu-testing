@@ -89,8 +89,23 @@ impl<'a> BatchRecorder<'a> {
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
+            let device = self.renderer.get_device().clone();
+
             if let Some(group) = bindless_group {
+                let pipeline = self.renderer.pipeline.pipeline_for_material(
+                    &device,
+                    self.assets,
+                    pipeline_key,
+                    batch.material_pipeline_key,
+                );
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(3, group, &[]);
+
+                let start_instance = batch.first_instance;
+                let end_instance = start_instance + batch.instances.len() as u32;
+                pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
+                draw_calls += 1;
+                continue;
             }
 
             let mut local_offset = 0usize;
@@ -101,7 +116,6 @@ impl<'a> BatchRecorder<'a> {
                     .get(material_index)
                     .copied()
                     .unwrap_or(MaterialPipelineKey::Pbr);
-                let device = self.renderer.get_device().clone();
                 let pipeline = self.renderer.pipeline.pipeline_for_material(
                     &device,
                     self.assets,
@@ -110,26 +124,24 @@ impl<'a> BatchRecorder<'a> {
                 );
                 pass.set_pipeline(pipeline);
 
-                if bindless_group.is_none() {
-                    let Some(material) = self.materials.get(material_index).copied() else {
-                        let handle = self.material_handles.get(material_index);
-                        log::warn!(
-                            "Material index {} out of bounds ({} materials, handle {:?})",
-                            material_index,
-                            self.materials.len(),
-                            handle
-                        );
-                        local_offset += 1;
-                        continue;
-                    };
+                let Some(material) = self.materials.get(material_index).copied() else {
+                    let handle = self.material_handles.get(material_index);
+                    log::warn!(
+                        "Material index {} out of bounds ({} materials, handle {:?})",
+                        material_index,
+                        self.materials.len(),
+                        handle
+                    );
+                    local_offset += 1;
+                    continue;
+                };
 
-                    let Some(bind_group) = self.renderer.material_bind_group(self.assets, material)
-                    else {
-                        local_offset += 1;
-                        continue;
-                    };
-                    pass.set_bind_group(3, bind_group, &[]);
-                }
+                let Some(bind_group) = self.renderer.material_bind_group(self.assets, material)
+                else {
+                    local_offset += 1;
+                    continue;
+                };
+                pass.set_bind_group(3, bind_group, &[]);
 
                 let run_length = material_run_length(batch.instances.as_slice(), local_offset);
                 let start_instance = batch.first_instance + local_offset as u32;
