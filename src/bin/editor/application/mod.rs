@@ -24,6 +24,8 @@ use self::core::GameViewDisplayMode;
 
 use glam::{Quat, Vec3};
 use hecs::Entity;
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
 use std::path::PathBuf;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
@@ -375,6 +377,233 @@ impl EditorApplication {
                                 handle.index()
                             );
                         }
+                    }
+                }
+                InspectorAction::SetMaterialKind {
+                    entity,
+                    handle,
+                    kind,
+                } => {
+                    let mut can_update = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&MaterialComponent>(entity) {
+                            Ok(component) => {
+                                if component.0 == handle {
+                                    can_update = true;
+                                } else {
+                                    log::warn!(
+                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                        entity,
+                                        component.0.index(),
+                                        handle.index()
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to access material for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if !can_update {
+                        continue;
+                    }
+
+                    if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                        asset.set_kind(kind.clone());
+                        match kind {
+                            MaterialKind::Shader(_) => {
+                                asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                            }
+                            MaterialKind::Pbr => {
+                                asset.set_asset_type(AssetTypeTag::default());
+                            }
+                        }
+                        self.record_scene_change(ctx.scene);
+                    } else {
+                        log::warn!(
+                            "Inspector material asset missing for handle {:?}",
+                            handle.index()
+                        );
+                    }
+                }
+                InspectorAction::AssignShaderSource {
+                    entity,
+                    handle,
+                    shader_path,
+                } => {
+                    let mut can_update = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&MaterialComponent>(entity) {
+                            Ok(component) => {
+                                if component.0 == handle {
+                                    can_update = true;
+                                } else {
+                                    log::warn!(
+                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                        entity,
+                                        component.0.index(),
+                                        handle.index()
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to access material for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if !can_update {
+                        continue;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let Some(content_root) = self.project_system().content_root() else {
+                            log::warn!(
+                                "Cannot assign shader without an open project for handle {:?}",
+                                handle.index()
+                            );
+                            continue;
+                        };
+
+                        let canonical = shader_path.canonicalize().unwrap_or(shader_path.clone());
+
+                        if !canonical.starts_with(&content_root) {
+                            log::warn!(
+                                "Shader {:?} is outside of the project content directory",
+                                canonical
+                            );
+                            continue;
+                        }
+
+                        let source = match fs::read_to_string(&canonical) {
+                            Ok(contents) => contents,
+                            Err(err) => {
+                                log::warn!("Failed to read shader source {:?}: {}", canonical, err);
+                                continue;
+                            }
+                        };
+
+                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                            let mut metadata = match asset.kind().clone() {
+                                MaterialKind::Shader(existing) => existing,
+                                MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
+                            };
+                            metadata.set_wgsl_source(source);
+                            metadata.set_source_path(Some(canonical));
+                            asset.set_kind(MaterialKind::Shader(metadata));
+                            asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                            self.record_scene_change(ctx.scene);
+                        } else {
+                            log::warn!(
+                                "Inspector material asset missing for handle {:?}",
+                                handle.index()
+                            );
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = (entity, handle, shader_path);
+                        log::warn!("Assigning shader files is unavailable on WebAssembly builds.");
+                    }
+                }
+                InspectorAction::CreateShaderSource {
+                    entity,
+                    handle,
+                    suggested_stem,
+                } => {
+                    let mut can_update = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&MaterialComponent>(entity) {
+                            Ok(component) => {
+                                if component.0 == handle {
+                                    can_update = true;
+                                } else {
+                                    log::warn!(
+                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                        entity,
+                                        component.0.index(),
+                                        handle.index()
+                                    );
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to access material for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
+
+                    if !can_update {
+                        continue;
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let Some(content_root) = self.project_system().content_root() else {
+                            log::warn!(
+                                "Cannot create shader without an open project for handle {:?}",
+                                handle.index()
+                            );
+                            continue;
+                        };
+
+                        let shader_dir = content_root.join("shaders");
+                        if let Err(err) = fs::create_dir_all(&shader_dir) {
+                            log::warn!(
+                                "Failed to create shader directory {:?}: {}",
+                                shader_dir,
+                                err
+                            );
+                            continue;
+                        }
+
+                        let base_stem = if suggested_stem.trim().is_empty() {
+                            format!("material_{}", handle.index())
+                        } else {
+                            suggested_stem.clone()
+                        };
+
+                        let mut candidate = shader_dir.join(format!("{base_stem}.wgsl"));
+                        let mut counter = 1usize;
+                        while candidate.exists() {
+                            candidate = shader_dir.join(format!("{base_stem}_{counter:02}.wgsl"));
+                            counter += 1;
+                        }
+
+                        if let Err(err) =
+                            fs::write(&candidate, ShaderMaterialMetadata::DEFAULT_TEMPLATE)
+                        {
+                            log::warn!("Failed to write shader template {:?}: {}", candidate, err);
+                            continue;
+                        }
+
+                        let canonical = candidate.canonicalize().unwrap_or(candidate.clone());
+
+                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                            let mut metadata = match asset.kind().clone() {
+                                MaterialKind::Shader(existing) => existing,
+                                MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
+                            };
+                            metadata.set_wgsl_source(ShaderMaterialMetadata::DEFAULT_TEMPLATE);
+                            metadata.set_source_path(Some(canonical));
+                            asset.set_kind(MaterialKind::Shader(metadata));
+                            asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                            self.record_scene_change(ctx.scene);
+                        } else {
+                            log::warn!(
+                                "Inspector material asset missing for handle {:?}",
+                                handle.index()
+                            );
+                        }
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        let _ = (entity, handle, suggested_stem);
+                        log::warn!("Creating shader files is unavailable on WebAssembly builds.");
                     }
                 }
                 InspectorAction::CreateShaderMaterial { entity, source } => {

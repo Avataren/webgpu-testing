@@ -2674,6 +2674,8 @@ pub enum SerializedMaterialKind {
         wgsl_source: String,
         #[serde(default)]
         needs_lighting_include: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shader_path: Option<String>,
     },
 }
 
@@ -2690,6 +2692,9 @@ impl SerializedMaterialKind {
             MaterialKind::Shader(metadata) => Self::Shader {
                 wgsl_source: metadata.wgsl_source().to_string(),
                 needs_lighting_include: metadata.needs_lighting_include(),
+                shader_path: metadata
+                    .source_path()
+                    .map(|path| path.to_string_lossy().to_string()),
             },
         }
     }
@@ -2700,9 +2705,13 @@ impl SerializedMaterialKind {
             SerializedMaterialKind::Shader {
                 wgsl_source,
                 needs_lighting_include,
+                shader_path,
             } => {
                 let mut metadata = ShaderMaterialMetadata::new(wgsl_source.clone());
                 metadata.set_needs_lighting_include(*needs_lighting_include);
+                if let Some(path) = shader_path {
+                    metadata.set_source_path(Some(PathBuf::from(path)));
+                }
                 MaterialKind::Shader(metadata)
             }
         }
