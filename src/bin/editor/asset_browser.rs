@@ -6,6 +6,8 @@ use notify::{recommended_watcher, RecommendedWatcher, RecursiveMode, Watcher};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+use log::debug;
 #[cfg(not(target_arch = "wasm32"))]
 use log::warn;
 
@@ -117,15 +119,21 @@ impl AssetBrowserState {
             .clone()
             .unwrap_or_else(|| root.to_path_buf());
 
-        let available_size = ui.available_size();
+        let mut available_size = ui.available_size();
+        if !available_size.y.is_finite() {
+            available_size.y = ui.available_height();
+        }
+        let available_height = available_size.y.max(0.0);
         ui.allocate_ui_with_layout(
             available_size,
             egui::Layout::left_to_right(egui::Align::TOP),
             |ui| {
                 ui.set_min_size(available_size);
 
+                let folder_width = 200.0;
                 ui.vertical(|ui| {
-                    ui.set_min_width(180.0);
+                    ui.set_width(folder_width);
+                    ui.set_min_height(available_height);
                     ui.heading("Folders");
                     ui.separator();
 
@@ -140,7 +148,25 @@ impl AssetBrowserState {
                 ui.separator();
 
                 ui.vertical(|ui| {
-                    ui.set_min_width(220.0);
+                    let mut files_width = ui.available_width();
+                    if !files_width.is_finite() {
+                        files_width = (available_size.x - folder_width
+                            - ui.spacing().item_spacing.x)
+                            .max(220.0);
+                    }
+
+                    if files_width > 0.0 && files_width.is_finite() {
+                        ui.set_width(files_width);
+                    } else {
+                        ui.set_min_width(220.0);
+                        #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                        debug!(
+                            "Asset browser file pane received non-positive width (available={:?})",
+                            available_size
+                        );
+                    }
+
+                    ui.set_min_height(available_height);
                     let relative = selected_folder
                         .strip_prefix(root)
                         .ok()
@@ -262,6 +288,15 @@ impl AssetBrowserState {
                                 }
                             }
                         });
+
+                    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+                    if ui.button("Debug Layout Bounds").clicked() {
+                        debug!(
+                            "Asset browser layout → available: {:?}, folder_width: {folder_width}, files_width: {files_width}",
+                            available_size
+                        );
+                        ui.ctx().set_debug_on_hover(true);
+                    }
                 });
             },
         );
