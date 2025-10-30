@@ -40,6 +40,81 @@ impl MaterialParameterMetadata {
     }
 }
 
+/// Describes the high level kind of a material asset.
+#[derive(Debug, Clone)]
+pub enum MaterialKind {
+    /// A built-in physically based rendering (PBR) material.
+    Pbr,
+    /// A user-authored shader material with custom WGSL source code.
+    Shader(ShaderMaterialMetadata),
+}
+
+impl Default for MaterialKind {
+    fn default() -> Self {
+        Self::Pbr
+    }
+}
+
+/// Metadata for a shader material, including its WGSL source and optional flags.
+#[derive(Debug, Clone)]
+pub struct ShaderMaterialMetadata {
+    wgsl_source: String,
+    needs_lighting_include: bool,
+}
+
+impl ShaderMaterialMetadata {
+    /// Default WGSL template used for newly created shader materials.
+    pub const DEFAULT_TEMPLATE: &'static str = r#"// Custom material shader
+// This template returns a white fragment color. Extend it to fit your needs.
+
+@fragment
+fn fragment_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+}
+"#;
+
+    /// Creates metadata with explicit WGSL source.
+    pub fn new(wgsl_source: impl Into<String>) -> Self {
+        Self {
+            wgsl_source: wgsl_source.into(),
+            needs_lighting_include: false,
+        }
+    }
+
+    /// Creates metadata populated with the default shader template.
+    pub fn default_template() -> Self {
+        Self {
+            wgsl_source: Self::DEFAULT_TEMPLATE.to_string(),
+            needs_lighting_include: false,
+        }
+    }
+
+    /// Returns the WGSL source for the shader material.
+    pub fn wgsl_source(&self) -> &str {
+        &self.wgsl_source
+    }
+
+    /// Provides mutable access to the WGSL source string.
+    pub fn wgsl_source_mut(&mut self) -> &mut String {
+        &mut self.wgsl_source
+    }
+
+    /// Replaces the WGSL source with a new value.
+    pub fn set_wgsl_source(&mut self, source: impl Into<String>) {
+        self.wgsl_source = source.into();
+    }
+
+    /// Indicates whether the shader requires the shared lighting include file.
+    pub fn needs_lighting_include(&self) -> bool {
+        self.needs_lighting_include
+    }
+
+    /// Sets whether the shader requires the shared lighting include file.
+    pub fn set_needs_lighting_include(&mut self, needs_include: bool) {
+        self.needs_lighting_include = needs_include;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MaterialTextureSlot {
     BaseColor,
@@ -138,6 +213,7 @@ pub struct MaterialAsset {
     default_parameters: MaterialParameterMetadata,
     asset_type: AssetTypeTag,
     texture_references: BTreeMap<MaterialTextureSlot, MaterialTextureReference>,
+    kind: MaterialKind,
 }
 
 impl MaterialAsset {
@@ -146,6 +222,7 @@ impl MaterialAsset {
         canonical_path: PathBuf,
         default_parameters: MaterialParameterMetadata,
         asset_type: AssetTypeTag,
+        kind: MaterialKind,
     ) -> Self {
         Self {
             material,
@@ -153,6 +230,7 @@ impl MaterialAsset {
             default_parameters,
             asset_type,
             texture_references: BTreeMap::new(),
+            kind,
         }
     }
 
@@ -162,6 +240,18 @@ impl MaterialAsset {
             canonical_path,
             MaterialParameterMetadata::default(),
             AssetTypeTag::default(),
+            MaterialKind::Pbr,
+        )
+    }
+
+    /// Creates a shader material asset with the default WGSL template.
+    pub fn shader(material: Material, canonical_path: PathBuf) -> Self {
+        Self::new(
+            material,
+            canonical_path,
+            MaterialParameterMetadata::default(),
+            AssetTypeTag::new("shader_material"),
+            MaterialKind::Shader(ShaderMaterialMetadata::default_template()),
         )
     }
 
@@ -195,6 +285,32 @@ impl MaterialAsset {
 
     pub fn set_asset_type(&mut self, asset_type: AssetTypeTag) {
         self.asset_type = asset_type;
+    }
+
+    pub fn kind(&self) -> &MaterialKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut MaterialKind {
+        &mut self.kind
+    }
+
+    pub fn set_kind(&mut self, kind: MaterialKind) {
+        self.kind = kind;
+    }
+
+    pub fn shader_metadata(&self) -> Option<&ShaderMaterialMetadata> {
+        match &self.kind {
+            MaterialKind::Shader(metadata) => Some(metadata),
+            MaterialKind::Pbr => None,
+        }
+    }
+
+    pub fn shader_metadata_mut(&mut self) -> Option<&mut ShaderMaterialMetadata> {
+        match &mut self.kind {
+            MaterialKind::Shader(metadata) => Some(metadata),
+            MaterialKind::Pbr => None,
+        }
     }
 
     pub fn texture_reference(

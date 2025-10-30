@@ -6,8 +6,8 @@ pub mod mesh;
 pub use cache::AssetCache;
 pub use handle::Handle;
 pub use material::{
-    AssetTypeTag, MaterialAsset, MaterialParameterMetadata, MaterialTextureReference,
-    MaterialTextureSlot,
+    AssetTypeTag, MaterialAsset, MaterialKind, MaterialParameterMetadata, MaterialTextureReference,
+    MaterialTextureSlot, ShaderMaterialMetadata,
 };
 pub use mesh::{Mesh, MeshData};
 
@@ -52,6 +52,15 @@ impl Assets {
             texture_paths: HashMap::new(),
             default_material,
         }
+    }
+
+    /// Creates a new shader material asset using the default WGSL template and inserts it.
+    pub fn create_shader_material(
+        &mut self,
+        material: Material,
+        canonical_path: PathBuf,
+    ) -> Handle<MaterialAsset> {
+        self.insert_material_asset(MaterialAsset::shader(material, canonical_path))
     }
 
     pub fn ensure_primitive_mesh(
