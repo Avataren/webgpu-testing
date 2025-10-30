@@ -25,6 +25,7 @@ fn serialized_shader_material_roundtrips_metadata() {
         SerializedMaterialKind::Shader {
             wgsl_source,
             needs_lighting_include,
+            ..
         } => {
             assert_eq!(wgsl_source, &custom_wgsl, "WGSL source should persist");
             assert!(

@@ -102,10 +102,6 @@ pub struct Batch<'a> {
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
-    pub(crate) material_pipeline_key: MaterialPipelineKey,
-    pub(crate) material_handles: &'a [Handle<MaterialAsset>],
-    pub(crate) materials: &'a [Material],
-    pub(crate) material_pipeline_keys: &'a [MaterialPipelineKey],
     pub use_nearest_filtering: bool,
     pub cull_mode: CullMode,
 }
@@ -239,10 +235,6 @@ impl RenderBatcher {
             pass: key.pass,
             depth_state: key.depth_state,
             instances: instances.as_slice(),
-            material_pipeline_key: key.material_pipeline_key,
-            material_handles: self.materials.as_slice(),
-            materials: self.resolved_materials.as_slice(),
-            material_pipeline_keys: self.material_pipeline_keys.as_slice(),
             use_nearest_filtering: key.use_nearest_filtering,
             cull_mode: key.cull_mode,
         })
@@ -256,10 +248,6 @@ impl RenderBatcher {
                     pass: key.pass,
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
-                    material_pipeline_key: key.material_pipeline_key,
-                    material_handles: self.materials.as_slice(),
-                    materials: self.resolved_materials.as_slice(),
-                    material_pipeline_keys: self.material_pipeline_keys.as_slice(),
                     use_nearest_filtering: key.use_nearest_filtering,
                     cull_mode: key.cull_mode,
                 })
@@ -348,7 +336,13 @@ mod tests {
 
         let mut batch_keys: Vec<MaterialPipelineKey> = batcher
             .iter()
-            .map(|batch| batch.material_pipeline_key)
+            .filter_map(|batch| {
+                batch
+                    .instances
+                    .first()
+                    .and_then(|inst| keys.get(inst.material_index as usize))
+                    .copied()
+            })
             .collect();
         batch_keys.sort_by_key(|key| match key {
             MaterialPipelineKey::Pbr => 0,
