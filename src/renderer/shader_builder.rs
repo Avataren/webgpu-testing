@@ -8,6 +8,24 @@ use crate::renderer::{
     MAX_TEXTURES,
 };
 
+const MATERIAL_COMMON: &str = include_str!("../shader/material_common.wgsl");
+const CONSTANTS: &str = include_str!("../shader/constants.wgsl");
+const BINDINGS_BINDLESS_LINEAR: &str = include_str!("../shader/bindings_bindless_linear.wgsl");
+const BINDINGS_BINDLESS_NEAREST: &str = include_str!("../shader/bindings_bindless_nearest.wgsl");
+const BINDINGS_TRADITIONAL_LINEAR: &str =
+    include_str!("../shader/bindings_traditional_linear.wgsl");
+const BINDINGS_TRADITIONAL_NEAREST: &str =
+    include_str!("../shader/bindings_traditional_nearest.wgsl");
+const LIGHTING_COMMON: &str = include_str!("../shader/lighting_common.wgsl");
+const SHADOWS: &str = include_str!("../shader/shadows.wgsl");
+const ENVIRONMENT: &str = include_str!("../shader/environment.wgsl");
+const LIGHTING_WITH_SHADOWS: &str = include_str!("../shader/lighting_with_shadows.wgsl");
+
+const MARKER_INCLUDE_MATERIAL_SYSTEM: &str = "// @include_material_system";
+const MARKER_INCLUDE_LIGHTING: &str = "// @include_lighting";
+const MARKER_INCLUDE_SHADOWS: &str = "// @include_shadows";
+const MARKER_INCLUDE_ENVIRONMENT: &str = "// @include_environment";
+
 struct ShaderConstant {
     name: &'static str,
     value: u32,
@@ -35,20 +53,19 @@ impl ShaderBuilder {
 
     /// Share the material data layout and flag constants across shaders.
     pub fn with_material_system(mut self) -> Self {
-        self.modules
-            .push(include_str!("../shader/material_common.wgsl"));
+        self.ensure_with_material_system();
         self
     }
 
     /// Add an arbitrary shader module to the builder.
     pub fn with_module(mut self, module: &'static str) -> Self {
-        self.modules.push(module);
+        self.ensure_module(module);
         self
     }
 
     /// Add constants (PI, TWO_PI, etc.)
     pub fn with_constants(mut self) -> Self {
-        self.modules.push(include_str!("../shader/constants.wgsl"));
+        self.ensure_module(CONSTANTS);
         self.set_constant("MAX_DIRECTIONAL_LIGHTS", MAX_DIRECTIONAL_LIGHTS as u32);
         self.set_constant("MAX_POINT_LIGHTS", MAX_POINT_LIGHTS as u32);
         self.set_constant("MAX_SPOT_LIGHTS", MAX_SPOT_LIGHTS as u32);
@@ -67,21 +84,13 @@ impl ShaderBuilder {
     ) -> Self {
         if bindless {
             match filtering {
-                SamplerFilterMode::Linear => self
-                    .modules
-                    .push(include_str!("../shader/bindings_bindless_linear.wgsl")),
-                SamplerFilterMode::Nearest => self
-                    .modules
-                    .push(include_str!("../shader/bindings_bindless_nearest.wgsl")),
+                SamplerFilterMode::Linear => self.ensure_module(BINDINGS_BINDLESS_LINEAR),
+                SamplerFilterMode::Nearest => self.ensure_module(BINDINGS_BINDLESS_NEAREST),
             }
         } else {
             match filtering {
-                SamplerFilterMode::Linear => self
-                    .modules
-                    .push(include_str!("../shader/bindings_traditional_linear.wgsl")),
-                SamplerFilterMode::Nearest => self
-                    .modules
-                    .push(include_str!("../shader/bindings_traditional_nearest.wgsl")),
+                SamplerFilterMode::Linear => self.ensure_module(BINDINGS_TRADITIONAL_LINEAR),
+                SamplerFilterMode::Nearest => self.ensure_module(BINDINGS_TRADITIONAL_NEAREST),
             }
         }
         self
@@ -93,28 +102,25 @@ impl ShaderBuilder {
 
     /// Add core PBR lighting functions and light structures
     pub fn with_lighting(mut self) -> Self {
-        self.modules
-            .push(include_str!("../shader/lighting_common.wgsl"));
+        self.ensure_with_lighting();
         self
     }
 
     /// Add shadow sampling functions
     pub fn with_shadows(mut self) -> Self {
-        self.modules.push(include_str!("../shader/shadows.wgsl"));
+        self.ensure_with_shadows();
         self
     }
 
     /// Add environment lighting (IBL)
     pub fn with_environment(mut self) -> Self {
-        self.modules
-            .push(include_str!("../shader/environment.wgsl"));
+        self.ensure_with_environment();
         self
     }
 
     /// Add complete scene lighting with shadows
     pub fn with_lighting_and_shadows(mut self) -> Self {
-        self.modules
-            .push(include_str!("../shader/lighting_with_shadows.wgsl"));
+        self.ensure_module(LIGHTING_WITH_SHADOWS);
         self
     }
 
@@ -127,7 +133,8 @@ impl ShaderBuilder {
     }
 
     /// Build the final shader source by appending the main shader
-    pub fn build(self, main_shader: &'static str) -> String {
+    pub fn build(mut self, main_shader: &str) -> String {
+        self = self.apply_markers(main_shader);
         let mut source = String::with_capacity(
             self.modules.iter().map(|m| m.len()).sum::<usize>()
                 + main_shader.len()
@@ -216,6 +223,50 @@ impl ShaderBuilder {
 }
 
 impl ShaderBuilder {
+    fn ensure_module(&mut self, module: &'static str) {
+        if !self.modules.iter().any(|existing| *existing == module) {
+            self.modules.push(module);
+        }
+    }
+
+    fn ensure_with_material_system(&mut self) {
+        self.ensure_module(MATERIAL_COMMON);
+    }
+
+    fn ensure_with_lighting(&mut self) {
+        self.ensure_module(LIGHTING_COMMON);
+    }
+
+    fn ensure_with_shadows(&mut self) {
+        self.ensure_module(LIGHTING_COMMON);
+        self.ensure_module(SHADOWS);
+        self.ensure_module(LIGHTING_WITH_SHADOWS);
+    }
+
+    fn ensure_with_environment(&mut self) {
+        self.ensure_module(ENVIRONMENT);
+    }
+
+    fn apply_markers(mut self, shader_source: &str) -> Self {
+        if shader_source.contains(MARKER_INCLUDE_MATERIAL_SYSTEM) {
+            self.ensure_with_material_system();
+        }
+
+        if shader_source.contains(MARKER_INCLUDE_LIGHTING) {
+            self.ensure_with_lighting();
+        }
+
+        if shader_source.contains(MARKER_INCLUDE_SHADOWS) {
+            self.ensure_with_shadows();
+        }
+
+        if shader_source.contains(MARKER_INCLUDE_ENVIRONMENT) {
+            self.ensure_with_environment();
+        }
+
+        self
+    }
+
     fn set_constant(&mut self, name: &'static str, value: u32) {
         if let Some(existing) = self
             .constant_overrides
@@ -258,10 +309,12 @@ impl ShaderBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asset::material::ShaderMaterialMetadata;
     use crate::renderer::{
         lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
         MAX_TEXTURES,
     };
+    use naga::front::wgsl;
 
     #[test]
     fn test_builder_basic() {
@@ -325,5 +378,28 @@ mod tests {
         assert!(bindless.contains("binding_array"));
         assert!(traditional.contains("base_color_texture_binding"));
         assert_ne!(bindless, traditional);
+    }
+
+    #[test]
+    fn include_markers_add_expected_modules() {
+        let shader = ShaderBuilder::new()
+            .with_constants()
+            .build(
+                "// @include_material_system\n// @include_lighting\n@fragment fn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.0, 0.0, 0.0, 1.0);\n}\n",
+            );
+
+        assert!(shader.contains("struct MaterialData"));
+        assert!(shader.contains("struct Lights"));
+    }
+
+    #[test]
+    fn default_template_compiles_with_naga() {
+        let metadata = ShaderMaterialMetadata::default_template();
+        let source = ShaderBuilder::new()
+            .with_constants()
+            .with_bindings(true)
+            .build(metadata.wgsl_source());
+
+        wgsl::parse_str(&source).expect("default template should produce valid WGSL");
     }
 }

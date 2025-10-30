@@ -9,7 +9,7 @@ fn serialized_shader_material_roundtrips_metadata() {
     let mut shader_asset =
         MaterialAsset::shader(Material::pbr(), PathBuf::from("shader_roundtrip.mat.json"));
 
-    let custom_wgsl = "@fragment fn fragment_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.2, 0.4, 0.8, 1.0);\n}".to_string();
+    let custom_wgsl = "// @include_lighting\n@fragment fn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.2, 0.4, 0.8, 1.0);\n}\n".to_string();
 
     {
         let metadata = shader_asset

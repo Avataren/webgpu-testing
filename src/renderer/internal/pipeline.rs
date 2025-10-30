@@ -368,9 +368,7 @@ impl RenderPipeline {
         }
 
         let processed = Self::preprocess_shader_source(metadata.wgsl_source());
-        let mut source = builder.build_modules_only();
-        source.push_str(&processed);
-        source
+        builder.build(&processed)
     }
 
     fn preprocess_shader_source(source: &str) -> String {
