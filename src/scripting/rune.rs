@@ -331,8 +331,8 @@ impl ActiveCommands {
             Some(rc) => rc.clone(),
             None => return VmResult::panic("script command context missing"),
         };
-    let mut guard = rc.borrow_mut();
-    f(&mut guard)
+        let mut guard = rc.borrow_mut();
+        f(&mut guard)
     }
 }
 
@@ -385,8 +385,8 @@ fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> V
         let Some(rc) = opt.as_ref() else {
             return VmResult::panic("state store missing");
         };
-    let mut borrow = rc.borrow_mut();
-    f(&mut borrow)
+        let mut borrow = rc.borrow_mut();
+        f(&mut borrow)
     })
 }
 

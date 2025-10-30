@@ -433,7 +433,10 @@ fn package_gltf_into_project(
         SceneLoader::import_gltf_native(&source_path).expect("import glTF for textures");
 
     // Debugging: print texture/image info when no embedded textures are found
-    eprintln!("imported document has {} textures", document.textures().count());
+    eprintln!(
+        "imported document has {} textures",
+        document.textures().count()
+    );
     for (i, texture) in document.textures().enumerate() {
         let image = texture.source();
         match image.source() {
@@ -441,7 +444,12 @@ fn package_gltf_into_project(
                 eprintln!("texture[{}] uri='{}'", i, uri);
             }
             gltf::image::Source::View { view, mime_type } => {
-                eprintln!("texture[{}] view buffer_idx={} mime={:?}", i, view.buffer().index(), mime_type);
+                eprintln!(
+                    "texture[{}] view buffer_idx={} mime={:?}",
+                    i,
+                    view.buffer().index(),
+                    mime_type
+                );
             }
         }
     }
@@ -642,10 +650,10 @@ fn packaged_gltf_roundtrip_without_source() {
 
     let source_dir = tempdir().expect("temp gltf source");
     let source_root = source_dir.path();
-    let gltf_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("web/assets/animated/AnimatedCube.gltf");
-    let bin_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("web/assets/animated/AnimatedCube.bin");
+    let gltf_source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/assets/animated/AnimatedCube.gltf");
+    let bin_source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web/assets/animated/AnimatedCube.bin");
     let texture_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("web/assets/animated/AnimatedCube_BaseColor.png");
 

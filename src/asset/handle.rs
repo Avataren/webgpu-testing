@@ -31,7 +31,10 @@ impl<T> Clone for Handle<T> {
 // Manually implement Copy without requiring T: Copy
 impl<T> Copy for Handle<T> {}
 
-// Manually implement Send and Sync since we're using raw pointers
+// `Handle<T>` is a lightweight index/ID type and does not contain or own a `T`.
+// It is therefore safe to send and share `Handle<T>` across threads regardless
+// of `T`. Re-add the explicit impls so the type is usable in `hecs` components
+// without requiring `T: Send + Sync`.
 unsafe impl<T> Send for Handle<T> {}
 unsafe impl<T> Sync for Handle<T> {}
 

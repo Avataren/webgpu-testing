@@ -2,7 +2,7 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::ptr::NonNull;
+// Use a direct mutable borrow instead of a raw pointer for safety.
 
 use super::asset_browser_system::AssetBrowserSystem;
 use super::core::{EditorApplication, PendingScriptAction};
@@ -33,7 +33,7 @@ pub(super) enum EditorCommand {
 pub(super) enum EditorEvent {}
 
 pub struct EditorContext<'app, 'ctx, 'scene> {
-    application: NonNull<EditorApplication>,
+    application: &'app mut EditorApplication,
     update: Option<&'ctx mut UpdateContext<'scene>>,
     gpu: Option<&'ctx mut GpuUpdateContext<'scene>>,
     ui: Option<EditorUiContext<'ctx>>,
@@ -67,7 +67,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut UpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            application: NonNull::from(application),
+            application,
             update: Some(ctx),
             gpu: None,
             ui: None,
@@ -80,7 +80,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            application: NonNull::from(application),
+            application,
             update: None,
             gpu: Some(ctx),
             ui: None,
@@ -89,7 +89,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn application_mut(&mut self) -> &mut EditorApplication {
-        unsafe { self.application.as_mut() }
+        &mut *self.application
     }
 
     pub fn update_context_mut(&mut self) -> Option<&mut UpdateContext<'scene>> {
@@ -101,7 +101,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {
-        unsafe { self.application.as_ref().runtime_state.clone() }
+        (&*self.application).runtime_state.clone()
     }
 
     pub fn scene(&mut self) -> Option<&mut Scene> {
@@ -115,43 +115,43 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn asset_browser(&mut self) -> &mut AssetBrowserState {
-        unsafe { self.application.as_mut().asset_browser_state_mut() }
+        self.application.asset_browser_state_mut()
     }
 
     pub fn asset_browser_system(&self) -> &AssetBrowserSystem {
-        unsafe { self.application.as_ref().asset_browser_system() }
+        (&*self.application).asset_browser_system()
     }
 
     pub fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
-        unsafe { self.application.as_mut().asset_browser_system_mut() }
+        self.application.asset_browser_system_mut()
     }
 
     pub(super) fn project_system(&self) -> &ProjectSystem {
-        unsafe { self.application.as_ref().project_system() }
+        (&*self.application).project_system()
     }
 
     pub(super) fn project_system_mut(&mut self) -> &mut ProjectSystem {
-        unsafe { self.application.as_mut().project_system_mut() }
+        self.application.project_system_mut()
     }
 
     pub fn script_editor_system(&self) -> &ScriptEditorSystem {
-        unsafe { self.application.as_ref().script_editor_system() }
+        (&*self.application).script_editor_system()
     }
 
     pub fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
-        unsafe { self.application.as_mut().script_editor_system_mut() }
+        self.application.script_editor_system_mut()
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {
-        unsafe { self.application.as_mut().history_mut() }
+        self.application.history_mut()
     }
 
     pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
-        unsafe { &mut self.application.as_mut().commands }
+        &mut self.application.commands
     }
 
     pub(super) fn events(&mut self) -> &mut Vec<EditorEvent> {
-        unsafe { &mut self.application.as_mut().events }
+        &mut self.application.events
     }
 
     pub fn with_update<R, F>(&mut self, f: F) -> Option<R>
@@ -159,7 +159,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorApplication, &mut UpdateContext<'scene>) -> R,
     {
         let update = self.update.as_deref_mut()?;
-        let app = unsafe { self.application.as_mut() };
+        let app = &mut *self.application;
         Some(f(app, update))
     }
 
@@ -168,7 +168,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorApplication, &mut GpuUpdateContext<'scene>) -> R,
     {
         let gpu = self.gpu.as_deref_mut()?;
-        let app = unsafe { self.application.as_mut() };
+        let app = &mut *self.application;
         Some(f(app, gpu))
     }
 }
@@ -208,7 +208,7 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
             egui: ui.egui,
             default_ui: &mut *ui.default_ui,
         };
-        let app = unsafe { self.application.as_mut() };
+        let app = &mut *self.application;
         Some(f(app, ui_ctx))
     }
 }
