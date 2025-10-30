@@ -49,6 +49,7 @@ pub(crate) fn build_render_objects(
 struct RenderEntity {
     mesh: Handle<Mesh>,
     material_handle: Handle<MaterialAsset>,
+    selection_material_handle: Handle<MaterialAsset>,
     base_material: Material,
     visible: bool,
     world_transform: Option<Transform>,
@@ -104,6 +105,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                 RenderEntity {
                     mesh: mesh.0,
                     material_handle,
+                    selection_material_handle: default_material,
                     base_material,
                     visible: visible.0,
                     world_transform: world_transform.map(|t| t.0),
@@ -188,7 +190,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
 
         objects.push(RenderObject {
             mesh: entity.mesh,
-            material: entity.material_handle,
+            material: entity.selection_material_handle,
             resolved_material: Some(outline_material),
             transform: outline_transform,
             depth_state: outline_depth,

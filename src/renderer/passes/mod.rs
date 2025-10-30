@@ -145,6 +145,18 @@ impl<'a> BatchRecorder<'a> {
     }
 }
 
+fn batch_uses_shader(batch: &OrderedBatch, material_pipeline_keys: &[MaterialPipelineKey]) -> bool {
+    batch
+        .instances
+        .first()
+        .and_then(|instance| {
+            material_pipeline_keys
+                .get(instance.material_index as usize)
+                .copied()
+        })
+        .is_some_and(|key| matches!(key, MaterialPipelineKey::Shader(_)))
+}
+
 pub(crate) struct SurfacePassAttachments<'a> {
     pub(crate) color: &'a wgpu::TextureView,
     pub(crate) resolve: Option<&'a wgpu::TextureView>,
@@ -348,6 +360,11 @@ pub(crate) fn main_color_pass(
         material_pipeline_keys,
     );
     let mut draw_calls = 0u32;
+    let shader_batches: Vec<OrderedBatch> = batches
+        .iter()
+        .filter(|batch| batch_uses_shader(batch, material_pipeline_keys))
+        .cloned()
+        .collect();
 
     frame_graph.execute_pass(plan, render_region, |pass| {
         if hdr_enabled {
@@ -365,6 +382,32 @@ pub(crate) fn main_color_pass(
             draw_calls += recorder.record(pass, batches, options, bindless_group.as_ref());
         }
     });
+
+    if !shader_batches.is_empty() {
+        let attachments = SurfacePassAttachments {
+            color: scene_view,
+            resolve: scene_resolve_view,
+            depth: Some(depth_view),
+            pick: None,
+        };
+        let shader_options = BatchPassOptions {
+            color_format: scene_format,
+            color_sample_count: sample_count,
+            use_gbuffer: false,
+            write_pick: false,
+        };
+
+        draw_calls += execute_surface_pass(
+            encoder,
+            "ShaderMaterialPass",
+            attachments,
+            render_region,
+            shader_batches.as_slice(),
+            &mut recorder,
+            shader_options,
+            bindless_group.as_ref(),
+        );
+    }
 
     draw_calls
 }
