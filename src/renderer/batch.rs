@@ -195,7 +195,9 @@ impl RenderBatcher {
         };
 
         let lookup_key = match material_pipeline_key {
-            MaterialPipelineKey::Pbr => MaterialCacheKey::Pbr(material),
+            MaterialPipelineKey::Pbr | MaterialPipelineKey::Error => {
+                MaterialCacheKey::Pbr(material)
+            }
             MaterialPipelineKey::Shader(handle) => MaterialCacheKey::Shader(handle),
         };
 
@@ -347,6 +349,7 @@ mod tests {
         batch_keys.sort_by_key(|key| match key {
             MaterialPipelineKey::Pbr => 0,
             MaterialPipelineKey::Shader(_) => 1,
+            MaterialPipelineKey::Error => 2,
         });
 
         assert_eq!(batch_keys.len(), 2);

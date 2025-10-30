@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::ptr;
 
+use naga::front::wgsl;
+use naga::valid::{Capabilities, ValidationFlags, Validator};
+
 use crate::asset::{material::ShaderMaterialMetadata, Assets, Handle, MaterialAsset, MaterialKind};
 use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
@@ -25,6 +28,7 @@ pub(crate) struct RenderPipeline {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum MaterialPipelineKey {
     Pbr,
+    Error,
     Shader(Handle<MaterialAsset>),
 }
 
@@ -310,6 +314,8 @@ impl RenderPipeline {
                 SamplerFilterMode::Nearest => "RendererShaderNearest",
             };
             let source = Self::shader_source(uses_bindless, filtering);
+            Self::validate_shader(&source)
+                .expect("Default renderer shader should compile through naga");
             let module = context
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -317,6 +323,21 @@ impl RenderPipeline {
                     source: wgpu::ShaderSource::Wgsl(source.into()),
                 });
             shader_modules.insert((MaterialPipelineKey::Pbr, filtering), module);
+
+            let error_label = match filtering {
+                SamplerFilterMode::Linear => "RendererShaderErrorLinear",
+                SamplerFilterMode::Nearest => "RendererShaderErrorNearest",
+            };
+            let error_source = Self::error_shader_source(uses_bindless, filtering);
+            Self::validate_shader(&error_source)
+                .expect("Fallback renderer shader should compile through naga");
+            let error_module = context
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(error_label),
+                    source: wgpu::ShaderSource::Wgsl(error_source.into()),
+                });
+            shader_modules.insert((MaterialPipelineKey::Error, filtering), error_module);
         }
 
         let pipelines = HashMap::new();
@@ -347,6 +368,23 @@ impl RenderPipeline {
         // Use the preset configuration for full PBR with all features
         ShaderBuilder::full_pbr_filtered(bindless, filtering)
             .build(include_str!("../../shader/common.wgsl"))
+    }
+
+    fn error_shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
+        ShaderBuilder::new()
+            .with_material_system()
+            .with_constants()
+            .with_bindings_for_filter(bindless, filtering)
+            .build(include_str!("../shader/error_fallback.wgsl"))
+    }
+
+    fn validate_shader(source: &str) -> Result<(), String> {
+        let module = wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
+        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+        validator
+            .validate(&module)
+            .map(|_| ())
+            .map_err(|error| error.emit_to_string(source))
     }
 
     fn build_shader_material_source(
@@ -501,8 +539,13 @@ impl RenderPipeline {
                 .get(&(MaterialPipelineKey::Pbr, filtering))
                 .expect("missing default PBR shader module")
                 .clone(),
+            MaterialPipelineKey::Error => self
+                .shader_modules
+                .get(&(MaterialPipelineKey::Error, filtering))
+                .expect("missing error fallback shader module")
+                .clone(),
             MaterialPipelineKey::Shader(handle) => {
-                let fallback = self
+                let default_module = self
                     .shader_modules
                     .get(&(MaterialPipelineKey::Pbr, filtering))
                     .expect("missing default PBR shader module")
@@ -513,7 +556,7 @@ impl RenderPipeline {
                         "Shader material {:?} missing; falling back to default PBR shader",
                         handle
                     );
-                    return fallback;
+                    return default_module;
                 };
 
                 let MaterialKind::Shader(metadata) = asset.kind() else {
@@ -522,35 +565,51 @@ impl RenderPipeline {
                         handle,
                         asset.kind()
                     );
-                    return fallback;
+                    return default_module;
                 };
 
                 let source =
                     Self::build_shader_material_source(self.uses_bindless, filtering, metadata);
+                if let Err(error) = Self::validate_shader(&source) {
+                    let fallback = self
+                        .shader_modules
+                        .get(&(MaterialPipelineKey::Error, filtering))
+                        .expect("missing error fallback shader module")
+                        .clone();
+
+                    if let Some(path) = metadata.source_path() {
+                        log::error!(
+                            "Failed to compile shader material {:?} ({}):\n{}",
+                            handle,
+                            path.display(),
+                            error
+                        );
+                    } else {
+                        log::error!("Failed to compile shader material {:?}: {}", handle, error);
+                    }
+
+                    return fallback;
+                }
+
                 let label = format!("RendererMaterialShader{}", handle.index());
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(&label),
                     source: wgpu::ShaderSource::Wgsl(source.into()),
                 });
                 self.shader_modules
-                    .insert((material_key, filtering), module);
-
-                let shader_ref = self
-                    .shader_modules
-                    .get(&(material_key, filtering))
-                    .expect("shader module just inserted");
+                    .insert((material_key, filtering), module.clone());
 
                 if let Some(pbr_module) = self
                     .shader_modules
                     .get(&(MaterialPipelineKey::Pbr, filtering))
                 {
                     debug_assert!(
-                        !ptr::eq(shader_ref, pbr_module),
+                        !ptr::eq(&module, pbr_module),
                         "Shader material should compile to a distinct shader module"
                     );
                 }
 
-                shader_ref.clone()
+                module
             }
         }
     }
