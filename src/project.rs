@@ -80,7 +80,12 @@ pub fn resolve_project_path(path: impl AsRef<Path>) -> PathBuf {
     path.to_path_buf()
 }
 
-pub(crate) fn normalize_absolute_path(path: PathBuf) -> PathBuf {
+/// Normalizes an absolute path for cross-platform comparisons.
+///
+/// On Windows this strips the verbatim `\\\\?\\` prefix returned by some
+/// filesystem APIs so that string comparisons behave as expected. On other
+/// platforms the input path is returned unchanged.
+pub fn normalize_absolute_path(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
         use std::borrow::Cow;

@@ -33,9 +33,9 @@ use crate::history::EditorHistory;
 use crate::layout::{create_editor_layout, EditorPane, ViewportState};
 use crate::postprocess::ViewportGrid;
 use crate::project;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::project::normalize_absolute_path;
 use crate::windows::WindowToggles;
+#[cfg(not(target_arch = "wasm32"))]
+use wgpu_cube::project::normalize_absolute_path;
 
 pub(super) struct RuntimeModeTransition {
     pub(super) from: RuntimeMode,
@@ -423,12 +423,14 @@ impl EditorApplication {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn process_shader_file_changes(&mut self, ctx: &mut GpuUpdateContext) {
-        let Some(watcher) = self.shader_watcher.as_mut() else {
+        let Some(content_root) = self.project_system().content_root() else {
+            if let Some(watcher) = self.shader_watcher.as_mut() {
+                watcher.clear();
+            }
             return;
         };
 
-        let Some(content_root) = self.project_system().content_root() else {
-            watcher.clear();
+        let Some(watcher) = self.shader_watcher.as_mut() else {
             return;
         };
 
