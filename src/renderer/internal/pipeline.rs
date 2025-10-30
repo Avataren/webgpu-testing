@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::num::NonZeroU32;
+use std::ptr;
 
-use crate::asset::Assets;
+use crate::asset::{material::ShaderMaterialMetadata, Assets, Handle, MaterialAsset, MaterialKind};
 use crate::renderer::batch::CullMode;
 use crate::renderer::internal::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer, RenderContext};
 use crate::renderer::material::MaterialFlags;
@@ -11,10 +12,20 @@ use crate::renderer::{
 };
 
 pub(crate) struct RenderPipeline {
-    pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    pipelines: HashMap<(MaterialPipelineKey, PipelineKey), wgpu::RenderPipeline>,
+    shader_modules: HashMap<(MaterialPipelineKey, SamplerFilterMode), wgpu::ShaderModule>,
+    pipeline_layout: wgpu::PipelineLayout,
+    uses_bindless: bool,
+    depth_format: wgpu::TextureFormat,
     depth_prepass: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
     background_pick: wgpu::RenderPipeline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum MaterialPipelineKey {
+    Pbr,
+    Shader(Handle<MaterialAsset>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -202,26 +213,6 @@ impl RenderPipeline {
             (layout, binder)
         };
 
-        let shader_modules: Vec<(SamplerFilterMode, wgpu::ShaderModule)> =
-            [SamplerFilterMode::Linear, SamplerFilterMode::Nearest]
-                .into_iter()
-                .map(|filtering| {
-                    let label = match filtering {
-                        SamplerFilterMode::Linear => "RendererShaderLinear",
-                        SamplerFilterMode::Nearest => "RendererShaderNearest",
-                    };
-                    let source = Self::shader_source(uses_bindless, filtering);
-                    let module =
-                        context
-                            .device
-                            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                                label: Some(label),
-                                source: wgpu::ShaderSource::Wgsl(source.into()),
-                            });
-                    (filtering, module)
-                })
-                .collect();
-
         let pipeline_layout =
             context
                 .device
@@ -312,63 +303,23 @@ impl RenderPipeline {
                 .with_multisample(sample_count)
                 .build();
 
-        let mut pipelines = HashMap::new();
-        let color_targets = [
-            (scene_format, sample_count, true),
-            (scene_format, sample_count, false),
-            (context.config.format, 1, false),
-        ];
-        let wireframe_options: Vec<bool> = if context.supports_wireframe {
-            vec![false, true]
-        } else {
-            vec![false]
-        };
-
-        for (filtering, shader_module) in &shader_modules {
-            let filtering = *filtering;
-            for &(color_format, samples, gbuffer) in &color_targets {
-                for &write_pick in &[false, true] {
-                    for &depth_test in &[false, true] {
-                        for &depth_write in &[false, true] {
-                            for &alpha_blend in &[false, true] {
-                                for &cull_mode in &[CullMode::Back, CullMode::Front, CullMode::None]
-                                {
-                                    for &wireframe in &wireframe_options {
-                                        let key = PipelineKey::new(
-                                            depth_test,
-                                            depth_write,
-                                            alpha_blend,
-                                            color_format,
-                                            samples,
-                                            filtering,
-                                            cull_mode,
-                                            gbuffer,
-                                            write_pick,
-                                            wireframe,
-                                        );
-                                        let pipeline = Self::create_pipeline(
-                                            context,
-                                            &pipeline_layout,
-                                            shader_module,
-                                            depth_test,
-                                            depth_write,
-                                            alpha_blend,
-                                            color_format,
-                                            samples,
-                                            cull_mode,
-                                            gbuffer,
-                                            write_pick,
-                                            wireframe,
-                                        );
-                                        pipelines.insert(key, pipeline);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        let mut shader_modules = HashMap::new();
+        for filtering in [SamplerFilterMode::Linear, SamplerFilterMode::Nearest] {
+            let label = match filtering {
+                SamplerFilterMode::Linear => "RendererShaderLinear",
+                SamplerFilterMode::Nearest => "RendererShaderNearest",
+            };
+            let source = Self::shader_source(uses_bindless, filtering);
+            let module = context
+                .device
+                .create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(label),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+            shader_modules.insert((MaterialPipelineKey::Pbr, filtering), module);
         }
+
+        let pipelines = HashMap::new();
 
         let depth_prepass = Self::create_depth_prepass_pipeline(
             context,
@@ -380,6 +331,10 @@ impl RenderPipeline {
         (
             Self {
                 pipelines,
+                shader_modules,
+                pipeline_layout,
+                uses_bindless,
+                depth_format: context.depth.format,
                 depth_prepass,
                 background: background_pipeline,
                 background_pick: background_pick_pipeline,
@@ -394,80 +349,212 @@ impl RenderPipeline {
             .build(include_str!("../../shader/common.wgsl"))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    fn build_shader_material_source(
+        bindless: bool,
+        filtering: SamplerFilterMode,
+        metadata: &ShaderMaterialMetadata,
+    ) -> String {
+        let mut builder = ShaderBuilder::new()
+            .with_material_system()
+            .with_constants()
+            .with_bindings_for_filter(bindless, filtering);
+
+        if metadata.needs_lighting_include() {
+            builder = builder
+                .with_lighting()
+                .with_shadows()
+                .with_environment()
+                .with_lighting_and_shadows();
+        }
+
+        let processed = Self::preprocess_shader_source(metadata.wgsl_source());
+        let mut source = builder.build_modules_only();
+        source.push_str(&processed);
+        source
+    }
+
+    fn preprocess_shader_source(source: &str) -> String {
+        if source.ends_with('\n') {
+            source.to_string()
+        } else {
+            let mut owned = String::with_capacity(source.len() + 1);
+            owned.push_str(source);
+            owned.push('\n');
+            owned
+        }
+    }
+
     fn create_pipeline(
-        context: &RenderContext,
+        device: &wgpu::Device,
         pipeline_layout: &wgpu::PipelineLayout,
         shader: &wgpu::ShaderModule,
-        depth_test: bool,
-        depth_write: bool,
-        alpha_blend: bool,
-        color_format: wgpu::TextureFormat,
-        sample_count: u32,
-        cull_mode: CullMode,
-        gbuffer: bool,
-        write_pick: bool,
-        wireframe: bool,
+        key: PipelineKey,
+        depth_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        let depth_compare = if depth_test {
+        let depth_compare = if key.depth_test {
             wgpu::CompareFunction::LessEqual
         } else {
             wgpu::CompareFunction::Always
         };
 
-        let blend_state = if alpha_blend {
+        let blend_state = if key.alpha_blend {
             Some(wgpu::BlendState::ALPHA_BLENDING)
         } else {
             Some(wgpu::BlendState::REPLACE)
         };
 
-        let mut builder = PipelineBuilder::new(&context.device, pipeline_layout, shader)
+        let mut builder = PipelineBuilder::new(device, pipeline_layout, shader)
             .with_label("MainRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
-            .with_multisample(sample_count);
+            .with_multisample(key.sample_count);
 
-        if gbuffer {
-            let entry = if write_pick {
+        if key.gbuffer {
+            let entry = if key.write_pick {
                 "fs_main_gbuffer_pick"
             } else {
                 "fs_main_gbuffer"
             };
             builder = builder.with_fragment_entry(entry);
-        } else if write_pick {
+        } else if key.write_pick {
             builder = builder.with_fragment_entry("fs_main_pick");
         }
 
-        builder = builder.with_color_target(color_format, blend_state);
+        builder = builder.with_color_target(key.color_format, blend_state);
 
-        if gbuffer {
+        if key.gbuffer {
             builder = builder
                 .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
                 .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
         }
 
-        if write_pick {
+        if key.write_pick {
             builder = builder.with_color_target(GBUFFER_PICK_FORMAT, None);
         }
 
-        builder = match cull_mode {
+        builder = match key.cull_mode {
             CullMode::Back => builder.with_cull_mode(Some(wgpu::Face::Back)),
             CullMode::Front => builder.with_cull_mode(Some(wgpu::Face::Front)),
             CullMode::None => builder.with_cull_mode(None),
         };
 
-        if wireframe {
+        if key.wireframe {
             builder = builder.with_polygon_mode(wgpu::PolygonMode::Line);
         }
 
-        if depth_test || depth_write {
-            builder = builder.with_depth_stencil(context.depth.format, depth_write, depth_compare);
+        if key.depth_test || key.depth_write {
+            builder = builder.with_depth_stencil(depth_format, key.depth_write, depth_compare);
         }
 
         builder.build()
     }
 
-    pub(crate) fn pipeline(&self, key: PipelineKey) -> &wgpu::RenderPipeline {
-        self.pipelines.get(&key).expect("missing pipeline variant")
+    pub(crate) fn pipeline_for_material(
+        &mut self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        key: PipelineKey,
+        material_key: MaterialPipelineKey,
+    ) -> &wgpu::RenderPipeline {
+        let effective_key = if matches!(material_key, MaterialPipelineKey::Shader(_))
+            && (key.gbuffer || key.write_pick)
+        {
+            MaterialPipelineKey::Pbr
+        } else {
+            material_key
+        };
+
+        let entry_key = (effective_key, key);
+        if !self.pipelines.contains_key(&entry_key) {
+            let shader_handle = self.shader_module_for_material(
+                device,
+                assets,
+                effective_key,
+                key.sampler_filtering,
+            );
+            let pipeline = Self::create_pipeline(
+                device,
+                &self.pipeline_layout,
+                &shader_handle,
+                key,
+                self.depth_format,
+            );
+            self.pipelines.insert(entry_key, pipeline);
+        }
+
+        self.pipelines
+            .get(&entry_key)
+            .expect("pipeline should exist for requested key")
+    }
+
+    fn shader_module_for_material(
+        &mut self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        material_key: MaterialPipelineKey,
+        filtering: SamplerFilterMode,
+    ) -> wgpu::ShaderModule {
+        if let Some(module) = self.shader_modules.get(&(material_key, filtering)) {
+            return module.clone();
+        }
+
+        match material_key {
+            MaterialPipelineKey::Pbr => self
+                .shader_modules
+                .get(&(MaterialPipelineKey::Pbr, filtering))
+                .expect("missing default PBR shader module")
+                .clone(),
+            MaterialPipelineKey::Shader(handle) => {
+                let fallback = self
+                    .shader_modules
+                    .get(&(MaterialPipelineKey::Pbr, filtering))
+                    .expect("missing default PBR shader module")
+                    .clone();
+
+                let Some(asset) = assets.material(handle) else {
+                    log::warn!(
+                        "Shader material {:?} missing; falling back to default PBR shader",
+                        handle
+                    );
+                    return fallback;
+                };
+
+                let MaterialKind::Shader(metadata) = asset.kind() else {
+                    log::warn!(
+                        "Material {:?} expected to be shader but is {:?}; using default shader",
+                        handle,
+                        asset.kind()
+                    );
+                    return fallback;
+                };
+
+                let source =
+                    Self::build_shader_material_source(self.uses_bindless, filtering, metadata);
+                let label = format!("RendererMaterialShader{}", handle.index());
+                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(&label),
+                    source: wgpu::ShaderSource::Wgsl(source.into()),
+                });
+                self.shader_modules
+                    .insert((material_key, filtering), module);
+
+                let shader_ref = self
+                    .shader_modules
+                    .get(&(material_key, filtering))
+                    .expect("shader module just inserted");
+
+                if let Some(pbr_module) = self
+                    .shader_modules
+                    .get(&(MaterialPipelineKey::Pbr, filtering))
+                {
+                    debug_assert!(
+                        !ptr::eq(shader_ref, pbr_module),
+                        "Shader material should compile to a distinct shader module"
+                    );
+                }
+
+                shader_ref.clone()
+            }
+        }
     }
 
     fn create_depth_prepass_pipeline(

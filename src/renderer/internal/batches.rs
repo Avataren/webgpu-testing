@@ -1,7 +1,8 @@
 use std::{cmp::Ordering, ops::Range};
 
-use crate::asset::{Handle, Mesh};
+use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::renderer::batch::{CullMode, InstanceData, InstanceSource, RenderBatcher, RenderPass};
+use crate::renderer::internal::MaterialPipelineKey;
 use crate::renderer::material::Material;
 use crate::renderer::shader_builder::SamplerFilterMode;
 use crate::scene::components::DepthState;
@@ -17,6 +18,7 @@ pub(crate) struct OrderedBatch {
     pub first_instance: u32,
     pub sampler_filtering: SamplerFilterMode,
     pub cull_mode: CullMode,
+    pub material_pipeline_key: MaterialPipelineKey,
 }
 
 pub(crate) struct PreparedBatches {
@@ -27,6 +29,8 @@ pub(crate) struct PreparedBatches {
     pub gizmo_range: Range<usize>,
     pub gizmo_solid_range: Range<usize>,
     pub materials: Vec<Material>,
+    pub material_handles: Vec<Handle<MaterialAsset>>,
+    pub material_pipeline_keys: Vec<MaterialPipelineKey>,
 }
 
 impl PreparedBatches {
@@ -37,6 +41,8 @@ impl PreparedBatches {
         let mut gizmos = Vec::new();
         let mut gizmo_solids = Vec::new();
         let materials = batcher.materials();
+        let material_handles = batcher.material_handles();
+        let material_pipeline_keys = batcher.material_pipeline_keys();
 
         for batch in batcher.iter() {
             if batch.instances.is_empty() {
@@ -77,6 +83,7 @@ impl PreparedBatches {
                     SamplerFilterMode::Linear
                 },
                 cull_mode: batch.cull_mode,
+                material_pipeline_key: batch.material_pipeline_key,
             };
 
             if ordered
@@ -146,6 +153,8 @@ impl PreparedBatches {
             gizmo_range,
             gizmo_solid_range,
             materials: materials.to_vec(),
+            material_handles: material_handles.to_vec(),
+            material_pipeline_keys: material_pipeline_keys.to_vec(),
         }
     }
 
@@ -180,6 +189,14 @@ impl PreparedBatches {
 
     pub(crate) fn materials(&self) -> &[Material] {
         &self.materials
+    }
+
+    pub(crate) fn material_handles(&self) -> &[Handle<MaterialAsset>] {
+        &self.material_handles
+    }
+
+    pub(crate) fn material_pipeline_keys(&self) -> &[MaterialPipelineKey] {
+        &self.material_pipeline_keys
     }
 }
 

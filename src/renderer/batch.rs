@@ -1,7 +1,8 @@
 // renderer/batch.rs (Smart version)
 use super::material::Material;
+use crate::renderer::internal::MaterialPipelineKey;
 use crate::{
-    asset::{Assets, Handle, MaterialAsset, Mesh},
+    asset::{Assets, Handle, MaterialAsset, MaterialKind, Mesh},
     renderer::PickId,
     scene::components::DepthState,
     scene::transform::Transform,
@@ -101,8 +102,10 @@ pub struct Batch<'a> {
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
-    pub material_handles: &'a [Handle<MaterialAsset>],
-    pub materials: &'a [Material],
+    pub(crate) material_pipeline_key: MaterialPipelineKey,
+    pub(crate) material_handles: &'a [Handle<MaterialAsset>],
+    pub(crate) materials: &'a [Material],
+    pub(crate) material_pipeline_keys: &'a [MaterialPipelineKey],
     pub use_nearest_filtering: bool,
     pub cull_mode: CullMode,
 }
@@ -116,6 +119,7 @@ struct BatchKey {
     source: InstanceSource,
     use_nearest_filtering: bool,
     cull_mode: CullMode,
+    material_pipeline_key: MaterialPipelineKey,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -123,7 +127,14 @@ pub struct RenderBatcher {
     batches: HashMap<BatchKey, Vec<InstanceData>>,
     materials: Vec<Handle<MaterialAsset>>,
     resolved_materials: Vec<Material>,
-    material_lookup: HashMap<Material, u32>,
+    material_pipeline_keys: Vec<MaterialPipelineKey>,
+    material_lookup: HashMap<MaterialCacheKey, u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum MaterialCacheKey {
+    Pbr(Material),
+    Shader(Handle<MaterialAsset>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -138,21 +149,32 @@ impl RenderBatcher {
             batches: HashMap::new(),
             materials: Vec::new(),
             resolved_materials: Vec::new(),
+            material_pipeline_keys: Vec::new(),
             material_lookup: HashMap::new(),
         }
     }
 
     /// Add an object to be rendered
     pub fn add(&mut self, obj: RenderObject, assets: &Assets) -> Result<(), BatchError> {
+        let material_asset = assets.material(obj.material);
+
         let material = if let Some(resolved) = obj.resolved_material {
             resolved
         } else {
-            assets
-                .material(obj.material)
+            material_asset
                 .map(|asset| *asset.material())
                 .ok_or(BatchError::MissingMaterial {
                     handle: obj.material,
                 })?
+        };
+
+        let material_kind = material_asset
+            .map(|asset| asset.kind().clone())
+            .unwrap_or(MaterialKind::Pbr);
+
+        let material_pipeline_key = match &material_kind {
+            MaterialKind::Pbr => MaterialPipelineKey::Pbr,
+            MaterialKind::Shader(_) => MaterialPipelineKey::Shader(obj.material),
         };
 
         // Determine which pass this object belongs to
@@ -173,12 +195,19 @@ impl RenderBatcher {
             source: obj.instance_source,
             use_nearest_filtering: material.uses_nearest_filtering(),
             cull_mode: obj.cull_mode,
+            material_pipeline_key,
         };
 
-        let material_index = *self.material_lookup.entry(material).or_insert_with(|| {
+        let lookup_key = match material_pipeline_key {
+            MaterialPipelineKey::Pbr => MaterialCacheKey::Pbr(material),
+            MaterialPipelineKey::Shader(handle) => MaterialCacheKey::Shader(handle),
+        };
+
+        let material_index = *self.material_lookup.entry(lookup_key).or_insert_with(|| {
             let index = self.materials.len() as u32;
             self.materials.push(obj.material);
             self.resolved_materials.push(material);
+            self.material_pipeline_keys.push(material_pipeline_key);
             index
         });
 
@@ -200,6 +229,7 @@ impl RenderBatcher {
         }
         self.materials.clear();
         self.resolved_materials.clear();
+        self.material_pipeline_keys.clear();
         self.material_lookup.clear();
     }
 
@@ -209,8 +239,10 @@ impl RenderBatcher {
             pass: key.pass,
             depth_state: key.depth_state,
             instances: instances.as_slice(),
+            material_pipeline_key: key.material_pipeline_key,
             material_handles: self.materials.as_slice(),
             materials: self.resolved_materials.as_slice(),
+            material_pipeline_keys: self.material_pipeline_keys.as_slice(),
             use_nearest_filtering: key.use_nearest_filtering,
             cull_mode: key.cull_mode,
         })
@@ -224,8 +256,10 @@ impl RenderBatcher {
                     pass: key.pass,
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
+                    material_pipeline_key: key.material_pipeline_key,
                     material_handles: self.materials.as_slice(),
                     materials: self.resolved_materials.as_slice(),
+                    material_pipeline_keys: self.material_pipeline_keys.as_slice(),
                     use_nearest_filtering: key.use_nearest_filtering,
                     cull_mode: key.cull_mode,
                 })
@@ -259,10 +293,70 @@ impl RenderBatcher {
     pub fn material_handles(&self) -> &[Handle<MaterialAsset>] {
         &self.materials
     }
+
+    pub(crate) fn material_pipeline_keys(&self) -> &[MaterialPipelineKey] {
+        &self.material_pipeline_keys
+    }
 }
 
 impl Default for RenderBatcher {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset::Assets;
+    use std::path::PathBuf;
+
+    #[test]
+    fn shader_materials_use_distinct_pipeline_keys() {
+        let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
+        let mesh = Handle::new(7);
+
+        let pbr_handle = assets.default_material_handle();
+        let shader_handle =
+            assets.create_shader_material(Material::pbr(), PathBuf::from("shader_material.wgsl"));
+
+        let make_object = |material| RenderObject {
+            mesh,
+            material,
+            resolved_material: None,
+            transform: Transform::IDENTITY,
+            depth_state: DepthState::default(),
+            force_overlay: false,
+            render_pass: None,
+            instance_source: InstanceSource::Cpu,
+            gpu_index: None,
+            cull_mode: CullMode::Back,
+            pick_id: 0,
+        };
+
+        batcher
+            .add(make_object(pbr_handle), &assets)
+            .expect("pbr material valid");
+        batcher
+            .add(make_object(shader_handle), &assets)
+            .expect("shader material valid");
+
+        let keys = batcher.material_pipeline_keys();
+        assert!(keys.contains(&MaterialPipelineKey::Pbr));
+        assert!(keys.contains(&MaterialPipelineKey::Shader(shader_handle)));
+
+        let mut batch_keys: Vec<MaterialPipelineKey> = batcher
+            .iter()
+            .map(|batch| batch.material_pipeline_key)
+            .collect();
+        batch_keys.sort_by_key(|key| match key {
+            MaterialPipelineKey::Pbr => 0,
+            MaterialPipelineKey::Shader(_) => 1,
+        });
+
+        assert_eq!(batch_keys.len(), 2);
+        assert_eq!(batch_keys[0], MaterialPipelineKey::Pbr);
+        assert_eq!(batch_keys[1], MaterialPipelineKey::Shader(shader_handle));
     }
 }
