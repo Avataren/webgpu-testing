@@ -18,5 +18,5 @@ pub(crate) use batches::{OrderedBatch, PreparedBatches};
 pub(crate) use buffers::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer};
 pub(crate) use context::RenderContext;
 pub(crate) use environment::EnvironmentResources;
-pub(crate) use pipeline::{PipelineKey, RenderPipeline, TextureBindingModel};
+pub(crate) use pipeline::{MaterialPipelineKey, PipelineKey, RenderPipeline, TextureBindingModel};
 pub(crate) use shadows::ShadowResources;

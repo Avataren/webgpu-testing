@@ -629,12 +629,16 @@ impl Renderer {
         frame_stats.overlay_draw_calls += overlay_draw_calls;
 
         let materials = prepared_batches.materials();
+        let material_handles = prepared_batches.material_handles();
+        let material_pipeline_keys = prepared_batches.material_pipeline_keys();
         let gizmo_draw_calls = {
             let gizmo_draws = passes::gizmo_pass(
                 self,
                 assets,
                 prepared_batches.gizmos(),
                 materials,
+                material_handles,
+                material_pipeline_keys,
                 &mut encoder,
                 &surface_view,
                 render_region,
@@ -647,6 +651,8 @@ impl Renderer {
                 assets,
                 prepared_batches.gizmo_solids(),
                 materials,
+                material_handles,
+                material_pipeline_keys,
                 &mut encoder,
                 &surface_view,
                 render_region,
@@ -798,51 +804,13 @@ impl Renderer {
         );
     }
 
-    fn draw_classic_batch(
+    fn material_bind_group(
         &mut self,
-        pass: &mut wgpu::RenderPass<'_>,
         assets: &Assets,
-        mesh: &Mesh,
-        batch: &OrderedBatch,
-        materials: &[Material],
-    ) -> usize {
-        self.set_geometry_buffers(pass, mesh);
-
-        let instances = &batch.instances;
-        let mut local_offset = 0usize;
-        let mut draw_calls = 0usize;
-
-        while local_offset < instances.len() {
-            let material_index = instances[local_offset].material_index as usize;
-            let Some(material) = materials.get(material_index) else {
-                log::warn!(
-                    "Material index {} out of bounds ({} materials)",
-                    material_index,
-                    materials.len()
-                );
-                local_offset += 1;
-                continue;
-            };
-            let Some(bind_group) = self.texture_binder.bind_group_for_material(
-                &self.context.device,
-                assets,
-                *material,
-            ) else {
-                local_offset += 1;
-                continue;
-            };
-
-            let run_length = passes::material_run_length(instances, local_offset);
-            let start_instance = batch.first_instance + local_offset as u32;
-            let end_instance = start_instance + run_length as u32;
-
-            pass.set_bind_group(3, bind_group, &[]);
-            pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
-
-            local_offset += run_length;
-            draw_calls += 1;
-        }
-        draw_calls
+        material: Material,
+    ) -> Option<&wgpu::BindGroup> {
+        self.texture_binder
+            .bind_group_for_material(&self.context.device, assets, material)
     }
 
     fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {

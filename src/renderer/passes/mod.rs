@@ -1,10 +1,10 @@
-use crate::asset::{Assets, Mesh};
+use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::environment::Environment;
 use crate::renderer::frame_graph::{
     FrameGraph, FrameGraphColorAttachment, FrameGraphDepthAttachment, PassPlan,
 };
 use crate::renderer::internal::shadows::ShadowInvocation;
-use crate::renderer::internal::{OrderedBatch, PipelineKey, PreparedBatches};
+use crate::renderer::internal::{MaterialPipelineKey, OrderedBatch, PipelineKey, PreparedBatches};
 use crate::renderer::{
     CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderPass,
     RenderRegion,
@@ -26,6 +26,8 @@ pub(crate) struct BatchRecorder<'a> {
     renderer: &'a mut Renderer,
     assets: &'a Assets,
     materials: &'a [Material],
+    material_handles: &'a [Handle<MaterialAsset>],
+    material_pipeline_keys: &'a [MaterialPipelineKey],
 }
 
 impl<'a> BatchRecorder<'a> {
@@ -33,11 +35,15 @@ impl<'a> BatchRecorder<'a> {
         renderer: &'a mut Renderer,
         assets: &'a Assets,
         materials: &'a [Material],
+        material_handles: &'a [Handle<MaterialAsset>],
+        material_pipeline_keys: &'a [MaterialPipelineKey],
     ) -> Self {
         Self {
             renderer,
             assets,
             materials,
+            material_handles,
+            material_pipeline_keys,
         }
     }
 
@@ -77,21 +83,61 @@ impl<'a> BatchRecorder<'a> {
                 options.write_pick,
                 wireframe,
             );
-            let pipeline = self.renderer.pipeline.pipeline(pipeline_key);
-            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.renderer.camera_buffer.bind_group, &[]);
             pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
             pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+            pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
             if let Some(group) = bindless_group {
                 pass.set_bind_group(3, group, &[]);
-                self.renderer.draw_full_batch(pass, mesh, batch);
+            }
+
+            let mut local_offset = 0usize;
+            while local_offset < batch.instances.len() {
+                let material_index = batch.instances[local_offset].material_index as usize;
+                let material_key = self
+                    .material_pipeline_keys
+                    .get(material_index)
+                    .copied()
+                    .unwrap_or(MaterialPipelineKey::Pbr);
+                let device = self.renderer.get_device().clone();
+                let pipeline = self.renderer.pipeline.pipeline_for_material(
+                    &device,
+                    self.assets,
+                    pipeline_key,
+                    material_key,
+                );
+                pass.set_pipeline(pipeline);
+
+                if bindless_group.is_none() {
+                    let Some(material) = self.materials.get(material_index).copied() else {
+                        let handle = self.material_handles.get(material_index);
+                        log::warn!(
+                            "Material index {} out of bounds ({} materials, handle {:?})",
+                            material_index,
+                            self.materials.len(),
+                            handle
+                        );
+                        local_offset += 1;
+                        continue;
+                    };
+
+                    let Some(bind_group) = self.renderer.material_bind_group(self.assets, material)
+                    else {
+                        local_offset += 1;
+                        continue;
+                    };
+                    pass.set_bind_group(3, bind_group, &[]);
+                }
+
+                let run_length = material_run_length(batch.instances.as_slice(), local_offset);
+                let start_instance = batch.first_instance + local_offset as u32;
+                let end_instance = start_instance + run_length as u32;
+
+                pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
                 draw_calls += 1;
-            } else {
-                draw_calls +=
-                    self.renderer
-                        .draw_classic_batch(pass, self.assets, mesh, batch, self.materials)
-                        as u32;
+                local_offset += run_length;
             }
         }
 
@@ -290,9 +336,17 @@ pub(crate) fn main_color_pass(
     let sample_count = renderer.context.sample_count;
     let batches = prepared_batches.opaque();
     let materials = prepared_batches.materials();
+    let material_handles = prepared_batches.material_handles();
+    let material_pipeline_keys = prepared_batches.material_pipeline_keys();
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut frame_graph = FrameGraph::new(encoder);
-    let mut recorder = BatchRecorder::new(renderer, assets, materials);
+    let mut recorder = BatchRecorder::new(
+        renderer,
+        assets,
+        materials,
+        material_handles,
+        material_pipeline_keys,
+    );
     let mut draw_calls = 0u32;
 
     frame_graph.execute_pass(plan, render_region, |pass| {
@@ -357,6 +411,8 @@ pub(crate) fn transparent_pass(
 ) -> u32 {
     let batches = prepared_batches.transparent();
     let materials = prepared_batches.materials();
+    let material_handles = prepared_batches.material_handles();
+    let material_pipeline_keys = prepared_batches.material_pipeline_keys();
     let pick_view = if write_pick {
         renderer
             .postprocess
@@ -374,7 +430,13 @@ pub(crate) fn transparent_pass(
     };
 
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
-    let mut recorder = BatchRecorder::new(renderer, assets, materials);
+    let mut recorder = BatchRecorder::new(
+        renderer,
+        assets,
+        materials,
+        material_handles,
+        material_pipeline_keys,
+    );
     let options = BatchPassOptions {
         color_format: surface_format,
         color_sample_count: 1,
@@ -412,6 +474,8 @@ pub(crate) fn overlay_pass(
     }
 
     let materials = prepared_batches.materials();
+    let material_handles = prepared_batches.material_handles();
+    let material_pipeline_keys = prepared_batches.material_pipeline_keys();
     let overlay_needs_depth = batches
         .iter()
         .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
@@ -432,7 +496,13 @@ pub(crate) fn overlay_pass(
     };
 
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
-    let mut recorder = BatchRecorder::new(renderer, assets, materials);
+    let mut recorder = BatchRecorder::new(
+        renderer,
+        assets,
+        materials,
+        material_handles,
+        material_pipeline_keys,
+    );
     let options = BatchPassOptions {
         color_format: surface_format,
         color_sample_count: 1,
@@ -458,6 +528,8 @@ pub(crate) fn gizmo_pass(
     assets: &Assets,
     batches: &[OrderedBatch],
     materials: &[Material],
+    material_handles: &[Handle<MaterialAsset>],
+    material_pipeline_keys: &[MaterialPipelineKey],
     encoder: &mut wgpu::CommandEncoder,
     surface_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
@@ -486,7 +558,13 @@ pub(crate) fn gizmo_pass(
     };
 
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
-    let mut recorder = BatchRecorder::new(renderer, assets, materials);
+    let mut recorder = BatchRecorder::new(
+        renderer,
+        assets,
+        materials,
+        material_handles,
+        material_pipeline_keys,
+    );
     let options = BatchPassOptions {
         color_format: surface_format,
         color_sample_count: 1,

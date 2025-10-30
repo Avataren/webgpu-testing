@@ -3153,6 +3153,7 @@ mod tests {
             metallic_factor: 0,
             roughness_factor: 0,
             emissive_strength: 0,
+            kind: SerializedMaterialKind::default(),
         }
     }
 
