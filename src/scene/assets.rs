@@ -13,7 +13,8 @@ use super::components::{
 use super::graph::SceneInstance;
 use super::loader::SceneImportDevice;
 use crate::asset::{
-    Assets, Handle, MaterialAsset, MaterialTextureReference, MaterialTextureSlot, Mesh, MeshData,
+    Assets, Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+    Mesh, MeshData, ShaderMaterialMetadata,
 };
 use crate::project::{
     active_project_root, normalize_absolute_path, relativize_path_to_project, resolve_project_path,
@@ -993,7 +994,7 @@ fn resolve_material_handle(
         if let Some(path) = canonical_path.clone() {
             let key = canonicalize_material_path(&path);
             let mut asset = MaterialAsset::from_material(Material::from(serialized.clone()), path);
-            let (material, references) = with_import_device(renderer, |device| {
+            let (material, kind, references) = with_import_device(renderer, |device| {
                 serialized.resolve_material(assets, device)
             });
             for (slot, reference) in references {
@@ -1004,13 +1005,14 @@ fn resolve_material_handle(
                 }
             }
             *asset.material_mut() = material;
+            asset.set_kind(kind);
             let handle = assets.insert_material_asset(asset);
             cache.insert(key, handle);
             return Some(handle);
         } else {
             let mut asset =
                 MaterialAsset::from_material(Material::from(serialized.clone()), PathBuf::new());
-            let (material, references) = with_import_device(renderer, |device| {
+            let (material, kind, references) = with_import_device(renderer, |device| {
                 serialized.resolve_material(assets, device)
             });
             for (slot, reference) in references {
@@ -1021,6 +1023,7 @@ fn resolve_material_handle(
                 }
             }
             *asset.material_mut() = material;
+            asset.set_kind(kind);
             let handle = assets.insert_material_asset(asset);
             return Some(handle);
         }
@@ -1044,10 +1047,12 @@ fn update_material_asset_from_references(
     assets: &mut Assets,
     handle: Handle<MaterialAsset>,
     material: Material,
+    kind: MaterialKind,
     references: Vec<(MaterialTextureSlot, Option<MaterialTextureReference>)>,
 ) {
     if let Some(asset) = assets.material_mut(handle) {
         *asset.material_mut() = material;
+        asset.set_kind(kind);
         for (slot, reference) in references {
             if let Some(reference) = reference {
                 asset.set_texture_reference(slot, reference);
@@ -1064,8 +1069,8 @@ fn apply_serialized_material_to_handle(
     serialized: &SerializedMaterial,
     renderer: Option<&mut dyn SceneImportDevice>,
 ) {
-    let (material, references) = serialized.resolve_material(assets, renderer);
-    update_material_asset_from_references(assets, handle, material, references);
+    let (material, kind, references) = serialized.resolve_material(assets, renderer);
+    update_material_asset_from_references(assets, handle, material, kind, references);
 }
 
 fn ensure_asset_textures_from_metadata(
@@ -1079,8 +1084,8 @@ fn ensure_asset_textures_from_metadata(
         return;
     };
 
-    let (material, references) = serialized.resolve_material(assets, renderer);
-    update_material_asset_from_references(assets, handle, material, references);
+    let (material, kind, references) = serialized.resolve_material(assets, renderer);
+    update_material_asset_from_references(assets, handle, material, kind, references);
 }
 
 impl SceneAssetResources {
@@ -2651,10 +2656,61 @@ pub struct SerializedMaterial {
     pub metallic_factor: u8,
     pub roughness_factor: u8,
     pub emissive_strength: u8,
+    #[serde(default)]
+    pub kind: SerializedMaterialKind,
 }
 
-impl From<Material> for SerializedMaterial {
-    fn from(material: Material) -> Self {
+impl From<&MaterialAsset> for SerializedMaterial {
+    fn from(asset: &MaterialAsset) -> Self {
+        SerializedMaterial::from_material_asset(asset)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SerializedMaterialKind {
+    Pbr,
+    Shader {
+        wgsl_source: String,
+        #[serde(default)]
+        needs_lighting_include: bool,
+    },
+}
+
+impl Default for SerializedMaterialKind {
+    fn default() -> Self {
+        Self::Pbr
+    }
+}
+
+impl SerializedMaterialKind {
+    fn from_material_kind(kind: &MaterialKind) -> Self {
+        match kind {
+            MaterialKind::Pbr => Self::Pbr,
+            MaterialKind::Shader(metadata) => Self::Shader {
+                wgsl_source: metadata.wgsl_source().to_string(),
+                needs_lighting_include: metadata.needs_lighting_include(),
+            },
+        }
+    }
+
+    fn to_material_kind(&self) -> MaterialKind {
+        match self {
+            SerializedMaterialKind::Pbr => MaterialKind::Pbr,
+            SerializedMaterialKind::Shader {
+                wgsl_source,
+                needs_lighting_include,
+            } => {
+                let mut metadata = ShaderMaterialMetadata::new(wgsl_source.clone());
+                metadata.set_needs_lighting_include(*needs_lighting_include);
+                MaterialKind::Shader(metadata)
+            }
+        }
+    }
+}
+
+impl SerializedMaterial {
+    fn from_material(material: Material) -> Self {
         Self {
             base_color: material.base_color,
             flags: material.flags.bits(),
@@ -2668,11 +2724,10 @@ impl From<Material> for SerializedMaterial {
             metallic_factor: material.metallic_factor,
             roughness_factor: material.roughness_factor,
             emissive_strength: material.emissive_strength,
+            kind: SerializedMaterialKind::default(),
         }
     }
-}
 
-impl SerializedMaterial {
     fn remap_textures(&mut self, mapping: &std::collections::HashMap<u32, u32>) {
         self.base_color_texture.remap(mapping);
         self.metallic_roughness_texture.remap(mapping);
@@ -2702,7 +2757,8 @@ impl SerializedMaterial {
     }
 
     pub fn from_material_asset(asset: &MaterialAsset) -> Self {
-        let mut serialized = SerializedMaterial::from(*asset.material());
+        let mut serialized = SerializedMaterial::from_material(*asset.material());
+        serialized.kind = SerializedMaterialKind::from_material_kind(asset.kind());
         let project_root = active_project_root();
         let canonical_project_root = project_root
             .as_ref()
@@ -2738,9 +2794,11 @@ impl SerializedMaterial {
         mut renderer: Option<&mut dyn SceneImportDevice>,
     ) -> (
         Material,
+        MaterialKind,
         Vec<(MaterialTextureSlot, Option<MaterialTextureReference>)>,
     ) {
         let mut material = Material::from(self.clone());
+        let kind = self.kind.to_material_kind();
         let mut references = Vec::new();
 
         for slot in MaterialTextureSlot::all() {
@@ -2784,10 +2842,11 @@ impl SerializedMaterial {
             references.push((slot, reference));
         }
 
-        (material, references)
+        (material, kind, references)
     }
 
     pub fn apply_metadata_to_asset(&self, asset: &mut MaterialAsset) {
+        asset.set_kind(self.kind.to_material_kind());
         for slot in MaterialTextureSlot::all() {
             let slot_data = self.texture_slot(slot);
             if let Some(path) = slot_data.path.as_ref() {

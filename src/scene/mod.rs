@@ -25,9 +25,9 @@ pub mod transform;
 pub use assets::{
     InstantiatedSceneAsset, SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity,
     SceneAssetEntityBuilder, SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset,
-    SceneTreeAssetNode, SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedParticleBehavior,
-    SerializedParticleEmitter, SerializedParticleSystem, SerializedRuneScript,
-    SerializedRuneScriptSource, SerializedTransform,
+    SceneTreeAssetNode, SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedMaterialKind,
+    SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
+    SerializedRuneScript, SerializedRuneScriptSource, SerializedTransform,
 };
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};
