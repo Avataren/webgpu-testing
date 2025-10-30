@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
+use std::{collections::HashSet, fs, path::Path};
 
 use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
@@ -18,6 +20,8 @@ use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
 use super::script_editor_system::ScriptEditorSystem;
 use super::selection_system::SelectionSystem;
+#[cfg(not(target_arch = "wasm32"))]
+use super::shader_watcher::ShaderWatcher;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent};
 use egui::Context as EguiContext;
@@ -29,6 +33,8 @@ use crate::history::EditorHistory;
 use crate::layout::{create_editor_layout, EditorPane, ViewportState};
 use crate::postprocess::ViewportGrid;
 use crate::project;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::project::normalize_absolute_path;
 use crate::windows::WindowToggles;
 
 pub(super) struct RuntimeModeTransition {
@@ -59,6 +65,8 @@ pub struct EditorApplication {
     pub(super) events: Vec<EditorEvent>,
     pub(super) particle_mesh: Option<Handle<Mesh>>,
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) shader_watcher: Option<ShaderWatcher>,
 }
 
 #[derive(Default)]
@@ -206,6 +214,14 @@ impl EditorApplicationBuilder {
             events: Vec::new(),
             particle_mesh: None,
             particle_mesh_bounds: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            shader_watcher: match ShaderWatcher::new() {
+                Ok(watcher) => Some(watcher),
+                Err(err) => {
+                    log::warn!("Failed to initialize shader file watcher: {err}");
+                    None
+                }
+            },
         }
     }
 }
@@ -403,6 +419,123 @@ impl EditorApplication {
                 (&mut *systems_ptr.add(index)).gpu_update(&mut editor_ctx);
             }
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn process_shader_file_changes(&mut self, ctx: &mut GpuUpdateContext) {
+        let Some(watcher) = self.shader_watcher.as_mut() else {
+            return;
+        };
+
+        let Some(content_root) = self.project_system().content_root() else {
+            watcher.clear();
+            return;
+        };
+
+        if let Err(err) = watcher.watch_root(&content_root) {
+            log::warn!(
+                "Failed to watch project shader directory {:?}: {}",
+                content_root,
+                err
+            );
+            return;
+        }
+
+        let changed_paths = watcher.poll();
+        if changed_paths.is_empty() {
+            return;
+        }
+
+        let mut processed = HashSet::new();
+        for path in changed_paths {
+            if let Some(canonical) = Self::canonicalize_shader_path(&path) {
+                if processed.insert(canonical.clone()) {
+                    self.reload_shader_materials_from_path(ctx, &canonical);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn canonicalize_shader_path(path: &Path) -> Option<PathBuf> {
+        let canonical = match path.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                log::warn!("Failed to canonicalize shader path {:?}: {}", path, err);
+                return None;
+            }
+        };
+
+        Some(normalize_absolute_path(canonical))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reload_shader_materials_from_path(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        canonical_path: &Path,
+    ) {
+        let source = match fs::read_to_string(canonical_path) {
+            Ok(contents) => contents,
+            Err(err) => {
+                log::warn!("Failed to reload shader {:?}: {}", canonical_path, err);
+                return;
+            }
+        };
+
+        let normalized_path = normalize_absolute_path(canonical_path.to_path_buf());
+        let material_count = ctx.scene.assets.materials.len();
+        let mut matching_handles = Vec::new();
+
+        for index in 0..material_count {
+            let handle = Handle::new(index);
+            let Some(asset) = ctx.scene.assets.material(handle) else {
+                continue;
+            };
+
+            let Some(metadata) = asset.shader_metadata() else {
+                continue;
+            };
+
+            let Some(source_path) = metadata.source_path() else {
+                continue;
+            };
+
+            let normalized_source = normalize_absolute_path(source_path.to_path_buf());
+            if normalized_source == normalized_path {
+                matching_handles.push(handle);
+            }
+        }
+
+        if matching_handles.is_empty() {
+            return;
+        }
+
+        let mut updated_handles = Vec::new();
+        for handle in &matching_handles {
+            if let Some(asset) = ctx.scene.assets.material_mut(*handle) {
+                if let Some(metadata) = asset.shader_metadata_mut() {
+                    metadata.set_wgsl_source(source.clone());
+                    updated_handles.push(*handle);
+                }
+            }
+        }
+
+        if updated_handles.is_empty() {
+            return;
+        }
+
+        for handle in &updated_handles {
+            ctx.renderer
+                .invalidate_material_shader_modules(*handle, None);
+        }
+
+        log::info!(
+            "Hot-reloaded WGSL shader {:?} for {} material(s)",
+            canonical_path,
+            updated_handles.len()
+        );
+        self.record_scene_change(ctx.scene);
     }
 
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
