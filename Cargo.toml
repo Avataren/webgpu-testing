@@ -76,6 +76,7 @@ rfd = "0.14"
 notify = "6.1"
 
 [dev-dependencies]
+naga = { version = "27", features = ["wgsl-in"] }
 tempfile = "3.10"
 
 

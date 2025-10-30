@@ -55,7 +55,7 @@ impl Default for MaterialKind {
     }
 }
 
-/// Metadata for a shader material, including its WGSL source and optional flags.
+/// Metadata for a shader material, including its WGSL source and compatibility flags.
 #[derive(Debug, Clone)]
 pub struct ShaderMaterialMetadata {
     wgsl_source: String,
@@ -64,14 +64,12 @@ pub struct ShaderMaterialMetadata {
 
 impl ShaderMaterialMetadata {
     /// Default WGSL template used for newly created shader materials.
-    pub const DEFAULT_TEMPLATE: &'static str = r#"// Custom material shader
-// This template returns a white fragment color. Extend it to fit your needs.
-
-@fragment
-fn fragment_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(1.0, 1.0, 1.0, 1.0);
-}
-"#;
+    ///
+    /// The template documents the include markers that the renderer understands:
+    /// `// @include_material_system`, `// @include_lighting`,
+    /// `// @include_shadows`, and `// @include_environment`.
+    pub const DEFAULT_TEMPLATE: &'static str =
+        include_str!("../shader/templates/shader_material.wgsl");
 
     /// Creates metadata with explicit WGSL source.
     pub fn new(wgsl_source: impl Into<String>) -> Self {
@@ -85,7 +83,9 @@ fn fragment_main() -> @location(0) vec4<f32> {
     pub fn default_template() -> Self {
         Self {
             wgsl_source: Self::DEFAULT_TEMPLATE.to_string(),
-            needs_lighting_include: false,
+            // The default template opts into shared lighting via marker comments.
+            // Retain the legacy flag for compatibility with serialized assets.
+            needs_lighting_include: true,
         }
     }
 
@@ -104,7 +104,10 @@ fn fragment_main() -> @location(0) vec4<f32> {
         self.wgsl_source = source.into();
     }
 
-    /// Indicates whether the shader requires the shared lighting include file.
+    /// Indicates whether the shader should explicitly include the shared lighting module.
+    ///
+    /// New shader materials should prefer the `// @include_*` markers documented in the
+    /// template, but the flag is kept for compatibility with previously serialized assets.
     pub fn needs_lighting_include(&self) -> bool {
         self.needs_lighting_include
     }
@@ -245,6 +248,9 @@ impl MaterialAsset {
     }
 
     /// Creates a shader material asset with the default WGSL template.
+    ///
+    /// The template includes documentation for the supported `// @include_*` markers,
+    /// allowing users to opt into shared lighting, shadows, and environment helpers.
     pub fn shader(material: Material, canonical_path: PathBuf) -> Self {
         Self::new(
             material,

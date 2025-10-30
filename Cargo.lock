@@ -4302,6 +4302,7 @@ dependencies = [
  "instant",
  "js-sys",
  "log",
+ "naga",
  "notify",
  "once_cell",
  "pollster",

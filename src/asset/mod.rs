@@ -55,6 +55,10 @@ impl Assets {
     }
 
     /// Creates a new shader material asset using the default WGSL template and inserts it.
+    ///
+    /// The generated material includes documentation about the available `// @include_*`
+    /// markers so artists can enable lighting, shadows, or environment helpers directly in
+    /// the WGSL source before authoring their shader code.
     pub fn create_shader_material(
         &mut self,
         material: Material,
