@@ -98,6 +98,7 @@ pub struct InspectorMaterial {
     pub material: Material,
     pub textures: Vec<(MaterialTextureSlot, MaterialTextureReference)>,
     pub kind: MaterialKind,
+    pub canonical_path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "egui")]
@@ -168,6 +169,11 @@ impl SceneHierarchySnapshot {
                                 .map(|(slot, reference)| (slot, reference.clone()))
                                 .collect(),
                             kind: asset.kind().clone(),
+                            canonical_path: if asset.canonical_path().as_os_str().is_empty() {
+                                None
+                            } else {
+                                Some(asset.canonical_path().to_path_buf())
+                            },
                         })
                 });
             let script = entity_ref

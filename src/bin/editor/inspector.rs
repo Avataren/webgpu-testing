@@ -6,11 +6,13 @@ use glam::{EulerRot, Quat, Vec3};
 use std::cmp::Ordering;
 use std::f32::consts::PI;
 use std::ops::RangeInclusive;
+use std::path::{Path, PathBuf};
 
 use hecs::Entity;
 
 use wgpu_cube::asset::{
     Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+    ShaderMaterialMetadata,
 };
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
@@ -51,6 +53,21 @@ pub enum InspectorAction {
         entity: Entity,
         source: Handle<MaterialAsset>,
     },
+    SetMaterialKind {
+        entity: Entity,
+        handle: Handle<MaterialAsset>,
+        kind: MaterialKind,
+    },
+    AssignShaderSource {
+        entity: Entity,
+        handle: Handle<MaterialAsset>,
+        shader_path: PathBuf,
+    },
+    CreateShaderSource {
+        entity: Entity,
+        handle: Handle<MaterialAsset>,
+        suggested_stem: String,
+    },
     UpdatePointLight {
         entity: Entity,
         light: PointLight,
@@ -90,9 +107,16 @@ pub enum InspectorAction {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MaterialKindChoice {
+    Pbr,
+    Shader,
+}
+
 pub fn show_entity_inspector(
     ui: &mut egui::Ui,
     data: &SceneEntityInspectorData,
+    content_root: Option<&Path>,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
     ui.label(format!("Name: {}", data.name));
@@ -118,7 +142,14 @@ pub fn show_entity_inspector(
 
     if let Some(material) = data.components.material.clone() {
         begin_section(ui, &mut first_section);
-        show_material_section(ui, data.entity, material, &mut actions);
+        show_material_section(
+            ui,
+            data.entity,
+            &data.name,
+            material,
+            content_root,
+            &mut actions,
+        );
     }
 
     let has_light = data.components.point_light.is_some()
@@ -387,20 +418,33 @@ fn show_mesh_section(ui: &mut egui::Ui, mesh: MeshComponent) {
 fn show_material_section(
     ui: &mut egui::Ui,
     entity: Entity,
+    entity_name: &str,
     material_data: InspectorMaterial,
+    content_root: Option<&Path>,
     actions: &mut Vec<InspectorAction>,
 ) {
     ui.collapsing("Material", |ui| {
         let mut material = material_data.material;
         let mut changed = false;
 
+        let mut selected_kind = if matches!(material_data.kind, MaterialKind::Shader(_)) {
+            MaterialKindChoice::Shader
+        } else {
+            MaterialKindChoice::Pbr
+        };
+        let initial_kind = selected_kind;
+
         ui.horizontal(|ui| {
             ui.label("Kind");
-            let kind_label = match &material_data.kind {
-                MaterialKind::Pbr => "PBR",
-                MaterialKind::Shader(_) => "Shader",
-            };
-            ui.monospace(kind_label);
+            ComboBox::from_id_salt(("material_kind", material_data.handle.index()))
+                .selected_text(match selected_kind {
+                    MaterialKindChoice::Pbr => "PBR",
+                    MaterialKindChoice::Shader => "Shader",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut selected_kind, MaterialKindChoice::Pbr, "PBR");
+                    ui.selectable_value(&mut selected_kind, MaterialKindChoice::Shader, "Shader");
+                });
 
             if matches!(material_data.kind, MaterialKind::Pbr)
                 && ui
@@ -416,6 +460,41 @@ fn show_material_section(
                 });
             }
         });
+
+        if selected_kind != initial_kind {
+            let kind = match selected_kind {
+                MaterialKindChoice::Pbr => MaterialKind::Pbr,
+                MaterialKindChoice::Shader => match &material_data.kind {
+                    MaterialKind::Shader(metadata) => MaterialKind::Shader(metadata.clone()),
+                    MaterialKind::Pbr => {
+                        MaterialKind::Shader(ShaderMaterialMetadata::default_template())
+                    }
+                },
+            };
+            actions.push(InspectorAction::SetMaterialKind {
+                entity,
+                handle: material_data.handle,
+                kind,
+            });
+        }
+
+        if matches!(selected_kind, MaterialKindChoice::Shader) {
+            ui.add_space(4.0);
+            let shader_metadata = match &material_data.kind {
+                MaterialKind::Shader(metadata) => Some(metadata),
+                MaterialKind::Pbr => None,
+            };
+            show_shader_controls(
+                ui,
+                entity,
+                entity_name,
+                &material_data,
+                shader_metadata,
+                content_root,
+                actions,
+            );
+        }
+
         ui.add_space(4.0);
 
         let reference_for = |slot: MaterialTextureSlot| -> Option<&MaterialTextureReference> {
@@ -1827,6 +1906,139 @@ fn show_script_section(
         }
     });
     action
+}
+
+fn show_shader_controls(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    entity_name: &str,
+    material: &InspectorMaterial,
+    metadata: Option<&ShaderMaterialMetadata>,
+    content_root: Option<&Path>,
+    actions: &mut Vec<InspectorAction>,
+) {
+    ui.group(|ui| {
+        ui.label("Shader source");
+        let display_path = shader_path_display(metadata, content_root);
+        ui.monospace(display_path);
+
+        let has_root = content_root.is_some();
+        ui.horizontal(|ui| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut dialog = FileDialog::new().add_filter("WGSL Shaders", &["wgsl"]);
+                if let Some(root) = content_root {
+                    let shaders_dir = root.join("shaders");
+                    dialog = dialog.set_directory(shaders_dir);
+                }
+                let select_button = ui.add_enabled(
+                    has_root,
+                    egui::Button::new("Select shader...").on_hover_text(
+                        "Assign an existing WGSL shader file from the project contents.",
+                    ),
+                );
+                if select_button.clicked() {
+                    if let Some(path) = dialog.pick_file() {
+                        actions.push(InspectorAction::AssignShaderSource {
+                            entity,
+                            handle: material.handle,
+                            shader_path: path,
+                        });
+                    }
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = has_root;
+                ui.add_enabled(false, egui::Button::new("Select shader..."));
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let create_button = ui.add_enabled(
+                    has_root,
+                    egui::Button::new("Create new shader").on_hover_text(
+                        "Create a WGSL shader file in content/shaders using the default template.",
+                    ),
+                );
+                if create_button.clicked() {
+                    let suggested = suggested_shader_stem(material, entity_name);
+                    actions.push(InspectorAction::CreateShaderSource {
+                        entity,
+                        handle: material.handle,
+                        suggested_stem: suggested,
+                    });
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                ui.add_enabled(false, egui::Button::new("Create new shader"));
+            }
+        });
+
+        if metadata.is_none() {
+            ui.label("Assign a shader file or create one to customize this material.");
+        }
+        if !has_root {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 80, 80),
+                "Open or create a project to manage shader files.",
+            );
+        }
+    });
+}
+
+fn shader_path_display(
+    metadata: Option<&ShaderMaterialMetadata>,
+    content_root: Option<&Path>,
+) -> String {
+    if let Some(metadata) = metadata {
+        if let Some(path) = metadata.source_path() {
+            if let Some(root) = content_root {
+                if let Ok(relative) = path.strip_prefix(root) {
+                    return relative.display().to_string();
+                }
+            }
+            return path.display().to_string();
+        }
+    }
+    "None".to_string()
+}
+
+fn suggested_shader_stem(material: &InspectorMaterial, entity_name: &str) -> String {
+    if let Some(path) = material.canonical_path.as_ref() {
+        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+            let sanitized = sanitize_shader_stem(stem);
+            if !sanitized.is_empty() {
+                return sanitized;
+            }
+        }
+    }
+
+    let sanitized_entity = sanitize_shader_stem(entity_name);
+    if !sanitized_entity.is_empty() {
+        sanitized_entity
+    } else {
+        format!("material_{}", material.handle.index())
+    }
+}
+
+fn sanitize_shader_stem(name: &str) -> String {
+    let mut stem = String::new();
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            stem.push(ch.to_ascii_lowercase());
+        } else if !stem.ends_with('_') {
+            stem.push('_');
+        }
+    }
+
+    let trimmed = stem.trim_matches('_');
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn vec3_editor(ui: &mut egui::Ui, label: &str, value: &mut Vec3) -> bool {

@@ -60,6 +60,7 @@ impl Default for MaterialKind {
 pub struct ShaderMaterialMetadata {
     wgsl_source: String,
     needs_lighting_include: bool,
+    source_path: Option<PathBuf>,
 }
 
 impl ShaderMaterialMetadata {
@@ -76,6 +77,7 @@ impl ShaderMaterialMetadata {
         Self {
             wgsl_source: wgsl_source.into(),
             needs_lighting_include: false,
+            source_path: None,
         }
     }
 
@@ -86,6 +88,7 @@ impl ShaderMaterialMetadata {
             // The default template opts into shared lighting via marker comments.
             // Retain the legacy flag for compatibility with serialized assets.
             needs_lighting_include: true,
+            source_path: None,
         }
     }
 
@@ -102,6 +105,16 @@ impl ShaderMaterialMetadata {
     /// Replaces the WGSL source with a new value.
     pub fn set_wgsl_source(&mut self, source: impl Into<String>) {
         self.wgsl_source = source.into();
+    }
+
+    /// Returns the file system path backing this shader material, if any.
+    pub fn source_path(&self) -> Option<&Path> {
+        self.source_path.as_deref()
+    }
+
+    /// Sets or clears the shader source path tracked by this metadata.
+    pub fn set_source_path(&mut self, path: Option<PathBuf>) {
+        self.source_path = path;
     }
 
     /// Indicates whether the shader should explicitly include the shared lighting module.
