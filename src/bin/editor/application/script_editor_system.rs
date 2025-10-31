@@ -85,7 +85,7 @@ impl ScriptEditorSystem {
 
     fn process_pending_actions(
         &mut self,
-        app: &mut EditorAppAccess<'_>,
+        app: &mut EditorAppAccess<'_, '_, '_>,
         scene: &mut Scene,
         actions: Vec<PendingScriptAction>,
     ) {

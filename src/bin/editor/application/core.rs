@@ -24,7 +24,6 @@ use super::selection_system::SelectionSystem;
 use super::shader_watcher::ShaderWatcher;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent, EditorSystemsAccess};
-use egui::Context as EguiContext;
 use wgpu_cube::DefaultUI;
 
 use crate::asset_browser::AssetBrowserState;
