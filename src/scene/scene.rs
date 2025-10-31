@@ -4,21 +4,17 @@ use super::assets::{
     SerializedAnimationClip, SerializedTransform,
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId};
-use super::import_state::SceneImports;
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::loader::SceneImportDevice;
 use super::render_bridge::RenderBridge;
-use super::runtime_state::SceneRuntime;
-use super::state::{
-    EnvironmentState, GizmoState, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
-};
+use super::state::{GizmoState, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace};
+use super::{SceneCamera, SceneEnvironment, SceneImportsManager, SceneRuntimeController};
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
 use crate::scene::components::{
     CameraComponent, SelectedInEditor, TransformComponent, WorldTransform,
 };
-use crate::scene::internal::lights::safe_normalize;
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::ScriptingState;
@@ -30,15 +26,15 @@ use std::collections::HashMap;
 
 pub struct Scene {
     pub assets: Assets,
-    environment: EnvironmentState,
-    camera: Camera,
+    environment: SceneEnvironment,
+    camera: SceneCamera,
     nodes: Vec<Option<SceneNode>>,
     free_list: Vec<SceneNodeId>,
     root: SceneNodeId,
     main_scene: SceneNodeId,
-    runtime: SceneRuntime,
+    runtime: SceneRuntimeController,
     gizmos: GizmoState,
-    imports: SceneImports,
+    imports: SceneImportsManager,
 }
 
 impl Scene {
@@ -50,15 +46,15 @@ impl Scene {
 
         Self {
             assets: Assets::default(),
-            environment: EnvironmentState::new(),
-            camera: Camera::default(),
+            environment: SceneEnvironment::new(),
+            camera: SceneCamera::new(),
             nodes,
             free_list: Vec::new(),
             root: root_id,
             main_scene: root_id,
-            runtime: SceneRuntime::new(),
+            runtime: SceneRuntimeController::new(),
             gizmos: GizmoState::new(),
-            imports: SceneImports::new(),
+            imports: SceneImportsManager::new(),
         }
     }
 
@@ -294,15 +290,15 @@ impl Scene {
     }
 
     pub fn camera(&self) -> &Camera {
-        &self.camera
+        self.camera.camera()
     }
 
     pub fn camera_mut(&mut self) -> &mut Camera {
-        &mut self.camera
+        self.camera.camera_mut()
     }
 
     pub fn set_camera(&mut self, camera: Camera) {
-        self.camera = camera;
+        self.camera.set_camera(camera);
     }
 
     pub fn active_camera_entity(&self) -> Option<Entity> {
@@ -600,52 +596,11 @@ impl Scene {
     }
 
     fn apply_camera_from_entity(&mut self, entity: Entity) -> bool {
-        let data = {
-            let world = self.main_world();
-            if !world.contains(entity) {
-                return false;
-            }
-
-            let projection = world
-                .get::<&CameraComponent>(entity)
-                .ok()
-                .map(|component| *component);
-            let transform = world
-                .get::<&WorldTransform>(entity)
-                .map(|component| component.0)
-                .ok()
-                .or_else(|| {
-                    world
-                        .get::<&TransformComponent>(entity)
-                        .map(|component| component.0)
-                        .ok()
-                });
-
-            Some((projection, transform))
-        };
-
-        let Some((projection, transform)) = data else {
-            return false;
-        };
-
-        let mut camera = *self.camera();
-
-        if let Some(component) = projection {
-            component.apply_to_camera(&mut camera);
-        }
-
-        if let Some(transform) = transform {
-            let eye = transform.translation;
-            let forward = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
-            let up = safe_normalize(transform.rotation * Vec3::Y, Vec3::Y);
-
-            camera.eye = eye;
-            camera.target = eye + forward;
-            camera.up = up;
-        }
-
+        let mut camera = std::mem::take(&mut self.camera);
+        let world = self.main_world();
+        let result = camera.apply_from_entity(world, entity);
         self.camera = camera;
-        true
+        result
     }
 
     pub fn render<'a>(
