@@ -174,16 +174,16 @@ impl SelectionSystem {
         self.reset_pointer_press();
         self.request_override(None);
         self.set_selected(None);
+        self.set_highlighted(None);
         self.gpu_pick.mark_discard();
     }
 
-    fn push_history_selection(
-        &self,
-        app: &mut EditorAppAccess<'_>,
-        scene: &Scene,
-    ) {
-        app.history_system_mut()
-            .update_history_selection(scene, self.selected(), self.highlighted());
+    fn push_history_selection(&self, app: &mut EditorAppAccess<'_>, scene: &Scene) {
+        app.history_system_mut().update_history_selection(
+            scene,
+            self.selected(),
+            self.highlighted(),
+        );
     }
 
     fn process_viewport_pick(
@@ -275,66 +275,94 @@ impl SelectionSystem {
     pub(crate) fn sync_selection_component(&mut self, ctx: &mut UpdateContext) -> bool {
         let previous_selected = self.selected();
         let previous_highlighted = self.highlighted();
+        let previously_synced = self.state.synced_highlighted();
+        let mut state_changed = false;
+        let desired_selection = self.selected();
 
-        if previous_selected == previous_highlighted {
-            if let Some(entity) = previous_selected {
-                let missing_marker = ctx
+        if desired_selection != previously_synced {
+            let mut new_highlight = None;
+            {
+                let world = ctx.scene.main_world_mut();
+
+                if let Some(previous) = previously_synced {
+                    let _ = world.remove_one::<SelectedInEditor>(previous);
+                    state_changed = true;
+                }
+
+                if let Some(entity) = desired_selection {
+                    match world.insert_one(entity, SelectedInEditor) {
+                        Ok(()) => {
+                            new_highlight = Some(entity);
+                            state_changed = true;
+                        }
+                        Err(err) => {
+                            warn!("failed to mark entity {:?} as selected: {err}", entity);
+                            self.set_selected(None);
+                        }
+                    }
+                }
+            }
+
+            if self.selected().is_none() {
+                new_highlight = None;
+            }
+
+            self.set_highlighted(new_highlight);
+            self.state.set_synced_highlighted(new_highlight);
+        } else if let Some(entity) = desired_selection {
+            let missing_marker = ctx
+                .scene
+                .main_world()
+                .get::<&SelectedInEditor>(entity)
+                .is_err();
+
+            if missing_marker {
+                match ctx
                     .scene
-                    .main_world()
-                    .get::<&SelectedInEditor>(entity)
-                    .is_err();
-
-                if missing_marker {
-                    if let Err(err) = ctx
-                        .scene
-                        .main_world_mut()
-                        .insert_one(entity, SelectedInEditor)
-                    {
+                    .main_world_mut()
+                    .insert_one(entity, SelectedInEditor)
+                {
+                    Ok(()) => {
+                        state_changed = true;
+                        self.set_highlighted(Some(entity));
+                        self.state.set_synced_highlighted(Some(entity));
+                    }
+                    Err(err) => {
                         warn!(
                             "failed to reapply editor selection marker to {:?}: {err}",
                             entity
                         );
                         self.set_selected(None);
                         self.set_highlighted(None);
+                        self.state.set_synced_highlighted(None);
+                        state_changed = true;
                     }
                 }
+            } else if self.highlighted() != Some(entity) {
+                self.set_highlighted(Some(entity));
+                self.state.set_synced_highlighted(Some(entity));
+                state_changed = true;
+            }
+        } else {
+            if let Some(previous) = previously_synced {
+                let _ = ctx
+                    .scene
+                    .main_world_mut()
+                    .remove_one::<SelectedInEditor>(previous);
+                state_changed = true;
             }
 
-            return self.selected() != previous_selected
-                || self.highlighted() != previous_highlighted;
+            if self.highlighted().is_some() {
+                self.set_highlighted(None);
+                state_changed = true;
+            }
+
+            self.state.set_synced_highlighted(None);
         }
 
-        let mut new_highlight = None;
-        let mut highlight_changed = false;
-
-        {
-            let world = ctx.scene.main_world_mut();
-
-            if let Some(previous) = self.take_highlighted() {
-                let _ = world.remove_one::<SelectedInEditor>(previous);
-                highlight_changed = true;
-            }
-
-            if let Some(entity) = self.selected() {
-                match world.insert_one(entity, SelectedInEditor) {
-                    Ok(()) => {
-                        new_highlight = Some(entity);
-                        highlight_changed = true;
-                    }
-                    Err(err) => {
-                        warn!("failed to mark entity {:?} as selected: {err}", entity);
-                        self.set_selected(None);
-                    }
-                }
-            }
-        }
-
-        self.set_highlighted(new_highlight);
-
-        let selection_changed = self.selected() != previous_selected;
-        let highlight_changed = highlight_changed || self.highlighted() != previous_highlighted;
-
-        selection_changed || highlight_changed
+        state_changed
+            || self.selected() != previous_selected
+            || self.highlighted() != previous_highlighted
     }
 
     fn update_pointer_hover(&mut self, app: &EditorAppAccess<'_>, ui_ctx: &egui::Context) {
@@ -482,6 +510,7 @@ impl EditorSystem for SelectionSystem {
 struct SelectionState {
     selected: Option<Entity>,
     highlighted: Option<Entity>,
+    synced_highlighted: Option<Entity>,
     override_request: Option<Option<Entity>>,
 }
 
@@ -498,6 +527,14 @@ impl SelectionState {
         let current = self.highlighted;
         self.highlighted = None;
         current
+    }
+
+    fn synced_highlighted(&self) -> Option<Entity> {
+        self.synced_highlighted
+    }
+
+    fn set_synced_highlighted(&mut self, entity: Option<Entity>) {
+        self.synced_highlighted = entity;
     }
 
     fn request_override(&mut self, entity: Option<Entity>) {
