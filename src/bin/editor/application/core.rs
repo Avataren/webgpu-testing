@@ -9,7 +9,7 @@ use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::asset::{Handle, Mesh};
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::scene::{MeshBounds, Scene};
+use wgpu_cube::scene::{MeshBounds, Scene, SceneStateSnapshot};
 use wgpu_cube::SceneHierarchyHandle;
 
 use super::asset_browser_system::AssetBrowserSystem;
@@ -42,23 +42,15 @@ pub(super) struct RuntimeModeTransition {
     pub(super) to: RuntimeMode,
 }
 
-pub struct EditorApplication {
+pub struct EditorSharedState {
     pub(super) dock_tree: Tree<EditorPane>,
     pub(super) viewports: ViewportSystem,
     pub(super) windows: WindowToggles,
-    pub(super) systems: Vec<Box<dyn EditorSystem>>,
-    pub(super) camera_system_index: usize,
-    pub(super) selection_system_index: usize,
-    pub(super) history_system_index: usize,
-    pub(super) project_system_index: usize,
-    pub(super) script_editor_system_index: usize,
-    pub(super) asset_browser_system_index: usize,
-    pub(super) particle_system_index: usize,
     pub(super) active_camera_entity: Option<Entity>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
-    pub(super) editor_scene_snapshot: Option<wgpu_cube::scene::SceneStateSnapshot>,
+    pub(super) editor_scene_snapshot: Option<SceneStateSnapshot>,
     pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
     pub(super) commands: VecDeque<EditorCommand>,
     #[allow(dead_code)]
@@ -67,6 +59,18 @@ pub struct EditorApplication {
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
+}
+
+pub struct EditorApplication {
+    pub(super) shared: EditorSharedState,
+    pub(super) systems: Vec<Box<dyn EditorSystem>>,
+    pub(super) camera_system_index: usize,
+    pub(super) selection_system_index: usize,
+    pub(super) history_system_index: usize,
+    pub(super) project_system_index: usize,
+    pub(super) script_editor_system_index: usize,
+    pub(super) asset_browser_system_index: usize,
+    pub(super) particle_system_index: usize,
 }
 
 #[derive(Default)]
@@ -192,18 +196,10 @@ impl EditorApplicationBuilder {
             index
         };
 
-        EditorApplication {
+        let mut shared = EditorSharedState {
             dock_tree: self.dock_tree.unwrap_or_else(create_editor_layout),
             viewports,
             windows: self.windows.unwrap_or_else(WindowToggles::new),
-            systems,
-            camera_system_index,
-            selection_system_index,
-            history_system_index,
-            project_system_index,
-            script_editor_system_index,
-            asset_browser_system_index,
-            particle_system_index,
             active_camera_entity: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
@@ -215,13 +211,30 @@ impl EditorApplicationBuilder {
             particle_mesh: None,
             particle_mesh_bounds: None,
             #[cfg(not(target_arch = "wasm32"))]
-            shader_watcher: match ShaderWatcher::new() {
+            shader_watcher: None,
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            shared.shader_watcher = match ShaderWatcher::new() {
                 Ok(watcher) => Some(watcher),
                 Err(err) => {
                     log::warn!("Failed to initialize shader file watcher: {err}");
                     None
                 }
-            },
+            };
+        }
+
+        EditorApplication {
+            shared,
+            systems,
+            camera_system_index,
+            selection_system_index,
+            history_system_index,
+            project_system_index,
+            script_editor_system_index,
+            asset_browser_system_index,
+            particle_system_index,
         }
     }
 }
@@ -246,7 +259,7 @@ impl EditorApplication {
     }
 
     pub fn set_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
-        self.runtime_state = handle;
+        self.shared.runtime_state = handle;
     }
 
     pub(super) fn selection_system(&self) -> &SelectionSystem {
@@ -345,7 +358,7 @@ impl EditorApplication {
     }
 
     pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
-        self.scene_hierarchy_handle.as_ref()
+        self.shared.scene_hierarchy_handle.as_ref()
     }
 
     pub(super) fn history(&self) -> &EditorHistory {
@@ -424,13 +437,13 @@ impl EditorApplication {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn process_shader_file_changes(&mut self, ctx: &mut GpuUpdateContext) {
         let Some(content_root) = self.project_system().content_root() else {
-            if let Some(watcher) = self.shader_watcher.as_mut() {
+            if let Some(watcher) = self.shared.shader_watcher.as_mut() {
                 watcher.clear();
             }
             return;
         };
 
-        let Some(watcher) = self.shader_watcher.as_mut() else {
+        let Some(watcher) = self.shared.shader_watcher.as_mut() else {
             return;
         };
 
@@ -554,13 +567,13 @@ impl EditorApplication {
     }
 
     pub(super) fn enqueue_command(&mut self, command: EditorCommand) {
-        self.commands.push_back(command);
+        self.shared.commands.push_back(command);
     }
 
     pub(super) fn drain_update_commands(&mut self, ctx: &mut UpdateContext) {
         use EditorCommand::*;
 
-        let mut queue = std::mem::take(&mut self.commands);
+        let mut queue = std::mem::take(&mut self.shared.commands);
         let mut remaining = VecDeque::new();
         let mut pending_imports = Vec::new();
         let mut pending_deletions = Vec::new();
@@ -588,7 +601,7 @@ impl EditorApplication {
         }
 
         if !pending_deletions.is_empty() {
-            let active_camera = self.active_camera_entity;
+            let active_camera = self.shared.active_camera_entity;
             let gizmo_drag_entity = self.history_system().gizmo_drag().map(|drag| drag.entity);
 
             let result = {
@@ -603,7 +616,7 @@ impl EditorApplication {
 
             if let Some(outcome) = result {
                 if outcome.active_camera_removed {
-                    self.active_camera_entity = ctx.scene.active_camera_entity();
+                    self.shared.active_camera_entity = ctx.scene.active_camera_entity();
                 }
 
                 if outcome.clear_gizmo_drag {
@@ -618,8 +631,8 @@ impl EditorApplication {
             }
         }
 
-        remaining.append(&mut self.commands);
-        self.commands = remaining;
+        remaining.append(&mut self.shared.commands);
+        self.shared.commands = remaining;
     }
 
     pub(super) fn process_pending_imports(
@@ -653,7 +666,8 @@ impl EditorApplication {
     }
 
     pub(super) fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {
-        self.dock_tree
+        self.shared
+            .dock_tree
             .tiles
             .iter()
             .find_map(|(id, tile)| match tile {
@@ -669,14 +683,14 @@ impl EditorApplication {
         };
 
         if let Some(tile_id) = self.find_pane_tile(target) {
-            let _ = self.dock_tree.make_active(|id, _| id == tile_id);
+            let _ = self.shared.dock_tree.make_active(|id, _| id == tile_id);
         }
     }
 
     pub(super) fn render_region_for_mode(&self, mode: RuntimeMode) -> Option<RenderRegion> {
         match mode {
-            RuntimeMode::Editor => self.viewports.scene_viewport.region(),
-            RuntimeMode::Playing => self.viewports.game_viewport.region(),
+            RuntimeMode::Editor => self.shared.viewports.scene_viewport.region(),
+            RuntimeMode::Playing => self.shared.viewports.game_viewport.region(),
         }
     }
 }

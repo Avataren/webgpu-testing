@@ -7,7 +7,10 @@ use super::EditorCommand;
 
 impl EditorApplication {
     pub(super) fn capture_viewport_pick_input(&mut self, ctx: &egui::Context) {
-        if matches!(self.runtime_state.active_mode(), RuntimeMode::Playing) {
+        if matches!(
+            self.shared.runtime_state.active_mode(),
+            RuntimeMode::Playing
+        ) {
             let selection = self.selection_system_mut();
             selection.clear_pending_pick();
             selection.reset_pointer_press();
@@ -19,7 +22,7 @@ impl EditorApplication {
             return;
         }
 
-        let Some(rect) = self.viewports.scene_viewport.rect() else {
+        let Some(rect) = self.shared.viewports.scene_viewport.rect() else {
             self.selection_system_mut().reset_pointer_press();
             return;
         };

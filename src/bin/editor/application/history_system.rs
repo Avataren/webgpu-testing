@@ -307,7 +307,7 @@ impl HistorySystem {
             if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
                 if !pointer_down {
                     end_drag = true;
-                } else if let Some(region) = app.viewports.scene_viewport.region() {
+                } else if let Some(region) = app.shared.viewports.scene_viewport.region() {
                     let width = region.width().max(1) as f32;
                     let height = region.height().max(1) as f32;
                     if width > 0.0 && height > 0.0 {
@@ -360,7 +360,7 @@ impl HistorySystem {
         ctx: &mut UpdateContext,
         press_uv: Vec2,
     ) -> bool {
-        let Some(region) = app.viewports.scene_viewport.region() else {
+        let Some(region) = app.shared.viewports.scene_viewport.region() else {
             return false;
         };
         let width = region.width().max(1) as f32;
