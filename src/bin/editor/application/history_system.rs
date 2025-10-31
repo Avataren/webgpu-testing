@@ -9,8 +9,9 @@ use wgpu_cube::scene::{
 };
 
 use super::core::EditorApplication;
-use super::system::{EditorCommand, EditorContext, EditorSystem};
+use super::system::{EditorAppAccess, EditorCommand, EditorContext, EditorSystem};
 use crate::history::{EditorHistory, HistorySelection};
+use crate::layout::ViewportState;
 
 pub(crate) struct HistorySystem {
     history: EditorHistory,
@@ -138,7 +139,7 @@ impl HistorySystem {
     }
 
     fn commit_transform_snapshot(&mut self, ctx: &mut EditorContext) {
-        let Some(()) = ctx.with_update(|app, update_ctx| {
+        let Some(()) = ctx.with_update_app(|app, update_ctx| {
             let (selected, highlighted) = {
                 let selection = app.selection_system();
                 (selection.selected(), selection.highlighted())
@@ -198,7 +199,7 @@ impl HistorySystem {
 
     fn apply_history_selection(
         &mut self,
-        app: &mut EditorApplication,
+        app: &mut EditorAppAccess,
         scene: &Scene,
         selection: HistorySelection,
     ) {
@@ -234,7 +235,7 @@ impl HistorySystem {
     fn perform_undo(&mut self, ctx: &mut EditorContext) {
         self.clear_gizmo_drag();
 
-        let Some(()) = ctx.with_update(|app, update_ctx| {
+        let Some(()) = ctx.with_update_app(|app, update_ctx| {
             if let Some(selection) = self.history.undo(update_ctx.scene) {
                 self.refresh_next_editor_entity_id(update_ctx.scene);
                 self.apply_history_selection(app, update_ctx.scene, selection);
@@ -257,7 +258,7 @@ impl HistorySystem {
     fn perform_redo(&mut self, ctx: &mut EditorContext) {
         self.clear_gizmo_drag();
 
-        let Some(()) = ctx.with_update(|app, update_ctx| {
+        let Some(()) = ctx.with_update_app(|app, update_ctx| {
             if let Some(selection) = self.history.redo(update_ctx.scene) {
                 self.refresh_next_editor_entity_id(update_ctx.scene);
                 self.apply_history_selection(app, update_ctx.scene, selection);
@@ -279,7 +280,7 @@ impl HistorySystem {
 
     fn update_gizmo_drag(&mut self, ctx: &mut EditorContext) {
         let mut record_history = false;
-        let Some(()) = ctx.with_update(|app, update_ctx| {
+        let Some(()) = ctx.with_update_app(|app, update_ctx| {
             if !matches!(update_ctx.runtime, RuntimeMode::Editor) {
                 self.transform_tool.gizmo_drag = None;
                 app.selection_system_mut().set_pointer_press_uv(None);
@@ -296,7 +297,7 @@ impl HistorySystem {
             };
 
             if let (Some(press_uv), Some(entity)) = (press_uv, selected_entity) {
-                if self.try_begin_gizmo_drag(app, entity, update_ctx, press_uv) {
+                if self.try_begin_gizmo_drag(app.scene_viewport(), entity, update_ctx, press_uv) {
                     app.selection_system_mut().set_selection_press_uv(None);
                 }
             }
@@ -307,7 +308,7 @@ impl HistorySystem {
             if let Some(drag) = self.transform_tool.gizmo_drag.as_mut() {
                 if !pointer_down {
                     end_drag = true;
-                } else if let Some(region) = app.shared.viewports.scene_viewport.region() {
+                } else if let Some(region) = app.scene_viewport().region() {
                     let width = region.width().max(1) as f32;
                     let height = region.height().max(1) as f32;
                     if width > 0.0 && height > 0.0 {
@@ -355,12 +356,12 @@ impl HistorySystem {
 
     fn try_begin_gizmo_drag(
         &mut self,
-        app: &EditorApplication,
+        scene_viewport: &ViewportState,
         entity: Entity,
         ctx: &mut UpdateContext,
         press_uv: Vec2,
     ) -> bool {
-        let Some(region) = app.shared.viewports.scene_viewport.region() else {
+        let Some(region) = scene_viewport.region() else {
             return false;
         };
         let width = region.width().max(1) as f32;
@@ -911,7 +912,7 @@ impl EditorSystem for HistorySystem {
 
         self.process_history_commands(ctx);
 
-        let _ = ctx.with_update(|app, update_ctx| {
+        let _ = ctx.with_update_app(|app, update_ctx| {
             self.ensure_editor_entity_ids(update_ctx.scene);
             update_ctx
                 .scene
