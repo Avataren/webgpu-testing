@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::core::{EditorApplication, PendingScriptAction};
+use super::history_system::HistorySystem;
 use super::project_system::ProjectSystem;
 use super::script_editor_system::ScriptEditorSystem;
 use super::selection_system::SelectionSystem;
@@ -84,6 +85,18 @@ impl<'app> EditorAppAccess<'app> {
 
     pub fn camera_system(&self) -> &CameraSystem {
         self.application.camera_system()
+    }
+
+    pub fn history_system(&self) -> &HistorySystem {
+        self.application.history_system()
+    }
+
+    pub fn history_system_mut(&mut self) -> &mut HistorySystem {
+        self.application.history_system_mut()
+    }
+
+    pub fn selection_system(&self) -> &SelectionSystem {
+        self.application.selection_system()
     }
 
     pub fn selection_system_mut(&mut self) -> &mut SelectionSystem {
