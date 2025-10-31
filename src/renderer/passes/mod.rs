@@ -101,13 +101,9 @@ impl<'a> BatchRecorder<'a> {
                     .get(material_index)
                     .copied()
                     .unwrap_or(MaterialPipelineKey::Pbr);
-                let device = self.renderer.get_device().clone();
-                let pipeline = self.renderer.pipeline.pipeline_for_material(
-                    &device,
-                    self.assets,
-                    pipeline_key,
-                    material_key,
-                );
+                let pipeline =
+                    self.renderer
+                        .pipeline_for_material(self.assets, pipeline_key, material_key);
                 pass.set_pipeline(pipeline);
 
                 if bindless_group.is_none() {

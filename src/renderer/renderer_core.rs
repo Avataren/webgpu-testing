@@ -5,8 +5,9 @@ use crate::environment::Environment;
 pub(crate) mod passes;
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
-    CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, OrderedBatch,
-    PreparedBatches, RenderContext, RenderPipeline, ShadowResources, TextureBindingModel,
+    CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, MaterialPipelineKey,
+    OrderedBatch, PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
+    TextureBindingModel,
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
@@ -324,6 +325,16 @@ impl Renderer {
 
     pub fn get_queue(&self) -> &wgpu::Queue {
         &self.context.queue
+    }
+
+    pub(crate) fn pipeline_for_material(
+        &mut self,
+        assets: &Assets,
+        key: PipelineKey,
+        material_key: MaterialPipelineKey,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline
+            .pipeline_for_material(&self.context.device, assets, key, material_key)
     }
 
     pub fn reserve_object_capacity(&mut self, count: u32) {
