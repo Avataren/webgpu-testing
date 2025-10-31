@@ -40,10 +40,6 @@ impl SelectionSystem {
         self.state.set_highlighted(entity);
     }
 
-    pub(crate) fn take_highlighted(&mut self) -> Option<Entity> {
-        self.state.take_highlighted()
-    }
-
     pub(crate) fn request_override(&mut self, entity: Option<Entity>) {
         self.state.request_override(entity);
     }
@@ -521,12 +517,6 @@ impl SelectionState {
 
     fn set_highlighted(&mut self, entity: Option<Entity>) {
         self.highlighted = entity;
-    }
-
-    fn take_highlighted(&mut self) -> Option<Entity> {
-        let current = self.highlighted;
-        self.highlighted = None;
-        current
     }
 
     fn synced_highlighted(&self) -> Option<Entity> {
