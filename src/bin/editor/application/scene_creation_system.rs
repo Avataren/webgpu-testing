@@ -33,7 +33,7 @@ impl SceneCreationSystem {
             return;
         }
 
-        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
+        let Some(()) = ctx.with_gpu_app(|app, gpu_ctx| {
             let mut last_created: Option<Entity> = None;
 
             for action in actions {

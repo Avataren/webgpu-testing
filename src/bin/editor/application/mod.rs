@@ -75,13 +75,13 @@ impl RenderApplication for EditorApplication {
 
     fn update(&mut self, ctx: &mut UpdateContext) {
         let mut ctx = self.make_update_context(ctx);
-        ctx.with_update(|app, update_ctx| app.run_update_impl(update_ctx))
+        ctx.with_update_app(|app, update_ctx| app.run_update_impl(update_ctx))
             .expect("update context is available");
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
         let mut ctx = self.make_gpu_update_context(ctx);
-        ctx.with_gpu(|app, gpu_ctx| app.run_gpu_update_impl(gpu_ctx))
+        ctx.with_gpu_app(|app, gpu_ctx| app.run_gpu_update_impl(gpu_ctx))
             .expect("gpu update context is available");
     }
 
@@ -110,7 +110,7 @@ impl RenderApplication for EditorApplication {
 
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         let mut ctx = self.make_ui_context(ctx, default_ui);
-        ctx.with_ui(|app, mut ui_ctx| app.run_ui_impl(ui_ctx.egui(), ui_ctx.default_ui()))
+        ctx.with_ui_app(|app, ui_ctx| app.run_ui_impl(ui_ctx))
             .expect("ui context is available");
     }
 

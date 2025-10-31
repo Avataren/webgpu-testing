@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use hecs::Entity;
 use log::warn;
 
-use super::core::{EditorApplication, PendingScriptAction};
-use super::system::{EditorCommand, EditorContext, EditorSystem};
+use super::core::PendingScriptAction;
+use super::system::{EditorAppAccess, EditorCommand, EditorContext, EditorSystem};
 use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
 use wgpu_cube::scene::Scene;
 use wgpu_cube::scripting::RuneScriptComponent;
@@ -85,7 +85,7 @@ impl ScriptEditorSystem {
 
     fn process_pending_actions(
         &mut self,
-        app: &mut EditorApplication,
+        app: &mut EditorAppAccess<'_>,
         scene: &mut Scene,
         actions: Vec<PendingScriptAction>,
     ) {
@@ -159,7 +159,7 @@ impl EditorSystem for ScriptEditorSystem {
             Self::drain_script_commands(queue)
         };
 
-        let _ = ctx.with_update(move |app, update_ctx| {
+        let _ = ctx.with_update_app(move |app, update_ctx| {
             self.ensure_target_valid(update_ctx.scene);
             self.process_pending_actions(app, update_ctx.scene, actions);
         });
