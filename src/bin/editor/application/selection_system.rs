@@ -6,7 +6,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
 use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
 
-use super::core::ViewportPick;
+use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorAppAccess, EditorContext, EditorSystem};
 
 #[derive(Default)]
@@ -179,7 +179,7 @@ impl SelectionSystem {
 
     fn process_viewport_pick(
         &mut self,
-        app: &mut EditorAppAccess<'_>,
+        app: &mut EditorAppAccess<'_, '_, '_>,
         ctx: &mut UpdateContext<'_>,
     ) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
@@ -218,7 +218,7 @@ impl SelectionSystem {
 
     fn try_enqueue_pick(
         &mut self,
-        app: &EditorAppAccess<'_>,
+        app: &EditorAppAccess<'_, '_, '_>,
         gpu_ctx: &mut GpuUpdateContext<'_>,
         request: ViewportPick,
     ) -> bool {
@@ -328,7 +328,7 @@ impl SelectionSystem {
         selection_changed || highlight_changed
     }
 
-    fn update_pointer_hover(&mut self, app: &EditorAppAccess<'_>, ui_ctx: &egui::Context) {
+    fn update_pointer_hover(&mut self, app: &EditorAppAccess<'_, '_, '_>, ui_ctx: &egui::Context) {
         let runtime_state = app.runtime_state();
         let is_playing = matches!(runtime_state.active_mode(), RuntimeMode::Playing);
         if is_playing || app.camera_system().is_looking() {

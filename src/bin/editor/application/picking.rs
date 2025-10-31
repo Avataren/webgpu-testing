@@ -15,7 +15,6 @@ const LIGHT_ICON_PICK_PADDING: f32 = 0.15;
 
 impl EditorApplication {
     pub(super) fn pick_entity(
-        &self,
         ctx: &UpdateContext,
         uv: Vec2,
         region: RenderRegion,
@@ -60,13 +59,12 @@ impl EditorApplication {
 
         let camera_view = CameraView::new(camera.eye, camera.up, camera.fov_y_radians());
         let ray = SceneRay::new(origin, direction);
-        self.consider_light_picks(world, camera_view, ray, &mut best);
+        Self::consider_light_picks(world, camera_view, ray, &mut best);
 
         best.map(|(entity, _)| entity)
     }
 
     fn consider_light_picks(
-        &self,
         world: &hecs::World,
         camera: CameraView,
         ray: SceneRay,

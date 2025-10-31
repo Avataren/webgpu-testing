@@ -199,7 +199,7 @@ impl HistorySystem {
 
     fn apply_history_selection(
         &mut self,
-        app: &mut EditorAppAccess,
+        app: &mut EditorAppAccess<'_, '_, '_>,
         scene: &Scene,
         selection: HistorySelection,
     ) {

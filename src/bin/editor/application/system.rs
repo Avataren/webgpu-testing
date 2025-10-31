@@ -70,15 +70,15 @@ impl<'a> EditorUiContextMut<'a> {
     }
 }
 
-pub struct EditorAppAccess<'shared, 'systems> {
+pub struct EditorAppAccess<'shared, 'systems, 'access> {
     shared: &'shared mut EditorSharedState,
-    systems: &'systems mut EditorSystemsAccess<'shared>,
+    systems: &'systems mut EditorSystemsAccess<'access>,
 }
 
-impl<'shared, 'systems> EditorAppAccess<'shared, 'systems> {
+impl<'shared, 'systems, 'access> EditorAppAccess<'shared, 'systems, 'access> {
     fn new(
         shared: &'shared mut EditorSharedState,
-        systems: &'systems mut EditorSystemsAccess<'shared>,
+        systems: &'systems mut EditorSystemsAccess<'access>,
     ) -> Self {
         Self { shared, systems }
     }
@@ -356,7 +356,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn with_update_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, &mut UpdateContext<'scene>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'_, '_, 'app>, &mut UpdateContext<'scene>) -> R,
     {
         let update = self.update.as_deref_mut()?;
         let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
@@ -365,7 +365,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn with_gpu_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, &mut GpuUpdateContext<'scene>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'_, '_, 'app>, &mut GpuUpdateContext<'scene>) -> R,
     {
         let gpu = self.gpu.as_deref_mut()?;
         let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
@@ -456,7 +456,7 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
 
     pub fn with_ui_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, EditorUiContextMut<'_>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'_, '_, 'app>, EditorUiContextMut<'_>) -> R,
     {
         let ui = self.ui.as_mut()?;
         let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
