@@ -32,7 +32,7 @@ impl EditorSystem for CameraSystem {
                 let selection = app.selection_system();
                 if let (Some(uv), Some(region)) = (
                     selection.pointer_scene_uv(),
-                    app.viewports.scene_viewport.region(),
+                    app.shared.viewports.scene_viewport.region(),
                 ) {
                     let width = region.width().max(1) as f32;
                     let height = region.height().max(1) as f32;
@@ -55,12 +55,12 @@ impl EditorSystem for CameraSystem {
 
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
         let _ = ctx.with_ui(|app, ui_ctx| {
-            let is_playing = matches!(app.runtime_state.active_mode(), RuntimeMode::Playing);
+            let is_playing = matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Playing);
             if is_playing {
                 self.controller.set_viewport_rect(None);
             } else {
                 self.controller
-                    .set_viewport_rect(app.viewports.scene_viewport.rect());
+                    .set_viewport_rect(app.shared.viewports.scene_viewport.rect());
             }
 
             self.controller.capture_input(ui_ctx.egui());

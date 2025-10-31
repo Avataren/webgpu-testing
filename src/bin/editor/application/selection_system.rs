@@ -218,7 +218,7 @@ impl SelectionSystem {
         gpu_ctx: &mut GpuUpdateContext,
         request: ViewportPick,
     ) -> bool {
-        let Some(region) = app.viewports.scene_viewport.region() else {
+        let Some(region) = app.shared.viewports.scene_viewport.region() else {
             self.gpu_pick.complete(PickCompletion::Gpu(None));
             return false;
         };
@@ -325,13 +325,13 @@ impl SelectionSystem {
     }
 
     fn update_pointer_hover(&mut self, app: &EditorApplication, ui_ctx: &egui::Context) {
-        let is_playing = matches!(app.runtime_state.active_mode(), RuntimeMode::Playing);
+        let is_playing = matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Playing);
         if is_playing || app.camera_system().is_looking() {
             self.set_pointer_scene_uv(None);
             return;
         }
 
-        let Some(rect) = app.viewports.scene_viewport.rect() else {
+        let Some(rect) = app.shared.viewports.scene_viewport.rect() else {
             self.set_pointer_scene_uv(None);
             return;
         };
@@ -404,7 +404,7 @@ impl EditorSystem for SelectionSystem {
 
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
         let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
-            if !matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
+            if !matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Editor) {
                 self.clear_pending_pick();
                 gpu_ctx.renderer.set_pick_active(false);
                 return;
@@ -441,7 +441,7 @@ impl EditorSystem for SelectionSystem {
 
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
         let _ = ctx.with_ui(|app, ui_ctx| {
-            let is_playing = matches!(app.runtime_state.active_mode(), RuntimeMode::Playing);
+            let is_playing = matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Playing);
             if is_playing {
                 self.clear_pending_pick();
                 self.reset_pointer_press();

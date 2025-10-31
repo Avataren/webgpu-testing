@@ -19,10 +19,10 @@ mod shader_watcher;
 mod ui;
 
 use self::asset_browser_system::AssetBrowserSystem;
-pub use self::core::EditorApplication;
 #[allow(unused_imports)]
 pub use self::core::EditorApplicationBuilder;
 use self::core::GameViewDisplayMode;
+pub use self::core::{EditorApplication, EditorSharedState};
 
 use glam::{Quat, Vec3};
 use hecs::Entity;
@@ -87,9 +87,10 @@ impl RenderApplication for EditorApplication {
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         if !matches!(ctx.stage, CustomRenderStage::Shadow(_))
-            && matches!(self.runtime_state.active_mode(), RuntimeMode::Editor)
+            && matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor)
         {
             let grid = self
+                .shared
                 .viewports
                 .grid_postprocess
                 .get_or_insert_with(|| ViewportGrid::new(ctx.renderer.get_device()));
@@ -118,7 +119,7 @@ impl RenderApplication for EditorApplication {
     }
 
     fn render_region(&self) -> Option<RenderRegion> {
-        self.render_region_for_mode(self.runtime_state.active_mode())
+        self.render_region_for_mode(self.shared.runtime_state.active_mode())
     }
 }
 
@@ -126,7 +127,7 @@ impl EditorApplication {
     fn run_update_impl(&mut self, ctx: &mut UpdateContext) {
         // DETECT MODE CHANGES FIRST - saves state BEFORE any animation changes
         let current_mode = ctx.runtime;
-        if current_mode != self.last_runtime_mode {
+        if current_mode != self.shared.last_runtime_mode {
             self.detect_mode_transition(ctx, current_mode);
         }
 
@@ -146,8 +147,8 @@ impl EditorApplication {
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        self.viewports.scene_viewport.clear();
-        self.viewports.game_viewport.clear();
+        self.shared.viewports.scene_viewport.clear();
+        self.shared.viewports.game_viewport.clear();
 
         self.project_system_mut().show_startup_dialog(ctx);
 
@@ -157,11 +158,11 @@ impl EditorApplication {
 
         self.show_menu_bar(ctx);
 
-        let active_mode = self.runtime_state.active_mode();
+        let active_mode = self.shared.runtime_state.active_mode();
         let is_playing = matches!(active_mode, RuntimeMode::Playing);
         let show_fullscreen_game = is_playing
             && matches!(
-                self.viewports.game_view_display,
+                self.shared.viewports.game_view_display,
                 GameViewDisplayMode::Fullscreen
             );
 
@@ -169,14 +170,14 @@ impl EditorApplication {
             .set_auxiliary_windows_enabled(!show_fullscreen_game);
 
         if !show_fullscreen_game {
-            self.windows.show(ctx, default_ui);
+            self.shared.windows.show(ctx, default_ui);
         }
 
         let content_root = self.project_system().content_root();
         let override_selection = { self.selection_system_mut().take_override() };
-        let dock_tree = &mut self.dock_tree;
-        let scene_viewport = &mut self.viewports.scene_viewport;
-        let game_viewport = &mut self.viewports.game_viewport;
+        let dock_tree = &mut self.shared.dock_tree;
+        let scene_viewport = &mut self.shared.viewports.scene_viewport;
+        let game_viewport = &mut self.shared.viewports.game_viewport;
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
         if let Some(selection) = override_selection {
             scene_hierarchy_window.set_selected_entity(selection);
@@ -215,21 +216,21 @@ impl EditorApplication {
                 }
             });
 
-        if self.scene_hierarchy_handle.is_none() {
-            self.scene_hierarchy_handle = Some(scene_hierarchy_window.handle());
+        if self.shared.scene_hierarchy_handle.is_none() {
+            self.shared.scene_hierarchy_handle = Some(scene_hierarchy_window.handle());
         }
 
         let game_tile_active = self
             .find_pane_tile(EditorPane::GameViewport)
-            .map(|id| self.dock_tree.active_tiles().contains(&id))
+            .map(|id| self.shared.dock_tree.active_tiles().contains(&id))
             .unwrap_or(false);
 
         let scene_tile_active = self
             .find_pane_tile(EditorPane::SceneViewport)
-            .map(|id| self.dock_tree.active_tiles().contains(&id))
+            .map(|id| self.shared.dock_tree.active_tiles().contains(&id))
             .unwrap_or(false);
 
-        let has_pending_transition = self.pending_mode_transition.is_some();
+        let has_pending_transition = self.shared.pending_mode_transition.is_some();
 
         if !has_pending_transition
             && is_playing
@@ -237,15 +238,18 @@ impl EditorApplication {
             && !game_tile_active
             && scene_tile_active
         {
-            self.runtime_state.request_mode(RuntimeMode::Editor);
+            self.shared.runtime_state.request_mode(RuntimeMode::Editor);
         }
 
         if !has_pending_transition
             && !is_playing
-            && !matches!(self.runtime_state.desired_mode(), RuntimeMode::Playing)
+            && !matches!(
+                self.shared.runtime_state.desired_mode(),
+                RuntimeMode::Playing
+            )
             && game_tile_active
         {
-            self.runtime_state.request_mode(RuntimeMode::Playing);
+            self.shared.runtime_state.request_mode(RuntimeMode::Playing);
         }
 
         self.selection_system_mut()
@@ -335,11 +339,11 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        if self.active_camera_entity.is_none()
-                            || self.active_camera_entity == Some(entity)
+                        if self.shared.active_camera_entity.is_none()
+                            || self.shared.active_camera_entity == Some(entity)
                         {
                             ctx.scene.set_active_camera_entity(Some(entity));
-                            self.active_camera_entity = ctx.scene.active_camera_entity();
+                            self.shared.active_camera_entity = ctx.scene.active_camera_entity();
                         }
 
                         self.record_scene_change(ctx.scene);
@@ -997,12 +1001,12 @@ impl EditorApplication {
     }
 
     fn resolve_active_camera_entity(&mut self, scene: &mut Scene) {
-        if let Some(entity) = self.active_camera_entity {
+        if let Some(entity) = self.shared.active_camera_entity {
             if scene.main_world().contains(entity) {
                 return;
             }
             scene.set_active_camera_entity(None);
-            self.active_camera_entity = scene.active_camera_entity();
+            self.shared.active_camera_entity = scene.active_camera_entity();
         }
 
         let target_projection = scene.camera().projection();
@@ -1017,7 +1021,7 @@ impl EditorApplication {
 
         if let Some(entity) = candidate {
             scene.set_active_camera_entity(Some(entity));
-            self.active_camera_entity = scene.active_camera_entity();
+            self.shared.active_camera_entity = scene.active_camera_entity();
         }
     }
 
@@ -1108,13 +1112,13 @@ impl EditorApplication {
         &mut self,
         ctx: &mut GpuUpdateContext,
     ) -> (Handle<Mesh>, Option<MeshBounds>) {
-        if let Some(handle) = self.particle_mesh {
+        if let Some(handle) = self.shared.particle_mesh {
             if ctx.scene.assets.meshes.get(handle).is_some() {
-                return (handle, self.particle_mesh_bounds);
+                return (handle, self.shared.particle_mesh_bounds);
             }
 
-            self.particle_mesh = None;
-            self.particle_mesh_bounds = None;
+            self.shared.particle_mesh = None;
+            self.shared.particle_mesh_bounds = None;
         }
 
         let (vertices, indices) = quad_mesh();
@@ -1122,8 +1126,8 @@ impl EditorApplication {
         let handle = ctx.scene.assets.meshes.insert(mesh);
         let bounds = MeshBounds::from_vertices(&vertices);
 
-        self.particle_mesh = Some(handle);
-        self.particle_mesh_bounds = bounds;
+        self.shared.particle_mesh = Some(handle);
+        self.shared.particle_mesh_bounds = bounds;
 
         (handle, bounds)
     }
@@ -1243,7 +1247,7 @@ impl EditorApplication {
             .spawn();
 
         ctx.scene.set_active_camera_entity(Some(entity));
-        self.active_camera_entity = ctx.scene.active_camera_entity();
+        self.shared.active_camera_entity = ctx.scene.active_camera_entity();
 
         Some(entity)
     }

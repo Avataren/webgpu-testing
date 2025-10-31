@@ -40,7 +40,7 @@ impl EditorApplication {
                 });
 
                 ui.menu_button("Window", |ui| {
-                    self.windows.window_menu(ui);
+                    self.shared.windows.window_menu(ui);
                 });
             });
 
@@ -48,8 +48,8 @@ impl EditorApplication {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Toolbar").strong());
                 ui.separator();
-                let desired = self.runtime_state.desired_mode();
-                let active = self.runtime_state.active_mode();
+                let desired = self.shared.runtime_state.desired_mode();
+                let active = self.shared.runtime_state.active_mode();
                 let requesting_play = matches!(desired, RuntimeMode::Playing);
                 let active_play = matches!(active, RuntimeMode::Playing);
 
@@ -57,7 +57,7 @@ impl EditorApplication {
                     .add_enabled(!requesting_play, egui::Button::new("▶ Play"))
                     .clicked()
                 {
-                    self.runtime_state.request_mode(RuntimeMode::Playing);
+                    self.shared.runtime_state.request_mode(RuntimeMode::Playing);
                 }
 
                 ui.add_enabled(false, egui::Button::new("Pause"));
@@ -66,7 +66,7 @@ impl EditorApplication {
                     .add_enabled(requesting_play || active_play, egui::Button::new("⏹ Stop"))
                     .clicked()
                 {
-                    self.runtime_state.request_mode(RuntimeMode::Editor);
+                    self.shared.runtime_state.request_mode(RuntimeMode::Editor);
                 }
 
                 ui.separator();
@@ -102,12 +102,12 @@ impl EditorApplication {
                 ui.separator();
                 ui.label("Game View:");
                 ui.selectable_value(
-                    &mut self.viewports.game_view_display,
+                    &mut self.shared.viewports.game_view_display,
                     GameViewDisplayMode::Viewport,
                     "Viewport",
                 );
                 ui.selectable_value(
-                    &mut self.viewports.game_view_display,
+                    &mut self.shared.viewports.game_view_display,
                     GameViewDisplayMode::Fullscreen,
                     "Fullscreen",
                 );

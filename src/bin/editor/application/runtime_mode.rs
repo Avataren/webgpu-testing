@@ -6,7 +6,7 @@ use super::core::{EditorApplication, RuntimeModeTransition};
 
 impl EditorApplication {
     pub(super) fn process_pending_mode_transition(&mut self, ctx: &mut GpuUpdateContext) {
-        let Some(transition) = self.pending_mode_transition.take() else {
+        let Some(transition) = self.shared.pending_mode_transition.take() else {
             return;
         };
 
@@ -22,16 +22,16 @@ impl EditorApplication {
     }
 
     pub fn detect_mode_transition(&mut self, ctx: &mut UpdateContext, new_mode: RuntimeMode) {
-        let old_mode = self.last_runtime_mode;
+        let old_mode = self.shared.last_runtime_mode;
 
         // Entering play mode from editor
         if matches!(old_mode, RuntimeMode::Editor) && matches!(new_mode, RuntimeMode::Playing) {
             info!("Transitioning from Editor to Play mode - capturing scene snapshot");
 
             // Capture the ENTIRE scene state
-            self.editor_scene_snapshot = Some(SceneStateSnapshot::capture(ctx.scene));
+            self.shared.editor_scene_snapshot = Some(SceneStateSnapshot::capture(ctx.scene));
 
-            self.pending_mode_transition = Some(RuntimeModeTransition {
+            self.shared.pending_mode_transition = Some(RuntimeModeTransition {
                 from: old_mode,
                 to: new_mode,
             });
@@ -43,20 +43,20 @@ impl EditorApplication {
         // Exiting play mode to editor
         if matches!(old_mode, RuntimeMode::Playing) && matches!(new_mode, RuntimeMode::Editor) {
             info!("Transitioning from Play to Editor mode");
-            self.pending_mode_transition = Some(RuntimeModeTransition {
+            self.shared.pending_mode_transition = Some(RuntimeModeTransition {
                 from: old_mode,
                 to: new_mode,
             });
         }
 
-        self.last_runtime_mode = new_mode;
+        self.shared.last_runtime_mode = new_mode;
     }
 
     fn exit_play_mode(&mut self, ctx: &mut GpuUpdateContext) {
         info!("Exiting play mode - restoring editor scene");
 
         // Completely restore the scene from the snapshot
-        if let Some(snapshot) = self.editor_scene_snapshot.take() {
+        if let Some(snapshot) = self.shared.editor_scene_snapshot.take() {
             snapshot.restore(ctx.scene); // Changed from restore_without_assets
         }
 

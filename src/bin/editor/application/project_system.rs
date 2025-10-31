@@ -125,7 +125,7 @@ impl ProjectSystem {
                 }
             }
 
-            if matches!(app.runtime_state.active_mode(), RuntimeMode::Editor) {
+            if matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Editor) {
                 gpu_ctx.scene.set_animation_playback(false);
                 gpu_ctx.scene.update(0.0);
             }
@@ -279,7 +279,7 @@ impl ProjectSystem {
                         }
                         app.history_system_mut().reset();
                         app.initialize_history_state(gpu_ctx.scene);
-                        app.runtime_state.request_mode(RuntimeMode::Editor);
+                        app.shared.runtime_state.request_mode(RuntimeMode::Editor);
                     }
                     Err(err) => {
                         error!("Failed to instantiate project scene: {err}");
