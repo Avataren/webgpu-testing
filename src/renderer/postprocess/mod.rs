@@ -241,6 +241,551 @@ impl<'a> PickAttachmentViews<'a> {
 }
 
 impl PostProcess {
+    fn fullscreen_vertex<'a>(shader: &'a wgpu::ShaderModule) -> wgpu::VertexState<'a> {
+        wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_fullscreen"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        }
+    }
+
+    fn init_color_grading(
+        device: &wgpu::Device,
+        uniform_layout: &wgpu::BindGroupLayout,
+        shader: &wgpu::ShaderModule,
+        scene_format: wgpu::TextureFormat,
+    ) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline) {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ColorGradingLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ColorGradingPipelineLayout"),
+            bind_group_layouts: &[uniform_layout, &layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
+            .with_label("ColorGradingPipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_color_adjust")
+            .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        (layout, pipeline)
+    }
+
+    fn init_depth_resolve(
+        device: &wgpu::Device,
+        uniform_layout: &wgpu::BindGroupLayout,
+        sample_count: u32,
+    ) -> (Option<wgpu::BindGroupLayout>, Option<wgpu::RenderPipeline>) {
+        if sample_count <= 1 {
+            return (None, None);
+        }
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("DepthResolveLayout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        });
+
+        let depth_resolve_source =
+            ShaderBuilder::new().build(include_str!("../../shader/depth_resolve.wgsl"));
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("DepthResolveShader"),
+            source: wgpu::ShaderSource::Wgsl(depth_resolve_source.into()),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("DepthResolvePipelineLayout"),
+            bind_group_layouts: &[uniform_layout, &layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
+            .with_label("DepthResolvePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_resolve_depth")
+            .with_depth_stencil(
+                wgpu::TextureFormat::Depth32Float,
+                true,
+                wgpu::CompareFunction::Always,
+            )
+            .with_vertex_state(Self::fullscreen_vertex(&shader))
+            .with_no_culling()
+            .build();
+
+        (Some(layout), Some(pipeline))
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn init_ssao(
+        device: &wgpu::Device,
+        uniform_layout: &wgpu::BindGroupLayout,
+        shader: &wgpu::ShaderModule,
+    ) -> (
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+    ) {
+        let ssao_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SsaoInputLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SsaoPipelineLayout"),
+            bind_group_layouts: &[uniform_layout, &ssao_layout],
+            push_constant_ranges: &[],
+        });
+
+        let ssao_pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
+            .with_label("SsaoPipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_ssao")
+            .with_color_target(wgpu::TextureFormat::R8Unorm, None)
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SsaoBlurLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 21,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 22,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 23,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SsaoBlurPipelineLayout"),
+            bind_group_layouts: &[uniform_layout, &blur_layout],
+            push_constant_ranges: &[],
+        });
+
+        let blur_horizontal = PipelineBuilder::new(device, &blur_pipeline_layout, shader)
+            .with_label("SsaoBlurHorizontalPipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_ssao_blur_horizontal")
+            .with_color_target(wgpu::TextureFormat::R8Unorm, None)
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        let blur_vertical = PipelineBuilder::new(device, &blur_pipeline_layout, shader)
+            .with_label("SsaoBlurVerticalPipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_ssao_blur_vertical")
+            .with_color_target(wgpu::TextureFormat::R8Unorm, None)
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        (
+            ssao_layout,
+            ssao_pipeline,
+            blur_layout,
+            blur_horizontal,
+            blur_vertical,
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn init_bloom(
+        device: &wgpu::Device,
+        uniform_layout: &wgpu::BindGroupLayout,
+        shader: &wgpu::ShaderModule,
+    ) -> (
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+        wgpu::BindGroupLayout,
+        wgpu::RenderPipeline,
+    ) {
+        let prefilter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("BloomPrefilterLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 30,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 31,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let prefilter_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("BloomPrefilterPipelineLayout"),
+                bind_group_layouts: &[uniform_layout, &prefilter_layout],
+                push_constant_ranges: &[],
+            });
+
+        let prefilter_pipeline = PipelineBuilder::new(device, &prefilter_pipeline_layout, shader)
+            .with_label("BloomPrefilterPipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_bloom_prefilter")
+            .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        let downsample_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("BloomDownsampleLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 40,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 41,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 42,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let downsample_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("BloomDownsamplePipelineLayout"),
+                bind_group_layouts: &[uniform_layout, &downsample_layout],
+                push_constant_ranges: &[],
+            });
+
+        let downsample_pipeline = PipelineBuilder::new(device, &downsample_pipeline_layout, shader)
+            .with_label("BloomDownsamplePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_bloom_downsample")
+            .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        let upsample_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("BloomUpsampleLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 45,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 46,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 47,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 48,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 49,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 42,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let upsample_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("BloomUpsamplePipelineLayout"),
+                bind_group_layouts: &[uniform_layout, &upsample_layout],
+                push_constant_ranges: &[],
+            });
+
+        let upsample_pipeline = PipelineBuilder::new(device, &upsample_pipeline_layout, shader)
+            .with_label("BloomUpsamplePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_bloom_upsample")
+            .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        (
+            prefilter_layout,
+            prefilter_pipeline,
+            downsample_layout,
+            downsample_pipeline,
+            upsample_layout,
+            upsample_pipeline,
+        )
+    }
+
+    fn init_composite(
+        device: &wgpu::Device,
+        uniform_layout: &wgpu::BindGroupLayout,
+        shader: &wgpu::ShaderModule,
+        output_format: wgpu::TextureFormat,
+    ) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline) {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("CompositeLayout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 50,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 51,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 52,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 53,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("CompositePipelineLayout"),
+            bind_group_layouts: &[uniform_layout, &layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
+            .with_label("CompositePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_composite")
+            .with_color_target(output_format, Some(wgpu::BlendState::REPLACE))
+            .with_vertex_state(Self::fullscreen_vertex(shader))
+            .with_no_culling()
+            .build();
+
+        (layout, pipeline)
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -360,420 +905,31 @@ impl PostProcess {
             source: wgpu::ShaderSource::Wgsl(postprocess_source.into()),
         });
 
-        let fullscreen_vertex = wgpu::VertexState {
-            module: &postprocess_shader,
-            entry_point: Some("vs_fullscreen"),
-            buffers: &[],
-            compilation_options: Default::default(),
-        };
+        let (color_grading_layout, color_grading_pipeline) =
+            Self::init_color_grading(device, &uniform_layout, &postprocess_shader, scene_format);
 
-        let color_grading_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ColorGradingLayout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 10,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 11,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+        let (depth_resolve_layout, depth_resolve_pipeline) =
+            Self::init_depth_resolve(device, &uniform_layout, sample_count);
 
-        let color_grading_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ColorGradingPipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &color_grading_layout],
-                push_constant_ranges: &[],
-            });
+        let (
+            ssao_layout,
+            ssao_pipeline,
+            ssao_blur_layout,
+            ssao_blur_horizontal_pipeline,
+            ssao_blur_vertical_pipeline,
+        ) = Self::init_ssao(device, &uniform_layout, &postprocess_shader);
 
-        let color_grading_pipeline =
-            PipelineBuilder::new(device, &color_grading_pipeline_layout, &postprocess_shader)
-                .with_label("ColorGradingPipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_color_adjust")
-                .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
+        let (
+            bloom_prefilter_layout,
+            bloom_prefilter_pipeline,
+            bloom_downsample_layout,
+            bloom_downsample_pipeline,
+            bloom_upsample_layout,
+            bloom_upsample_pipeline,
+        ) = Self::init_bloom(device, &uniform_layout, &postprocess_shader);
 
-        let (depth_resolve_layout, depth_resolve_pipeline) = if sample_count > 1 {
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("DepthResolveLayout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
-                    },
-                    count: None,
-                }],
-            });
-            let depth_resolve_source =
-                ShaderBuilder::new().build(include_str!("../../shader/depth_resolve.wgsl"));
-
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("DepthResolveShader"),
-                source: wgpu::ShaderSource::Wgsl(depth_resolve_source.into()),
-            });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("DepthResolvePipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &layout],
-                push_constant_ranges: &[],
-            });
-            let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
-                .with_label("DepthResolvePipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_resolve_depth")
-                .with_depth_stencil(
-                    wgpu::TextureFormat::Depth32Float,
-                    true,
-                    wgpu::CompareFunction::Always,
-                )
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
-            (Some(layout), Some(pipeline))
-        } else {
-            (None, None)
-        };
-
-        // SSAO pipeline setup
-        let ssao_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("SsaoInputLayout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let ssao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("SsaoPipelineLayout"),
-            bind_group_layouts: &[&uniform_layout, &ssao_layout],
-            push_constant_ranges: &[],
-        });
-
-        let ssao_pipeline =
-            PipelineBuilder::new(device, &ssao_pipeline_layout, &postprocess_shader)
-                .with_label("SsaoPipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_ssao")
-                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
-
-        let ssao_blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("SsaoBlurLayout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 60,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 61,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let ssao_blur_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("SsaoBlurPipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &ssao_blur_layout],
-                push_constant_ranges: &[],
-            });
-
-        let ssao_blur_horizontal_pipeline =
-            PipelineBuilder::new(device, &ssao_blur_pipeline_layout, &postprocess_shader)
-                .with_label("SsaoBlurHorizontalPipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_ssao_blur_horizontal")
-                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
-
-        let ssao_blur_vertical_pipeline =
-            PipelineBuilder::new(device, &ssao_blur_pipeline_layout, &postprocess_shader)
-                .with_label("SsaoBlurVerticalPipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_ssao_blur_vertical")
-                .with_color_target(wgpu::TextureFormat::R8Unorm, None)
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
-
-        // Bloom prefilter pipeline
-        let bloom_prefilter_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("BloomPrefilterLayout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 20,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 21,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let bloom_prefilter_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("BloomPrefilterPipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &bloom_prefilter_layout],
-                push_constant_ranges: &[],
-            });
-
-        let bloom_prefilter_pipeline = PipelineBuilder::new(
-            device,
-            &bloom_prefilter_pipeline_layout,
-            &postprocess_shader,
-        )
-        .with_label("BloomPrefilterPipeline")
-        .with_vertex_entry("vs_fullscreen")
-        .with_fragment_entry("fs_bloom_prefilter")
-        .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
-        .with_vertex_state(fullscreen_vertex.clone())
-        .with_no_culling()
-        .build();
-
-        let bloom_downsample_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("BloomDownsampleLayout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 30,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 31,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let bloom_downsample_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("BloomDownsamplePipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &bloom_downsample_layout],
-                push_constant_ranges: &[],
-            });
-
-        let bloom_downsample_pipeline = PipelineBuilder::new(
-            device,
-            &bloom_downsample_pipeline_layout,
-            &postprocess_shader,
-        )
-        .with_label("BloomDownsamplePipeline")
-        .with_vertex_entry("vs_fullscreen")
-        .with_fragment_entry("fs_bloom_downsample")
-        .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
-        .with_vertex_state(fullscreen_vertex.clone())
-        .with_no_culling()
-        .build();
-
-        let bloom_upsample_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("BloomUpsampleLayout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 40,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 41,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 42,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
-        let bloom_upsample_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("BloomUpsamplePipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &bloom_upsample_layout],
-                push_constant_ranges: &[],
-            });
-
-        let bloom_upsample_pipeline =
-            PipelineBuilder::new(device, &bloom_upsample_pipeline_layout, &postprocess_shader)
-                .with_label("BloomUpsamplePipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_bloom_upsample")
-                .with_color_target(BLOOM_FORMAT, Some(wgpu::BlendState::REPLACE))
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
-
-        // Composite pipeline
-        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("CompositeLayout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 50,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 51,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 52,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 53,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
-        let composite_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("CompositePipelineLayout"),
-                bind_group_layouts: &[&uniform_layout, &composite_layout],
-                push_constant_ranges: &[],
-            });
-
-        let composite_pipeline =
-            PipelineBuilder::new(device, &composite_pipeline_layout, &postprocess_shader)
-                .with_label("CompositePipeline")
-                .with_vertex_entry("vs_fullscreen")
-                .with_fragment_entry("fs_composite")
-                .with_color_target(config.format, Some(wgpu::BlendState::REPLACE))
-                .with_vertex_state(fullscreen_vertex.clone())
-                .with_no_culling()
-                .build();
+        let (composite_layout, composite_pipeline) =
+            Self::init_composite(device, &uniform_layout, &postprocess_shader, config.format);
 
         let post = Self {
             scene_source,
