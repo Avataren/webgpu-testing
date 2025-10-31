@@ -320,25 +320,11 @@ impl EditorApplication {
             .expect("project system registered")
     }
 
-    pub(super) fn script_editor_system(&self) -> &ScriptEditorSystem {
-        self.systems[self.script_editor_system_index]
-            .as_any()
-            .downcast_ref::<ScriptEditorSystem>()
-            .expect("script editor system registered")
-    }
-
     pub(super) fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
         self.systems[self.script_editor_system_index]
             .as_any_mut()
             .downcast_mut::<ScriptEditorSystem>()
             .expect("script editor system registered")
-    }
-
-    pub(super) fn asset_browser_system(&self) -> &AssetBrowserSystem {
-        self.systems[self.asset_browser_system_index]
-            .as_any()
-            .downcast_ref::<AssetBrowserSystem>()
-            .expect("asset browser system registered")
     }
 
     pub(super) fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
@@ -366,16 +352,8 @@ impl EditorApplication {
             .expect("particle system registered")
     }
 
-    pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
-        self.shared.scene_hierarchy_handle.as_ref()
-    }
-
     pub(super) fn history(&self) -> &EditorHistory {
         self.history_system().history()
-    }
-
-    pub(super) fn history_mut(&mut self) -> &mut EditorHistory {
-        self.history_system_mut().history_mut()
     }
 
     fn system_indices(&self) -> EditorSystemIndices {

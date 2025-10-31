@@ -57,7 +57,7 @@ struct EditorUiContext<'ctx> {
 
 pub struct EditorUiContextMut<'a> {
     egui: &'a EguiContext,
-    default_ui: &'a mut DefaultUI,
+    _default_ui: &'a mut DefaultUI,
 }
 
 impl<'a> EditorUiContextMut<'a> {
@@ -65,8 +65,9 @@ impl<'a> EditorUiContextMut<'a> {
         self.egui
     }
 
+    #[allow(dead_code)]
     pub fn default_ui(&mut self) -> &mut DefaultUI {
-        self.default_ui
+        self._default_ui
     }
 }
 
@@ -112,12 +113,6 @@ impl<'shared> EditorAppAccess<'shared> {
         self.systems.selection_system_mut()
     }
 
-    pub fn update_history_selection(&mut self, scene: &Scene) {
-        let (selected, highlighted) = self.selection_entities();
-        self.history_system_mut()
-            .update_history_selection(scene, selected, highlighted);
-    }
-
     pub fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
         self.systems.asset_browser_system_mut().state_mut()
     }
@@ -138,11 +133,11 @@ impl<'shared> EditorAppAccess<'shared> {
             .initialize_state(scene, selected, highlighted);
     }
 
-    pub fn command_queue_mut(&mut self) -> &mut VecDeque<EditorCommand> {
+    pub(super) fn command_queue_mut(&mut self) -> &mut VecDeque<EditorCommand> {
         &mut self.shared.commands
     }
 
-    pub fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
+    pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
         self.shared.scene_hierarchy_handle.as_ref()
     }
 
@@ -186,14 +181,6 @@ impl<'shared> EditorAppAccess<'shared> {
         EditorApplication::create_environment(ctx)
     }
 
-    pub fn history(&self) -> &EditorHistory {
-        self.history_system().history()
-    }
-
-    pub fn history_mut(&mut self) -> &mut EditorHistory {
-        self.history_system_mut().history_mut()
-    }
-
     pub fn pick_entity(
         &self,
         ctx: &UpdateContext<'_>,
@@ -210,7 +197,7 @@ impl<'shared> EditorAppAccess<'shared> {
 }
 
 impl<'app> EditorSystemsAccess<'app> {
-    pub(crate) fn new(
+    pub(super) fn new(
         before: &'app mut [Box<dyn EditorSystem>],
         after: &'app mut [Box<dyn EditorSystem>],
         indices: EditorSystemIndices,
@@ -292,11 +279,11 @@ impl<'app> EditorSystemsAccess<'app> {
         self.system_mut(self.indices.selection)
     }
 
-    pub fn project_system(&self) -> &ProjectSystem {
+    pub(super) fn project_system(&self) -> &ProjectSystem {
         self.system_ref(self.indices.project)
     }
 
-    pub fn project_system_mut(&mut self) -> &mut ProjectSystem {
+    pub(super) fn project_system_mut(&mut self) -> &mut ProjectSystem {
         self.system_mut(self.indices.project)
     }
 
@@ -500,7 +487,7 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
     pub fn ui_context(&mut self) -> Option<EditorUiContextMut<'_>> {
         self.ui.as_mut().map(|ui| EditorUiContextMut {
             egui: ui.egui,
-            default_ui: &mut *ui.default_ui,
+            _default_ui: &mut *ui.default_ui,
         })
     }
 
@@ -520,7 +507,7 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
         let mut app = EditorAppAccess::new(shared, systems);
         let ui_ctx = EditorUiContextMut {
             egui: ui.egui,
-            default_ui: &mut *ui.default_ui,
+            _default_ui: &mut *ui.default_ui,
         };
         let result = f(&mut app, ui_ctx);
         let (shared, systems) = app.into_inner();
