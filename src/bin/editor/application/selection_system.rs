@@ -6,8 +6,8 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
 use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
 
-use super::core::{EditorApplication, ViewportPick};
-use super::system::{EditorContext, EditorSystem};
+use super::core::ViewportPick;
+use super::system::{EditorAppAccess, EditorContext, EditorSystem};
 
 #[derive(Default)]
 pub(crate) struct SelectionSystem {
@@ -177,7 +177,11 @@ impl SelectionSystem {
         self.gpu_pick.mark_discard();
     }
 
-    fn process_viewport_pick(&mut self, app: &mut EditorApplication, ctx: &mut UpdateContext) {
+    fn process_viewport_pick(
+        &mut self,
+        app: &mut EditorAppAccess<'_>,
+        ctx: &mut UpdateContext<'_>,
+    ) {
         if !matches!(ctx.runtime, RuntimeMode::Editor) {
             self.clear_pending_pick();
             return;
@@ -214,11 +218,11 @@ impl SelectionSystem {
 
     fn try_enqueue_pick(
         &mut self,
-        app: &EditorApplication,
-        gpu_ctx: &mut GpuUpdateContext,
+        app: &EditorAppAccess<'_>,
+        gpu_ctx: &mut GpuUpdateContext<'_>,
         request: ViewportPick,
     ) -> bool {
-        let Some(region) = app.shared.viewports.scene_viewport.region() else {
+        let Some(region) = app.scene_viewport().region() else {
             self.gpu_pick.complete(PickCompletion::Gpu(None));
             return false;
         };
@@ -324,14 +328,15 @@ impl SelectionSystem {
         selection_changed || highlight_changed
     }
 
-    fn update_pointer_hover(&mut self, app: &EditorApplication, ui_ctx: &egui::Context) {
-        let is_playing = matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Playing);
+    fn update_pointer_hover(&mut self, app: &EditorAppAccess<'_>, ui_ctx: &egui::Context) {
+        let runtime_state = app.runtime_state();
+        let is_playing = matches!(runtime_state.active_mode(), RuntimeMode::Playing);
         if is_playing || app.camera_system().is_looking() {
             self.set_pointer_scene_uv(None);
             return;
         }
 
-        let Some(rect) = app.shared.viewports.scene_viewport.rect() else {
+        let Some(rect) = app.scene_viewport().rect() else {
             self.set_pointer_scene_uv(None);
             return;
         };
@@ -391,7 +396,7 @@ impl SelectionSystem {
 
 impl EditorSystem for SelectionSystem {
     fn update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
-        let Some(()) = ctx.with_update(|app, update_ctx| {
+        let Some(()) = ctx.with_update_app(|app, update_ctx| {
             self.process_viewport_pick(app, update_ctx);
             let history_changed = self.sync_selection_component(update_ctx);
             if history_changed {
@@ -403,8 +408,9 @@ impl EditorSystem for SelectionSystem {
     }
 
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
-        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
-            if !matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Editor) {
+        let Some(()) = ctx.with_gpu_app(|app, gpu_ctx| {
+            let runtime_state = app.runtime_state();
+            if !matches!(runtime_state.active_mode(), RuntimeMode::Editor) {
                 self.clear_pending_pick();
                 gpu_ctx.renderer.set_pick_active(false);
                 return;
@@ -440,8 +446,9 @@ impl EditorSystem for SelectionSystem {
     }
 
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {
-        let _ = ctx.with_ui(|app, ui_ctx| {
-            let is_playing = matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Playing);
+        let _ = ctx.with_ui_app(|app, ui_ctx| {
+            let runtime_state = app.runtime_state();
+            let is_playing = matches!(runtime_state.active_mode(), RuntimeMode::Playing);
             if is_playing {
                 self.clear_pending_pick();
                 self.reset_pointer_press();

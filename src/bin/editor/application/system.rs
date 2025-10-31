@@ -5,15 +5,20 @@ use std::path::PathBuf;
 // Use a direct mutable borrow instead of a raw pointer for safety.
 
 use super::asset_browser_system::AssetBrowserSystem;
+use super::camera_system::CameraSystem;
 use super::core::{EditorApplication, PendingScriptAction};
 use super::project_system::ProjectSystem;
 use super::script_editor_system::ScriptEditorSystem;
+use super::selection_system::SelectionSystem;
 use crate::asset_browser::AssetBrowserState;
 use crate::history::EditorHistory;
 use crate::inspector::InspectorAction;
+use crate::layout::ViewportState;
 use egui::Context as EguiContext;
+use glam::Vec2;
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeStateHandle, UpdateContext};
+use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::Scene;
 use wgpu_cube::DefaultUI;
 use wgpu_cube::SceneCreationAction;
@@ -60,6 +65,49 @@ impl<'a> EditorUiContextMut<'a> {
     }
 }
 
+pub struct EditorAppAccess<'app> {
+    application: &'app mut EditorApplication,
+}
+
+impl<'app> EditorAppAccess<'app> {
+    fn new(application: &'app mut EditorApplication) -> Self {
+        Self { application }
+    }
+
+    pub fn runtime_state(&self) -> RuntimeStateHandle {
+        self.application.shared.runtime_state.clone()
+    }
+
+    pub fn scene_viewport(&self) -> &ViewportState {
+        &self.application.shared.viewports.scene_viewport
+    }
+
+    pub fn camera_system(&self) -> &CameraSystem {
+        self.application.camera_system()
+    }
+
+    pub fn selection_system_mut(&mut self) -> &mut SelectionSystem {
+        self.application.selection_system_mut()
+    }
+
+    pub fn update_history_selection(&mut self, scene: &Scene) {
+        self.application.update_history_selection(scene);
+    }
+
+    pub fn pick_entity(
+        &self,
+        ctx: &UpdateContext<'_>,
+        uv: Vec2,
+        region: RenderRegion,
+    ) -> Option<Entity> {
+        self.application.pick_entity(ctx, uv, region)
+    }
+
+    pub fn application_mut(&mut self) -> &mut EditorApplication {
+        self.application
+    }
+}
+
 #[allow(dead_code)]
 impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     pub(crate) fn for_update(
@@ -98,6 +146,26 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn gpu_context_mut(&mut self) -> Option<&mut GpuUpdateContext<'scene>> {
         self.gpu.as_deref_mut()
+    }
+
+    pub fn with_update_app<R, F>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut EditorAppAccess<'app>, &mut UpdateContext<'scene>) -> R,
+    {
+        let update = self.update.as_deref_mut()?;
+        let mut app = EditorAppAccess::new(&mut *self.application);
+        let result = f(&mut app, update);
+        Some(result)
+    }
+
+    pub fn with_gpu_app<R, F>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut EditorAppAccess<'app>, &mut GpuUpdateContext<'scene>) -> R,
+    {
+        let gpu = self.gpu.as_deref_mut()?;
+        let mut app = EditorAppAccess::new(&mut *self.application);
+        let result = f(&mut app, gpu);
+        Some(result)
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {
@@ -158,18 +226,14 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     where
         F: FnOnce(&mut EditorApplication, &mut UpdateContext<'scene>) -> R,
     {
-        let update = self.update.as_deref_mut()?;
-        let app = &mut *self.application;
-        Some(f(app, update))
+        self.with_update_app(|app, update| f(app.application_mut(), update))
     }
 
     pub fn with_gpu<R, F>(&mut self, f: F) -> Option<R>
     where
         F: FnOnce(&mut EditorApplication, &mut GpuUpdateContext<'scene>) -> R,
     {
-        let gpu = self.gpu.as_deref_mut()?;
-        let app = &mut *self.application;
-        Some(f(app, gpu))
+        self.with_gpu_app(|app, gpu| f(app.application_mut(), gpu))
     }
 }
 
@@ -181,7 +245,7 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
         default_ui: &'ctx mut DefaultUI,
     ) -> EditorContext<'app, 'ctx, 'ctx> {
         Self {
-            application: NonNull::from(application),
+            application,
             update: None,
             gpu: None,
             ui: Some(EditorUiContext {
@@ -199,17 +263,25 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
         })
     }
 
-    pub fn with_ui<R>(
-        &mut self,
-        f: impl FnOnce(&mut EditorApplication, EditorUiContextMut<'_>) -> R,
-    ) -> Option<R> {
+    pub fn with_ui_app<R, F>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut EditorAppAccess<'app>, EditorUiContextMut<'_>) -> R,
+    {
         let ui = self.ui.as_mut()?;
         let ui_ctx = EditorUiContextMut {
             egui: ui.egui,
             default_ui: &mut *ui.default_ui,
         };
-        let app = &mut *self.application;
-        Some(f(app, ui_ctx))
+        let mut app = EditorAppAccess::new(&mut *self.application);
+        let result = f(&mut app, ui_ctx);
+        Some(result)
+    }
+
+    pub fn with_ui<R>(
+        &mut self,
+        f: impl FnOnce(&mut EditorApplication, EditorUiContextMut<'_>) -> R,
+    ) -> Option<R> {
+        self.with_ui_app(|app, ui_ctx| f(app.application_mut(), ui_ctx))
     }
 }
 
