@@ -1,59 +1,64 @@
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
-#[derive(Debug)]
-pub struct Handle<T> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HandleRepr<M> {
     index: usize,
-    _marker: PhantomData<*const T>,
+    _marker: M,
 }
 
-impl<T> PartialEq for Handle<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
+#[derive(Debug)]
+pub struct HandleMarker<T>(PhantomData<fn() -> T>);
+
+impl<T> HandleMarker<T> {
+    const fn new() -> Self {
+        Self(PhantomData)
     }
 }
 
-impl<T> Eq for Handle<T> {}
-
-impl<T> Hash for Handle<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
-    }
-}
-
-// Manually implement Clone without requiring T: Clone
-impl<T> Clone for Handle<T> {
+impl<T> Clone for HandleMarker<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-// Manually implement Copy without requiring T: Copy
-impl<T> Copy for Handle<T> {}
+impl<T> Copy for HandleMarker<T> {}
 
-// `Handle<T>` is a lightweight index/ID type and does not contain or own a `T`.
-// It is therefore safe to send and share `Handle<T>` across threads regardless
-// of `T`. Re-add the explicit impls so the type is usable in `hecs` components
-// without requiring `T: Send + Sync`.
-unsafe impl<T> Send for Handle<T> {}
-unsafe impl<T> Sync for Handle<T> {}
+impl<T> PartialEq for HandleMarker<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
 
-impl<T> Handle<T> {
+impl<T> Eq for HandleMarker<T> {}
+
+impl<T> Hash for HandleMarker<T> {
+    fn hash<H: Hasher>(&self, _: &mut H) {}
+}
+
+pub type Handle<T> = HandleRepr<HandleMarker<T>>;
+
+impl<M> HandleRepr<M> {
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+impl<T> HandleRepr<HandleMarker<T>> {
     pub fn new(index: usize) -> Self {
         Self {
             index,
-            _marker: PhantomData,
+            _marker: HandleMarker::new(),
         }
-    }
-
-    pub fn index(&self) -> usize {
-        self.index
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
+
+    fn assert_send_sync<T: Send + Sync>() {}
 
     #[test]
     fn handle_is_copy() {
@@ -62,5 +67,10 @@ mod tests {
         let h3 = h1;
         assert_eq!(h1.index(), h2.index());
         assert_eq!(h1.index(), h3.index());
+    }
+
+    #[test]
+    fn handle_is_send_and_sync_for_non_send_assets() {
+        assert_send_sync::<Handle<Rc<u8>>>();
     }
 }
