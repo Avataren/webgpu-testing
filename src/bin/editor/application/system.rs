@@ -18,11 +18,10 @@ use crate::layout::ViewportState;
 use egui::Context as EguiContext;
 use glam::Vec2;
 use hecs::Entity;
-use wgpu_cube::app::{GpuUpdateContext, RuntimeStateHandle, UpdateContext};
-use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::scene::Scene;
-use wgpu_cube::DefaultUI;
-use wgpu_cube::SceneCreationAction;
+use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
+use wgpu_cube::renderer::{RenderRegion, Renderer};
+use wgpu_cube::scene::{ParticleBehaviorPreset, Scene};
+use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
 
 pub(super) enum EditorCommand {
     ImportPath(PathBuf),
@@ -105,6 +104,92 @@ impl<'app> EditorAppAccess<'app> {
 
     pub fn update_history_selection(&mut self, scene: &Scene) {
         self.application.update_history_selection(scene);
+    }
+
+    pub fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
+        self.application.asset_browser_state_mut()
+    }
+
+    pub fn record_scene_change(&mut self, scene: &mut Scene) {
+        self.application.record_scene_change(scene);
+    }
+
+    pub fn ensure_editor_scene_basics(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
+        self.application.ensure_editor_scene_basics(scene, renderer);
+    }
+
+    pub fn initialize_history_state(&mut self, scene: &mut Scene) {
+        self.application.initialize_history_state(scene);
+    }
+
+    pub fn command_queue_mut(&mut self) -> &mut VecDeque<EditorCommand> {
+        &mut self.application.shared.commands
+    }
+
+    pub fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
+        self.application.scene_hierarchy_handle()
+    }
+
+    pub fn request_runtime_mode(&mut self, mode: RuntimeMode) {
+        self.application.shared.runtime_state.request_mode(mode);
+    }
+
+    pub fn create_primitive(
+        &mut self,
+        ctx: &mut GpuUpdateContext<'_>,
+        preset: ScenePrimitivePreset,
+    ) -> Option<Entity> {
+        self.application.create_primitive(ctx, preset)
+    }
+
+    pub fn create_particle_system(
+        &mut self,
+        ctx: &mut GpuUpdateContext<'_>,
+        preset: ParticleBehaviorPreset,
+    ) -> Option<Entity> {
+        self.application.create_particle_system(ctx, preset)
+    }
+
+    pub fn create_point_light(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        self.application.create_point_light(ctx)
+    }
+
+    pub fn create_directional_light(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        self.application.create_directional_light(ctx)
+    }
+
+    pub fn create_spot_light(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        self.application.create_spot_light(ctx)
+    }
+
+    pub fn create_camera(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        self.application.create_camera(ctx)
+    }
+
+    pub fn create_environment(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        self.application.create_environment(ctx)
+    }
+
+    pub fn history(&self) -> &EditorHistory {
+        self.application.history()
+    }
+
+    pub fn history_mut(&mut self) -> &mut EditorHistory {
+        self.application.history_mut()
+    }
+
+    pub fn run_update_impl(&mut self, ctx: &mut UpdateContext<'_>) {
+        self.application.run_update_impl(ctx);
+    }
+
+    pub fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext<'_>) {
+        self.application.run_gpu_update_impl(ctx);
+    }
+
+    pub fn run_ui_impl(&mut self, mut ui_ctx: EditorUiContextMut<'_>) {
+        let egui_ctx = ui_ctx.egui();
+        let default_ui = ui_ctx.default_ui();
+        self.application.run_ui_impl(egui_ctx, default_ui);
     }
 
     pub fn pick_entity(

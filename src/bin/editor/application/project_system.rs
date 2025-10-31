@@ -51,7 +51,7 @@ impl ProjectSystem {
         };
 
         let pending = std::mem::take(&mut self.pending_gltf_imports);
-        let Some(()) = ctx.with_gpu(|app, gpu_ctx| {
+        let Some(()) = ctx.with_gpu_app(|app, gpu_ctx| {
             let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
             let mut any_spawned = false;
 
@@ -125,7 +125,7 @@ impl ProjectSystem {
                 }
             }
 
-            if matches!(app.shared.runtime_state.active_mode(), RuntimeMode::Editor) {
+            if matches!(app.runtime_state().active_mode(), RuntimeMode::Editor) {
                 gpu_ctx.scene.set_animation_playback(false);
                 gpu_ctx.scene.update(0.0);
             }
@@ -255,41 +255,43 @@ impl ProjectSystem {
     }
 
     fn handle_project_load(&mut self, ctx: &mut EditorContext<'_, '_, '_>, dir: PathBuf) {
-        let Some(()) = ctx.with_gpu(|app, gpu_ctx| match ProjectManifest::load_from_dir(&dir) {
-            Ok(manifest) => {
-                let metadata = manifest.metadata.clone();
-                match manifest.instantiate_into(gpu_ctx.scene, gpu_ctx.renderer, &dir) {
-                    Ok(textures_changed) => {
-                        app.ensure_editor_scene_basics(gpu_ctx.scene, gpu_ctx.renderer);
-                        if textures_changed {
-                            gpu_ctx
-                                .renderer
-                                .update_texture_bind_group(&gpu_ctx.scene.assets);
-                        }
+        let Some(()) =
+            ctx.with_gpu_app(|app, gpu_ctx| match ProjectManifest::load_from_dir(&dir) {
+                Ok(manifest) => {
+                    let metadata = manifest.metadata.clone();
+                    match manifest.instantiate_into(gpu_ctx.scene, gpu_ctx.renderer, &dir) {
+                        Ok(textures_changed) => {
+                            app.ensure_editor_scene_basics(gpu_ctx.scene, gpu_ctx.renderer);
+                            if textures_changed {
+                                gpu_ctx
+                                    .renderer
+                                    .update_texture_bind_group(&gpu_ctx.scene.assets);
+                            }
 
-                        self.controller.set_current_dir(dir.clone());
-                        self.controller.set_metadata(metadata);
-                        app.commands.clear();
-                        {
-                            let selection = app.selection_system_mut();
-                            selection.set_selected(None);
-                            selection.set_highlighted(None);
-                            selection.clear_pending_pick();
-                            selection.request_override(None);
+                            self.controller.set_current_dir(dir.clone());
+                            self.controller.set_metadata(metadata);
+                            app.command_queue_mut().clear();
+                            {
+                                let selection = app.selection_system_mut();
+                                selection.set_selected(None);
+                                selection.set_highlighted(None);
+                                selection.clear_pending_pick();
+                                selection.request_override(None);
+                            }
+                            app.history_system_mut().reset();
+                            app.initialize_history_state(gpu_ctx.scene);
+                            app.request_runtime_mode(RuntimeMode::Editor);
                         }
-                        app.history_system_mut().reset();
-                        app.initialize_history_state(gpu_ctx.scene);
-                        app.shared.runtime_state.request_mode(RuntimeMode::Editor);
-                    }
-                    Err(err) => {
-                        error!("Failed to instantiate project scene: {err}");
+                        Err(err) => {
+                            error!("Failed to instantiate project scene: {err}");
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                error!("Failed to load project from {:?}: {err}", dir);
-            }
-        }) else {
+                Err(err) => {
+                    error!("Failed to load project from {:?}: {err}", dir);
+                }
+            })
+        else {
             return;
         };
     }
@@ -328,7 +330,7 @@ impl ProjectSystem {
                 }
             }
 
-            let Some(()) = ctx.with_gpu(|_app, gpu_ctx| {
+            let Some(()) = ctx.with_gpu_app(|_app, gpu_ctx| {
                 match ProjectManifest::capture(gpu_ctx.scene, self.controller.metadata().clone()) {
                     Ok(manifest) => {
                         if let Err(err) = manifest.save_to_dir(&request.output_dir) {
@@ -397,7 +399,7 @@ impl EditorSystem for ProjectSystem {
             self.handle_project_build(ctx, request);
         }
 
-        let _ = ctx.with_gpu(|_, gpu_ctx| {
+        let _ = ctx.with_gpu_app(|_, gpu_ctx| {
             gpu_ctx.scene.process_pending_gltf_imports(gpu_ctx.renderer);
         });
     }
