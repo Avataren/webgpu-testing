@@ -157,38 +157,101 @@ fn batch_uses_shader(batch: &OrderedBatch, material_pipeline_keys: &[MaterialPip
         .is_some_and(|key| matches!(key, MaterialPipelineKey::Shader(_)))
 }
 
-pub(crate) struct SurfacePassAttachments<'a> {
-    pub(crate) color: &'a wgpu::TextureView,
-    pub(crate) resolve: Option<&'a wgpu::TextureView>,
-    pub(crate) depth: Option<&'a wgpu::TextureView>,
-    pub(crate) pick: Option<&'a wgpu::TextureView>,
+pub(crate) struct SurfacePassConfig<'a, 'b> {
+    label: &'static str,
+    color: &'a wgpu::TextureView,
+    resolve: Option<&'a wgpu::TextureView>,
+    depth: Option<&'a wgpu::TextureView>,
+    pick: Option<&'a wgpu::TextureView>,
+    render_region: Option<RenderRegion>,
+    batches: &'a [OrderedBatch],
+    recorder: &'b mut BatchRecorder<'a>,
+    options: BatchPassOptions,
+    bindless_group: Option<&'a wgpu::BindGroup>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn execute_surface_pass(
+impl<'a, 'b> SurfacePassConfig<'a, 'b> {
+    pub(crate) fn new(
+        label: &'static str,
+        color: &'a wgpu::TextureView,
+        batches: &'a [OrderedBatch],
+        recorder: &'b mut BatchRecorder<'a>,
+        options: BatchPassOptions,
+    ) -> Self {
+        Self {
+            label,
+            color,
+            resolve: None,
+            depth: None,
+            pick: None,
+            render_region: None,
+            batches,
+            recorder,
+            options,
+            bindless_group: None,
+        }
+    }
+
+    pub(crate) fn resolve(mut self, resolve: Option<&'a wgpu::TextureView>) -> Self {
+        self.resolve = resolve;
+        self
+    }
+
+    pub(crate) fn depth(mut self, depth: Option<&'a wgpu::TextureView>) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    pub(crate) fn write_pick(mut self, pick: Option<&'a wgpu::TextureView>) -> Self {
+        self.options.write_pick = pick.is_some();
+        self.pick = pick;
+        self
+    }
+
+    pub(crate) fn render_region(mut self, render_region: Option<RenderRegion>) -> Self {
+        self.render_region = render_region;
+        self
+    }
+
+    pub(crate) fn bindless_group(mut self, bindless_group: Option<&'a wgpu::BindGroup>) -> Self {
+        self.bindless_group = bindless_group;
+        self
+    }
+}
+
+pub(crate) fn run_surface_pass(
     encoder: &mut wgpu::CommandEncoder,
-    label: &'static str,
-    attachments: SurfacePassAttachments<'_>,
-    render_region: Option<RenderRegion>,
-    batches: &[OrderedBatch],
-    recorder: &mut BatchRecorder<'_>,
-    options: BatchPassOptions,
-    bindless_group: Option<&wgpu::BindGroup>,
+    config: SurfacePassConfig<'_, '_>,
 ) -> u32 {
-    if batches.is_empty() {
+    if config.batches.is_empty() {
         return 0;
     }
 
-    let mut plan = PassPlan::new(label).add_color(FrameGraphColorAttachment::load(
-        attachments.color,
-        attachments.resolve,
-    ));
+    debug_assert!(
+        !config.options.write_pick || config.pick.is_some(),
+        "Pick writes require a pick attachment"
+    );
 
-    if let Some(pick) = attachments.pick {
+    let SurfacePassConfig {
+        label,
+        color,
+        resolve,
+        depth,
+        pick,
+        render_region,
+        batches,
+        recorder,
+        options,
+        bindless_group,
+    } = config;
+
+    let mut plan = PassPlan::new(label).add_color(FrameGraphColorAttachment::load(color, resolve));
+
+    if let Some(pick) = pick {
         plan = plan.add_color(FrameGraphColorAttachment::load(pick, None));
     }
 
-    if let Some(depth) = attachments.depth {
+    if let Some(depth) = depth {
         plan = plan.set_depth(FrameGraphDepthAttachment::load(depth));
     }
 
@@ -384,29 +447,25 @@ pub(crate) fn main_color_pass(
     });
 
     if !shader_batches.is_empty() {
-        let attachments = SurfacePassAttachments {
-            color: scene_view,
-            resolve: scene_resolve_view,
-            depth: Some(depth_view),
-            pick: None,
-        };
         let shader_options = BatchPassOptions {
             color_format: scene_format,
             color_sample_count: sample_count,
             use_gbuffer: false,
             write_pick: false,
         };
-
-        draw_calls += execute_surface_pass(
-            encoder,
+        let config = SurfacePassConfig::new(
             "ShaderMaterialPass",
-            attachments,
-            render_region,
+            scene_view,
             shader_batches.as_slice(),
             &mut recorder,
             shader_options,
-            bindless_group.as_ref(),
-        );
+        )
+        .resolve(scene_resolve_view)
+        .depth(Some(depth_view))
+        .render_region(render_region)
+        .bindless_group(bindless_group.as_ref());
+
+        draw_calls += run_surface_pass(encoder, config);
     }
 
     draw_calls
@@ -465,13 +524,6 @@ pub(crate) fn transparent_pass(
         None
     };
 
-    let attachments = SurfacePassAttachments {
-        color: surface_view,
-        resolve: None,
-        depth: Some(depth_view),
-        pick: pick_view.as_ref(),
-    };
-
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
         renderer,
@@ -486,17 +538,19 @@ pub(crate) fn transparent_pass(
         use_gbuffer: false,
         write_pick,
     };
-
-    execute_surface_pass(
-        encoder,
+    let config = SurfacePassConfig::new(
         "TransparentPass",
-        attachments,
-        render_region,
+        surface_view,
         batches,
         &mut recorder,
         options,
-        bindless_group.as_ref(),
     )
+    .depth(Some(depth_view))
+    .write_pick(pick_view.as_ref())
+    .render_region(render_region)
+    .bindless_group(bindless_group.as_ref());
+
+    run_surface_pass(encoder, config)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -531,13 +585,6 @@ pub(crate) fn overlay_pass(
         None
     };
 
-    let attachments = SurfacePassAttachments {
-        color: surface_view,
-        resolve: None,
-        depth: overlay_needs_depth.then_some(depth_view),
-        pick: pick_view.as_ref(),
-    };
-
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
         renderer,
@@ -552,17 +599,14 @@ pub(crate) fn overlay_pass(
         use_gbuffer: false,
         write_pick,
     };
+    let config =
+        SurfacePassConfig::new("OverlayPass", surface_view, batches, &mut recorder, options)
+            .depth(overlay_needs_depth.then_some(depth_view))
+            .write_pick(pick_view.as_ref())
+            .render_region(render_region)
+            .bindless_group(bindless_group.as_ref());
 
-    execute_surface_pass(
-        encoder,
-        "OverlayPass",
-        attachments,
-        render_region,
-        batches,
-        &mut recorder,
-        options,
-        bindless_group.as_ref(),
-    )
+    run_surface_pass(encoder, config)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -593,13 +637,6 @@ pub(crate) fn gizmo_pass(
         None
     };
 
-    let attachments = SurfacePassAttachments {
-        color: surface_view,
-        resolve: None,
-        depth: None,
-        pick: pick_view.as_ref(),
-    };
-
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
         renderer,
@@ -614,17 +651,12 @@ pub(crate) fn gizmo_pass(
         use_gbuffer: false,
         write_pick,
     };
+    let config = SurfacePassConfig::new(label, surface_view, batches, &mut recorder, options)
+        .write_pick(pick_view.as_ref())
+        .render_region(render_region)
+        .bindless_group(bindless_group.as_ref());
 
-    execute_surface_pass(
-        encoder,
-        label,
-        attachments,
-        render_region,
-        batches,
-        &mut recorder,
-        options,
-        bindless_group.as_ref(),
-    )
+    run_surface_pass(encoder, config)
 }
 
 pub(crate) fn process_pick(renderer: &mut Renderer, encoder: &mut wgpu::CommandEncoder) {
