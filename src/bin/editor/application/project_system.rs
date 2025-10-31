@@ -269,7 +269,7 @@ impl ProjectSystem {
 
                         self.controller.set_current_dir(dir.clone());
                         self.controller.set_metadata(metadata);
-                        app.commands.clear();
+                        app.shared.commands.clear();
                         {
                             let selection = app.selection_system_mut();
                             selection.set_selected(None);

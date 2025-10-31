@@ -101,7 +101,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {
-        (&*self.application).runtime_state.clone()
+        self.application.shared.runtime_state.clone()
     }
 
     pub fn scene(&mut self) -> Option<&mut Scene> {
@@ -147,11 +147,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
-        &mut self.application.commands
+        &mut self.application.shared.commands
     }
 
     pub(super) fn events(&mut self) -> &mut Vec<EditorEvent> {
-        &mut self.application.events
+        &mut self.application.shared.events
     }
 
     pub fn with_update<R, F>(&mut self, f: F) -> Option<R>
