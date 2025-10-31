@@ -23,7 +23,7 @@ use super::selection_system::SelectionSystem;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shader_watcher::ShaderWatcher;
 use super::system::EditorSystem;
-use super::{EditorCommand, EditorContext, EditorEvent};
+use super::{EditorCommand, EditorContext, EditorEvent, EditorSystemsAccess};
 use egui::Context as EguiContext;
 use wgpu_cube::DefaultUI;
 
@@ -71,6 +71,16 @@ pub struct EditorApplication {
     pub(super) script_editor_system_index: usize,
     pub(super) asset_browser_system_index: usize,
     pub(super) particle_system_index: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct EditorSystemIndices {
+    pub(super) camera: usize,
+    pub(super) selection: usize,
+    pub(super) history: usize,
+    pub(super) project: usize,
+    pub(super) script_editor: usize,
+    pub(super) asset_browser: usize,
 }
 
 #[derive(Default)]
@@ -369,6 +379,17 @@ impl EditorApplication {
         self.history_system_mut().history_mut()
     }
 
+    fn system_indices(&self) -> EditorSystemIndices {
+        EditorSystemIndices {
+            camera: self.camera_system_index,
+            selection: self.selection_system_index,
+            history: self.history_system_index,
+            project: self.project_system_index,
+            script_editor: self.script_editor_system_index,
+            asset_browser: self.asset_browser_system_index,
+        }
+    }
+
     pub(super) fn selection_entities(&self) -> (Option<Entity>, Option<Entity>) {
         let selection = self.selection_system();
         (selection.selected(), selection.highlighted())
@@ -392,45 +413,27 @@ impl EditorApplication {
             .update_history_selection(scene, selected, highlighted);
     }
 
-    pub(super) fn make_update_context<'app, 'ctx, 'scene>(
-        &'app mut self,
-        ctx: &'ctx mut UpdateContext<'scene>,
-    ) -> EditorContext<'app, 'ctx, 'scene> {
-        EditorContext::for_update(self, ctx)
-    }
-
     pub(super) fn run_system_updates(&mut self, ctx: &mut UpdateContext) {
+        let indices = self.system_indices();
         let len = self.systems.len();
-        let systems_ptr = self.systems.as_mut_ptr();
-        for index in 0..len {
-            let mut editor_ctx = self.make_update_context(ctx);
-            // SAFETY: `systems_ptr` points into `self.systems`, which is not reallocated or
-            // mutated within this loop body. Each iteration exclusively reborrows the element
-            // at `index` to invoke the system while `editor_ctx` holds a raw pointer back to
-            // the parent application.
-            unsafe {
-                (&mut *systems_ptr.add(index)).update(&mut editor_ctx);
-            }
+        for current_index in 0..len {
+            let (before, rest) = self.systems.split_at_mut(current_index);
+            let (current, after) = rest.split_first_mut().expect("system index within bounds");
+            let systems = EditorSystemsAccess::new(before, after, indices, current_index);
+            let mut editor_ctx = EditorContext::for_update(&mut self.shared, systems, ctx);
+            current.update(&mut editor_ctx);
         }
     }
 
-    pub(super) fn make_gpu_update_context<'app, 'ctx, 'scene>(
-        &'app mut self,
-        ctx: &'ctx mut GpuUpdateContext<'scene>,
-    ) -> EditorContext<'app, 'ctx, 'scene> {
-        EditorContext::for_gpu(self, ctx)
-    }
-
     pub(super) fn run_system_gpu_updates(&mut self, ctx: &mut GpuUpdateContext) {
+        let indices = self.system_indices();
         let len = self.systems.len();
-        let systems_ptr = self.systems.as_mut_ptr();
-        for index in 0..len {
-            let mut editor_ctx = self.make_gpu_update_context(ctx);
-            // SAFETY: Same reasoning as `run_system_updates`; the systems vector is stable
-            // while we temporarily reborrow each system for GPU updates.
-            unsafe {
-                (&mut *systems_ptr.add(index)).gpu_update(&mut editor_ctx);
-            }
+        for current_index in 0..len {
+            let (before, rest) = self.systems.split_at_mut(current_index);
+            let (current, after) = rest.split_first_mut().expect("system index within bounds");
+            let systems = EditorSystemsAccess::new(before, after, indices, current_index);
+            let mut editor_ctx = EditorContext::for_gpu(&mut self.shared, systems, ctx);
+            current.gpu_update(&mut editor_ctx);
         }
     }
 
@@ -554,15 +557,14 @@ impl EditorApplication {
     }
 
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+        let indices = self.system_indices();
         let len = self.systems.len();
-        let systems_ptr = self.systems.as_mut_ptr();
-        for index in 0..len {
-            let mut editor_ctx = self.make_ui_context(ctx, default_ui);
-            // SAFETY: See comment above in `run_system_updates`; the systems vector is left
-            // untouched while we temporarily reborrow each element to run its UI pass.
-            unsafe {
-                (&mut *systems_ptr.add(index)).ui(&mut editor_ctx);
-            }
+        for current_index in 0..len {
+            let (before, rest) = self.systems.split_at_mut(current_index);
+            let (current, after) = rest.split_first_mut().expect("system index within bounds");
+            let systems = EditorSystemsAccess::new(before, after, indices, current_index);
+            let mut editor_ctx = EditorContext::for_ui(&mut self.shared, systems, ctx, default_ui);
+            current.ui(&mut editor_ctx);
         }
     }
 
@@ -644,25 +646,19 @@ impl EditorApplication {
             return;
         }
 
-        let index = self.project_system_index;
-        let systems_ptr = self.systems.as_mut_ptr();
-        let mut editor_ctx = self.make_update_context(ctx);
-        unsafe {
-            let system = &mut *systems_ptr.add(index);
-            system
-                .as_any_mut()
-                .downcast_mut::<ProjectSystem>()
-                .expect("project system registered")
-                .process_pending_imports(&mut editor_ctx, pending);
-        }
-    }
-
-    pub(super) fn make_ui_context<'app, 'ctx>(
-        &'app mut self,
-        ctx: &'ctx EguiContext,
-        default_ui: &'ctx mut DefaultUI,
-    ) -> EditorContext<'app, 'ctx, 'ctx> {
-        EditorContext::for_ui(self, ctx, default_ui)
+        let indices = self.system_indices();
+        let project_index = self.project_system_index;
+        let (before, rest) = self.systems.split_at_mut(project_index);
+        let (system, after) = rest
+            .split_first_mut()
+            .expect("project system index within bounds");
+        let systems = EditorSystemsAccess::new(before, after, indices, project_index);
+        let mut editor_ctx = EditorContext::for_update(&mut self.shared, systems, ctx);
+        system
+            .as_any_mut()
+            .downcast_mut::<ProjectSystem>()
+            .expect("project system registered")
+            .process_pending_imports(&mut editor_ctx, pending);
     }
 
     pub(super) fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {

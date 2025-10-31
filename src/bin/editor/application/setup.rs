@@ -11,11 +11,7 @@ use super::core::EditorApplication;
 const EDITOR_CUBE_MATERIAL_CANONICAL_PATH: &str = "builtin/editor/editor_cube.material";
 
 impl EditorApplication {
-    pub(super) fn ensure_editor_scene_basics(
-        &mut self,
-        scene: &mut Scene,
-        renderer: &mut Renderer,
-    ) {
+    pub(super) fn ensure_editor_scene_basics(scene: &mut Scene, renderer: &mut Renderer) {
         let has_editor_cube = {
             scene
                 .main_world()

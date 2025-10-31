@@ -74,15 +74,11 @@ impl RenderApplication for EditorApplication {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        let mut ctx = self.make_update_context(ctx);
-        ctx.with_update_app(|app, update_ctx| app.run_update_impl(update_ctx))
-            .expect("update context is available");
+        self.run_update_impl(ctx);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
-        let mut ctx = self.make_gpu_update_context(ctx);
-        ctx.with_gpu_app(|app, gpu_ctx| app.run_gpu_update_impl(gpu_ctx))
-            .expect("gpu update context is available");
+        self.run_gpu_update_impl(ctx);
     }
 
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
@@ -109,9 +105,7 @@ impl RenderApplication for EditorApplication {
     }
 
     fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        let mut ctx = self.make_ui_context(ctx, default_ui);
-        ctx.with_ui_app(|app, ui_ctx| app.run_ui_impl(ui_ctx))
-            .expect("ui context is available");
+        self.run_ui_impl(ctx, default_ui);
     }
 
     fn show_default_ui(&self) -> bool {
@@ -1025,8 +1019,7 @@ impl EditorApplication {
         }
     }
 
-    fn create_primitive(
-        &mut self,
+    pub(super) fn create_primitive(
         ctx: &mut GpuUpdateContext,
         preset: ScenePrimitivePreset,
     ) -> Option<Entity> {
@@ -1067,14 +1060,14 @@ impl EditorApplication {
         Some(builder.spawn())
     }
 
-    fn create_particle_system(
-        &mut self,
+    pub(super) fn create_particle_system(
+        shared: &mut EditorSharedState,
         ctx: &mut GpuUpdateContext,
         preset: ParticleBehaviorPreset,
     ) -> Option<Entity> {
         let name = format!("{} Particle System", preset.display_name());
         let spawn_rate = Self::default_particle_spawn_rate(preset);
-        let (mesh_handle, bounds) = self.ensure_particle_mesh(ctx);
+        let (mesh_handle, bounds) = Self::ensure_particle_mesh(shared, ctx);
         let material = Self::default_particle_material(preset);
         let material_handle = ctx
             .scene
@@ -1109,16 +1102,16 @@ impl EditorApplication {
     }
 
     fn ensure_particle_mesh(
-        &mut self,
+        shared: &mut EditorSharedState,
         ctx: &mut GpuUpdateContext,
     ) -> (Handle<Mesh>, Option<MeshBounds>) {
-        if let Some(handle) = self.shared.particle_mesh {
+        if let Some(handle) = shared.particle_mesh {
             if ctx.scene.assets.meshes.get(handle).is_some() {
-                return (handle, self.shared.particle_mesh_bounds);
+                return (handle, shared.particle_mesh_bounds);
             }
 
-            self.shared.particle_mesh = None;
-            self.shared.particle_mesh_bounds = None;
+            shared.particle_mesh = None;
+            shared.particle_mesh_bounds = None;
         }
 
         let (vertices, indices) = quad_mesh();
@@ -1126,8 +1119,8 @@ impl EditorApplication {
         let handle = ctx.scene.assets.meshes.insert(mesh);
         let bounds = MeshBounds::from_vertices(&vertices);
 
-        self.shared.particle_mesh = Some(handle);
-        self.shared.particle_mesh_bounds = bounds;
+        shared.particle_mesh = Some(handle);
+        shared.particle_mesh_bounds = bounds;
 
         (handle, bounds)
     }
@@ -1166,7 +1159,7 @@ impl EditorApplication {
         120.0
     }
 
-    fn create_point_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+    pub(super) fn create_point_light(ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let transform = Transform::from_trs(Vec3::new(3.0, 3.0, 2.0), Quat::IDENTITY, Vec3::ONE);
         let light = PointLight {
             color: Vec3::splat(1.0),
@@ -1184,7 +1177,7 @@ impl EditorApplication {
         Some(entity)
     }
 
-    fn create_directional_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+    pub(super) fn create_directional_light(ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let direction = Vec3::new(0.35, -1.0, -0.85).normalize();
         let rotation = Quat::from_rotation_arc(Vec3::NEG_Z, direction);
         let transform = Transform::from_trs(Vec3::new(0.0, 6.0, 0.0), rotation, Vec3::ONE);
@@ -1200,7 +1193,7 @@ impl EditorApplication {
         Some(entity)
     }
 
-    fn create_spot_light(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+    pub(super) fn create_spot_light(ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let position = Vec3::new(-4.0, 5.0, -3.0);
         let target = Vec3::new(0.0, 1.0, 0.0);
         let direction = (target - position).normalize();
@@ -1224,7 +1217,10 @@ impl EditorApplication {
         Some(entity)
     }
 
-    fn create_camera(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+    pub(super) fn create_camera(
+        shared: &mut EditorSharedState,
+        ctx: &mut GpuUpdateContext,
+    ) -> Option<Entity> {
         let position = Vec3::new(0.0, 3.0, 6.0);
         let target = Vec3::ZERO;
         let direction = {
@@ -1247,12 +1243,12 @@ impl EditorApplication {
             .spawn();
 
         ctx.scene.set_active_camera_entity(Some(entity));
-        self.shared.active_camera_entity = ctx.scene.active_camera_entity();
+        shared.active_camera_entity = ctx.scene.active_camera_entity();
 
         Some(entity)
     }
 
-    fn create_environment(&mut self, ctx: &mut GpuUpdateContext) -> Option<Entity> {
+    pub(super) fn create_environment(ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let component = EnvironmentComponent::from_environment(ctx.scene.environment());
         let entity = EntityBuilder::new(ctx.scene)
             .with_name("Environment")
