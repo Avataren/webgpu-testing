@@ -24,6 +24,7 @@ pub use self::core::EditorApplicationBuilder;
 use self::core::GameViewDisplayMode;
 pub use self::core::{EditorApplication, EditorSharedState};
 
+use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,46 +170,41 @@ impl EditorApplication {
 
         let content_root = self.project_system().content_root();
         let override_selection = { self.selection_system_mut().take_override() };
-        let dock_tree = &mut self.shared.dock_tree;
-        let scene_viewport = &mut self.shared.viewports.scene_viewport;
-        let game_viewport = &mut self.shared.viewports.game_viewport;
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
         if let Some(selection) = override_selection {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
         let mut creation_actions = Vec::new();
-        let systems_ptr = self.systems.as_mut_ptr();
-        let asset_browser_index = self.asset_browser_system_index;
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
-        egui::CentralPanel::default()
-            .frame(transparent_frame)
-            .show(ctx, |ui| {
-                if show_fullscreen_game {
-                    crate::layout::show_fullscreen_viewport(ui, game_viewport);
-                } else {
-                    let asset_browser_state = unsafe {
-                        (&mut *systems_ptr.add(asset_browser_index))
-                            .as_any_mut()
-                            .downcast_mut::<AssetBrowserSystem>()
-                            .expect("asset browser system registered")
-                            .state_mut()
-                    };
-                    let mut behavior = EditorBehavior {
-                        scene_viewport,
-                        game_viewport,
-                        scene_hierarchy: scene_hierarchy_window,
-                        log_window,
-                        is_playing,
-                        inspector_actions: &mut inspector_actions,
-                        scene_creation_actions: &mut creation_actions,
-                        asset_browser: asset_browser_state,
-                        content_root,
-                    };
-                    dock_tree.ui(&mut behavior, ui);
-                }
-            });
+        {
+            let (shared, asset_browser_state) = self.shared_and_asset_browser_state_mut();
+            let dock_tree = &mut shared.dock_tree;
+            let scene_viewport = &mut shared.viewports.scene_viewport;
+            let game_viewport = &mut shared.viewports.game_viewport;
+
+            egui::CentralPanel::default()
+                .frame(transparent_frame)
+                .show(ctx, |ui| {
+                    if show_fullscreen_game {
+                        crate::layout::show_fullscreen_viewport(ui, game_viewport);
+                    } else {
+                        let mut behavior = EditorBehavior {
+                            scene_viewport,
+                            game_viewport,
+                            scene_hierarchy: scene_hierarchy_window,
+                            log_window,
+                            is_playing,
+                            inspector_actions: &mut inspector_actions,
+                            scene_creation_actions: &mut creation_actions,
+                            asset_browser: asset_browser_state,
+                            content_root,
+                        };
+                        dock_tree.ui(&mut behavior, ui);
+                    }
+                });
+        }
 
         if self.shared.scene_hierarchy_handle.is_none() {
             self.shared.scene_hierarchy_handle = Some(scene_hierarchy_window.handle());
@@ -281,6 +277,22 @@ impl EditorApplication {
 }
 
 impl EditorApplication {
+    fn shared_and_asset_browser_state_mut(
+        &mut self,
+    ) -> (&mut EditorSharedState, &mut AssetBrowserState) {
+        let asset_browser_index = self.asset_browser_system_index;
+        let (_, tail) = self.systems.split_at_mut(asset_browser_index);
+        let (asset_browser_system, _) = tail
+            .split_first_mut()
+            .expect("asset browser system registered");
+        let asset_browser_system = asset_browser_system
+            .as_any_mut()
+            .downcast_mut::<AssetBrowserSystem>()
+            .expect("asset browser system registered");
+
+        (&mut self.shared, asset_browser_system.state_mut())
+    }
+
     fn apply_pending_inspector_actions(
         &mut self,
         ctx: &mut UpdateContext,

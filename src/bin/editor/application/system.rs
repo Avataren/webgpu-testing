@@ -158,7 +158,7 @@ impl<'shared> EditorAppAccess<'shared> {
         ctx: &mut GpuUpdateContext<'_>,
         preset: ParticleBehaviorPreset,
     ) -> Option<Entity> {
-        EditorApplication::create_particle_system(&mut self.shared, ctx, preset)
+        EditorApplication::create_particle_system(self.shared, ctx, preset)
     }
 
     pub fn create_point_light(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
@@ -336,8 +336,7 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     fn shared(&self) -> &EditorSharedState {
         self.shared
-            .as_ref()
-            .map(|shared| &**shared)
+            .as_deref()
             .expect("editor shared state available")
     }
 
