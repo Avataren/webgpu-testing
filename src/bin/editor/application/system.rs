@@ -36,8 +36,8 @@ pub(super) enum EditorCommand {
 pub(super) enum EditorEvent {}
 
 pub struct EditorContext<'app, 'ctx, 'scene> {
-    shared: &'app mut EditorSharedState,
-    systems: EditorSystemsAccess<'app>,
+    shared: Option<&'app mut EditorSharedState>,
+    systems: Option<EditorSystemsAccess<'app>>,
     update: Option<&'ctx mut UpdateContext<'scene>>,
     gpu: Option<&'ctx mut GpuUpdateContext<'scene>>,
     ui: Option<EditorUiContext<'ctx>>,
@@ -70,17 +70,18 @@ impl<'a> EditorUiContextMut<'a> {
     }
 }
 
-pub struct EditorAppAccess<'shared, 'systems> {
+pub struct EditorAppAccess<'shared> {
     shared: &'shared mut EditorSharedState,
-    systems: &'systems mut EditorSystemsAccess<'shared>,
+    systems: EditorSystemsAccess<'shared>,
 }
 
-impl<'shared, 'systems> EditorAppAccess<'shared, 'systems> {
-    fn new(
-        shared: &'shared mut EditorSharedState,
-        systems: &'systems mut EditorSystemsAccess<'shared>,
-    ) -> Self {
+impl<'shared> EditorAppAccess<'shared> {
+    fn new(shared: &'shared mut EditorSharedState, systems: EditorSystemsAccess<'shared>) -> Self {
         Self { shared, systems }
+    }
+
+    fn into_inner(self) -> (&'shared mut EditorSharedState, EditorSystemsAccess<'shared>) {
+        (self.shared, self.systems)
     }
 
     pub fn runtime_state(&self) -> RuntimeStateHandle {
@@ -324,8 +325,8 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut UpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            shared,
-            systems,
+            shared: Some(shared),
+            systems: Some(systems),
             update: Some(ctx),
             gpu: None,
             ui: None,
@@ -338,12 +339,37 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         ctx: &'ctx mut GpuUpdateContext<'scene>,
     ) -> EditorContext<'app, 'ctx, 'scene> {
         Self {
-            shared,
-            systems,
+            shared: Some(shared),
+            systems: Some(systems),
             update: None,
             gpu: Some(ctx),
             ui: None,
         }
+    }
+
+    fn shared(&self) -> &EditorSharedState {
+        self.shared
+            .as_ref()
+            .map(|shared| &**shared)
+            .expect("editor shared state available")
+    }
+
+    fn shared_mut(&mut self) -> &mut EditorSharedState {
+        self.shared
+            .as_deref_mut()
+            .expect("editor shared state available")
+    }
+
+    fn systems(&self) -> &EditorSystemsAccess<'app> {
+        self.systems
+            .as_ref()
+            .expect("editor systems access available")
+    }
+
+    fn systems_mut(&mut self) -> &mut EditorSystemsAccess<'app> {
+        self.systems
+            .as_mut()
+            .expect("editor systems access available")
     }
 
     pub fn update_context_mut(&mut self) -> Option<&mut UpdateContext<'scene>> {
@@ -356,24 +382,48 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn with_update_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, &mut UpdateContext<'scene>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'app>, &mut UpdateContext<'scene>) -> R,
     {
         let update = self.update.as_deref_mut()?;
-        let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
-        Some(f(&mut app, update))
+        let shared = self
+            .shared
+            .take()
+            .expect("editor shared state temporarily taken");
+        let systems = self
+            .systems
+            .take()
+            .expect("editor systems temporarily taken");
+        let mut app = EditorAppAccess::new(shared, systems);
+        let result = f(&mut app, update);
+        let (shared, systems) = app.into_inner();
+        self.shared = Some(shared);
+        self.systems = Some(systems);
+        Some(result)
     }
 
     pub fn with_gpu_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, &mut GpuUpdateContext<'scene>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'app>, &mut GpuUpdateContext<'scene>) -> R,
     {
         let gpu = self.gpu.as_deref_mut()?;
-        let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
-        Some(f(&mut app, gpu))
+        let shared = self
+            .shared
+            .take()
+            .expect("editor shared state temporarily taken");
+        let systems = self
+            .systems
+            .take()
+            .expect("editor systems temporarily taken");
+        let mut app = EditorAppAccess::new(shared, systems);
+        let result = f(&mut app, gpu);
+        let (shared, systems) = app.into_inner();
+        self.shared = Some(shared);
+        self.systems = Some(systems);
+        Some(result)
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {
-        self.shared.runtime_state.clone()
+        self.shared().runtime_state.clone()
     }
 
     pub fn scene(&mut self) -> Option<&mut Scene> {
@@ -387,43 +437,43 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
     }
 
     pub fn asset_browser(&mut self) -> &mut AssetBrowserState {
-        self.systems.asset_browser_system_mut().state_mut()
+        self.systems_mut().asset_browser_system_mut().state_mut()
     }
 
     pub fn asset_browser_system(&self) -> &AssetBrowserSystem {
-        self.systems.asset_browser_system()
+        self.systems().asset_browser_system()
     }
 
     pub fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
-        self.systems.asset_browser_system_mut()
+        self.systems_mut().asset_browser_system_mut()
     }
 
     pub(super) fn project_system(&self) -> &ProjectSystem {
-        self.systems.project_system()
+        self.systems().project_system()
     }
 
     pub(super) fn project_system_mut(&mut self) -> &mut ProjectSystem {
-        self.systems.project_system_mut()
+        self.systems_mut().project_system_mut()
     }
 
     pub fn script_editor_system(&self) -> &ScriptEditorSystem {
-        self.systems.script_editor_system()
+        self.systems().script_editor_system()
     }
 
     pub fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
-        self.systems.script_editor_system_mut()
+        self.systems_mut().script_editor_system_mut()
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {
-        self.systems.history_system_mut().history_mut()
+        self.systems_mut().history_system_mut().history_mut()
     }
 
     pub(super) fn command_queue(&mut self) -> &mut VecDeque<EditorCommand> {
-        &mut self.shared.commands
+        &mut self.shared_mut().commands
     }
 
     pub(super) fn events(&mut self) -> &mut Vec<EditorEvent> {
-        &mut self.shared.events
+        &mut self.shared_mut().events
     }
 }
 
@@ -436,8 +486,8 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
         default_ui: &'ctx mut DefaultUI,
     ) -> EditorContext<'app, 'ctx, 'ctx> {
         Self {
-            shared,
-            systems,
+            shared: Some(shared),
+            systems: Some(systems),
             update: None,
             gpu: None,
             ui: Some(EditorUiContext {
@@ -456,15 +506,27 @@ impl<'app, 'ctx> EditorContext<'app, 'ctx, 'ctx> {
 
     pub fn with_ui_app<R, F>(&mut self, f: F) -> Option<R>
     where
-        F: FnOnce(&mut EditorAppAccess<'app, '_>, EditorUiContextMut<'_>) -> R,
+        F: FnOnce(&mut EditorAppAccess<'app>, EditorUiContextMut<'_>) -> R,
     {
         let ui = self.ui.as_mut()?;
-        let mut app = EditorAppAccess::new(self.shared, &mut self.systems);
+        let shared = self
+            .shared
+            .take()
+            .expect("editor shared state temporarily taken");
+        let systems = self
+            .systems
+            .take()
+            .expect("editor systems temporarily taken");
+        let mut app = EditorAppAccess::new(shared, systems);
         let ui_ctx = EditorUiContextMut {
             egui: ui.egui,
             default_ui: &mut *ui.default_ui,
         };
-        Some(f(&mut app, ui_ctx))
+        let result = f(&mut app, ui_ctx);
+        let (shared, systems) = app.into_inner();
+        self.shared = Some(shared);
+        self.systems = Some(systems);
+        Some(result)
     }
 }
 

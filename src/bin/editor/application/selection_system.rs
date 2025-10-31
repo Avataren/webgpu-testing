@@ -6,7 +6,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
 use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
 
-use super::core::ViewportPick;
+use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorAppAccess, EditorContext, EditorSystem};
 
 #[derive(Default)]
@@ -177,6 +177,15 @@ impl SelectionSystem {
         self.gpu_pick.mark_discard();
     }
 
+    fn push_history_selection(
+        &self,
+        app: &mut EditorAppAccess<'_>,
+        scene: &Scene,
+    ) {
+        app.history_system_mut()
+            .update_history_selection(scene, self.selected(), self.highlighted());
+    }
+
     fn process_viewport_pick(
         &mut self,
         app: &mut EditorAppAccess<'_>,
@@ -195,7 +204,7 @@ impl SelectionSystem {
             PickCompletion::Gpu(entity) => {
                 self.set_selected(entity);
                 self.request_override(entity);
-                app.update_history_selection(ctx.scene);
+                self.push_history_selection(app, ctx.scene);
             }
             PickCompletion::CpuFallback(request) => {
                 let entity = app.pick_entity(ctx, request.uv, request.region);
@@ -211,7 +220,7 @@ impl SelectionSystem {
                 });
                 self.set_selected(entity);
                 self.request_override(entity);
-                app.update_history_selection(ctx.scene);
+                self.push_history_selection(app, ctx.scene);
             }
         }
     }
@@ -400,7 +409,7 @@ impl EditorSystem for SelectionSystem {
             self.process_viewport_pick(app, update_ctx);
             let history_changed = self.sync_selection_component(update_ctx);
             if history_changed {
-                app.update_history_selection(update_ctx.scene);
+                self.push_history_selection(app, update_ctx.scene);
             }
         }) else {
             return;
