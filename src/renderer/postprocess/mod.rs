@@ -240,7 +240,76 @@ impl<'a> PickAttachmentViews<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ColorAttachment<'a> {
+    view: &'a wgpu::TextureView,
+    resolve: Option<&'a wgpu::TextureView>,
+}
+
+impl<'a> ColorAttachment<'a> {
+    fn single(view: &'a wgpu::TextureView) -> Self {
+        Self {
+            view,
+            resolve: None,
+        }
+    }
+}
+
 impl PostProcess {
+    fn begin_color_pass<'a>(
+        encoder: &'a mut wgpu::CommandEncoder,
+        label: &'static str,
+        attachment: ColorAttachment<'a>,
+        load: wgpu::LoadOp<wgpu::Color>,
+        region: Option<RenderRegion>,
+    ) -> wgpu::RenderPass<'a> {
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: attachment.view,
+            resolve_target: attachment.resolve,
+            depth_slice: None,
+            ops: wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            },
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(color_attachment)],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        if let Some(region) = region {
+            region.apply_to_pass(&mut pass);
+        }
+
+        pass
+    }
+
+    fn begin_depth_pass<'a>(
+        encoder: &'a mut wgpu::CommandEncoder,
+        label: &'static str,
+        view: &'a wgpu::TextureView,
+        load: wgpu::LoadOp<f32>,
+    ) -> wgpu::RenderPass<'a> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view,
+                depth_ops: Some(wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        })
+    }
+
     fn fullscreen_vertex<'a>(shader: &'a wgpu::ShaderModule) -> wgpu::VertexState<'a> {
         wgpu::VertexState {
             module: shader,
@@ -1127,21 +1196,13 @@ impl PostProcess {
         self.ensure_cached_bind_groups(device);
 
         if let Some(color_group) = self.color_grading_bind_group.as_ref() {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ColorGradingPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.scene.view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "ColorGradingPass",
+                ColorAttachment::single(&self.scene.view),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
             pass.set_pipeline(&self.color_grading_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, color_group, &[]);
@@ -1153,20 +1214,12 @@ impl PostProcess {
             self.depth_resolve_bind_group.as_ref(),
             self.resolved_depth.as_ref(),
         ) {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("DepthResolvePass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &resolved.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            let mut pass = Self::begin_depth_pass(
+                encoder,
+                "DepthResolvePass",
+                &resolved.view,
+                wgpu::LoadOp::Clear(1.0),
+            );
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, bind_group, &[]);
@@ -1174,226 +1227,15 @@ impl PostProcess {
         }
 
         if self.effects.ssao {
-            let ssao_bind_group = self
-                .ssao_bind_group
-                .as_ref()
-                .expect("SSAO bind group not initialized");
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SsaoPass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.ssao.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.ssao_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, ssao_bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-
-            let blur_horizontal = self
-                .ssao_blur_horizontal_bind_group
-                .as_ref()
-                .expect("SSAO horizontal blur bind group not initialized");
-            let blur_vertical = self
-                .ssao_blur_vertical_bind_group
-                .as_ref()
-                .expect("SSAO vertical blur bind group not initialized");
-
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SsaoBlurHorizontal"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.ssao_ping.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.ssao_blur_horizontal_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, blur_horizontal, &[]);
-                pass.draw(0..3, 0..1);
-            }
-
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("SsaoBlurVertical"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.ssao.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.ssao_blur_vertical_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, blur_vertical, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            self.render_ssao(encoder);
         } else {
-            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SsaoPass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.ssao.view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SsaoPingClear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.ssao_ping.view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
+            self.clear_ssao_targets(encoder);
         }
 
         if self.effects.bloom {
-            let bloom_prefilter = self
-                .bloom_prefilter_bind_group
-                .as_ref()
-                .expect("Bloom prefilter bind group not initialized");
-
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("BloomPrefilter"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.bloom_down_chain[0].view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.bloom_prefilter_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, bloom_prefilter, &[]);
-                pass.draw(0..3, 0..1);
-            }
-
-            for pass_info in &self.bloom_downsample_passes {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("BloomDownsample"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.bloom_down_chain[pass_info.target_index].view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.bloom_downsample_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, &pass_info.bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-
-            if let (Some(last_down), Some(last_up)) =
-                (self.bloom_down_chain.last(), self.bloom_up_chain.last())
-            {
-                encoder.copy_texture_to_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: last_down.texture(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyTextureInfo {
-                        texture: last_up.texture(),
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    last_down.extent(),
-                );
-            }
-
-            for pass_info in &self.bloom_upsample_passes {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("BloomUpsample"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.bloom_up_chain[pass_info.target_index].view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                pass.set_pipeline(&self.bloom_upsample_pipeline);
-                pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-                pass.set_bind_group(1, &pass_info.bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
+            self.render_bloom(encoder);
         } else {
-            for mip in &self.bloom_up_chain {
-                let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("BloomDisabledClear"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &mip.view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-            }
+            self.clear_bloom_targets(encoder);
         }
 
         let composite_bind_group = self
@@ -1401,29 +1243,181 @@ impl PostProcess {
             .as_ref()
             .expect("Composite bind group not initialized");
 
+        let mut pass = Self::begin_color_pass(
+            encoder,
+            "CompositePass",
+            ColorAttachment::single(target),
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            region,
+        );
+        pass.set_pipeline(&self.composite_pipeline);
+        pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        pass.set_bind_group(1, composite_bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+impl PostProcess {
+    fn render_ssao(&self, encoder: &mut wgpu::CommandEncoder) {
+        let ssao_bind_group = self
+            .ssao_bind_group
+            .as_ref()
+            .expect("SSAO bind group not initialized");
+
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("CompositePass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            if let Some(region) = region {
-                region.apply_to_pass(&mut pass);
-            }
-            pass.set_pipeline(&self.composite_pipeline);
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "SsaoPass",
+                ColorAttachment::single(&self.ssao.view),
+                wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                None,
+            );
+            pass.set_pipeline(&self.ssao_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            pass.set_bind_group(1, composite_bind_group, &[]);
+            pass.set_bind_group(1, ssao_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+
+        let blur_horizontal = self
+            .ssao_blur_horizontal_bind_group
+            .as_ref()
+            .expect("SSAO horizontal blur bind group not initialized");
+        let blur_vertical = self
+            .ssao_blur_vertical_bind_group
+            .as_ref()
+            .expect("SSAO vertical blur bind group not initialized");
+
+        {
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "SsaoBlurHorizontal",
+                ColorAttachment::single(&self.ssao_ping.view),
+                wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                None,
+            );
+            pass.set_pipeline(&self.ssao_blur_horizontal_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, blur_horizontal, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        {
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "SsaoBlurVertical",
+                ColorAttachment::single(&self.ssao.view),
+                wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                None,
+            );
+            pass.set_pipeline(&self.ssao_blur_vertical_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, blur_vertical, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn clear_ssao_targets(&self, encoder: &mut wgpu::CommandEncoder) {
+        {
+            let _pass = Self::begin_color_pass(
+                encoder,
+                "SsaoPass",
+                ColorAttachment::single(&self.ssao.view),
+                wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                None,
+            );
+        }
+
+        {
+            let _pass = Self::begin_color_pass(
+                encoder,
+                "SsaoPingClear",
+                ColorAttachment::single(&self.ssao_ping.view),
+                wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                None,
+            );
+        }
+    }
+
+    fn render_bloom(&self, encoder: &mut wgpu::CommandEncoder) {
+        let bloom_prefilter = self
+            .bloom_prefilter_bind_group
+            .as_ref()
+            .expect("Bloom prefilter bind group not initialized");
+
+        {
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "BloomPrefilter",
+                ColorAttachment::single(&self.bloom_down_chain[0].view),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
+            pass.set_pipeline(&self.bloom_prefilter_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, bloom_prefilter, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        for pass_info in &self.bloom_downsample_passes {
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "BloomDownsample",
+                ColorAttachment::single(&self.bloom_down_chain[pass_info.target_index].view),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
+            pass.set_pipeline(&self.bloom_downsample_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, &pass_info.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        if let (Some(last_down), Some(last_up)) =
+            (self.bloom_down_chain.last(), self.bloom_up_chain.last())
+        {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: last_down.texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: last_up.texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                last_down.extent(),
+            );
+        }
+
+        for pass_info in &self.bloom_upsample_passes {
+            let mut pass = Self::begin_color_pass(
+                encoder,
+                "BloomUpsample",
+                ColorAttachment::single(&self.bloom_up_chain[pass_info.target_index].view),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
+            pass.set_pipeline(&self.bloom_upsample_pipeline);
+            pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            pass.set_bind_group(1, &pass_info.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn clear_bloom_targets(&self, encoder: &mut wgpu::CommandEncoder) {
+        for mip in &self.bloom_up_chain {
+            {
+                let _pass = Self::begin_color_pass(
+                    encoder,
+                    "BloomDisabledClear",
+                    ColorAttachment::single(&mip.view),
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    None,
+                );
+            }
         }
     }
 }
