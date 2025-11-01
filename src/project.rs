@@ -1,8 +1,8 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
-    Camera, CameraProjection, Scene, SceneAsset, SceneAssetBundle, SceneAssetResources,
-    SceneLibrary, SerializedRuneScript, SerializedRuneScriptSource,
+    Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspaceBuilder,
+    SerializedRuneScript, SerializedRuneScriptSource,
 };
 use glam::Vec3;
 use log::warn;
@@ -328,6 +328,14 @@ impl ProjectManifest {
         &self.scenes
     }
 
+    pub fn environment(&self) -> &SerializedEnvironment {
+        &self.environment
+    }
+
+    pub fn engine_camera(&self) -> &SerializedEngineCamera {
+        &self.engine_camera
+    }
+
     pub fn scene_asset(&self, document_id: &str) -> Option<&SceneAsset> {
         self.scene_assets.get(document_id)
     }
@@ -625,21 +633,6 @@ impl ProjectManifest {
     ) -> Result<bool, ProjectError> {
         set_active_project_root(Some(project_root.to_path_buf()));
 
-        let mut new_scene = Scene::new();
-        new_scene.set_camera(self.engine_camera.to_camera());
-        let environment = self.environment.clone().into_environment(project_root)?;
-        new_scene.set_environment(environment);
-
-        let document = self.scenes.first().ok_or(ProjectError::NoScenes)?;
-        library.register_document(document);
-
-        let active_asset = if let Some(asset) = self.scene_assets.get(&document.id) {
-            asset.clone()
-        } else {
-            library.load_document(document, project_root)?.clone()
-        };
-        library.insert(document.id.clone(), active_asset.clone());
-
         for import in &self.imports {
             for meta in &import.metadata {
                 let path = if meta.is_absolute() {
@@ -657,17 +650,13 @@ impl ProjectManifest {
             }
         }
 
-        let mut bundle = SceneAssetBundle::new(active_asset, SceneAssetResources::default());
+        let builder = SceneWorkspaceBuilder::new(self, project_root, library);
+        let (workspace, textures_changed) = builder.build(renderer)?;
+        let Some(active_scene) = workspace.into_active_scene() else {
+            return Err(ProjectError::NoScenes);
+        };
 
-        let registration = bundle.register_resources(renderer, &mut new_scene.assets);
-        let textures_changed = registration.textures_changed;
-
-        if !bundle.asset.entities.is_empty() {
-            let main = new_scene.instantiate_asset_with_renderer(&bundle.asset, None, renderer);
-            new_scene.set_main_scene(main);
-        }
-
-        *scene = new_scene;
+        *scene = active_scene;
         Ok(textures_changed)
     }
 }
@@ -734,6 +723,10 @@ impl SerializedEnvironment {
             color_grading: SerializedColorGrading::from(grading),
             hdr,
         }
+    }
+
+    pub fn to_environment(&self, project_root: &Path) -> Result<Environment, ProjectError> {
+        self.clone().into_environment(project_root)
     }
 
     fn prepare_for_save(&mut self, project_dir: &Path) -> Result<(), ProjectError> {
