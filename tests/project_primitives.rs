@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use glam::Vec3;
 use pollster::block_on;
 use tempfile::tempdir;
 use wgpu::{
@@ -12,8 +13,9 @@ use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
 use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
-    MeshBounds, MeshComponent, Name, PrimitiveMeshComponent, Scene, SceneAssetBundle,
-    SceneAssetResources, SceneImportDevice, Transform, TransformComponent, Visible,
+    CameraProjection, MeshBounds, MeshComponent, Name, PrimitiveMeshComponent, Scene,
+    SceneAssetBundle, SceneAssetResources, SceneImportDevice, Transform, TransformComponent,
+    Visible,
 };
 
 struct HeadlessDevice {
@@ -171,4 +173,104 @@ fn project_manifest_roundtrip_preserves_primitive_meshes() {
         ),
         "restored primitives should share the same handle and descriptor"
     );
+}
+
+#[test]
+fn project_manifest_roundtrip_restores_engine_camera() {
+    let Some(mut headless) = HeadlessDevice::new() else {
+        eprintln!("Skipping engine camera roundtrip test: no suitable headless adapter available");
+        return;
+    };
+
+    let mut scene = Scene::new();
+    scene.main_world_mut().spawn((
+        Name::new("Marker".to_string()),
+        TransformComponent(Transform::default()),
+        Visible(true),
+    ));
+
+    let desired_eye = Vec3::new(5.0, 10.0, -15.0);
+    let desired_target = Vec3::new(-2.0, 1.5, 7.0);
+    let desired_up = Vec3::new(0.0, 1.0, 0.0);
+    let desired_projection = CameraProjection::perspective(1.25, 0.05, 350.0);
+
+    {
+        let camera = scene.camera_mut();
+        camera.eye = desired_eye;
+        camera.target = desired_target;
+        camera.up = desired_up;
+        camera.set_projection(desired_projection);
+    }
+
+    let metadata = ProjectMetadata::default();
+    let manifest = ProjectManifest::capture(&scene, metadata)
+        .expect("capturing manifest for engine camera roundtrip should succeed");
+
+    let temp_dir = tempdir().expect("temporary directory should create");
+    manifest
+        .save_to_dir(temp_dir.path())
+        .expect("manifest should save to disk");
+
+    let loaded =
+        ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should reload from disk");
+
+    let mut restored_scene = Scene::new();
+    let textures_changed = loaded
+        .instantiate_into(&mut restored_scene, &mut headless, temp_dir.path())
+        .expect("manifest should instantiate into a scene");
+    if textures_changed {
+        headless
+            .queue()
+            .submit(std::iter::empty::<wgpu::CommandBuffer>());
+    }
+
+    assert!(
+        restored_scene.active_camera_entity().is_none(),
+        "roundtrip should not create an active camera entity"
+    );
+
+    let restored_camera = restored_scene.camera();
+    assert!(
+        restored_camera.eye.abs_diff_eq(desired_eye, 1e-5),
+        "engine camera eye should roundtrip"
+    );
+    assert!(
+        restored_camera.target.abs_diff_eq(desired_target, 1e-5),
+        "engine camera target should roundtrip"
+    );
+    assert!(
+        restored_camera.up.abs_diff_eq(desired_up, 1e-5),
+        "engine camera up vector should roundtrip"
+    );
+
+    match restored_camera.projection() {
+        CameraProjection::Perspective {
+            fov_y_radians,
+            near,
+            far,
+        } => {
+            if let CameraProjection::Perspective {
+                fov_y_radians: expected_fov,
+                near: expected_near,
+                far: expected_far,
+            } = desired_projection
+            {
+                assert!(
+                    (fov_y_radians - expected_fov).abs() < 1e-6,
+                    "engine camera FOV should roundtrip"
+                );
+                assert!(
+                    (near - expected_near).abs() < 1e-6,
+                    "engine camera near plane should roundtrip"
+                );
+                assert!(
+                    (far - expected_far).abs() < 1e-4,
+                    "engine camera far plane should roundtrip"
+                );
+            } else {
+                panic!("expected perspective projection for desired camera");
+            }
+        }
+        other => panic!("expected perspective camera, got {:?}", other),
+    }
 }

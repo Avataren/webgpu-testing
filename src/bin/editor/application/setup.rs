@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
-use wgpu_cube::scene::{EntityBuilder, Scene};
+use wgpu_cube::scene::{Camera, EntityBuilder, Scene};
 
 use super::core::EditorApplication;
 
@@ -115,9 +115,20 @@ impl EditorApplication {
             scene.add_default_lighting();
         }
 
-        let camera = scene.camera_mut();
-        camera.eye = Vec3::new(6.0, 4.0, 6.0);
-        camera.target = Vec3::new(0.0, 0.5, 0.0);
-        camera.up = Vec3::Y;
+        let default_camera = Camera::default();
+        let current_camera = scene.camera();
+        let camera_matches_default = current_camera.eye.abs_diff_eq(default_camera.eye, 1e-5)
+            && current_camera
+                .target
+                .abs_diff_eq(default_camera.target, 1e-5)
+            && current_camera.up.abs_diff_eq(default_camera.up, 1e-5)
+            && current_camera.projection() == default_camera.projection();
+
+        if camera_matches_default {
+            let camera = scene.camera_mut();
+            camera.eye = Vec3::new(6.0, 4.0, 6.0);
+            camera.target = Vec3::new(0.0, 0.5, 0.0);
+            camera.up = Vec3::Y;
+        }
     }
 }

@@ -1,9 +1,10 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
-    Scene, SceneAsset, SceneAssetBundle, SceneAssetResources, SerializedRuneScript,
-    SerializedRuneScriptSource,
+    Camera, CameraProjection, Scene, SceneAsset, SceneAssetBundle, SceneAssetResources,
+    SerializedRuneScript, SerializedRuneScriptSource,
 };
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -216,6 +217,8 @@ pub struct ProjectManifest {
     pub scene: SceneAsset,
     pub environment: SerializedEnvironment,
     #[serde(default)]
+    pub engine_camera: SerializedEngineCamera,
+    #[serde(default)]
     pub imports: Vec<ProjectImport>,
 }
 
@@ -237,11 +240,13 @@ impl ProjectManifest {
             scene: SceneAsset::builder(metadata.name.clone()).build(),
             metadata,
             environment,
+            engine_camera: SerializedEngineCamera::default(),
             imports: Vec::new(),
         }
     }
 
     pub fn capture(scene: &Scene, metadata: ProjectMetadata) -> Result<Self, ProjectError> {
+        let engine_camera = SerializedEngineCamera::from_camera(scene.camera());
         let mut asset = scene
             .export_main_asset(metadata.name.clone())
             .ok_or(ProjectError::EmptyScene)?;
@@ -356,6 +361,7 @@ impl ProjectManifest {
             metadata,
             scene: asset,
             environment,
+            engine_camera,
             imports,
         })
     }
@@ -413,6 +419,7 @@ impl ProjectManifest {
         set_active_project_root(Some(project_root.to_path_buf()));
 
         let mut new_scene = Scene::new();
+        new_scene.set_camera(self.engine_camera.to_camera());
         let environment = self.environment.clone().into_environment(project_root)?;
         new_scene.set_environment(environment);
 
@@ -445,6 +452,40 @@ impl ProjectManifest {
 
         *scene = new_scene;
         Ok(textures_changed)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedEngineCamera {
+    eye: [f32; 3],
+    target: [f32; 3],
+    up: [f32; 3],
+    projection: CameraProjection,
+}
+
+impl SerializedEngineCamera {
+    pub fn from_camera(camera: &Camera) -> Self {
+        Self {
+            eye: camera.eye.to_array(),
+            target: camera.target.to_array(),
+            up: camera.up.to_array(),
+            projection: camera.projection(),
+        }
+    }
+
+    pub fn to_camera(&self) -> Camera {
+        let mut camera = Camera::default();
+        camera.eye = Vec3::from_array(self.eye);
+        camera.target = Vec3::from_array(self.target);
+        camera.up = Vec3::from_array(self.up);
+        camera.set_projection(self.projection);
+        camera
+    }
+}
+
+impl Default for SerializedEngineCamera {
+    fn default() -> Self {
+        Self::from_camera(&Camera::default())
     }
 }
 
