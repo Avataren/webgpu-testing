@@ -3,7 +3,7 @@ use super::assets::{
     build_tree_asset_node, serialize_world, SceneAsset, SceneTreeAsset, SceneTreeAssetNode,
     SerializedAnimationClip, SerializedTransform,
 };
-use super::graph::{SceneInstance, SceneNode, SceneNodeId};
+use super::graph::{SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::loader::SceneImportDevice;
 use super::render_bridge::RenderBridge;
@@ -215,12 +215,73 @@ impl Scene {
         self.node(node).local_transform()
     }
 
-    pub fn node_local_transform_mut(&mut self, node: SceneNodeId) -> &mut Transform {
+    pub fn node_local_transform_mut(
+        &mut self,
+        node: SceneNodeId,
+    ) -> SceneNodeLocalTransformMut<'_> {
         self.node_mut(node).local_transform_mut()
+    }
+
+    pub fn clear_node_local_transform_override(&mut self, node: SceneNodeId) {
+        self.node_mut(node).clear_local_transform_override();
     }
 
     pub fn node_world_transform(&self, node: SceneNodeId) -> &Transform {
         self.node(node).world_transform()
+    }
+
+    pub fn set_entity_transform_override(
+        &mut self,
+        node: SceneNodeId,
+        entity: Entity,
+        transform: Transform,
+    ) -> Result<(), hecs::ComponentError> {
+        self.node_mut(node)
+            .instance_mut()
+            .mutate_entity_transform(entity, transform)
+    }
+
+    pub fn clear_entity_transform_override(
+        &mut self,
+        node: SceneNodeId,
+        entity: Entity,
+    ) -> Result<(), hecs::ComponentError> {
+        self.node_mut(node)
+            .instance_mut()
+            .clear_entity_transform_override(entity)
+    }
+
+    pub fn set_entity_component_override<T>(
+        &mut self,
+        node: SceneNodeId,
+        entity: Entity,
+        value: T,
+    ) -> Result<(), hecs::ComponentError>
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
+        self.node_mut(node)
+            .instance_mut()
+            .mutate_component(entity, value)
+    }
+
+    pub fn clear_entity_component_override<T>(
+        &mut self,
+        node: SceneNodeId,
+        entity: Entity,
+    ) -> Result<(), hecs::ComponentError>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        self.node_mut(node)
+            .instance_mut()
+            .clear_component_override::<T>(entity)
+    }
+
+    pub fn reapply_node_prefab_overrides(&mut self, node: SceneNodeId) {
+        self.node_mut(node)
+            .instance_mut()
+            .reapply_prefab_overrides();
     }
 
     pub fn init_timer(&mut self) {
@@ -740,7 +801,8 @@ impl Scene {
             self.create_node(node_asset.name.clone(), Some(parent))
         };
 
-        *self.node_local_transform_mut(node_id) = Transform::from(node_asset.transform.clone());
+        let transform = Transform::from(node_asset.transform.clone());
+        self.node_mut(node_id).set_local_transform(transform);
 
         for child in &node_asset.children {
             self.instantiate_tree_node(child, node_id);

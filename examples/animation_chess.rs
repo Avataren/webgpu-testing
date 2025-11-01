@@ -104,7 +104,7 @@ impl RenderApplication for ExampleApp {
 
         if let Some(root) = self.root_node {
             let rotation = Quat::from_rotation_y(t * 0.5);
-            let transform = ctx.scene.node_local_transform_mut(root);
+            let mut transform = ctx.scene.node_local_transform_mut(root);
             transform.rotation = rotation;
         }
 
