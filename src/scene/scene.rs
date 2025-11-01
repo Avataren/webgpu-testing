@@ -1,8 +1,7 @@
 use super::animation::{AnimationClip, AnimationState, AnimationTarget};
 use super::assets::{
-    build_tree_asset_node, serialize_world, SceneAsset, SceneAssetEntity, ScenePrefabOverrides,
-    ScenePrefabRef, SceneTreeAsset, SceneTreeAssetNode, SerializedAnimationClip,
-    SerializedTransform,
+    build_tree_asset_node, serialize_world, SceneAsset, ScenePrefabOverrides, ScenePrefabRef,
+    SceneTreeAsset, SceneTreeAssetNode, SerializedAnimationClip, SerializedTransform,
 };
 use super::graph::{SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
@@ -87,6 +86,24 @@ fn collect_prefab_indices(asset: &SceneAsset, index: usize, output: &mut Vec<usi
     for child in &asset.entities[index].children {
         collect_prefab_indices(asset, *child, output);
     }
+}
+
+fn asset_entity_accumulated_transform(asset: &SceneAsset, entity_index: usize) -> Transform {
+    let mut chain = Vec::new();
+    let mut current = Some(entity_index);
+
+    while let Some(index) = current {
+        chain.push(index);
+        current = asset.entities[index].parent;
+    }
+
+    let mut transform = Transform::IDENTITY;
+    for index in chain.iter().rev() {
+        let local = Transform::from(asset.entities[*index].transform.clone());
+        transform = transform.mul_transform(&local);
+    }
+
+    transform
 }
 
 impl Scene {
@@ -1022,7 +1039,7 @@ impl Scene {
             };
 
             let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
-            let base_entity = resolved.entity.clone();
+            let base_transform = asset_entity_accumulated_transform(asset, index);
             prefab_stack.push(target_document.clone());
             let child_name = name_override
                 .or_else(|| resolved.entity.name.clone())
@@ -1038,7 +1055,7 @@ impl Scene {
             );
             prefab_stack.pop();
 
-            self.apply_prefab_overrides(child_id, &base_entity, &prefab.overrides, false);
+            self.apply_prefab_overrides(child_id, base_transform, &prefab.overrides, false);
 
             if let Some(source) = document_id {
                 library.track_prefab_dependency(source.to_string(), target_document);
@@ -1084,7 +1101,7 @@ impl Scene {
         };
 
         let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
-        let base_entity = resolved.entity.clone();
+        let base_transform = Transform::IDENTITY;
         prefab_stack.push(target_document.clone());
         let node_id = self.instantiate_asset_internal(
             library,
@@ -1097,7 +1114,7 @@ impl Scene {
         );
         prefab_stack.pop();
 
-        self.apply_prefab_overrides(node_id, &base_entity, &prefab.overrides, true);
+        self.apply_prefab_overrides(node_id, base_transform, &prefab.overrides, true);
 
         if let Some(source) = document_id {
             library.track_prefab_dependency(source.to_string(), target_document);
@@ -1109,11 +1126,10 @@ impl Scene {
     fn apply_prefab_overrides(
         &mut self,
         node_id: SceneNodeId,
-        base_entity: &SceneAssetEntity,
+        base_transform: Transform,
         overrides: &ScenePrefabOverrides,
         skip_transform_update: bool,
     ) {
-        let base_transform = Transform::from(base_entity.transform.clone());
         if !skip_transform_update {
             self.node_mut(node_id).set_local_transform(base_transform);
         }

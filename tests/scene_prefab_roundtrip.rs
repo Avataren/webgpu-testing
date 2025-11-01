@@ -201,6 +201,64 @@ fn nested_prefab_instantiation_applies_overrides() {
 }
 
 #[test]
+fn prefab_instantiation_respects_parent_chain_transform() {
+    let prefab_root = SceneAssetEntity::builder(SerializedTransform::identity())
+        .with_name("PrefabRoot")
+        .build();
+    let prefab_asset = SceneAsset::builder("Prefab")
+        .add_entity(prefab_root)
+        .build();
+
+    let prefab_ref = ScenePrefabRef {
+        document: "prefab".into(),
+        node_path: vec!["PrefabRoot".into()],
+        overrides: ScenePrefabOverrides::default(),
+    };
+
+    let root_entity = SceneAssetEntity::builder(SerializedTransform::identity())
+        .with_name("HostRoot")
+        .with_children(vec![1])
+        .build();
+    let intermediate_entity = SceneAssetEntity::builder(make_transform([2.0, 0.0, 0.0]))
+        .with_name("Intermediate")
+        .with_parent(0)
+        .with_children(vec![2])
+        .build();
+    let placeholder_entity = SceneAssetEntity::builder(make_transform([0.0, 4.0, 0.0]))
+        .with_name("PrefabHolder")
+        .with_parent(1)
+        .with_scene_ref(prefab_ref)
+        .build();
+
+    let host_asset = SceneAsset::builder("Host")
+        .add_entity(root_entity)
+        .add_entity(intermediate_entity)
+        .add_entity(placeholder_entity)
+        .build();
+
+    let mut library = SceneLibrary::new();
+    library.insert("prefab", prefab_asset);
+    library.insert("host", host_asset.clone());
+
+    let mut scene = Scene::new();
+    let host_node = scene.instantiate_asset(&mut library, &host_asset, None, Some("host"));
+    scene.set_main_scene(host_node);
+
+    let children = scene.node_children(host_node);
+    assert_eq!(
+        children.len(),
+        1,
+        "prefab should instantiate under host root"
+    );
+
+    let prefab_node = children[0];
+    let prefab_transform = scene.node_local_transform(prefab_node);
+    assert!(prefab_transform
+        .translation
+        .abs_diff_eq(Vec3::new(2.0, 4.0, 0.0), 1e-5));
+}
+
+#[test]
 fn prefab_cycle_detection_prevents_recursion() {
     let child_ref = ScenePrefabRef {
         document: "b".into(),
