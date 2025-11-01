@@ -41,17 +41,13 @@ impl RenderApplication for ProjectPlayer {
             return;
         }
 
-        match self.manifest.instantiate_into(
-            &mut ctx.scene,
+        match self.manifest.instantiate_workspace(
             ctx.renderer,
             &self.project_root,
             &mut self.library,
         ) {
-            Ok(textures_changed) => {
-                if textures_changed {
-                    ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
-                }
-
+            Ok((workspace, textures_changed)) => {
+                ctx.request_workspace_swap(workspace, textures_changed);
                 log::info!(
                     "Loaded project '{}' from {}",
                     self.manifest.metadata.name,

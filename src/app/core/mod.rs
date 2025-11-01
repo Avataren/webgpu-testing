@@ -14,7 +14,7 @@ pub use scheduler::{
 };
 
 use crate::renderer::{RenderBatcher, Renderer};
-use crate::scene::{Scene, SceneWorkspace, SceneWorkspaceSceneMut};
+use crate::scene::{Scene, SceneHandle, SceneWorkspace, SceneWorkspaceSceneMut};
 use crate::settings::RenderSettings;
 
 const DEFAULT_SCENE_DOCUMENT_ID: &str = "app://untitled";
@@ -260,47 +260,61 @@ impl AppCore {
     }
 
     pub fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
-        let Some((handle, mut scene)) = self.workspace.active_scene_handle_and_mut() else {
+        let Some((handle, scene)) = self.workspace.active_scene_handle_and_mut() else {
             log::warn!("Renderer ready but no active scene to initialize");
             return;
         };
-        scene.init_timer();
         drop(scene);
 
-        if !self
+        if self
             .scheduler
             .run_startup_systems(&mut self.workspace, handle, renderer)
+            .is_none()
         {
             return;
         }
 
-        renderer.update_texture_bind_group(self.workspace.assets());
-    }
-
-    pub fn run_update_stage(&mut self, frame: &FrameStep) {
-        let runtime_mode = self.runtime.mode();
-        let handle = frame.scene_handle();
-        if !self
-            .scheduler
-            .run_update_stage(&mut self.workspace, handle, frame.dt(), runtime_mode)
-        {
-            log::warn!(
-                "Update stage skipped: active scene handle {:?} is unavailable",
-                handle
-            );
+        if let Some((_, mut scene)) = self.workspace.active_scene_handle_and_mut() {
+            scene.init_timer();
         }
     }
 
-    pub fn run_gpu_systems(&mut self, renderer: &mut Renderer, frame: &FrameStep) {
+    pub fn run_update_stage(&mut self, frame: &FrameStep) -> SceneHandle {
+        let runtime_mode = self.runtime.mode();
         let handle = frame.scene_handle();
-        if !self
+        match self
+            .scheduler
+            .run_update_stage(&mut self.workspace, handle, frame.dt(), runtime_mode)
+        {
+            Some(new_handle) => new_handle,
+            None => {
+                log::warn!(
+                    "Update stage skipped: active scene handle {:?} is unavailable",
+                    handle
+                );
+                handle
+            }
+        }
+    }
+
+    pub fn run_gpu_systems(
+        &mut self,
+        renderer: &mut Renderer,
+        frame: &FrameStep,
+        handle: SceneHandle,
+    ) -> SceneHandle {
+        match self
             .scheduler
             .run_gpu_systems(&mut self.workspace, handle, renderer, frame.dt())
         {
-            log::warn!(
-                "GPU systems skipped: active scene handle {:?} is unavailable",
+            Some(new_handle) => new_handle,
+            None => {
+                log::warn!(
+                    "GPU systems skipped: active scene handle {:?} is unavailable",
+                    handle
+                );
                 handle
-            );
+            }
         }
     }
 
@@ -309,6 +323,7 @@ impl AppCore {
         renderer: &mut Renderer,
         frame: &FrameStep,
         params: &RenderParams,
+        handle: SceneHandle,
     ) -> Result<RenderResult, wgpu::SurfaceError> {
         if !frame.should_render() {
             return Ok(RenderResult::Skipped);
@@ -319,7 +334,6 @@ impl AppCore {
             .map(|region| region.width() as f32 / region.height() as f32)
             .unwrap_or_else(|| renderer.aspect_ratio());
         let gizmos_enabled = self.runtime.gizmos_enabled();
-        let handle = frame.scene_handle();
         let mut scene = match self.workspace.scene_mut_by_handle(handle) {
             Some(scene) => scene,
             None => {

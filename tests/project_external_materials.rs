@@ -135,16 +135,14 @@ fn project_instantiation_preserves_external_material_handles() {
     let loaded = ProjectManifest::load_from_dir(project_root)
         .expect("reloading manifest from disk should succeed");
 
-    let mut restored_scene = Scene::new();
     let mut library = SceneLibrary::new();
-    loaded
-        .instantiate_into(
-            &mut restored_scene,
-            &mut headless,
-            project_root,
-            &mut library,
-        )
+    let (workspace, _) = loaded
+        .instantiate_workspace(&mut headless, project_root, &mut library)
         .expect("project should instantiate successfully");
+
+    let restored_scene = workspace
+        .into_active_scene()
+        .expect("workspace should provide an active scene");
 
     let final_json = fs::read_to_string(&mat_path).expect("material asset should remain readable");
     assert_eq!(

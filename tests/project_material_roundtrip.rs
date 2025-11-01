@@ -281,16 +281,14 @@ fn project_material_roundtrip_preserves_registry() {
     let loaded = ProjectManifest::load_from_dir(project_root)
         .expect("reloading manifest from disk should succeed");
 
-    let mut restored_scene = Scene::new();
     let mut library = SceneLibrary::new();
-    loaded
-        .instantiate_into(
-            &mut restored_scene,
-            &mut headless,
-            project_root,
-            &mut library,
-        )
+    let (workspace, _) = loaded
+        .instantiate_workspace(&mut headless, project_root, &mut library)
         .expect("project should instantiate successfully");
+
+    let restored_scene = workspace
+        .into_active_scene()
+        .expect("workspace should provide an active scene");
 
     let recaptured = ProjectManifest::capture(
         &restored_scene,

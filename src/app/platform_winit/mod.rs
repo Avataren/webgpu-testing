@@ -424,7 +424,7 @@ where
                 let Some(frame) = self.core.begin_frame() else {
                     return;
                 };
-                self.core.run_update_stage(&frame);
+                let mut active_handle = self.core.run_update_stage(&frame);
 
                 if let Some(mut renderer) = self.platform.take_renderer() {
                     #[cfg(feature = "egui")]
@@ -432,7 +432,9 @@ where
                         self.editor.begin_ui_frame(window_handle.as_ref());
                     }
 
-                    self.core.run_gpu_systems(&mut renderer, &frame);
+                    active_handle = self
+                        .core
+                        .run_gpu_systems(&mut renderer, &frame, active_handle);
 
                     #[cfg(feature = "egui")]
                     {
@@ -451,7 +453,9 @@ where
 
                     let params = RenderParams { render_region };
 
-                    let result = self.core.render_scene(&mut renderer, &frame, &params);
+                    let result =
+                        self.core
+                            .render_scene(&mut renderer, &frame, &params, active_handle);
 
                     let mut should_continue = true;
 
