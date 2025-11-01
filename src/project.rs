@@ -1,8 +1,8 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
-    Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspaceBuilder,
-    SerializedRuneScript, SerializedRuneScriptSource,
+    Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspace,
+    SceneWorkspaceBuilder, SerializedRuneScript, SerializedRuneScriptSource,
 };
 use glam::Vec3;
 use log::warn;
@@ -624,13 +624,12 @@ impl ProjectManifest {
         Ok(manifest)
     }
 
-    pub fn instantiate_into(
+    pub fn instantiate_workspace(
         &self,
-        scene: &mut Scene,
         renderer: &mut impl SceneImportDevice,
         project_root: &Path,
         library: &mut SceneLibrary,
-    ) -> Result<bool, ProjectError> {
+    ) -> Result<(SceneWorkspace, bool), ProjectError> {
         set_active_project_root(Some(project_root.to_path_buf()));
 
         for import in &self.imports {
@@ -651,13 +650,7 @@ impl ProjectManifest {
         }
 
         let builder = SceneWorkspaceBuilder::new(self, project_root, library);
-        let (workspace, textures_changed) = builder.build(renderer)?;
-        let Some(active_scene) = workspace.into_active_scene() else {
-            return Err(ProjectError::NoScenes);
-        };
-
-        *scene = active_scene;
-        Ok(textures_changed)
+        builder.build(renderer)
     }
 }
 
@@ -890,7 +883,71 @@ struct SerializedHdrBackground {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pollster::block_on;
     use std::io::Write;
+    use std::sync::Arc;
+    use wgpu::{
+        Backends, DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, MemoryHints,
+        PowerPreference, RequestAdapterOptions, Trace,
+    };
+
+    use crate::asset::Mesh;
+    use crate::renderer::Vertex;
+    use crate::scene::{SceneAsset, SceneImportDevice, SceneLibrary};
+
+    struct HeadlessDevice {
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+    }
+
+    impl HeadlessDevice {
+        fn new() -> Option<Self> {
+            let instance = Instance::new(&InstanceDescriptor {
+                backends: Backends::all(),
+                ..Default::default()
+            });
+            let adapter = match block_on(instance.request_adapter(&RequestAdapterOptions {
+                power_preference: PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            })) {
+                Ok(adapter) => adapter,
+                Err(err) => {
+                    eprintln!("Skipping project workspace test: failed to request adapter ({err})");
+                    return None;
+                }
+            };
+
+            let (device, queue) = block_on(adapter.request_device(&DeviceDescriptor {
+                label: Some("project-workspace-test"),
+                required_features: Features::empty(),
+                required_limits: Limits::default(),
+                memory_hints: MemoryHints::Performance,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: Trace::Off,
+            }))
+            .ok()?;
+
+            Some(Self {
+                device: Arc::new(device),
+                queue: Arc::new(queue),
+            })
+        }
+    }
+
+    impl SceneImportDevice for HeadlessDevice {
+        fn device(&self) -> &wgpu::Device {
+            &self.device
+        }
+
+        fn queue(&self) -> &wgpu::Queue {
+            &self.queue
+        }
+
+        fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) -> Mesh {
+            Mesh::from_vertices(&self.device, vertices, indices)
+        }
+    }
 
     #[test]
     fn environment_roundtrip_preserves_hdr_path() {
@@ -951,5 +1008,38 @@ mod tests {
         let other = tmp_dir.path().join("other.hdr");
         fs::write(&other, b"dummy").unwrap();
         assert!(!super::paths_refer_to_same_file(&file_path, &other).unwrap());
+    }
+
+    #[test]
+    fn instantiate_workspace_registers_all_documents() {
+        let Some(mut device) = HeadlessDevice::new() else {
+            return;
+        };
+
+        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+        let secondary_asset = SceneAsset::builder("Secondary".to_string()).build();
+        let secondary_id = generate_scene_document_id();
+        let secondary_document = SceneDocument::with_asset(secondary_id.clone(), &secondary_asset);
+
+        manifest
+            .scene_assets
+            .insert(secondary_id.clone(), secondary_asset);
+        manifest.scenes.push(secondary_document);
+
+        let mut library = SceneLibrary::new();
+        let (workspace, _) = manifest
+            .instantiate_workspace(&mut device, Path::new("."), &mut library)
+            .expect("workspace instantiation should succeed");
+
+        let handles: Vec<_> = workspace.scene_handles().collect();
+        assert_eq!(handles.len(), 2, "workspace should contain both scenes");
+        assert!(
+            library.asset(&manifest.scenes[0].id).is_some(),
+            "primary scene asset should be registered"
+        );
+        assert!(
+            library.asset(&secondary_id).is_some(),
+            "secondary scene asset should be registered"
+        );
     }
 }

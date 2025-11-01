@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use glam::Vec2;
 use hecs::Entity;
 use log::warn;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
-use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
+use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene, SceneHandle};
 
 use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorAppAccess, EditorContext, EditorSystem};
@@ -15,6 +17,8 @@ pub(crate) struct SelectionSystem {
     pointer: PointerState,
     pending_pick: Option<ViewportPick>,
     gpu_pick: GpuPickState,
+    active_scene: Option<SceneHandle>,
+    scene_states: HashMap<SceneHandle, SelectionState>,
 }
 
 pub(crate) struct SelectionDeletionResult {
@@ -46,6 +50,28 @@ impl SelectionSystem {
 
     pub(crate) fn take_override(&mut self) -> Option<Option<Entity>> {
         self.state.take_override()
+    }
+
+    pub(crate) fn set_active_scene(&mut self, handle: SceneHandle) {
+        if self.active_scene == Some(handle) {
+            return;
+        }
+
+        if let Some(previous) = self.active_scene {
+            self.scene_states.insert(previous, self.state.clone());
+        }
+
+        self.state = self.scene_states.remove(&handle).unwrap_or_default();
+        self.clear_pending_pick();
+        self.active_scene = Some(handle);
+    }
+
+    pub(crate) fn reset_workspace(&mut self) {
+        self.clear_pending_pick();
+        self.state = SelectionState::default();
+        self.pointer = PointerState::default();
+        self.active_scene = None;
+        self.scene_states.clear();
     }
 
     pub(crate) fn clear_pending_pick(&mut self) {
@@ -430,6 +456,7 @@ impl SelectionSystem {
 impl EditorSystem for SelectionSystem {
     fn update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
         let Some(()) = ctx.with_update_app(|app, update_ctx| {
+            self.set_active_scene(update_ctx.scene_handle);
             self.process_viewport_pick(app, update_ctx);
             let history_changed = self.sync_selection_component(update_ctx);
             if history_changed {
@@ -442,6 +469,7 @@ impl EditorSystem for SelectionSystem {
 
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
         let Some(()) = ctx.with_gpu_app(|app, gpu_ctx| {
+            self.set_active_scene(gpu_ctx.scene_handle);
             let runtime_state = app.runtime_state();
             if !matches!(runtime_state.active_mode(), RuntimeMode::Editor) {
                 self.clear_pending_pick();
@@ -502,7 +530,7 @@ impl EditorSystem for SelectionSystem {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct SelectionState {
     selected: Option<Entity>,
     highlighted: Option<Entity>,

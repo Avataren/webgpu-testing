@@ -24,7 +24,7 @@ impl RenderApplication for ExampleApp {
                 Material::red(),
                 PathBuf::from("examples/minimal/red"),
             ));
-        EntityBuilder::new(ctx.scene)
+        EntityBuilder::new(&mut ctx.scene)
             .with_name("Test Cube")
             .with_mesh(mesh_handle)
             .with_material(material_handle)

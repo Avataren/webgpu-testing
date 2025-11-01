@@ -3,15 +3,44 @@ use crate::renderer::texture::{
     DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
 };
 use crate::renderer::{Renderer, Texture};
+use crate::scene::workspace::SceneDocumentId;
 use crate::scene::{Scene, SceneHandle, SceneWorkspace, SceneWorkspaceSceneMut};
 use crate::time::Instant;
 
 use super::runtime::RuntimeMode;
 
+struct WorkspaceSwapRequest {
+    workspace: SceneWorkspace,
+    textures_changed: bool,
+}
+
 pub struct StartupContext<'a> {
     pub scene_handle: SceneHandle,
     pub scene: SceneWorkspaceSceneMut<'a>,
     pub renderer: &'a mut Renderer,
+    workspace_swap: Option<WorkspaceSwapRequest>,
+    active_scene_request: Option<SceneDocumentId>,
+}
+
+impl<'a> StartupContext<'a> {
+    pub fn request_workspace_swap(&mut self, workspace: SceneWorkspace, textures_changed: bool) {
+        self.workspace_swap = Some(WorkspaceSwapRequest {
+            workspace,
+            textures_changed,
+        });
+    }
+
+    pub fn request_active_scene(&mut self, document_id: SceneDocumentId) {
+        self.active_scene_request = Some(document_id);
+    }
+
+    fn take_workspace_swap(&mut self) -> Option<WorkspaceSwapRequest> {
+        self.workspace_swap.take()
+    }
+
+    fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
+        self.active_scene_request.take()
+    }
 }
 
 pub struct UpdateContext<'a> {
@@ -19,6 +48,17 @@ pub struct UpdateContext<'a> {
     pub scene: SceneWorkspaceSceneMut<'a>,
     pub dt: f64,
     pub runtime: RuntimeMode,
+    active_scene_request: Option<SceneDocumentId>,
+}
+
+impl<'a> UpdateContext<'a> {
+    pub fn request_active_scene(&mut self, document_id: SceneDocumentId) {
+        self.active_scene_request = Some(document_id);
+    }
+
+    fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
+        self.active_scene_request.take()
+    }
 }
 
 pub struct GpuUpdateContext<'a> {
@@ -26,6 +66,29 @@ pub struct GpuUpdateContext<'a> {
     pub scene: SceneWorkspaceSceneMut<'a>,
     pub renderer: &'a mut Renderer,
     pub dt: f64,
+    workspace_swap: Option<WorkspaceSwapRequest>,
+    active_scene_request: Option<SceneDocumentId>,
+}
+
+impl<'a> GpuUpdateContext<'a> {
+    pub fn request_workspace_swap(&mut self, workspace: SceneWorkspace, textures_changed: bool) {
+        self.workspace_swap = Some(WorkspaceSwapRequest {
+            workspace,
+            textures_changed,
+        });
+    }
+
+    pub fn request_active_scene(&mut self, document_id: SceneDocumentId) {
+        self.active_scene_request = Some(document_id);
+    }
+
+    fn take_workspace_swap(&mut self) -> Option<WorkspaceSwapRequest> {
+        self.workspace_swap.take()
+    }
+
+    fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
+        self.active_scene_request.take()
+    }
 }
 
 pub type StartupSystem = Box<dyn for<'a> FnMut(&mut StartupContext<'a>) + 'static>;
@@ -140,35 +203,70 @@ impl Scheduler {
         workspace: &mut SceneWorkspace,
         handle: SceneHandle,
         renderer: &mut Renderer,
-    ) -> bool {
+    ) -> Option<SceneHandle> {
         if self.startup_ran {
-            return true;
+            return Some(handle);
         }
 
-        if self.auto_init_default_textures
-            && !Self::with_scene(workspace, handle, |mut scene| {
+        let mut active_handle = handle;
+        let mut textures_changed = false;
+        let mut workspace_swapped = false;
+
+        if self.auto_init_default_textures {
+            if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
                 if scene.assets.textures.is_empty() {
                     self.init_default_textures(&mut scene, renderer);
+                    textures_changed = true;
                 }
-            })
-        {
-            return false;
-        }
-
-        for system in &mut self.startup_systems {
-            if !Self::with_scene(workspace, handle, |scene| {
-                let mut ctx = StartupContext {
-                    scene_handle: handle,
-                    scene,
-                    renderer,
-                };
-                (system)(&mut ctx);
-            }) {
-                return false;
+            } else {
+                log::warn!(
+                    "Startup initialization skipped: active scene handle {:?} is unavailable",
+                    active_handle
+                );
+                return None;
             }
         }
 
-        if !Self::with_scene(workspace, handle, |mut scene| {
+        for system in &mut self.startup_systems {
+            let Some(scene) = workspace.scene_mut_by_handle(active_handle) else {
+                log::warn!(
+                    "Startup system skipped: active scene handle {:?} is unavailable",
+                    active_handle
+                );
+                return None;
+            };
+
+            let mut ctx = StartupContext {
+                scene_handle: active_handle,
+                scene,
+                renderer,
+                workspace_swap: None,
+                active_scene_request: None,
+            };
+            (system)(&mut ctx);
+
+            let swap = ctx.take_workspace_swap();
+            let active_request = ctx.take_active_scene_request();
+            active_handle = ctx.scene_handle;
+            drop(ctx);
+
+            let (new_handle, swap_changed, swapped) =
+                Self::apply_workspace_requests(workspace, active_handle, swap, active_request);
+            active_handle = new_handle;
+            textures_changed |= swap_changed;
+            workspace_swapped |= swapped;
+        }
+
+        if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
+            if self.auto_init_default_textures
+                && (workspace_swapped || scene.assets.textures.is_empty())
+            {
+                if scene.assets.textures.is_empty() {
+                    self.init_default_textures(&mut scene, renderer);
+                    textures_changed = true;
+                }
+            }
+
             if self.auto_add_default_lighting {
                 let added_lights = scene.add_default_lighting();
                 if added_lights > 0 {
@@ -180,12 +278,20 @@ impl Scheduler {
             scene.set_animation_playback(false);
             scene.update(0.0);
             log::info!("Initial propagation complete");
-        }) {
-            return false;
+        } else {
+            log::warn!(
+                "Startup post-processing skipped: active scene handle {:?} is unavailable",
+                active_handle
+            );
+            return None;
+        }
+
+        if textures_changed {
+            renderer.update_texture_bind_group(workspace.assets());
         }
 
         self.startup_ran = true;
-        true
+        Some(active_handle)
     }
 
     pub fn run_update_stage(
@@ -194,32 +300,58 @@ impl Scheduler {
         handle: SceneHandle,
         dt: f64,
         runtime: RuntimeMode,
-    ) -> bool {
-        if runtime == RuntimeMode::Playing
-            && !Self::with_scene(workspace, handle, |mut scene| {
-                scene.update(dt);
-            })
-        {
-            return false;
-        }
+    ) -> Option<SceneHandle> {
+        let mut active_handle = handle;
 
-        for system in &mut self.update_systems {
-            if !Self::with_scene(workspace, handle, |scene| {
-                let mut ctx = UpdateContext {
-                    scene_handle: handle,
-                    scene,
-                    dt,
-                    runtime,
-                };
-                (system)(&mut ctx);
-            }) {
-                return false;
+        if runtime == RuntimeMode::Playing {
+            if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
+                scene.update(dt);
+            } else {
+                log::warn!(
+                    "Update skipped: active scene handle {:?} is unavailable",
+                    active_handle
+                );
+                return None;
             }
         }
 
-        Self::with_scene(workspace, handle, |mut scene| {
+        for system in &mut self.update_systems {
+            let Some(scene) = workspace.scene_mut_by_handle(active_handle) else {
+                log::warn!(
+                    "Update system skipped: active scene handle {:?} is unavailable",
+                    active_handle
+                );
+                return None;
+            };
+
+            let mut ctx = UpdateContext {
+                scene_handle: active_handle,
+                scene,
+                dt,
+                runtime,
+                active_scene_request: None,
+            };
+            (system)(&mut ctx);
+
+            let active_request = ctx.take_active_scene_request();
+            active_handle = ctx.scene_handle;
+            drop(ctx);
+
+            let (new_handle, _, _) =
+                Self::apply_workspace_requests(workspace, active_handle, None, active_request);
+            active_handle = new_handle;
+        }
+
+        if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             scene.propagate_transforms();
-        })
+            Some(active_handle)
+        } else {
+            log::warn!(
+                "Transform propagation skipped: active scene handle {:?} is unavailable",
+                active_handle
+            );
+            None
+        }
     }
 
     pub fn run_gpu_systems(
@@ -228,40 +360,99 @@ impl Scheduler {
         handle: SceneHandle,
         renderer: &mut Renderer,
         dt: f64,
-    ) -> bool {
+    ) -> Option<SceneHandle> {
+        let mut active_handle = handle;
+        let mut textures_changed = false;
+        let mut workspace_swapped = false;
+
         for system in &mut self.gpu_systems {
-            if !Self::with_scene(workspace, handle, |scene| {
-                let mut ctx = GpuUpdateContext {
-                    scene_handle: handle,
-                    scene,
-                    renderer,
-                    dt,
-                };
-                (system)(&mut ctx);
-            }) {
-                return false;
-            }
+            let Some(scene) = workspace.scene_mut_by_handle(active_handle) else {
+                log::warn!(
+                    "GPU system skipped: active scene handle {:?} is unavailable",
+                    active_handle
+                );
+                return None;
+            };
+
+            let mut ctx = GpuUpdateContext {
+                scene_handle: active_handle,
+                scene,
+                renderer,
+                dt,
+                workspace_swap: None,
+                active_scene_request: None,
+            };
+            (system)(&mut ctx);
+
+            let swap = ctx.take_workspace_swap();
+            let active_request = ctx.take_active_scene_request();
+            active_handle = ctx.scene_handle;
+            drop(ctx);
+
+            let (new_handle, swap_changed, swapped) =
+                Self::apply_workspace_requests(workspace, active_handle, swap, active_request);
+            active_handle = new_handle;
+            textures_changed |= swap_changed;
+            workspace_swapped |= swapped;
         }
 
-        Self::with_scene(workspace, handle, |mut scene| {
+        if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             scene.propagate_transforms();
-        })
+        } else {
+            log::warn!(
+                "GPU propagation skipped: active scene handle {:?} is unavailable",
+                active_handle
+            );
+            return None;
+        }
+
+        if textures_changed {
+            renderer.update_texture_bind_group(workspace.assets());
+        }
+
+        if workspace_swapped {
+            log::info!("Workspace swap applied during GPU systems");
+        }
+
+        Some(active_handle)
     }
 
-    fn with_scene<F>(workspace: &mut SceneWorkspace, handle: SceneHandle, f: F) -> bool
-    where
-        F: FnOnce(SceneWorkspaceSceneMut<'_>),
-    {
-        match workspace.scene_mut_by_handle(handle) {
-            Some(scene) => {
-                f(scene);
-                true
-            }
-            None => {
-                log::warn!("Scene handle {:?} is no longer available", handle);
-                false
+    fn apply_workspace_requests(
+        workspace: &mut SceneWorkspace,
+        mut handle: SceneHandle,
+        swap: Option<WorkspaceSwapRequest>,
+        active_request: Option<SceneDocumentId>,
+    ) -> (SceneHandle, bool, bool) {
+        let mut textures_changed = false;
+        let mut workspace_swapped = false;
+
+        if let Some(request) = swap {
+            *workspace = request.workspace;
+            textures_changed |= request.textures_changed;
+            workspace_swapped = true;
+
+            if let Some(new_handle) = workspace.active_scene_handle() {
+                handle = new_handle;
+            } else {
+                log::warn!(
+                    "Workspace swap resulted in no active scene; retaining previous handle {:?}",
+                    handle
+                );
             }
         }
+
+        if let Some(document_id) = active_request {
+            match workspace.set_active_scene(&document_id) {
+                Ok(new_handle) => {
+                    handle = new_handle;
+                }
+                Err(err) => {
+                    log::warn!("Failed to activate scene '{}': {}", document_id, err);
+                }
+            }
+        }
+
+        (handle, textures_changed, workspace_swapped)
     }
 
     fn init_default_textures(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
@@ -335,5 +526,27 @@ mod tests {
             scheduler.begin_frame(handle, &mut scene)
         };
         assert!(second.should_render());
+    }
+
+    #[test]
+    fn update_stage_switches_active_scene() {
+        let mut scheduler = Scheduler::default();
+        let target = "second".to_string();
+        scheduler.add_update_system(Box::new(move |ctx| {
+            ctx.request_active_scene(target.clone());
+        }));
+
+        let mut workspace = SceneWorkspace::new();
+        let first_id = "first".to_string();
+        let second_id = "second".to_string();
+        let first_handle = workspace.open_scene(first_id.clone(), Scene::new());
+        workspace.open_scene(second_id.clone(), Scene::new());
+
+        let result = scheduler
+            .run_update_stage(&mut workspace, first_handle, 0.0, RuntimeMode::Editor)
+            .expect("update stage should succeed");
+
+        assert_eq!(workspace.active_scene_handle(), Some(result));
+        assert_eq!(workspace.active_document_id(), Some(&second_id));
     }
 }

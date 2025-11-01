@@ -754,16 +754,13 @@ fn packaged_gltf_roundtrip_without_source() {
     drop(packaged_bundle);
 
     let loaded = ProjectManifest::load_from_dir(project_root).expect("load manifest");
-    let mut restored_scene = Scene::new();
     let mut library = SceneLibrary::new();
-    let textures_changed = loaded
-        .instantiate_into(
-            &mut restored_scene,
-            &mut headless,
-            project_root,
-            &mut library,
-        )
+    let (workspace, textures_changed) = loaded
+        .instantiate_workspace(&mut headless, project_root, &mut library)
         .expect("instantiate project");
+    let restored_scene = workspace
+        .into_active_scene()
+        .expect("workspace should provide an active scene");
     if textures_changed {
         headless
             .queue()
