@@ -15,7 +15,9 @@ use wgpu_cube::project::{
     resolve_project_path, set_active_project_root, ProjectManifest, ProjectMetadata,
 };
 use wgpu_cube::renderer::Vertex;
-use wgpu_cube::scene::{Scene, SceneAsset, SceneImportDevice, SceneLoader, SerializedMaterial};
+use wgpu_cube::scene::{
+    Scene, SceneAsset, SceneImportDevice, SceneLibrary, SceneLoader, SerializedMaterial,
+};
 
 struct HeadlessDevice {
     device: Arc<wgpu::Device>,
@@ -257,9 +259,16 @@ fn project_material_roundtrip_preserves_registry() {
     let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
     scene.set_main_scene(node);
 
-    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
+    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
         .expect("capturing manifest should succeed");
-    let before_map = collect_material_map(&manifest.scene, project_root);
+    let document = manifest
+        .scenes()
+        .first()
+        .expect("captured manifest should include a scene");
+    let asset = manifest
+        .scene_asset(&document.id)
+        .expect("captured manifest should include asset payload");
+    let before_map = collect_material_map(asset, project_root);
     assert!(
         !before_map.is_empty(),
         "expected material registry to contain entries"
@@ -273,13 +282,30 @@ fn project_material_roundtrip_preserves_registry() {
         .expect("reloading manifest from disk should succeed");
 
     let mut restored_scene = Scene::new();
+    let mut library = SceneLibrary::new();
     loaded
-        .instantiate_into(&mut restored_scene, &mut headless, project_root)
+        .instantiate_into(
+            &mut restored_scene,
+            &mut headless,
+            project_root,
+            &mut library,
+        )
         .expect("project should instantiate successfully");
 
-    let recaptured = ProjectManifest::capture(&restored_scene, loaded.metadata.clone())
-        .expect("recapturing manifest should succeed");
-    let mut deserialized_scene = recaptured.scene.clone();
+    let recaptured = ProjectManifest::capture(
+        &restored_scene,
+        loaded.metadata.clone(),
+        loaded.scenes().first(),
+    )
+    .expect("recapturing manifest should succeed");
+    let recaptured_document = recaptured
+        .scenes()
+        .first()
+        .expect("recaptured manifest should include a scene");
+    let mut deserialized_scene = recaptured
+        .scene_asset(&recaptured_document.id)
+        .expect("recaptured manifest should provide asset")
+        .clone();
     hydrate_material_data(&mut deserialized_scene, project_root);
     let after_map = collect_material_map(&deserialized_scene, project_root);
 

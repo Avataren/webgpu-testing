@@ -13,7 +13,7 @@ use wgpu_cube::asset::{MaterialTextureSlot, Mesh};
 use wgpu_cube::project::{set_active_project_root, ProjectManifest, ProjectMetadata};
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
-    MaterialComponent, Scene, SceneImportDevice, SceneLoader, SerializedMaterial,
+    MaterialComponent, Scene, SceneImportDevice, SceneLibrary, SceneLoader, SerializedMaterial,
 };
 
 struct HeadlessDevice {
@@ -96,7 +96,7 @@ fn project_instantiation_preserves_external_material_handles() {
     let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
     scene.set_main_scene(node);
 
-    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
+    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
         .expect("capturing manifest should succeed");
     manifest
         .save_to_dir(project_root)
@@ -136,8 +136,14 @@ fn project_instantiation_preserves_external_material_handles() {
         .expect("reloading manifest from disk should succeed");
 
     let mut restored_scene = Scene::new();
+    let mut library = SceneLibrary::new();
     loaded
-        .instantiate_into(&mut restored_scene, &mut headless, project_root)
+        .instantiate_into(
+            &mut restored_scene,
+            &mut headless,
+            project_root,
+            &mut library,
+        )
         .expect("project should instantiate successfully");
 
     let final_json = fs::read_to_string(&mat_path).expect("material asset should remain readable");

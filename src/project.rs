@@ -2,11 +2,15 @@ use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
     Camera, CameraProjection, Scene, SceneAsset, SceneAssetBundle, SceneAssetResources,
-    SerializedRuneScript, SerializedRuneScriptSource,
+    SceneLibrary, SerializedRuneScript, SerializedRuneScriptSource,
 };
 use glam::Vec3;
+use log::warn;
+use rand::distributions::{Alphanumeric, DistString};
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
@@ -14,8 +18,21 @@ use thiserror::Error;
 
 pub const PROJECT_FILE_NAME: &str = "project.json";
 pub const SCENE_FILE_NAME: &str = "scene.json";
+pub const SCENE_LIBRARY_DIR: &str = "scenes";
 pub const CONTENT_DIR: &str = "content";
 const PROJECT_VERSION: u32 = 1;
+
+fn generate_scene_document_id() -> String {
+    let mut rng = SmallRng::from_entropy();
+    Alphanumeric.sample_string(&mut rng, 12)
+}
+
+fn default_scene_relative_path(document_id: &str) -> PathBuf {
+    PathBuf::from(CONTENT_DIR)
+        .join(SCENE_LIBRARY_DIR)
+        .join(document_id)
+        .join(SCENE_FILE_NAME)
+}
 
 fn collect_metadata_files(dir: &Path) -> Vec<PathBuf> {
     let mut stack = vec![dir.to_path_buf()];
@@ -177,6 +194,8 @@ fn strip_verbatim_prefix(path: &str) -> PathBuf {
 pub enum ProjectError {
     #[error("scene has no serializable content")]
     EmptyScene,
+    #[error("project manifest contains no scenes")]
+    NoScenes,
     #[error("failed to access the filesystem: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to (de)serialize project data: {0}")]
@@ -185,6 +204,8 @@ pub enum ProjectError {
     InvalidEnvironmentPath(PathBuf),
     #[error("environment HDR image not found: {0}")]
     MissingEnvironmentFile(PathBuf),
+    #[error("missing scene asset for document {0}")]
+    MissingSceneAsset(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,16 +231,66 @@ pub struct ProjectImport {
     pub metadata: Vec<PathBuf>,
 }
 
+mod relative_path_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::path::{Path, PathBuf};
+
+    pub fn serialize<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(path.to_string_lossy().as_ref())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(PathBuf::from(value))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SceneDocumentDependencies {
+    #[serde(default)]
+    pub prefab_instances: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SceneDocument {
+    pub id: String,
+    pub name: String,
+    #[serde(with = "relative_path_serde")]
+    pub relative_path: PathBuf,
+    #[serde(default)]
+    pub dependencies: SceneDocumentDependencies,
+}
+
+impl SceneDocument {
+    fn with_asset(id: String, asset: &SceneAsset) -> Self {
+        Self {
+            name: asset.name.clone(),
+            relative_path: default_scene_relative_path(&id),
+            id,
+            dependencies: SceneDocumentDependencies::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectManifest {
     version: u32,
     pub metadata: ProjectMetadata,
-    pub scene: SceneAsset,
+    #[serde(default)]
+    pub scenes: Vec<SceneDocument>,
     pub environment: SerializedEnvironment,
     #[serde(default)]
     pub engine_camera: SerializedEngineCamera,
     #[serde(default)]
     pub imports: Vec<ProjectImport>,
+    #[serde(skip, default)]
+    scene_assets: HashMap<String, SceneAsset>,
 }
 
 impl ProjectManifest {
@@ -235,17 +306,37 @@ impl ProjectManifest {
     /// ```
     pub fn new_empty(metadata: ProjectMetadata) -> Self {
         let environment = SerializedEnvironment::from_environment(&Environment::default());
-        Self {
+        let mut manifest = Self {
             version: PROJECT_VERSION,
-            scene: SceneAsset::builder(metadata.name.clone()).build(),
             metadata,
+            scenes: Vec::new(),
             environment,
             engine_camera: SerializedEngineCamera::default(),
             imports: Vec::new(),
-        }
+            scene_assets: HashMap::new(),
+        };
+
+        let scene_asset = SceneAsset::builder(manifest.metadata.name.clone()).build();
+        let document_id = generate_scene_document_id();
+        let document = SceneDocument::with_asset(document_id.clone(), &scene_asset);
+        manifest.scene_assets.insert(document_id, scene_asset);
+        manifest.scenes.push(document);
+        manifest
     }
 
-    pub fn capture(scene: &Scene, metadata: ProjectMetadata) -> Result<Self, ProjectError> {
+    pub fn scenes(&self) -> &[SceneDocument] {
+        &self.scenes
+    }
+
+    pub fn scene_asset(&self, document_id: &str) -> Option<&SceneAsset> {
+        self.scene_assets.get(document_id)
+    }
+
+    pub fn capture(
+        scene: &Scene,
+        metadata: ProjectMetadata,
+        existing_document: Option<&SceneDocument>,
+    ) -> Result<Self, ProjectError> {
         let engine_camera = SerializedEngineCamera::from_camera(scene.camera());
         let mut asset = scene
             .export_main_asset(metadata.name.clone())
@@ -356,13 +447,27 @@ impl ProjectManifest {
                 metadata: metadata_paths,
             });
         }
+        let (document, document_id) = if let Some(existing) = existing_document {
+            let mut document = existing.clone();
+            document.name = asset.name.clone();
+            (document, existing.id.clone())
+        } else {
+            let document_id = generate_scene_document_id();
+            let document = SceneDocument::with_asset(document_id.clone(), &asset);
+            (document, document_id)
+        };
+
+        let mut scene_assets = HashMap::new();
+        scene_assets.insert(document_id.clone(), asset);
+
         Ok(Self {
             version: PROJECT_VERSION,
             metadata,
-            scene: asset,
+            scenes: vec![document],
             environment,
             engine_camera,
             imports,
+            scene_assets,
         })
     }
 
@@ -371,16 +476,28 @@ impl ProjectManifest {
 
         let mut manifest = self.clone();
         manifest.environment.prepare_for_save(dir)?;
-        manifest.scene.persist_material_assets(dir)?;
+        for asset in manifest.scene_assets.values_mut() {
+            asset.persist_material_assets(dir)?;
+        }
 
         let json = serde_json::to_string_pretty(&manifest)?;
         fs::write(dir.join(PROJECT_FILE_NAME), json)?;
 
-        let scene_json = manifest
-            .scene
-            .to_json()
-            .map_err(ProjectError::Serialization)?;
-        fs::write(dir.join(SCENE_FILE_NAME), scene_json)?;
+        for document in &manifest.scenes {
+            let Some(asset) = manifest.scene_assets.get(&document.id) else {
+                return Err(ProjectError::MissingSceneAsset(document.id.clone()));
+            };
+            let scene_json = asset.to_json().map_err(ProjectError::Serialization)?;
+            let scene_path = dir.join(&document.relative_path);
+            if let Some(parent) = scene_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(scene_path, scene_json)?;
+        }
+        let legacy_scene = dir.join(SCENE_FILE_NAME);
+        if legacy_scene.exists() {
+            let _ = fs::remove_file(legacy_scene);
+        }
         Ok(())
     }
 
@@ -389,14 +506,103 @@ impl ProjectManifest {
         let json = fs::read_to_string(&manifest_path)?;
         let mut manifest: ProjectManifest = serde_json::from_str(&json)?;
         manifest.environment.resolve_paths(dir)?;
+        manifest.scene_assets.clear();
 
-        let scene_path = dir.join(SCENE_FILE_NAME);
-        if scene_path.exists() {
-            let scene_json = fs::read_to_string(scene_path)?;
-            manifest.scene =
+        let mut documents: Vec<SceneDocument> = Vec::new();
+        let mut existing: BTreeMap<String, SceneDocument> = manifest
+            .scenes
+            .iter()
+            .cloned()
+            .map(|doc| (doc.id.clone(), doc))
+            .collect();
+
+        let legacy_scene_path = dir.join(SCENE_FILE_NAME);
+        if legacy_scene_path.exists() {
+            let scene_json = fs::read_to_string(&legacy_scene_path)?;
+            let mut asset =
                 SceneAsset::from_json(&scene_json).map_err(ProjectError::Serialization)?;
-            manifest.scene.persist_material_assets(dir)?;
+            asset.persist_material_assets(dir)?;
+            let document_id = existing
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(generate_scene_document_id);
+            let (dependencies, relative_path) = match existing.remove(&document_id) {
+                Some(doc) => (doc.dependencies, doc.relative_path),
+                None => (
+                    SceneDocumentDependencies::default(),
+                    default_scene_relative_path(&document_id),
+                ),
+            };
+            let absolute_path = dir.join(&relative_path);
+            if let Some(parent) = absolute_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&absolute_path, scene_json)?;
+            let _ = fs::remove_file(&legacy_scene_path);
+            let document_name = asset.name.clone();
+            manifest.scene_assets.insert(document_id.clone(), asset);
+            documents.push(SceneDocument {
+                id: document_id.clone(),
+                name: document_name,
+                relative_path,
+                dependencies,
+            });
         }
+
+        let scenes_root = dir.join(CONTENT_DIR).join(SCENE_LIBRARY_DIR);
+        if scenes_root.exists() {
+            for entry in fs::read_dir(&scenes_root)? {
+                let entry = entry?;
+                if !entry.file_type()?.is_dir() {
+                    continue;
+                }
+
+                let document_id = match entry.file_name().into_string() {
+                    Ok(id) => id,
+                    Err(name) => {
+                        warn!(
+                            "Skipping scene directory with invalid UTF-8 name: {:?}",
+                            name
+                        );
+                        continue;
+                    }
+                };
+
+                let relative_path = default_scene_relative_path(&document_id);
+                let scene_path = dir.join(&relative_path);
+                if !scene_path.exists() {
+                    warn!(
+                        "Missing scene document for id {} at {:?}",
+                        document_id, scene_path
+                    );
+                    continue;
+                }
+
+                let scene_json = fs::read_to_string(&scene_path)?;
+                let mut asset =
+                    SceneAsset::from_json(&scene_json).map_err(ProjectError::Serialization)?;
+                asset.persist_material_assets(dir)?;
+                let document_name = asset.name.clone();
+                manifest.scene_assets.insert(document_id.clone(), asset);
+                let (dependencies, relative_path) = match existing.remove(&document_id) {
+                    Some(doc) => (doc.dependencies, doc.relative_path),
+                    None => (
+                        SceneDocumentDependencies::default(),
+                        default_scene_relative_path(&document_id),
+                    ),
+                };
+                documents.push(SceneDocument {
+                    id: document_id,
+                    name: document_name,
+                    relative_path,
+                    dependencies,
+                });
+            }
+        }
+
+        documents.sort_by(|a, b| a.id.cmp(&b.id));
+        manifest.scenes = documents;
         Ok(manifest)
     }
 
@@ -415,6 +621,7 @@ impl ProjectManifest {
         scene: &mut Scene,
         renderer: &mut impl SceneImportDevice,
         project_root: &Path,
+        library: &mut SceneLibrary,
     ) -> Result<bool, ProjectError> {
         set_active_project_root(Some(project_root.to_path_buf()));
 
@@ -422,6 +629,16 @@ impl ProjectManifest {
         new_scene.set_camera(self.engine_camera.to_camera());
         let environment = self.environment.clone().into_environment(project_root)?;
         new_scene.set_environment(environment);
+
+        let document = self.scenes.first().ok_or(ProjectError::NoScenes)?;
+        library.register_document(document);
+
+        let active_asset = if let Some(asset) = self.scene_assets.get(&document.id) {
+            asset.clone()
+        } else {
+            library.load_document(document, project_root)?.clone()
+        };
+        library.insert(document.id.clone(), active_asset.clone());
 
         for import in &self.imports {
             for meta in &import.metadata {
@@ -440,7 +657,7 @@ impl ProjectManifest {
             }
         }
 
-        let mut bundle = SceneAssetBundle::new(self.scene.clone(), SceneAssetResources::default());
+        let mut bundle = SceneAssetBundle::new(active_asset, SceneAssetResources::default());
 
         let registration = bundle.register_resources(renderer, &mut new_scene.assets);
         let textures_changed = registration.textures_changed;
@@ -708,15 +925,9 @@ mod tests {
         );
 
         let manifest_path = tmp_dir.path().join(PROJECT_FILE_NAME);
-        let json = serde_json::to_string(&ProjectManifest {
-            version: PROJECT_VERSION,
-            metadata: ProjectMetadata::default(),
-            scene: SceneAsset::builder("Test").build(),
-            environment: serialized.clone(),
-            engine_camera: SerializedEngineCamera::default(),
-            imports: Vec::new(),
-        })
-        .unwrap();
+        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+        manifest.environment = serialized.clone();
+        let json = serde_json::to_string(&manifest).unwrap();
         fs::write(&manifest_path, json).unwrap();
 
         let mut loaded_env = serialized;

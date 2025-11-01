@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use wgpu_cube::app::{StartupContext, UpdateContext};
 use wgpu_cube::project::ProjectManifest;
+use wgpu_cube::scene::SceneLibrary;
 
 #[cfg(target_arch = "wasm32")]
 use wgpu_cube::project::PROJECT_FILE_NAME;
@@ -16,6 +17,7 @@ struct ProjectPlayer {
     manifest: ProjectManifest,
     project_root: PathBuf,
     loaded: bool,
+    library: SceneLibrary,
 }
 
 impl ProjectPlayer {
@@ -24,6 +26,7 @@ impl ProjectPlayer {
             manifest,
             project_root,
             loaded: false,
+            library: SceneLibrary::new(),
         }
     }
 }
@@ -38,10 +41,12 @@ impl RenderApplication for ProjectPlayer {
             return;
         }
 
-        match self
-            .manifest
-            .instantiate_into(ctx.scene, ctx.renderer, &self.project_root)
-        {
+        match self.manifest.instantiate_into(
+            ctx.scene,
+            ctx.renderer,
+            &self.project_root,
+            &mut self.library,
+        ) {
             Ok(textures_changed) => {
                 if textures_changed {
                     ctx.renderer.update_texture_bind_group(&ctx.scene.assets);

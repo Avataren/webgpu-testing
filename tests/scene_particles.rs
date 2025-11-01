@@ -1,7 +1,7 @@
 use std::fs;
 
 use tempfile::tempdir;
-use wgpu_cube::project::{ProjectManifest, ProjectMetadata, SCENE_FILE_NAME};
+use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
 use wgpu_cube::scene::{
     Name, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleEmissionShape,
     ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve, ParticleSizeKeyframe,
@@ -111,21 +111,26 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
     ));
 
     let metadata = ProjectMetadata::default();
-    let manifest = ProjectManifest::capture(&scene, metadata)
+    let manifest = ProjectManifest::capture(&scene, metadata, None)
         .expect("manifest capture should succeed for particle scene");
 
-    assert!(manifest
-        .scene
+    let document = manifest
+        .scenes()
+        .first()
+        .expect("manifest should contain a primary scene");
+    let asset = manifest
+        .scene_asset(&document.id)
+        .expect("captured manifest should include scene asset");
+
+    assert!(asset
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
-    assert!(manifest
-        .scene
+    assert!(asset
         .entities
         .iter()
         .any(|entity| entity.particle_emitter.is_some()));
-    assert!(manifest
-        .scene
+    assert!(asset
         .entities
         .iter()
         .any(|entity| entity.particle_behavior.is_some()));
@@ -135,10 +140,10 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
         .save_to_dir(temp_dir.path())
         .expect("manifest should save");
 
-    let scene_path = temp_dir.path().join(SCENE_FILE_NAME);
-    assert!(scene_path.exists(), "scene.json should be written");
+    let scene_path = temp_dir.path().join(&document.relative_path);
+    assert!(scene_path.exists(), "scene document should be written");
 
-    let scene_json = fs::read_to_string(&scene_path).expect("scene.json should read");
+    let scene_json = fs::read_to_string(&scene_path).expect("scene document should read");
     let saved_scene = SceneAsset::from_json(&scene_json).expect("scene asset should load");
     assert!(saved_scene
         .entities
@@ -155,28 +160,31 @@ fn project_manifest_scene_json_roundtrip_includes_particles() {
 
     let loaded_manifest =
         ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should load from disk");
-    assert!(loaded_manifest
-        .scene
+    let loaded_document = loaded_manifest
+        .scenes()
+        .first()
+        .expect("loaded manifest should contain a scene");
+    let loaded_asset = loaded_manifest
+        .scene_asset(&loaded_document.id)
+        .expect("loaded manifest should provide scene asset");
+
+    assert!(loaded_asset
         .entities
         .iter()
         .any(|entity| entity.particle_system.is_some()));
-    assert!(manifest
-        .scene
+    assert!(asset
         .entities
         .iter()
         .any(|entity| entity.particle_emitter.is_some()));
-    assert!(loaded_manifest
-        .scene
+    assert!(loaded_asset
         .entities
         .iter()
         .any(|entity| entity.particle_emitter.is_some()));
-    assert!(loaded_manifest
-        .scene
+    assert!(loaded_asset
         .entities
         .iter()
         .any(|entity| entity.particle_behavior.is_some()));
-    assert!(manifest
-        .scene
+    assert!(asset
         .entities
         .iter()
         .any(|entity| entity.particle_behavior.is_some()));

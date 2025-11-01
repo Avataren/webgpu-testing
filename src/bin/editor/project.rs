@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use wgpu_cube::project::{ProjectMetadata, CONTENT_DIR};
+use wgpu_cube::project::{ProjectMetadata, SceneDocument, CONTENT_DIR};
 
 #[cfg(not(target_arch = "wasm32"))]
 const BUILD_PLATFORM_COMBO_ID: &str = "project_build_platform";
@@ -16,6 +16,7 @@ pub struct ProjectController {
     settings_open: bool,
     startup_dialog: StartupDialogState,
     build_dialog: BuildDialogState,
+    scene_documents: Vec<SceneDocument>,
 }
 
 impl ProjectController {
@@ -30,6 +31,7 @@ impl ProjectController {
             settings_open: false,
             startup_dialog: StartupDialogState::new(),
             build_dialog: BuildDialogState::default(),
+            scene_documents: Vec::new(),
         }
     }
 
@@ -43,6 +45,14 @@ impl ProjectController {
 
     pub fn current_dir(&self) -> Option<&PathBuf> {
         self.current_dir.as_ref()
+    }
+
+    pub fn set_scene_documents(&mut self, documents: Vec<SceneDocument>) {
+        self.scene_documents = documents;
+    }
+
+    pub fn primary_scene_document(&self) -> Option<&SceneDocument> {
+        self.scene_documents.first()
     }
 
     pub fn set_current_dir(&mut self, dir: PathBuf) {
