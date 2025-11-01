@@ -641,7 +641,7 @@ impl SceneAsset {
         let mut entity_map = Vec::with_capacity(self.entities.len());
         let mut material_cache: HashMap<PathBuf, Handle<MaterialAsset>> = HashMap::new();
 
-        for entity in &self.entities {
+        for (index, entity) in self.entities.iter().enumerate() {
             let mut builder = hecs::EntityBuilder::new();
 
             if let Some(name) = &entity.name {
@@ -768,7 +768,13 @@ impl SceneAsset {
             }
 
             let entity_id = instance.world_mut().spawn(builder.build());
-            entity_map.push(entity_id);
+            if entity_map.len() == index {
+                entity_map.push(entity_id);
+            } else if index < entity_map.len() {
+                entity_map[index] = entity_id;
+            } else {
+                entity_map.resize(index + 1, entity_id);
+            }
         }
 
         for (index, entity) in self.entities.iter().enumerate() {
@@ -792,6 +798,7 @@ impl SceneAsset {
             .active_camera
             .and_then(|index| entity_map.get(index).copied());
         instance.set_active_camera(active_camera);
+        instance.set_asset_entity_map(entity_map.clone());
 
         let animations: Vec<_> = self
             .animations
@@ -3339,7 +3346,7 @@ impl SceneAssetBuilder {
 mod tests {
     use super::*;
     use crate::project::{ProjectManifest, ProjectMetadata};
-    use crate::scene::Scene;
+    use crate::scene::{Scene, SceneLibrary};
     use glam::Vec3;
     use serde_json::Value;
     use std::collections::BTreeMap;
@@ -3549,7 +3556,8 @@ mod tests {
             .build();
 
         let mut scene = Scene::new();
-        let node = scene.instantiate_asset(&scene_asset, None);
+        let mut library = SceneLibrary::new();
+        let node = scene.instantiate_asset(&mut library, &scene_asset, None, None);
         scene.set_main_scene(node);
 
         let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
@@ -3617,7 +3625,8 @@ mod tests {
         );
 
         let mut scene = Scene::new();
-        let root_node = scene.instantiate_tree_asset(&tree, None);
+        let mut library = SceneLibrary::new();
+        let root_node = scene.instantiate_tree_asset(&mut library, &tree, None, None);
         scene.set_main_scene(root_node);
 
         let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
@@ -3637,7 +3646,7 @@ mod tests {
             .expect("reloaded manifest should provide a scene asset");
 
         let mut new_scene = Scene::new();
-        let instantiated = new_scene.instantiate_asset(asset, None);
+        let instantiated = new_scene.instantiate_asset(&mut library, asset, None, None);
         new_scene.set_main_scene(instantiated);
         new_scene.propagate_transforms();
 

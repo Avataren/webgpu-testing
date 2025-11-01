@@ -19,8 +19,6 @@ pub(crate) struct SelectionSystem {
     pointer: PointerState,
     pending_pick: Option<ViewportPick>,
     gpu_pick: GpuPickState,
-    active_scene: Option<SceneHandle>,
-    scene_states: HashMap<SceneHandle, SelectionState>,
 }
 
 pub(crate) struct SelectionDeletionResult {
@@ -52,20 +50,6 @@ impl SelectionSystem {
 
     pub(crate) fn take_override(&mut self) -> Option<Option<Entity>> {
         self.state.take_override()
-    }
-
-    pub(crate) fn set_active_scene(&mut self, handle: SceneHandle) {
-        if self.active_scene == Some(handle) {
-            return;
-        }
-
-        if let Some(previous) = self.active_scene {
-            self.scene_states.insert(previous, self.state.clone());
-        }
-
-        self.state = self.scene_states.remove(&handle).unwrap_or_default();
-        self.clear_pending_pick();
-        self.active_scene = Some(handle);
     }
 
     pub(crate) fn reset_workspace(&mut self) {
@@ -104,6 +88,8 @@ impl SelectionSystem {
         } else {
             self.state = SelectionState::default();
         }
+
+        self.clear_pending_pick();
     }
 
     pub(crate) fn pointer_scene_uv(&self) -> Option<Vec2> {
@@ -245,7 +231,7 @@ impl SelectionSystem {
             PickCompletion::Gpu(entity) => {
                 self.set_selected(entity);
                 self.request_override(entity);
-                self.push_history_selection(app, ctx.scene);
+                self.push_history_selection(app, &ctx.scene);
             }
             PickCompletion::CpuFallback(request) => {
                 let entity = app.pick_entity(ctx, request.uv, request.region);
@@ -261,7 +247,7 @@ impl SelectionSystem {
                 });
                 self.set_selected(entity);
                 self.request_override(entity);
-                self.push_history_selection(app, ctx.scene);
+                self.push_history_selection(app, &ctx.scene);
             }
         }
     }
@@ -479,7 +465,7 @@ impl EditorSystem for SelectionSystem {
             self.process_viewport_pick(app, update_ctx);
             let history_changed = self.sync_selection_component(update_ctx);
             if history_changed {
-                self.push_history_selection(app, update_ctx.scene);
+                self.push_history_selection(app, &update_ctx.scene);
             }
         }) else {
             return;
@@ -497,7 +483,7 @@ impl EditorSystem for SelectionSystem {
             }
 
             if let Some(value) = gpu_ctx.renderer.poll_pick_result() {
-                let scene_ref: &Scene = &*gpu_ctx.scene;
+                let scene_ref: &Scene = &gpu_ctx.scene;
                 if value == 0 {
                     if let Some(request) = self.gpu_pick.take_last_request() {
                         self.gpu_pick.complete(PickCompletion::CpuFallback(request));

@@ -255,8 +255,15 @@ fn project_material_roundtrip_preserves_registry() {
     assert!(mutated, "expected at least one material to mutate");
 
     let mut scene = Scene::new();
+    let mut library = SceneLibrary::new();
     bundle.register_resources(&mut headless, &mut scene.assets);
-    let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
+    let node = scene.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
     scene.set_main_scene(node);
 
     let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
@@ -281,7 +288,6 @@ fn project_material_roundtrip_preserves_registry() {
     let loaded = ProjectManifest::load_from_dir(project_root)
         .expect("reloading manifest from disk should succeed");
 
-    let mut library = SceneLibrary::new();
     let (workspace, _) = loaded
         .instantiate_workspace(&mut headless, project_root, &mut library)
         .expect("project should instantiate successfully");

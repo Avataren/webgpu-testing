@@ -68,10 +68,12 @@ impl EditorSharedState {
         self.active_scene_handle = Some(handle);
     }
 
+    #[allow(dead_code)]
     pub(super) fn clear_active_scene_handle(&mut self) {
         self.active_scene_handle = None;
     }
 
+    #[allow(dead_code)]
     pub(super) fn active_scene_handle(&self) -> Option<SceneHandle> {
         self.active_scene_handle
     }
@@ -400,7 +402,7 @@ impl EditorApplication {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
         self.history_system_mut()
-            .record_scene_change(&mut **scene, selected, highlighted);
+            .record_scene_change(scene, selected, highlighted);
     }
 
     pub(super) fn update_history_selection(&mut self, scene: &Scene) {
@@ -550,7 +552,7 @@ impl EditorApplication {
             updated_handles.len()
         );
 
-        self.record_scene_change(ctx.scene);
+        self.record_scene_change(&mut ctx.scene);
     }
 
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
@@ -623,10 +625,10 @@ impl EditorApplication {
                 }
 
                 if outcome.selection_changed {
-                    self.update_history_selection(ctx.scene);
+                    self.update_history_selection(&ctx.scene);
                 }
 
-                self.record_scene_change(ctx.scene);
+                self.record_scene_change(&mut ctx.scene);
             }
         }
 

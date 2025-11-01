@@ -10,7 +10,9 @@ use wgpu::{
 
 use wgpu_cube::asset::Mesh;
 use wgpu_cube::renderer::Vertex;
-use wgpu_cube::scene::{GltfMaterial, MeshComponent, Scene, SceneImportDevice, SceneLoader};
+use wgpu_cube::scene::{
+    GltfMaterial, MeshComponent, Scene, SceneImportDevice, SceneLibrary, SceneLoader,
+};
 
 struct HeadlessImporter {
     device: Arc<wgpu::Device>,
@@ -89,9 +91,16 @@ fn multi_material_import_preserves_mesh_material_association() {
         .collect();
 
     let mut scene = Scene::new();
+    let mut library = SceneLibrary::new();
     let _ = bundle.register_resources(&mut importer, &mut scene.assets);
 
-    let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut importer);
+    let node = scene.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut importer,
+        None,
+    );
     scene.set_main_scene(node);
 
     let mut local_to_global = HashMap::new();

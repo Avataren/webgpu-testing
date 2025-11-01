@@ -405,8 +405,13 @@ impl<'a> SceneWorkspaceBuilder<'a> {
             textures_changed |= registration.textures_changed;
 
             if !bundle.asset.entities.is_empty() {
-                let main_scene =
-                    scene.instantiate_asset_with_renderer(&bundle.asset, None, renderer);
+                let main_scene = scene.instantiate_asset_with_renderer(
+                    self.library,
+                    &bundle.asset,
+                    None,
+                    renderer,
+                    Some(document.id.as_str()),
+                );
                 scene.set_main_scene(main_scene);
             }
 

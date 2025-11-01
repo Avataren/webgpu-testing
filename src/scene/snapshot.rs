@@ -1,6 +1,6 @@
 use super::internal::{gizmos, transform_gizmos};
 use super::state::{TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace};
-use super::{Scene, SceneTreeAsset};
+use super::{Scene, SceneLibrary, SceneTreeAsset};
 use crate::asset::Assets;
 use crate::environment::Environment;
 use crate::scene::Camera;
@@ -55,7 +55,8 @@ impl SceneSnapshot {
         scene.set_environment(self.environment);
         scene.set_camera(self.camera);
         scene.set_time(self.time);
-        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
+        let mut library = SceneLibrary::new();
+        let tree_root = scene.instantiate_tree_asset(&mut library, &self.tree, None, None);
 
         let main_scene = if self.main_scene_path.is_empty() {
             Some(tree_root)
@@ -108,7 +109,8 @@ impl SceneSnapshot {
         }
 
         // Restore the tree (uses current asset storage)
-        let tree_root = scene.instantiate_tree_asset(&self.tree, None);
+        let mut library = SceneLibrary::new();
+        let tree_root = scene.instantiate_tree_asset(&mut library, &self.tree, None, None);
 
         // Restore main scene
         let main_scene = if self.main_scene_path.is_empty() {

@@ -145,7 +145,7 @@ impl EditorParticleSystem {
     }
 
     fn sync_with_scene(&mut self, ctx: &mut wgpu_cube::app::GpuUpdateContext<'_>) {
-        let data = Self::collect_scene_data(ctx.scene);
+        let data = Self::collect_scene_data(&mut ctx.scene);
         let mut seen = HashSet::new();
         let mut pending_gpu_instance_updates = Vec::new();
 

@@ -5,8 +5,8 @@ use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
 use wgpu_cube::scene::{
     Name, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleEmissionShape,
     ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve, ParticleSizeKeyframe,
-    ParticleSystemComponent, ParticleVec3Range, Scene, SceneAsset, StarfieldBehaviorConfig,
-    Transform, TransformComponent,
+    ParticleSystemComponent, ParticleVec3Range, Scene, SceneAsset, SceneLibrary,
+    StarfieldBehaviorConfig, Transform, TransformComponent,
 };
 
 #[test]
@@ -68,7 +68,8 @@ fn particle_system_asset_roundtrip() {
     let restored = SceneAsset::from_json(&json).expect("asset should deserialize");
 
     let mut restored_scene = Scene::new();
-    let node = restored_scene.instantiate_asset(&restored, None);
+    let mut library = SceneLibrary::new();
+    let node = restored_scene.instantiate_asset(&mut library, &restored, None, None);
     restored_scene.set_main_scene(node);
 
     let mut system_query = restored_scene

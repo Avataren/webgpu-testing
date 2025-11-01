@@ -154,10 +154,17 @@ fn project_manifest_roundtrip_preserves_primitive_meshes() {
 
     let mut bundle = SceneAssetBundle::new(asset.clone(), SceneAssetResources::default());
     let mut restored_scene = Scene::new();
+    let mut library = SceneLibrary::new();
 
     bundle.register_resources(&mut headless, &mut restored_scene.assets);
 
-    let node = restored_scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
+    let node = restored_scene.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
     restored_scene.set_main_scene(node);
 
     let mut query = restored_scene

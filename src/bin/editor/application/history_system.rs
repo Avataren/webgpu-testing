@@ -144,7 +144,7 @@ impl HistorySystem {
                 let selection = app.selection_system();
                 (selection.selected(), selection.highlighted())
             };
-            self.record_scene_change(update_ctx.scene, selected, highlighted);
+            self.record_scene_change(&mut update_ctx.scene, selected, highlighted);
         }) else {
             return;
         };
@@ -236,9 +236,9 @@ impl HistorySystem {
         self.clear_gizmo_drag();
 
         let Some(()) = ctx.with_update_app(|app, update_ctx| {
-            if let Some(selection) = self.history.undo(update_ctx.scene) {
-                self.refresh_next_editor_entity_id(update_ctx.scene);
-                self.apply_history_selection(app, update_ctx.scene, selection);
+            if let Some(selection) = self.history.undo(&mut update_ctx.scene) {
+                self.refresh_next_editor_entity_id(&update_ctx.scene);
+                self.apply_history_selection(app, &update_ctx.scene, selection);
                 update_ctx.scene.propagate_transforms();
                 {
                     let selection = app.selection_system_mut();
@@ -248,7 +248,7 @@ impl HistorySystem {
                     let selection = app.selection_system();
                     (selection.selected(), selection.highlighted())
                 };
-                self.update_history_selection(update_ctx.scene, selected, highlighted);
+                self.update_history_selection(&update_ctx.scene, selected, highlighted);
             }
         }) else {
             return;
@@ -259,9 +259,9 @@ impl HistorySystem {
         self.clear_gizmo_drag();
 
         let Some(()) = ctx.with_update_app(|app, update_ctx| {
-            if let Some(selection) = self.history.redo(update_ctx.scene) {
-                self.refresh_next_editor_entity_id(update_ctx.scene);
-                self.apply_history_selection(app, update_ctx.scene, selection);
+            if let Some(selection) = self.history.redo(&mut update_ctx.scene) {
+                self.refresh_next_editor_entity_id(&update_ctx.scene);
+                self.apply_history_selection(app, &update_ctx.scene, selection);
                 update_ctx.scene.propagate_transforms();
                 {
                     let selection = app.selection_system_mut();
@@ -271,7 +271,7 @@ impl HistorySystem {
                     let selection = app.selection_system();
                     (selection.selected(), selection.highlighted())
                 };
-                self.update_history_selection(update_ctx.scene, selected, highlighted);
+                self.update_history_selection(&update_ctx.scene, selected, highlighted);
             }
         }) else {
             return;
@@ -913,7 +913,7 @@ impl EditorSystem for HistorySystem {
         self.process_history_commands(ctx);
 
         let _ = ctx.with_update_app(|app, update_ctx| {
-            self.ensure_editor_entity_ids(update_ctx.scene);
+            self.ensure_editor_entity_ids(&mut update_ctx.scene);
             update_ctx
                 .scene
                 .set_transform_gizmo_mode(self.transform_tool.gizmo_mode);
@@ -924,7 +924,7 @@ impl EditorSystem for HistorySystem {
                 let selection = app.selection_system();
                 (selection.selected(), selection.highlighted())
             };
-            self.update_history_selection(update_ctx.scene, selected, highlighted);
+            self.update_history_selection(&update_ctx.scene, selected, highlighted);
         });
 
         self.update_gizmo_drag(ctx);

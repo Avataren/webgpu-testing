@@ -6,7 +6,7 @@ use log::warn;
 use super::core::PendingScriptAction;
 use super::system::{EditorAppAccess, EditorCommand, EditorContext, EditorSystem};
 use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
-use wgpu_cube::scene::Scene;
+use wgpu_cube::scene::{Scene, SceneWorkspaceSceneMut};
 use wgpu_cube::scripting::RuneScriptComponent;
 
 #[derive(Default)]
@@ -86,7 +86,7 @@ impl ScriptEditorSystem {
     fn process_pending_actions(
         &mut self,
         app: &mut EditorAppAccess<'_>,
-        scene: &mut Scene,
+        scene: &mut SceneWorkspaceSceneMut<'_>,
         actions: Vec<PendingScriptAction>,
     ) {
         if actions.is_empty() {
@@ -160,8 +160,8 @@ impl EditorSystem for ScriptEditorSystem {
         };
 
         let _ = ctx.with_update_app(move |app, update_ctx| {
-            self.ensure_target_valid(update_ctx.scene);
-            self.process_pending_actions(app, update_ctx.scene, actions);
+            self.ensure_target_valid(&update_ctx.scene);
+            self.process_pending_actions(app, &mut update_ctx.scene, actions);
         });
     }
 

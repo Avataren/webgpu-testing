@@ -1,10 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::project::{ProjectError, SceneDocument, SceneDocumentDependencies};
 
-use super::SceneAsset;
+use super::{SceneAsset, SceneAssetEntity};
+
+pub struct ResolvedPrefabNode<'a> {
+    pub asset: &'a SceneAsset,
+    pub entity_index: usize,
+    pub entity: &'a SceneAssetEntity,
+}
 
 #[derive(Debug, Default)]
 pub struct SceneLibrary {
@@ -71,6 +77,53 @@ impl SceneLibrary {
         self.dependencies.get(document_id)
     }
 
+    pub fn prefab_dependencies(&self, document_id: &str) -> Option<&BTreeSet<String>> {
+        self.dependencies(document_id)
+            .map(|deps| &deps.prefab_instances)
+    }
+
+    pub fn resolve_prefab_node<'a>(
+        &'a self,
+        document_id: &str,
+        node_path: &[String],
+    ) -> Option<ResolvedPrefabNode<'a>> {
+        let asset = self.assets.get(document_id)?;
+        let entity_index = resolve_prefab_entity_path(asset, node_path)?;
+        let entity = asset.entities.get(entity_index)?;
+        Some(ResolvedPrefabNode {
+            asset,
+            entity_index,
+            entity,
+        })
+    }
+
+    pub fn prefab_dependency_would_cycle(&self, source: &str, target: &str) -> bool {
+        if source == target {
+            return true;
+        }
+
+        let mut stack = vec![target];
+        let mut visited = HashSet::new();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current.to_string()) {
+                continue;
+            }
+
+            if current == source {
+                return true;
+            }
+
+            if let Some(deps) = self.prefab_dependencies(current) {
+                for dependency in deps {
+                    stack.push(dependency);
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn track_prefab_dependency(
         &mut self,
         source_document: impl Into<String>,
@@ -88,4 +141,37 @@ impl SceneLibrary {
     pub fn path(&self, document_id: &str) -> Option<&PathBuf> {
         self.paths.get(document_id)
     }
+}
+
+fn resolve_prefab_entity_path(asset: &SceneAsset, node_path: &[String]) -> Option<usize> {
+    if node_path.is_empty() {
+        return None;
+    }
+
+    let mut candidates: Vec<usize> = asset
+        .entities
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entity)| entity.parent.is_none().then_some(index))
+        .collect();
+
+    let mut current_index = None;
+
+    for segment in node_path {
+        let mut next_index = None;
+        for candidate in &candidates {
+            let entity = &asset.entities[*candidate];
+            if entity.name.as_deref() == Some(segment.as_str()) {
+                next_index = Some(*candidate);
+                break;
+            }
+        }
+
+        let index = next_index?;
+
+        current_index = Some(index);
+        candidates = asset.entities[index].children.clone();
+    }
+
+    current_index
 }
