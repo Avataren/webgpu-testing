@@ -25,6 +25,7 @@ log = "0.4"
 bitflags = "2.4"
 image = "0.25"
 hecs = "0.10"
+slotmap = "1.0"
 gltf = "1.4"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 base64 = "0.13"

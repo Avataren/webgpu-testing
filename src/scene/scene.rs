@@ -22,14 +22,14 @@ use crate::time::Instant;
 use glam::Vec3;
 use hecs::{Entity, World};
 use log::{error, warn};
+use slotmap::SlotMap;
 use std::collections::HashMap;
 
 pub struct Scene {
     pub assets: Assets,
     environment: SceneEnvironment,
     camera: SceneCamera,
-    nodes: Vec<Option<SceneNode>>,
-    free_list: Vec<SceneNodeId>,
+    nodes: SlotMap<SceneNodeId, SceneNode>,
     root: SceneNodeId,
     main_scene: SceneNodeId,
     runtime: SceneRuntimeController,
@@ -39,17 +39,15 @@ pub struct Scene {
 
 impl Scene {
     pub fn new() -> Self {
-        let mut nodes = Vec::new();
-        let root_id = SceneNodeId::new(0);
-        let root_node = SceneNode::new(root_id, "Root", SceneInstance::new());
-        nodes.push(Some(root_node));
+        let mut nodes = SlotMap::with_key();
+        let root_node = SceneNode::new("Root", SceneInstance::new());
+        let root_id = nodes.insert(root_node);
 
         Self {
             assets: Assets::default(),
             environment: SceneEnvironment::new(),
             camera: SceneCamera::new(),
             nodes,
-            free_list: Vec::new(),
             root: root_id,
             main_scene: root_id,
             runtime: SceneRuntimeController::new(),
@@ -59,26 +57,23 @@ impl Scene {
     }
 
     fn node(&self, id: SceneNodeId) -> &SceneNode {
-        self.nodes[id.index()].as_ref().expect("Invalid scene node")
+        self.nodes.get(id).expect("Invalid scene node")
     }
 
     fn node_mut(&mut self, id: SceneNodeId) -> &mut SceneNode {
-        self.nodes[id.index()].as_mut().expect("Invalid scene node")
+        self.nodes.get_mut(id).expect("Invalid scene node")
     }
 
     fn is_valid_node(&self, id: SceneNodeId) -> bool {
-        self.nodes
-            .get(id.index())
-            .and_then(|slot| slot.as_ref())
-            .is_some()
+        self.nodes.contains_key(id)
     }
 
     pub(super) fn nodes_iter(&self) -> impl Iterator<Item = &SceneNode> {
-        self.nodes.iter().filter_map(|n| n.as_ref())
+        self.nodes.values()
     }
 
     pub(super) fn nodes_iter_mut(&mut self) -> impl Iterator<Item = &mut SceneNode> {
-        self.nodes.iter_mut().filter_map(|n| n.as_mut())
+        self.nodes.values_mut()
     }
 
     fn attach_node(&mut self, child: SceneNodeId, parent: SceneNodeId) {
@@ -507,16 +502,13 @@ impl Scene {
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);
         let assets = &mut self.assets;
-        for node_opt in &mut self.nodes {
-            if let Some(node) = node_opt.as_mut() {
-                node.instance_mut().update(assets, dt, absolute_time);
-            }
+        for node in self.nodes.values_mut() {
+            node.instance_mut().update(assets, dt, absolute_time);
         }
 
         self.update_world_transforms();
 
-        let main_scene_index = self.main_scene.index();
-        if let Some(Some(main_node)) = self.nodes.get_mut(main_scene_index) {
+        if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             self.runtime.run_scripts(world, dt);
         } else {
@@ -826,8 +818,7 @@ impl Scene {
             }
         }
 
-        self.nodes[node.index()] = None;
-        self.free_list.push(node);
+        self.nodes.remove(node);
 
         Some(SceneTreeAssetNode {
             name,
@@ -928,14 +919,7 @@ impl Scene {
     }
 
     fn allocate_node(&mut self, name: String, instance: SceneInstance) -> SceneNodeId {
-        if let Some(id) = self.free_list.pop() {
-            self.nodes[id.index()] = Some(SceneNode::new(id, name, instance));
-            id
-        } else {
-            let id = SceneNodeId::new(self.nodes.len() as u32);
-            self.nodes.push(Some(SceneNode::new(id, name, instance)));
-            id
-        }
+        self.nodes.insert(SceneNode::new(name, instance))
     }
 }
 

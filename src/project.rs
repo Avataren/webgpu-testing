@@ -713,6 +713,7 @@ mod tests {
             metadata: ProjectMetadata::default(),
             scene: SceneAsset::builder("Test").build(),
             environment: serialized.clone(),
+            engine_camera: SerializedEngineCamera::default(),
             imports: Vec::new(),
         })
         .unwrap();
