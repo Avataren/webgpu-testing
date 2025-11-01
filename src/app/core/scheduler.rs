@@ -210,7 +210,6 @@ impl Scheduler {
 
         let mut active_handle = handle;
         let mut textures_changed = false;
-        let mut workspace_swapped = false;
 
         if self.auto_init_default_textures {
             if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
@@ -250,21 +249,16 @@ impl Scheduler {
             active_handle = ctx.scene_handle;
             drop(ctx);
 
-            let (new_handle, swap_changed, swapped) =
+            let (new_handle, swap_changed, _swapped) =
                 Self::apply_workspace_requests(workspace, active_handle, swap, active_request);
             active_handle = new_handle;
             textures_changed |= swap_changed;
-            workspace_swapped |= swapped;
         }
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
-            if self.auto_init_default_textures
-                && (workspace_swapped || scene.assets.textures.is_empty())
-            {
-                if scene.assets.textures.is_empty() {
-                    self.init_default_textures(&mut scene, renderer);
-                    textures_changed = true;
-                }
+            if self.auto_init_default_textures && scene.assets.textures.is_empty() {
+                self.init_default_textures(&mut scene, renderer);
+                textures_changed = true;
             }
 
             if self.auto_add_default_lighting {

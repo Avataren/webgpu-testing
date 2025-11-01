@@ -30,7 +30,7 @@ impl EditorState {
         let environment_source = workspace
             .active_scene()
             .map(|scene| scene.environment().clone())
-            .unwrap_or_else(Environment::default);
+            .unwrap_or_default();
 
         Self {
             egui_context: None,
