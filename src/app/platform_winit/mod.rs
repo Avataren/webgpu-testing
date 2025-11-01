@@ -156,8 +156,8 @@ where
             }
 
             self.editor.apply_postprocess_effects(renderer);
-            self.editor.sync_environment_controls(self.core.scene());
-            self.editor.refresh_scene_hierarchy(self.core.scene());
+            self.editor.sync_environment_controls(self.core.workspace());
+            self.editor.refresh_scene_hierarchy(self.core.workspace());
         }
     }
 
@@ -178,8 +178,8 @@ where
         #[cfg(feature = "egui")]
         match transition {
             RuntimeTransition::EnteredEditor => {
-                self.editor.sync_environment_controls(self.core.scene());
-                self.editor.refresh_scene_hierarchy(self.core.scene());
+                self.editor.sync_environment_controls(self.core.workspace());
+                self.editor.refresh_scene_hierarchy(self.core.workspace());
             }
             RuntimeTransition::EnteredPlaying => {}
         }
@@ -242,7 +242,7 @@ where
 {
     pub fn from_core_with_driver(core: AppCore, driver: D) -> Self {
         #[cfg(feature = "egui")]
-        let editor = EditorState::new(core.scene());
+        let editor = EditorState::new(core.workspace());
 
         Self {
             core,
@@ -438,10 +438,10 @@ where
 
                     #[cfg(feature = "egui")]
                     {
-                        self.editor.refresh_scene_hierarchy(self.core.scene());
+                        self.editor.refresh_scene_hierarchy(self.core.workspace());
                         {
-                            let scene = self.core.scene_mut();
-                            self.editor.apply_environment_settings(scene);
+                            let mut scene = self.core.scene_mut();
+                            self.editor.apply_environment_settings(&mut scene);
                         }
                         self.editor.apply_postprocess_effects(&mut renderer);
                     }
@@ -526,7 +526,7 @@ where
                 }
                 Key::Character(c) if c.as_str() == "h" => {
                     #[cfg(feature = "egui")]
-                    EditorState::debug_print_hierarchy(self.core.scene());
+                    EditorState::debug_print_hierarchy(self.core.workspace());
                 }
                 _ => {}
             },

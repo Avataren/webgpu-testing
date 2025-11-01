@@ -126,6 +126,8 @@ impl EditorApplication {
             self.detect_mode_transition(ctx, current_mode);
         }
 
+        self.sync_active_scene_state(ctx);
+
         // Regular editor updates
         self.drain_update_commands(ctx);
         self.run_system_updates(ctx);
@@ -135,13 +137,50 @@ impl EditorApplication {
         #[cfg(not(target_arch = "wasm32"))]
         self.process_shader_file_changes(ctx);
 
+        self.shared.set_active_scene_handle(ctx.scene_handle);
+        self.selection_system_mut()
+            .set_active_scene(ctx.scene_handle);
+
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
 
         self.run_system_gpu_updates(ctx);
     }
 
+    fn sync_active_scene_state(&mut self, ctx: &mut UpdateContext) {
+        let handle = ctx.scene_handle;
+        let scene_changed = self.shared.active_scene_handle != Some(handle);
+        self.shared.set_active_scene_handle(handle);
+
+        {
+            let selection = self.selection_system_mut();
+            selection.set_active_scene(handle);
+        }
+
+        if scene_changed {
+            self.shared.active_camera_entity = ctx.scene.active_camera_entity();
+            let (selected, highlighted) = {
+                let selection = self.selection_system();
+                (selection.selected(), selection.highlighted())
+            };
+            self.history_system_mut()
+                .initialize_state(&mut ctx.scene, selected, highlighted);
+
+            match ctx.runtime {
+                RuntimeMode::Playing => ctx.scene.set_animation_playback(true),
+                RuntimeMode::Editor => {
+                    ctx.scene.set_animation_playback(false);
+                    ctx.scene.update(0.0);
+                }
+            }
+        }
+    }
+
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+        if let Some(handle) = self.shared.active_scene_handle {
+            self.selection_system_mut().set_active_scene(handle);
+        }
+
         self.shared.viewports.scene_viewport.clear();
         self.shared.viewports.game_viewport.clear();
 

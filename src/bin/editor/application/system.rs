@@ -18,7 +18,7 @@ use glam::Vec2;
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::renderer::{RenderRegion, Renderer};
-use wgpu_cube::scene::{ParticleBehaviorPreset, Scene};
+use wgpu_cube::scene::{ParticleBehaviorPreset, Scene, SceneHandle, SceneWorkspaceSceneMut};
 use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
 
 pub(super) enum EditorCommand {
@@ -110,17 +110,27 @@ impl<'shared> EditorAppAccess<'shared> {
     }
 
     pub fn selection_system_mut(&mut self) -> &mut SelectionSystem {
-        self.systems.selection_system_mut()
+        let handle = self.shared.active_scene_handle;
+        let system = self.systems.selection_system_mut();
+        if let Some(handle) = handle {
+            system.set_active_scene(handle);
+        }
+        system
     }
 
     pub fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
         self.systems.asset_browser_system_mut().state_mut()
     }
 
-    pub fn record_scene_change(&mut self, scene: &mut Scene) {
+    pub fn active_scene_handle(&self) -> Option<SceneHandle> {
+        self.shared.active_scene_handle
+    }
+
+    pub fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
+        scene.mark_dirty();
         self.history_system_mut()
-            .record_scene_change(scene, selected, highlighted);
+            .record_scene_change(&mut **scene, selected, highlighted);
     }
 
     pub fn ensure_editor_scene_basics(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
@@ -371,6 +381,9 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorAppAccess<'app>, &mut UpdateContext<'scene>) -> R,
     {
         let update = self.update.as_deref_mut()?;
+        if let Some(shared) = self.shared.as_deref_mut() {
+            shared.set_active_scene_handle(update.scene_handle);
+        }
         let shared = self
             .shared
             .take()
@@ -392,6 +405,9 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         F: FnOnce(&mut EditorAppAccess<'app>, &mut GpuUpdateContext<'scene>) -> R,
     {
         let gpu = self.gpu.as_deref_mut()?;
+        if let Some(shared) = self.shared.as_deref_mut() {
+            shared.set_active_scene_handle(gpu.scene_handle);
+        }
         let shared = self
             .shared
             .take()

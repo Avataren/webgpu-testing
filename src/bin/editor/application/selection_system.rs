@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use glam::Vec2;
 use hecs::Entity;
 use log::warn;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::components::{EditorEntityId, SelectedInEditor};
-use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene};
+use wgpu_cube::scene::{entity_for_pick_value, Children, Parent, Scene, SceneHandle};
 
 use super::core::{EditorApplication, ViewportPick};
 use super::system::{EditorAppAccess, EditorContext, EditorSystem};
@@ -12,6 +14,8 @@ use super::system::{EditorAppAccess, EditorContext, EditorSystem};
 #[derive(Default)]
 pub(crate) struct SelectionSystem {
     state: SelectionState,
+    scene_states: HashMap<SceneHandle, SelectionState>,
+    active_scene: Option<SceneHandle>,
     pointer: PointerState,
     pending_pick: Option<ViewportPick>,
     gpu_pick: GpuPickState,
@@ -59,6 +63,23 @@ impl SelectionSystem {
 
     pub(super) fn take_pending_pick(&mut self) -> Option<ViewportPick> {
         self.pending_pick.take()
+    }
+
+    pub(crate) fn set_active_scene(&mut self, handle: SceneHandle) {
+        if self.active_scene == Some(handle) {
+            return;
+        }
+
+        if let Some(previous) = self.active_scene.replace(handle) {
+            let previous_state = std::mem::take(&mut self.state);
+            self.scene_states.insert(previous, previous_state);
+        }
+
+        if let Some(saved) = self.scene_states.remove(&handle) {
+            self.state = saved;
+        } else {
+            self.state = SelectionState::default();
+        }
     }
 
     pub(crate) fn pointer_scene_uv(&self) -> Option<Vec2> {
