@@ -336,10 +336,7 @@ impl ProjectSystem {
                             app.command_queue_mut().clear();
                             {
                                 let selection = app.selection_system_mut();
-                                selection.set_selected(None);
-                                selection.set_highlighted(None);
-                                selection.clear_pending_pick();
-                                selection.request_override(None);
+                                selection.reset_workspace();
                             }
                             app.request_runtime_mode(RuntimeMode::Editor);
                         }
