@@ -1,4 +1,4 @@
-use wgpu_cube::scene::assets::{
+use wgpu_cube::scene::{
     SceneAsset, SceneAssetEntity, ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset,
     SceneTreeAssetNode, SerializedTransform,
 };
@@ -10,11 +10,12 @@ fn prefab_overrides_sample() -> ScenePrefabOverrides {
         scale: [2.0, 2.0, 2.0],
     };
 
-    let mut overrides = ScenePrefabOverrides::default();
-    overrides.transform = Some(transform);
-    overrides.visible = Some(false);
-    overrides.casts_shadow = Some(true);
-    overrides
+    ScenePrefabOverrides {
+        transform: Some(transform),
+        visible: Some(false),
+        casts_shadow: Some(true),
+        ..ScenePrefabOverrides::default()
+    }
 }
 
 #[test]

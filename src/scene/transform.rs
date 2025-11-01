@@ -1,7 +1,7 @@
 // scene/transform.rs - Verified transform composition
 use glam::{Mat4, Quat, Vec3};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,

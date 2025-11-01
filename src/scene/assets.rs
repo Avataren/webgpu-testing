@@ -1542,7 +1542,7 @@ pub struct SceneAssetEntity {
     pub environment: Option<EnvironmentComponent>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_ref: Option<ScenePrefabRef>,
 }
 
@@ -1619,7 +1619,7 @@ struct SceneAssetEntityData {
     environment: Option<EnvironmentComponent>,
     #[serde(default)]
     camera: Option<CameraComponent>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     scene_ref: Option<ScenePrefabRef>,
 }
 
@@ -3122,7 +3122,7 @@ pub struct SceneTreeAssetNode {
     pub name: String,
     pub transform: SerializedTransform,
     pub asset: Option<SceneAsset>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_ref: Option<ScenePrefabRef>,
     #[serde(default)]
     pub children: Vec<SceneTreeAssetNode>,

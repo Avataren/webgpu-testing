@@ -391,7 +391,7 @@ impl MeshBounds {
 pub struct MaterialComponent(pub Handle<MaterialAsset>);
 
 /// Visibility component
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Visible(pub bool);
 
 impl Default for Visible {
