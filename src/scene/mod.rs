@@ -34,10 +34,11 @@ pub(crate) use self::{
 };
 pub use assets::{
     InstantiatedSceneAsset, SceneAsset, SceneAssetBuilder, SceneAssetBundle, SceneAssetEntity,
-    SceneAssetEntityBuilder, SceneAssetResources, SceneAssetResourcesBuilder, SceneTreeAsset,
-    SceneTreeAssetNode, SceneTreeAssetNodeBuilder, SerializedMaterial, SerializedMaterialKind,
-    SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
-    SerializedRuneScript, SerializedRuneScriptSource, SerializedTransform,
+    SceneAssetEntityBuilder, SceneAssetResources, SceneAssetResourcesBuilder, ScenePrefabOverrides,
+    ScenePrefabRef, SceneTreeAsset, SceneTreeAssetNode, SceneTreeAssetNodeBuilder,
+    SerializedMaterial, SerializedMaterialKind, SerializedParticleBehavior,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedRuneScript,
+    SerializedRuneScriptSource, SerializedTransform,
 };
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};

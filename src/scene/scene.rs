@@ -824,6 +824,7 @@ impl Scene {
             name,
             transform,
             asset,
+            scene_ref: None,
             children,
         })
     }

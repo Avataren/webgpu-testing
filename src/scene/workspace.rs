@@ -332,12 +332,13 @@ impl<'a> Drop for SceneWorkspaceSceneMut<'a> {
 
 /// Builder responsible for hydrating a [`SceneWorkspace`] from a project
 /// manifest.
+type DirtyListenerFactory<'a> = Box<dyn FnMut(&SceneDocument) -> Option<SceneDirtyListener> + 'a>;
+
 pub struct SceneWorkspaceBuilder<'a> {
     manifest: &'a ProjectManifest,
     project_root: &'a std::path::Path,
     library: &'a mut SceneLibrary,
-    dirty_listener_factory:
-        Option<Box<dyn FnMut(&SceneDocument) -> Option<SceneDirtyListener> + 'a>>,
+    dirty_listener_factory: Option<DirtyListenerFactory<'a>>,
 }
 
 impl<'a> SceneWorkspaceBuilder<'a> {
