@@ -42,7 +42,7 @@ impl RenderApplication for ProjectPlayer {
         }
 
         match self.manifest.instantiate_into(
-            ctx.scene,
+            &mut ctx.scene,
             ctx.renderer,
             &self.project_root,
             &mut self.library,

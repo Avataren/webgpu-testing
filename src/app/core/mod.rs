@@ -237,23 +237,22 @@ impl AppCore {
         self.render_hooks.set_custom_render_shadow_query(query);
     }
 
-    pub fn begin_frame(&mut self) -> FrameStep {
-        debug_assert!(
-            self.workspace.active_scene().is_some(),
-            "AppCore requires an active scene before beginning a frame",
-        );
+    pub fn begin_frame(&mut self) -> Option<FrameStep> {
+        let Some((handle, mut scene)) = self.workspace.active_scene_handle_and_mut() else {
+            log::warn!("Skipping frame: no active scene available");
+            return None;
+        };
 
-        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
-        workspace
-            .with_active_scene_mut(|scene| scheduler.begin_frame(scene))
-            .expect("AppCore requires an active scene")
+        Some(self.scheduler.begin_frame(handle, &mut scene))
     }
 
     pub fn sync_runtime_state(&mut self) -> Option<RuntimeTransition> {
-        let (workspace, runtime) = (&mut self.workspace, &mut self.runtime);
-        workspace
-            .with_active_scene_mut(|scene| runtime.sync_runtime_state(scene))
-            .expect("AppCore requires an active scene")
+        let Some((_, mut scene)) = self.workspace.active_scene_handle_and_mut() else {
+            log::warn!("Runtime sync skipped: no active scene available");
+            return None;
+        };
+
+        self.runtime.sync_runtime_state(&mut scene)
     }
 
     pub fn toggle_editor_gizmos(&mut self) {
@@ -261,33 +260,48 @@ impl AppCore {
     }
 
     pub fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
-        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
+        let Some((handle, mut scene)) = self.workspace.active_scene_handle_and_mut() else {
+            log::warn!("Renderer ready but no active scene to initialize");
+            return;
+        };
+        scene.init_timer();
+        drop(scene);
 
-        workspace
-            .with_active_scene_mut(|scene| {
-                scene.init_timer();
-                scheduler.run_startup_systems(scene, renderer);
-            })
-            .expect("AppCore requires an active scene");
+        if !self
+            .scheduler
+            .run_startup_systems(&mut self.workspace, handle, renderer)
+        {
+            return;
+        }
 
         renderer.update_texture_bind_group(self.workspace.assets());
     }
 
-    pub fn run_update_stage(&mut self, dt: f64) {
+    pub fn run_update_stage(&mut self, frame: &FrameStep) {
         let runtime_mode = self.runtime.mode();
-        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
-
-        workspace
-            .with_active_scene_mut(|scene| scheduler.run_update_stage(scene, dt, runtime_mode))
-            .expect("AppCore requires an active scene");
+        let handle = frame.scene_handle();
+        if !self
+            .scheduler
+            .run_update_stage(&mut self.workspace, handle, frame.dt(), runtime_mode)
+        {
+            log::warn!(
+                "Update stage skipped: active scene handle {:?} is unavailable",
+                handle
+            );
+        }
     }
 
-    pub fn run_gpu_systems(&mut self, renderer: &mut Renderer, dt: f64) {
-        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
-
-        workspace
-            .with_active_scene_mut(|scene| scheduler.run_gpu_systems(scene, renderer, dt))
-            .expect("AppCore requires an active scene");
+    pub fn run_gpu_systems(&mut self, renderer: &mut Renderer, frame: &FrameStep) {
+        let handle = frame.scene_handle();
+        if !self
+            .scheduler
+            .run_gpu_systems(&mut self.workspace, handle, renderer, frame.dt())
+        {
+            log::warn!(
+                "GPU systems skipped: active scene handle {:?} is unavailable",
+                handle
+            );
+        }
     }
 
     pub fn render_scene(
@@ -305,24 +319,35 @@ impl AppCore {
             .map(|region| region.width() as f32 / region.height() as f32)
             .unwrap_or_else(|| renderer.aspect_ratio());
         let gizmos_enabled = self.runtime.gizmos_enabled();
+        let handle = frame.scene_handle();
+        let mut scene = match self.workspace.scene_mut_by_handle(handle) {
+            Some(scene) => scene,
+            None => {
+                log::warn!(
+                    "Render skipped: active scene handle {:?} is unavailable",
+                    handle
+                );
+                return Ok(RenderResult::Skipped);
+            }
+        };
+
         let mut render_hooks = RenderHooks::new();
         std::mem::swap(&mut render_hooks, &mut self.render_hooks);
         let mut batcher = RenderBatcher::new();
         std::mem::swap(&mut batcher, &mut self.batcher);
 
-        let render_result = {
-            let mut scene = self.active_scene_mut();
-            let mut custom_render_request = render_hooks.prepare_request();
-            renderer.set_camera(scene.camera(), aspect);
-            renderer.set_render_region(params.render_region);
+        let mut custom_render_request = render_hooks.prepare_request();
+        renderer.set_camera(scene.camera(), aspect);
+        renderer.set_render_region(params.render_region);
 
-            scene.render(
-                renderer,
-                &mut batcher,
-                custom_render_request.as_mut(),
-                gizmos_enabled,
-            )
-        };
+        let render_result = scene.render(
+            renderer,
+            &mut batcher,
+            custom_render_request.as_mut(),
+            gizmos_enabled,
+        );
+
+        drop(scene);
 
         std::mem::swap(&mut batcher, &mut self.batcher);
         std::mem::swap(&mut render_hooks, &mut self.render_hooks);

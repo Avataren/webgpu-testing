@@ -3,24 +3,27 @@ use crate::renderer::texture::{
     DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
 };
 use crate::renderer::{Renderer, Texture};
-use crate::scene::Scene;
+use crate::scene::{Scene, SceneHandle, SceneWorkspace, SceneWorkspaceSceneMut};
 use crate::time::Instant;
 
 use super::runtime::RuntimeMode;
 
 pub struct StartupContext<'a> {
-    pub scene: &'a mut Scene,
+    pub scene_handle: SceneHandle,
+    pub scene: SceneWorkspaceSceneMut<'a>,
     pub renderer: &'a mut Renderer,
 }
 
 pub struct UpdateContext<'a> {
-    pub scene: &'a mut Scene,
+    pub scene_handle: SceneHandle,
+    pub scene: SceneWorkspaceSceneMut<'a>,
     pub dt: f64,
     pub runtime: RuntimeMode,
 }
 
 pub struct GpuUpdateContext<'a> {
-    pub scene: &'a mut Scene,
+    pub scene_handle: SceneHandle,
+    pub scene: SceneWorkspaceSceneMut<'a>,
     pub renderer: &'a mut Renderer,
     pub dt: f64,
 }
@@ -32,6 +35,7 @@ pub type GpuUpdateSystem = Box<dyn for<'a> FnMut(&mut GpuUpdateContext<'a>) + 's
 pub struct FrameStep {
     dt: f64,
     skip_rendering: bool,
+    scene_handle: SceneHandle,
 }
 
 impl FrameStep {
@@ -41,6 +45,10 @@ impl FrameStep {
 
     pub fn should_render(&self) -> bool {
         !self.skip_rendering
+    }
+
+    pub fn scene_handle(&self) -> SceneHandle {
+        self.scene_handle
     }
 }
 
@@ -95,7 +103,7 @@ impl Scheduler {
         self.skip_rendering_until_frame = Some(frames);
     }
 
-    pub fn begin_frame(&mut self, scene: &mut Scene) -> FrameStep {
+    pub fn begin_frame(&mut self, handle: SceneHandle, scene: &mut Scene) -> FrameStep {
         self.frame_counter = self.frame_counter.saturating_add(1);
 
         let skip_rendering = if let Some(skip_until) = self.skip_rendering_until_frame {
@@ -120,71 +128,140 @@ impl Scheduler {
         let dt = (now - last_frame).as_secs_f64();
         scene.set_last_frame(now);
 
-        FrameStep { dt, skip_rendering }
+        FrameStep {
+            dt,
+            skip_rendering,
+            scene_handle: handle,
+        }
     }
 
-    pub fn run_startup_systems(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
+    pub fn run_startup_systems(
+        &mut self,
+        workspace: &mut SceneWorkspace,
+        handle: SceneHandle,
+        renderer: &mut Renderer,
+    ) -> bool {
         if self.startup_ran {
-            return;
+            return true;
         }
 
-        if self.auto_init_default_textures && scene.assets.textures.is_empty() {
-            self.init_default_textures(scene, renderer);
+        if self.auto_init_default_textures
+            && !Self::with_scene(workspace, handle, |mut scene| {
+                if scene.assets.textures.is_empty() {
+                    self.init_default_textures(&mut scene, renderer);
+                }
+            })
+        {
+            return false;
         }
 
         for system in &mut self.startup_systems {
-            let mut ctx = StartupContext { scene, renderer };
-            (system)(&mut ctx);
-        }
-
-        if self.auto_add_default_lighting {
-            let added_lights = scene.add_default_lighting();
-            if added_lights > 0 {
-                log::info!("Added {} default lights to scene", added_lights);
+            if !Self::with_scene(workspace, handle, |scene| {
+                let mut ctx = StartupContext {
+                    scene_handle: handle,
+                    scene,
+                    renderer,
+                };
+                (system)(&mut ctx);
+            }) {
+                return false;
             }
         }
 
-        log::info!("Running initial transform propagation...");
-        scene.set_animation_playback(false);
-        scene.update(0.0);
-        log::info!("Initial propagation complete");
+        if !Self::with_scene(workspace, handle, |mut scene| {
+            if self.auto_add_default_lighting {
+                let added_lights = scene.add_default_lighting();
+                if added_lights > 0 {
+                    log::info!("Added {} default lights to scene", added_lights);
+                }
+            }
+
+            log::info!("Running initial transform propagation...");
+            scene.set_animation_playback(false);
+            scene.update(0.0);
+            log::info!("Initial propagation complete");
+        }) {
+            return false;
+        }
 
         self.startup_ran = true;
+        true
     }
 
-    pub fn run_update_stage(&mut self, scene: &mut Scene, dt: f64, runtime: RuntimeMode) {
-        if runtime == RuntimeMode::Playing {
-            scene.update(dt);
+    pub fn run_update_stage(
+        &mut self,
+        workspace: &mut SceneWorkspace,
+        handle: SceneHandle,
+        dt: f64,
+        runtime: RuntimeMode,
+    ) -> bool {
+        if runtime == RuntimeMode::Playing
+            && !Self::with_scene(workspace, handle, |mut scene| {
+                scene.update(dt);
+            })
+        {
+            return false;
         }
 
         for system in &mut self.update_systems {
-            let mut ctx = UpdateContext { scene, dt, runtime };
-            (system)(&mut ctx);
+            if !Self::with_scene(workspace, handle, |scene| {
+                let mut ctx = UpdateContext {
+                    scene_handle: handle,
+                    scene,
+                    dt,
+                    runtime,
+                };
+                (system)(&mut ctx);
+            }) {
+                return false;
+            }
         }
 
-        scene.propagate_transforms();
+        Self::with_scene(workspace, handle, |mut scene| {
+            scene.propagate_transforms();
+        })
     }
 
-    pub fn run_gpu_systems(&mut self, scene: &mut Scene, renderer: &mut Renderer, dt: f64) {
-        Self::run_gpu_systems_impl(scene, &mut self.gpu_systems, renderer, dt);
-    }
-
-    fn run_gpu_systems_impl(
-        scene: &mut Scene,
-        systems: &mut [GpuUpdateSystem],
+    pub fn run_gpu_systems(
+        &mut self,
+        workspace: &mut SceneWorkspace,
+        handle: SceneHandle,
         renderer: &mut Renderer,
         dt: f64,
-    ) {
-        for system in systems {
-            let mut ctx = GpuUpdateContext {
-                scene,
-                renderer,
-                dt,
-            };
-            (system)(&mut ctx);
+    ) -> bool {
+        for system in &mut self.gpu_systems {
+            if !Self::with_scene(workspace, handle, |scene| {
+                let mut ctx = GpuUpdateContext {
+                    scene_handle: handle,
+                    scene,
+                    renderer,
+                    dt,
+                };
+                (system)(&mut ctx);
+            }) {
+                return false;
+            }
         }
 
-        scene.propagate_transforms();
+        Self::with_scene(workspace, handle, |mut scene| {
+            scene.propagate_transforms();
+        })
+    }
+
+    fn with_scene<F>(workspace: &mut SceneWorkspace, handle: SceneHandle, f: F) -> bool
+    where
+        F: FnOnce(SceneWorkspaceSceneMut<'_>),
+    {
+        match workspace.scene_mut_by_handle(handle) {
+            Some(scene) => {
+                f(scene);
+                true
+            }
+            None => {
+                log::warn!("Scene handle {:?} is no longer available", handle);
+                false
+            }
+        }
     }
 
     fn init_default_textures(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
@@ -244,12 +321,19 @@ mod tests {
     fn frame_skip_counts_down() {
         let mut scheduler = Scheduler::default();
         scheduler.skip_initial_frames(2);
-        let mut scene = Scene::new();
+        let mut workspace = SceneWorkspace::new();
+        let handle = workspace.open_scene("test".into(), Scene::new());
 
-        let first = scheduler.begin_frame(&mut scene);
+        let first = {
+            let mut scene = workspace.scene_mut_by_handle(handle).unwrap();
+            scheduler.begin_frame(handle, &mut scene)
+        };
         assert!(!first.should_render());
 
-        let second = scheduler.begin_frame(&mut scene);
+        let second = {
+            let mut scene = workspace.scene_mut_by_handle(handle).unwrap();
+            scheduler.begin_frame(handle, &mut scene)
+        };
         assert!(second.should_render());
     }
 }
