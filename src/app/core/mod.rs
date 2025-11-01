@@ -14,8 +14,16 @@ pub use scheduler::{
 };
 
 use crate::renderer::{RenderBatcher, Renderer};
-use crate::scene::Scene;
+use crate::scene::{Scene, SceneWorkspace, SceneWorkspaceSceneMut};
 use crate::settings::RenderSettings;
+
+const DEFAULT_SCENE_DOCUMENT_ID: &str = "app://untitled";
+
+fn default_workspace() -> SceneWorkspace {
+    let mut workspace = SceneWorkspace::new();
+    workspace.open_scene(DEFAULT_SCENE_DOCUMENT_ID.to_string(), Scene::new());
+    workspace
+}
 
 pub trait Plugin {
     fn build(&self, app: &mut AppBuilder);
@@ -25,6 +33,7 @@ pub struct AppBuilder {
     scheduler: Scheduler,
     settings: RenderSettings,
     exit_on_escape: bool,
+    workspace: Option<SceneWorkspace>,
 }
 
 impl Default for AppBuilder {
@@ -33,6 +42,7 @@ impl Default for AppBuilder {
             scheduler: Scheduler::default(),
             settings: RenderSettings::load(),
             exit_on_escape: true,
+            workspace: None,
         }
     }
 }
@@ -96,15 +106,34 @@ impl AppBuilder {
         self
     }
 
+    pub fn with_workspace(mut self, workspace: SceneWorkspace) -> Self {
+        self.workspace = Some(workspace);
+        self
+    }
+
+    pub fn set_workspace(&mut self, workspace: SceneWorkspace) -> &mut Self {
+        self.workspace = Some(workspace);
+        self
+    }
+
     pub fn build(self) -> AppCore {
+        let Self {
+            scheduler,
+            settings,
+            exit_on_escape,
+            mut workspace,
+        } = self;
+
+        let workspace = workspace.take().unwrap_or_else(default_workspace);
+
         AppCore {
             batcher: RenderBatcher::new(),
-            scheduler: self.scheduler,
+            scheduler,
             runtime: RuntimeController::new(),
             render_hooks: RenderHooks::new(),
-            settings: self.settings,
-            scene: Scene::new(),
-            exit_on_escape: self.exit_on_escape,
+            settings,
+            workspace,
+            exit_on_escape,
             exit_requested: false,
         }
     }
@@ -116,7 +145,7 @@ pub struct AppCore {
     runtime: RuntimeController,
     render_hooks: RenderHooks,
     settings: RenderSettings,
-    scene: Scene,
+    workspace: SceneWorkspace,
     exit_on_escape: bool,
     exit_requested: bool,
 }
@@ -126,16 +155,40 @@ impl AppCore {
         AppBuilder::default().build()
     }
 
+    pub fn from_workspace(workspace: SceneWorkspace) -> Self {
+        AppBuilder::default().with_workspace(workspace).build()
+    }
+
     pub fn settings(&self) -> &RenderSettings {
         &self.settings
     }
 
-    pub fn scene(&self) -> &Scene {
-        &self.scene
+    pub fn workspace(&self) -> &SceneWorkspace {
+        &self.workspace
     }
 
-    pub fn scene_mut(&mut self) -> &mut Scene {
-        &mut self.scene
+    pub fn workspace_mut(&mut self) -> &mut SceneWorkspace {
+        &mut self.workspace
+    }
+
+    pub fn active_scene(&self) -> &Scene {
+        self.workspace
+            .active_scene()
+            .expect("AppCore requires an active scene")
+    }
+
+    pub fn active_scene_mut(&mut self) -> SceneWorkspaceSceneMut<'_> {
+        self.workspace
+            .active_scene_mut()
+            .expect("AppCore requires an active scene")
+    }
+
+    pub fn scene(&self) -> &Scene {
+        self.active_scene()
+    }
+
+    pub fn scene_mut(&mut self) -> SceneWorkspaceSceneMut<'_> {
+        self.active_scene_mut()
     }
 
     pub fn exit_on_escape(&self) -> bool {
@@ -185,11 +238,22 @@ impl AppCore {
     }
 
     pub fn begin_frame(&mut self) -> FrameStep {
-        self.scheduler.begin_frame(&mut self.scene)
+        debug_assert!(
+            self.workspace.active_scene().is_some(),
+            "AppCore requires an active scene before beginning a frame",
+        );
+
+        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
+        workspace
+            .with_active_scene_mut(|scene| scheduler.begin_frame(scene))
+            .expect("AppCore requires an active scene")
     }
 
     pub fn sync_runtime_state(&mut self) -> Option<RuntimeTransition> {
-        self.runtime.sync_runtime_state(&mut self.scene)
+        let (workspace, runtime) = (&mut self.workspace, &mut self.runtime);
+        workspace
+            .with_active_scene_mut(|scene| runtime.sync_runtime_state(scene))
+            .expect("AppCore requires an active scene")
     }
 
     pub fn toggle_editor_gizmos(&mut self) {
@@ -197,21 +261,33 @@ impl AppCore {
     }
 
     pub fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
-        self.scene.init_timer();
-        self.scheduler
-            .run_startup_systems(&mut self.scene, renderer);
-        renderer.update_texture_bind_group(&self.scene.assets);
+        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
+
+        workspace
+            .with_active_scene_mut(|scene| {
+                scene.init_timer();
+                scheduler.run_startup_systems(scene, renderer);
+            })
+            .expect("AppCore requires an active scene");
+
+        renderer.update_texture_bind_group(self.workspace.assets());
     }
 
     pub fn run_update_stage(&mut self, dt: f64) {
         let runtime_mode = self.runtime.mode();
-        self.scheduler
-            .run_update_stage(&mut self.scene, dt, runtime_mode);
+        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
+
+        workspace
+            .with_active_scene_mut(|scene| scheduler.run_update_stage(scene, dt, runtime_mode))
+            .expect("AppCore requires an active scene");
     }
 
     pub fn run_gpu_systems(&mut self, renderer: &mut Renderer, dt: f64) {
-        self.scheduler
-            .run_gpu_systems(&mut self.scene, renderer, dt);
+        let (workspace, scheduler) = (&mut self.workspace, &mut self.scheduler);
+
+        workspace
+            .with_active_scene_mut(|scene| scheduler.run_gpu_systems(scene, renderer, dt))
+            .expect("AppCore requires an active scene");
     }
 
     pub fn render_scene(
@@ -228,18 +304,30 @@ impl AppCore {
             .render_region
             .map(|region| region.width() as f32 / region.height() as f32)
             .unwrap_or_else(|| renderer.aspect_ratio());
-        renderer.set_camera(self.scene.camera(), aspect);
+        let gizmos_enabled = self.runtime.gizmos_enabled();
+        let mut render_hooks = RenderHooks::new();
+        std::mem::swap(&mut render_hooks, &mut self.render_hooks);
+        let mut batcher = RenderBatcher::new();
+        std::mem::swap(&mut batcher, &mut self.batcher);
 
-        renderer.set_render_region(params.render_region);
+        let render_result = {
+            let mut scene = self.active_scene_mut();
+            let mut custom_render_request = render_hooks.prepare_request();
+            renderer.set_camera(scene.camera(), aspect);
+            renderer.set_render_region(params.render_region);
 
-        let mut custom_render_request = self.render_hooks.prepare_request();
+            scene.render(
+                renderer,
+                &mut batcher,
+                custom_render_request.as_mut(),
+                gizmos_enabled,
+            )
+        };
 
-        let render_frame = self.scene.render(
-            renderer,
-            &mut self.batcher,
-            custom_render_request.as_mut(),
-            self.runtime.gizmos_enabled(),
-        )?;
+        std::mem::swap(&mut batcher, &mut self.batcher);
+        std::mem::swap(&mut render_hooks, &mut self.render_hooks);
+
+        let render_frame = render_result?;
 
         Ok(RenderResult::Rendered(render_frame))
     }
@@ -252,5 +340,31 @@ impl AppCore {
 impl Default for AppCore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_creates_active_scene() {
+        let core = AppBuilder::new().build();
+        assert!(core.workspace().active_scene().is_some());
+    }
+
+    #[test]
+    fn build_uses_supplied_workspace() {
+        let mut workspace = SceneWorkspace::new();
+        let handle = workspace.open_scene("test".into(), Scene::new());
+        let default_material = workspace.assets().default_material_handle();
+
+        let core = AppBuilder::new().with_workspace(workspace).build();
+
+        assert_eq!(core.workspace().active_scene_handle(), Some(handle));
+        assert_eq!(
+            core.workspace().assets().default_material_handle(),
+            default_material
+        );
     }
 }

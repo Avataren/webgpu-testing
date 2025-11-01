@@ -13,6 +13,7 @@ use winit::{
 
 use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
 use crate::renderer::{CustomRenderCallback, CustomRenderStage, RenderRegion, Renderer};
+use crate::scene::SceneWorkspace;
 
 #[cfg(feature = "egui")]
 use crate::app::editor::EditorState;
@@ -224,6 +225,10 @@ where
 {
     pub fn new() -> Self {
         Self::from_core(AppBuilder::new().build())
+    }
+
+    pub fn new_with_workspace(workspace: SceneWorkspace) -> Self {
+        Self::from_core(AppBuilder::new().with_workspace(workspace).build())
     }
 
     pub fn from_core(core: AppCore) -> Self {

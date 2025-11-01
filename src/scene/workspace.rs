@@ -118,6 +118,12 @@ impl SceneWorkspace {
         })
     }
 
+    /// Executes the provided closure with a mutable reference to the active scene.
+    pub fn with_active_scene_mut<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
+        let mut scene = self.active_scene_mut()?;
+        Some(f(&mut scene))
+    }
+
     /// Opens a new scene within the workspace, returning its handle.
     pub fn open_scene(&mut self, document_id: SceneDocumentId, scene: Scene) -> SceneHandle {
         self.open_scene_with_listener(document_id, scene, None)
