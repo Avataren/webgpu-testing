@@ -25,6 +25,7 @@ mod scene;
 mod snapshot;
 pub mod state;
 pub mod transform;
+pub mod workspace;
 
 // Re-export commonly used types
 pub(crate) use self::{
@@ -51,6 +52,10 @@ pub use state::{
     GizmoState, TransformGizmoAxis, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace,
 };
 pub use transform::Transform;
+pub use workspace::{
+    SceneDirtyListener, SceneHandle, SceneWorkspace, SceneWorkspaceAssetsMut,
+    SceneWorkspaceBuilder, SceneWorkspaceError, SceneWorkspaceSceneMut,
+};
 
 // Re-export all components
 pub use components::{
