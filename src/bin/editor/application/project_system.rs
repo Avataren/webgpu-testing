@@ -296,19 +296,39 @@ impl ProjectSystem {
                         }
                     }
 
-                    match manifest.instantiate_into(
-                        gpu_ctx.scene,
+                    match manifest.instantiate_workspace(
                         gpu_ctx.renderer,
                         &dir,
                         &mut self.scene_library,
                     ) {
-                        Ok(textures_changed) => {
-                            app.ensure_editor_scene_basics(gpu_ctx.scene, gpu_ctx.renderer);
-                            if textures_changed {
-                                gpu_ctx
-                                    .renderer
-                                    .update_texture_bind_group(&gpu_ctx.scene.assets);
+                        Ok((mut workspace, mut textures_changed)) => {
+                            let handles: Vec<_> = workspace.scene_handles().collect();
+                            for handle in handles {
+                                if let Some(mut scene) = workspace.scene_mut_by_handle(handle) {
+                                    app.ensure_editor_scene_basics(&mut scene, gpu_ctx.renderer);
+                                    textures_changed = true;
+                                }
                             }
+
+                            app.history_system_mut().reset();
+
+                            if let Some(active_handle) = workspace.active_scene_handle() {
+                                if let Some(mut scene) =
+                                    workspace.scene_mut_by_handle(active_handle)
+                                {
+                                    if matches!(
+                                        app.runtime_state().active_mode(),
+                                        RuntimeMode::Editor
+                                    ) {
+                                        scene.set_animation_playback(false);
+                                        scene.update(0.0);
+                                    }
+
+                                    app.initialize_history_state(&mut scene);
+                                }
+                            }
+
+                            gpu_ctx.request_workspace_swap(workspace, textures_changed);
 
                             self.controller.set_current_dir(dir.clone());
                             self.controller.set_scene_documents(manifest.scenes.clone());
@@ -321,8 +341,6 @@ impl ProjectSystem {
                                 selection.clear_pending_pick();
                                 selection.request_override(None);
                             }
-                            app.history_system_mut().reset();
-                            app.initialize_history_state(gpu_ctx.scene);
                             app.request_runtime_mode(RuntimeMode::Editor);
                         }
                         Err(err) => {

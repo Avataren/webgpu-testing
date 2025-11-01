@@ -221,16 +221,13 @@ fn project_manifest_roundtrip_restores_engine_camera() {
     let loaded =
         ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should reload from disk");
 
-    let mut restored_scene = Scene::new();
     let mut library = SceneLibrary::new();
-    let textures_changed = loaded
-        .instantiate_into(
-            &mut restored_scene,
-            &mut headless,
-            temp_dir.path(),
-            &mut library,
-        )
+    let (workspace, textures_changed) = loaded
+        .instantiate_workspace(&mut headless, temp_dir.path(), &mut library)
         .expect("manifest should instantiate into a scene");
+    let restored_scene = workspace
+        .into_active_scene()
+        .expect("workspace should provide an active scene");
     if textures_changed {
         headless
             .queue()
