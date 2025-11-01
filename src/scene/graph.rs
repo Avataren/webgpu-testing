@@ -108,6 +108,7 @@ pub(crate) struct SceneInstance {
     rest_pose: Option<HashMap<hecs::Entity, Transform>>,
     active_camera: Option<Entity>,
     prefab_overrides: PrefabOverrideState,
+    asset_entity_map: Vec<Option<Entity>>,
 }
 
 impl SceneInstance {
@@ -119,6 +120,7 @@ impl SceneInstance {
             rest_pose: None,
             active_camera: None,
             prefab_overrides: PrefabOverrideState::default(),
+            asset_entity_map: Vec::new(),
         }
     }
 
@@ -239,6 +241,20 @@ impl SceneInstance {
 
     pub(crate) fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    pub(crate) fn set_asset_entity_map(&mut self, map: Vec<Entity>) {
+        self.asset_entity_map = map.into_iter().map(Some).collect();
+    }
+
+    pub(crate) fn asset_entity(&self, index: usize) -> Option<Entity> {
+        self.asset_entity_map.get(index).copied().flatten()
+    }
+
+    pub(crate) fn clear_asset_entity(&mut self, index: usize) {
+        if let Some(entry) = self.asset_entity_map.get_mut(index) {
+            *entry = None;
+        }
     }
 
     pub(crate) fn mutate_entity_transform(

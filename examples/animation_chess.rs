@@ -2,7 +2,7 @@ use glam::{Quat, Vec3};
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::render_application::{run_application, RenderApplication};
-use wgpu_cube::scene::{Camera, SceneLoader, SceneNodeId};
+use wgpu_cube::scene::{Camera, SceneLibrary, SceneLoader, SceneNodeId};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -27,6 +27,7 @@ impl RenderApplication for ExampleApp {
     fn setup(&mut self, ctx: &mut StartupContext) {
         let renderer = &mut *ctx.renderer;
         let scene = &mut *ctx.scene;
+        let mut library = SceneLibrary::new();
 
         let mut animation_asset =
             match SceneLoader::load_gltf_asset(ANIMATION_GLTF, renderer, ANIMATION_SCALE) {
@@ -63,10 +64,12 @@ impl RenderApplication for ExampleApp {
             .register_resources(renderer, &mut scene.assets)
             .textures_changed();
         let animation_node = scene.instantiate_asset_named_with_renderer(
+            &mut library,
             &animation_asset.asset,
             "AnimatedBoxes",
             Some(root),
             renderer,
+            None,
         );
         scene.node_local_transform_mut(animation_node).translation = Vec3::new(-8.0, 0.0, 0.0);
 
@@ -77,10 +80,12 @@ impl RenderApplication for ExampleApp {
             textures_changed = true;
         }
         let chess_node = scene.instantiate_asset_named_with_renderer(
+            &mut library,
             &chess_asset.asset,
             "ChessBoard",
             Some(root),
             renderer,
+            None,
         );
         scene.node_local_transform_mut(chess_node).translation = Vec3::new(8.0, 0.0, 0.0);
 

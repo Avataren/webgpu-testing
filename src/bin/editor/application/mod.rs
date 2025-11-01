@@ -71,7 +71,7 @@ impl RenderApplication for EditorApplication {
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        self.initialize_history_state(ctx.scene);
+        self.initialize_history_state(&mut ctx.scene);
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
@@ -341,7 +341,7 @@ impl EditorApplication {
             return;
         }
 
-        self.resolve_active_camera_entity(ctx.scene);
+        self.resolve_active_camera_entity(&mut ctx.scene);
         let mut transforms_changed = false;
 
         for action in actions {
@@ -363,7 +363,7 @@ impl EditorApplication {
 
                     if updated {
                         transforms_changed = true;
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateCamera { entity, component } => {
@@ -391,7 +391,7 @@ impl EditorApplication {
                             self.shared.active_camera_entity = ctx.scene.active_camera_entity();
                         }
 
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateMaterial {
@@ -424,7 +424,7 @@ impl EditorApplication {
                     if can_update {
                         if let Some(asset) = ctx.scene.assets.material_mut(handle) {
                             *asset.material_mut() = material;
-                            self.record_scene_change(ctx.scene);
+                            self.record_scene_change(&mut ctx.scene);
                         } else {
                             log::warn!(
                                 "Inspector material asset missing for handle {:?}",
@@ -474,7 +474,7 @@ impl EditorApplication {
                                 asset.set_asset_type(AssetTypeTag::default());
                             }
                         }
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     } else {
                         log::warn!(
                             "Inspector material asset missing for handle {:?}",
@@ -550,7 +550,7 @@ impl EditorApplication {
                             metadata.set_source_path(Some(canonical));
                             asset.set_kind(MaterialKind::Shader(metadata));
                             asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            self.record_scene_change(ctx.scene);
+                            self.record_scene_change(&mut ctx.scene);
                         } else {
                             log::warn!(
                                 "Inspector material asset missing for handle {:?}",
@@ -646,7 +646,7 @@ impl EditorApplication {
                             metadata.set_source_path(Some(canonical));
                             asset.set_kind(MaterialKind::Shader(metadata));
                             asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            self.record_scene_change(ctx.scene);
+                            self.record_scene_change(&mut ctx.scene);
                         } else {
                             log::warn!(
                                 "Inspector material asset missing for handle {:?}",
@@ -684,7 +684,7 @@ impl EditorApplication {
                         .insert_one(entity, MaterialComponent(new_handle))
                     {
                         Ok(_) => {
-                            self.record_scene_change(ctx.scene);
+                            self.record_scene_change(&mut ctx.scene);
                         }
                         Err(err) => {
                             log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
@@ -711,7 +711,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateDirectionalLight { entity, light } => {
@@ -734,7 +734,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateSpotLight { entity, light } => {
@@ -753,7 +753,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateEnvironment { entity, component } => {
@@ -822,7 +822,7 @@ impl EditorApplication {
 
                     if updated {
                         ctx.scene.set_environment(component.to_environment());
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateParticleSystem { entity, component } => {
@@ -869,7 +869,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateParticleEmitter { entity, component } => {
@@ -894,7 +894,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::UpdateParticleBehavior {
@@ -927,7 +927,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::SetBillboard { entity, billboard } => {
@@ -983,7 +983,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::SetCanCastShadow {
@@ -1031,7 +1031,7 @@ impl EditorApplication {
                     }
 
                     if updated {
-                        self.record_scene_change(ctx.scene);
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::EditScript { .. } => {

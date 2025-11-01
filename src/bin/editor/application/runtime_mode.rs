@@ -29,7 +29,7 @@ impl EditorApplication {
             info!("Transitioning from Editor to Play mode - capturing scene snapshot");
 
             // Capture the ENTIRE scene state
-            self.shared.editor_scene_snapshot = Some(SceneStateSnapshot::capture(ctx.scene));
+            self.shared.editor_scene_snapshot = Some(SceneStateSnapshot::capture(&ctx.scene));
 
             self.shared.pending_mode_transition = Some(RuntimeModeTransition {
                 from: old_mode,
@@ -57,13 +57,13 @@ impl EditorApplication {
 
         // Completely restore the scene from the snapshot
         if let Some(snapshot) = self.shared.editor_scene_snapshot.take() {
-            snapshot.restore(ctx.scene); // Changed from restore_without_assets
+            snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
         // Reinitialize editor state
         {
             self.history_system_mut()
-                .initialize_state(ctx.scene, None, None);
+                .initialize_state(&mut ctx.scene, None, None);
         }
 
         let selection = self.selection_system_mut();

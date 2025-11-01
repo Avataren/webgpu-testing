@@ -122,6 +122,7 @@ impl<'shared> EditorAppAccess<'shared> {
         self.systems.asset_browser_system_mut().state_mut()
     }
 
+    #[allow(dead_code)]
     pub fn active_scene_handle(&self) -> Option<SceneHandle> {
         self.shared.active_scene_handle
     }
@@ -130,7 +131,7 @@ impl<'shared> EditorAppAccess<'shared> {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
         self.history_system_mut()
-            .record_scene_change(&mut **scene, selected, highlighted);
+            .record_scene_change(scene, selected, highlighted);
     }
 
     pub fn ensure_editor_scene_basics(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
@@ -430,9 +431,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn scene(&mut self) -> Option<&mut Scene> {
         if let Some(update) = self.update.as_deref_mut() {
-            Some(update.scene)
+            let scene = &mut update.scene;
+            Some(&mut **scene)
         } else if let Some(gpu) = self.gpu.as_deref_mut() {
-            Some(gpu.scene)
+            let scene = &mut gpu.scene;
+            Some(&mut **scene)
         } else {
             None
         }

@@ -135,7 +135,7 @@ impl ProjectSystem {
             }
 
             if any_spawned {
-                app.record_scene_change(gpu_ctx.scene);
+                app.record_scene_change(&mut gpu_ctx.scene);
             }
         }) else {
             self.pending_gltf_imports = pending;
@@ -243,7 +243,7 @@ impl ProjectSystem {
 
         let existing_document = self.controller.primary_scene_document();
         match ProjectManifest::capture(
-            gpu_ctx.scene,
+            &gpu_ctx.scene,
             self.controller.metadata().clone(),
             existing_document,
         ) {
@@ -391,7 +391,7 @@ impl ProjectSystem {
             let Some(()) = ctx.with_gpu_app(|_app, gpu_ctx| {
                 let existing_document = self.controller.primary_scene_document();
                 match ProjectManifest::capture(
-                    gpu_ctx.scene,
+                    &gpu_ctx.scene,
                     self.controller.metadata().clone(),
                     existing_document,
                 ) {

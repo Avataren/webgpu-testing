@@ -703,13 +703,20 @@ fn packaged_gltf_roundtrip_without_source() {
     }
 
     let mut scene = Scene::new();
+    let mut library = SceneLibrary::new();
     let registration = bundle.register_resources(&mut headless, &mut scene.assets);
     if registration.textures_changed() {
         headless
             .queue()
             .submit(std::iter::empty::<wgpu::CommandBuffer>());
     }
-    let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
+    let node = scene.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
     scene.set_main_scene(node);
 
     let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
@@ -732,8 +739,13 @@ fn packaged_gltf_roundtrip_without_source() {
             .queue()
             .submit(std::iter::empty::<wgpu::CommandBuffer>());
     }
-    let packaged_node =
-        packaged_scene.instantiate_asset_with_renderer(&packaged_bundle.asset, None, &mut headless);
+    let packaged_node = packaged_scene.instantiate_asset_with_renderer(
+        &mut library,
+        &packaged_bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
     packaged_scene.set_main_scene(packaged_node);
 
     let packaged_mesh_count = packaged_scene
@@ -754,7 +766,6 @@ fn packaged_gltf_roundtrip_without_source() {
     drop(packaged_bundle);
 
     let loaded = ProjectManifest::load_from_dir(project_root).expect("load manifest");
-    let mut library = SceneLibrary::new();
     let (workspace, textures_changed) = loaded
         .instantiate_workspace(&mut headless, project_root, &mut library)
         .expect("instantiate project");

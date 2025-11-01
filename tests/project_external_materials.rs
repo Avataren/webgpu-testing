@@ -92,8 +92,15 @@ fn project_instantiation_preserves_external_material_handles() {
         .expect("failed to import external test glTF");
 
     let mut scene = Scene::new();
+    let mut library = SceneLibrary::new();
     bundle.register_resources(&mut headless, &mut scene.assets);
-    let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
+    let node = scene.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
     scene.set_main_scene(node);
 
     let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
