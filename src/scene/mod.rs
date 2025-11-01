@@ -14,6 +14,7 @@ mod import_pipeline;
 mod import_state;
 mod importer;
 pub(crate) mod internal;
+pub mod library;
 pub mod loader;
 pub mod picking;
 mod render_bridge;
@@ -40,6 +41,7 @@ pub use assets::{
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
+pub use library::SceneLibrary;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub use scene::Scene;

@@ -3347,17 +3347,30 @@ mod tests {
             .with_billboard(serialized_billboard)
             .build();
 
-        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
-        manifest.scene = SceneAsset::builder("BillboardProject")
+        let scene_asset = SceneAsset::builder("BillboardProject")
             .add_entity(entity)
             .build();
+
+        let mut scene = Scene::new();
+        let node = scene.instantiate_asset(&scene_asset, None);
+        scene.set_main_scene(node);
+
+        let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
+            .expect("capture project manifest");
 
         let dir = tempdir().unwrap();
         manifest.save_to_dir(dir.path()).expect("save project");
 
         let reloaded = ProjectManifest::load_from_dir(dir.path()).expect("load project");
-        assert_eq!(reloaded.scene.entities.len(), 1);
-        let serialized = reloaded.scene.entities[0]
+        let document = reloaded
+            .scenes()
+            .first()
+            .expect("reloaded manifest should contain a scene");
+        let asset = reloaded
+            .scene_asset(&document.id)
+            .expect("reloaded manifest should provide a scene asset");
+        assert_eq!(asset.entities.len(), 1);
+        let serialized = asset.entities[0]
             .billboard
             .expect("billboard should persist in project");
         let restored = Billboard::from(serialized);
@@ -3409,7 +3422,7 @@ mod tests {
         let root_node = scene.instantiate_tree_asset(&tree, None);
         scene.set_main_scene(root_node);
 
-        let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default())
+        let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
             .expect("capture project manifest");
 
         let dir = tempdir().unwrap();
@@ -3417,9 +3430,16 @@ mod tests {
             .save_to_dir(dir.path())
             .expect("save captured project");
         let reloaded = ProjectManifest::load_from_dir(dir.path()).expect("load captured project");
+        let document = reloaded
+            .scenes()
+            .first()
+            .expect("reloaded manifest should contain a scene");
+        let asset = reloaded
+            .scene_asset(&document.id)
+            .expect("reloaded manifest should provide a scene asset");
 
         let mut new_scene = Scene::new();
-        let instantiated = new_scene.instantiate_asset(&reloaded.scene, None);
+        let instantiated = new_scene.instantiate_asset(asset, None);
         new_scene.set_main_scene(instantiated);
         new_scene.propagate_transforms();
 

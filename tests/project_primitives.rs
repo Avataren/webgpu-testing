@@ -14,8 +14,8 @@ use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Vertex;
 use wgpu_cube::scene::{
     CameraProjection, MeshBounds, MeshComponent, Name, PrimitiveMeshComponent, Scene,
-    SceneAssetBundle, SceneAssetResources, SceneImportDevice, Transform, TransformComponent,
-    Visible,
+    SceneAssetBundle, SceneAssetResources, SceneImportDevice, SceneLibrary, Transform,
+    TransformComponent, Visible,
 };
 
 struct HeadlessDevice {
@@ -134,7 +134,7 @@ fn project_manifest_roundtrip_preserves_primitive_meshes() {
     );
 
     let metadata = ProjectMetadata::default();
-    let manifest = ProjectManifest::capture(&scene, metadata)
+    let manifest = ProjectManifest::capture(&scene, metadata, None)
         .expect("capturing manifest for primitive scene should succeed");
 
     let temp_dir = tempdir().expect("temporary directory should create");
@@ -144,8 +144,15 @@ fn project_manifest_roundtrip_preserves_primitive_meshes() {
 
     let loaded =
         ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should reload from disk");
+    let document = loaded
+        .scenes()
+        .first()
+        .expect("loaded manifest should include a scene");
+    let asset = loaded
+        .scene_asset(&document.id)
+        .expect("loaded manifest should provide scene asset");
 
-    let mut bundle = SceneAssetBundle::new(loaded.scene.clone(), SceneAssetResources::default());
+    let mut bundle = SceneAssetBundle::new(asset.clone(), SceneAssetResources::default());
     let mut restored_scene = Scene::new();
 
     bundle.register_resources(&mut headless, &mut restored_scene.assets);
@@ -203,7 +210,7 @@ fn project_manifest_roundtrip_restores_engine_camera() {
     }
 
     let metadata = ProjectMetadata::default();
-    let manifest = ProjectManifest::capture(&scene, metadata)
+    let manifest = ProjectManifest::capture(&scene, metadata, None)
         .expect("capturing manifest for engine camera roundtrip should succeed");
 
     let temp_dir = tempdir().expect("temporary directory should create");
@@ -215,8 +222,14 @@ fn project_manifest_roundtrip_restores_engine_camera() {
         ProjectManifest::load_from_dir(temp_dir.path()).expect("manifest should reload from disk");
 
     let mut restored_scene = Scene::new();
+    let mut library = SceneLibrary::new();
     let textures_changed = loaded
-        .instantiate_into(&mut restored_scene, &mut headless, temp_dir.path())
+        .instantiate_into(
+            &mut restored_scene,
+            &mut headless,
+            temp_dir.path(),
+            &mut library,
+        )
         .expect("manifest should instantiate into a scene");
     if textures_changed {
         headless

@@ -4,7 +4,9 @@ use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
 use wgpu_cube::project::{ProjectError, ProjectManifest};
-use wgpu_cube::scene::{InstantiatedSceneAsset, Name, Transform, TransformComponent, Visible};
+use wgpu_cube::scene::{
+    InstantiatedSceneAsset, Name, SceneLibrary, Transform, TransformComponent, Visible,
+};
 
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, ProjectController};
 
@@ -14,6 +16,7 @@ pub(super) struct ProjectSystem {
     controller: ProjectController,
     aux_windows_enabled: bool,
     pending_gltf_imports: Vec<PathBuf>,
+    scene_library: SceneLibrary,
 }
 
 impl ProjectSystem {
@@ -22,6 +25,7 @@ impl ProjectSystem {
             controller,
             aux_windows_enabled: true,
             pending_gltf_imports: Vec::new(),
+            scene_library: SceneLibrary::new(),
         }
     }
 
@@ -237,11 +241,30 @@ impl ProjectSystem {
             return;
         };
 
-        match ProjectManifest::capture(gpu_ctx.scene, self.controller.metadata().clone()) {
+        let existing_document = self.controller.primary_scene_document();
+        match ProjectManifest::capture(
+            gpu_ctx.scene,
+            self.controller.metadata().clone(),
+            existing_document,
+        ) {
             Ok(manifest) => {
                 if let Err(err) = manifest.save_to_dir(&dir) {
                     error!("Failed to save project to {:?}: {err}", dir);
                 } else {
+                    self.controller.set_scene_documents(manifest.scenes.clone());
+                    self.scene_library.clear();
+                    for document in manifest.scenes() {
+                        self.scene_library.register_document(document);
+                        if let Some(asset) = manifest.scene_asset(&document.id) {
+                            self.scene_library
+                                .insert(document.id.clone(), asset.clone());
+                        } else if let Err(err) = self.scene_library.load_document(document, &dir) {
+                            error!(
+                                "Failed to cache scene document {} after save: {err}",
+                                document.id
+                            );
+                        }
+                    }
                     self.controller.set_current_dir(dir);
                 }
             }
@@ -259,7 +282,26 @@ impl ProjectSystem {
             ctx.with_gpu_app(|app, gpu_ctx| match ProjectManifest::load_from_dir(&dir) {
                 Ok(manifest) => {
                     let metadata = manifest.metadata.clone();
-                    match manifest.instantiate_into(gpu_ctx.scene, gpu_ctx.renderer, &dir) {
+                    self.scene_library.clear();
+                    for document in manifest.scenes() {
+                        self.scene_library.register_document(document);
+                        if let Some(asset) = manifest.scene_asset(&document.id) {
+                            self.scene_library
+                                .insert(document.id.clone(), asset.clone());
+                        } else if let Err(err) = self.scene_library.load_document(document, &dir) {
+                            error!(
+                                "Failed to cache scene document {} while loading project: {err}",
+                                document.id
+                            );
+                        }
+                    }
+
+                    match manifest.instantiate_into(
+                        gpu_ctx.scene,
+                        gpu_ctx.renderer,
+                        &dir,
+                        &mut self.scene_library,
+                    ) {
                         Ok(textures_changed) => {
                             app.ensure_editor_scene_basics(gpu_ctx.scene, gpu_ctx.renderer);
                             if textures_changed {
@@ -269,6 +311,7 @@ impl ProjectSystem {
                             }
 
                             self.controller.set_current_dir(dir.clone());
+                            self.controller.set_scene_documents(manifest.scenes.clone());
                             self.controller.set_metadata(metadata);
                             app.command_queue_mut().clear();
                             {
@@ -331,7 +374,12 @@ impl ProjectSystem {
             }
 
             let Some(()) = ctx.with_gpu_app(|_app, gpu_ctx| {
-                match ProjectManifest::capture(gpu_ctx.scene, self.controller.metadata().clone()) {
+                let existing_document = self.controller.primary_scene_document();
+                match ProjectManifest::capture(
+                    gpu_ctx.scene,
+                    self.controller.metadata().clone(),
+                    existing_document,
+                ) {
                     Ok(manifest) => {
                         if let Err(err) = manifest.save_to_dir(&request.output_dir) {
                             error!(
@@ -433,7 +481,7 @@ mod native {
     use std::thread;
 
     use gltf::{buffer::Source as BufferSource, image::Source as ImageSource, Gltf};
-    use log::{error, info};
+    use log::{error, info, warn};
     use thiserror::Error;
     use wgpu_cube::asset::MaterialTextureSlot;
     use wgpu_cube::io::percent_decode_uri;
@@ -1438,10 +1486,20 @@ mod native {
     ) -> Result<(), std::io::Error> {
         let mut scripts = BTreeSet::new();
 
-        for entity in &manifest.scene.entities {
-            if let Some(script) = &entity.script {
-                if let SerializedRuneScriptSource::File { path } = &script.source {
-                    scripts.insert(path.clone());
+        for document in manifest.scenes() {
+            let Some(asset) = manifest.scene_asset(&document.id) else {
+                warn!(
+                    "Skipping script collection for scene {}: asset payload unavailable",
+                    document.id
+                );
+                continue;
+            };
+
+            for entity in &asset.entities {
+                if let Some(script) = &entity.script {
+                    if let SerializedRuneScriptSource::File { path } = &script.source {
+                        scripts.insert(path.clone());
+                    }
                 }
             }
         }

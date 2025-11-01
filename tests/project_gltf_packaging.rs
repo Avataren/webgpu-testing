@@ -21,7 +21,7 @@ use wgpu_cube::scene::{
         PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture, PACKAGED_GLTF_VERSION,
     },
     loader::SceneImportDevice,
-    Scene, SceneAssetBundle, SceneLoader,
+    Scene, SceneAssetBundle, SceneLibrary, SceneLoader,
 };
 
 struct HeadlessDevice {
@@ -712,8 +712,8 @@ fn packaged_gltf_roundtrip_without_source() {
     let node = scene.instantiate_asset_with_renderer(&bundle.asset, None, &mut headless);
     scene.set_main_scene(node);
 
-    let manifest =
-        ProjectManifest::capture(&scene, ProjectMetadata::default()).expect("manifest capture");
+    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None)
+        .expect("manifest capture");
     manifest.save_to_dir(project_root).expect("save manifest");
 
     drop(scene);
@@ -755,8 +755,14 @@ fn packaged_gltf_roundtrip_without_source() {
 
     let loaded = ProjectManifest::load_from_dir(project_root).expect("load manifest");
     let mut restored_scene = Scene::new();
+    let mut library = SceneLibrary::new();
     let textures_changed = loaded
-        .instantiate_into(&mut restored_scene, &mut headless, project_root)
+        .instantiate_into(
+            &mut restored_scene,
+            &mut headless,
+            project_root,
+            &mut library,
+        )
         .expect("instantiate project");
     if textures_changed {
         headless
