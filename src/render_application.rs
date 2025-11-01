@@ -4,6 +4,7 @@
 #[cfg(feature = "egui")]
 use crate::app::RuntimeStateHandle;
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext, WinitApp};
+use crate::scene::SceneWorkspace;
 
 use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
@@ -184,12 +185,10 @@ impl DefaultUI {
     }
 }
 
-fn build_winit_app<T>(app_rc: Rc<RefCell<T>>) -> WinitApp
+fn build_winit_app_internal<T>(app_rc: Rc<RefCell<T>>, mut builder: AppBuilder) -> WinitApp
 where
     T: RenderApplication,
 {
-    let mut builder = AppBuilder::new();
-
     app_rc.borrow().configure(&mut builder);
 
     {
@@ -294,6 +293,20 @@ where
     app
 }
 
+fn build_winit_app<T>(app_rc: Rc<RefCell<T>>) -> WinitApp
+where
+    T: RenderApplication,
+{
+    build_winit_app_internal(app_rc, AppBuilder::new())
+}
+
+fn build_winit_app_with_workspace<T>(app_rc: Rc<RefCell<T>>, workspace: SceneWorkspace) -> WinitApp
+where
+    T: RenderApplication,
+{
+    build_winit_app_internal(app_rc, AppBuilder::new().with_workspace(workspace))
+}
+
 /// Run an application that implements RenderApplication
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_application<T>(application: T) -> Result<(), winit::error::EventLoopError>
@@ -305,6 +318,20 @@ where
     crate::run_with_app(app)
 }
 
+/// Run an application with a pre-populated scene workspace
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_application_with_workspace<T>(
+    application: T,
+    workspace: SceneWorkspace,
+) -> Result<(), winit::error::EventLoopError>
+where
+    T: RenderApplication,
+{
+    let app_rc = Rc::new(RefCell::new(application));
+    let app = build_winit_app_with_workspace(app_rc, workspace);
+    crate::run_with_app(app)
+}
+
 /// Run an application (WebAssembly version)
 #[cfg(target_arch = "wasm32")]
 pub fn run_application<T>(application: T) -> Result<(), wasm_bindgen::JsValue>
@@ -313,5 +340,19 @@ where
 {
     let app_rc = Rc::new(RefCell::new(application));
     let app = build_winit_app(app_rc);
+    crate::run_with_app(app)
+}
+
+/// Run an application with a pre-populated scene workspace (WebAssembly version)
+#[cfg(target_arch = "wasm32")]
+pub fn run_application_with_workspace<T>(
+    application: T,
+    workspace: SceneWorkspace,
+) -> Result<(), wasm_bindgen::JsValue>
+where
+    T: RenderApplication,
+{
+    let app_rc = Rc::new(RefCell::new(application));
+    let app = build_winit_app_with_workspace(app_rc, workspace);
     crate::run_with_app(app)
 }
