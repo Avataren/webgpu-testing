@@ -118,6 +118,35 @@ impl SceneWorkspace {
         })
     }
 
+    /// Returns the active scene handle together with a mutable guard to it.
+    pub fn active_scene_handle_and_mut(
+        &mut self,
+    ) -> Option<(SceneHandle, SceneWorkspaceSceneMut<'_>)> {
+        let handle = self.active_scene?;
+        let entry = self.scenes.get_mut(handle)?;
+        Some((
+            handle,
+            SceneWorkspaceSceneMut {
+                entry,
+                workspace_assets: &mut self.assets,
+                dirty: false,
+            },
+        ))
+    }
+
+    /// Returns a mutable guard for the scene identified by the supplied handle.
+    pub fn scene_mut_by_handle(
+        &mut self,
+        handle: SceneHandle,
+    ) -> Option<SceneWorkspaceSceneMut<'_>> {
+        let entry = self.scenes.get_mut(handle)?;
+        Some(SceneWorkspaceSceneMut {
+            entry,
+            workspace_assets: &mut self.assets,
+            dirty: false,
+        })
+    }
+
     /// Executes the provided closure with a mutable reference to the active scene.
     pub fn with_active_scene_mut<R>(&mut self, f: impl FnOnce(&mut Scene) -> R) -> Option<R> {
         let mut scene = self.active_scene_mut()?;

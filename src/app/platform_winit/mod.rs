@@ -421,8 +421,10 @@ where
                     self.handle_runtime_transition(transition);
                 }
 
-                let frame = self.core.begin_frame();
-                self.core.run_update_stage(frame.dt());
+                let Some(frame) = self.core.begin_frame() else {
+                    return;
+                };
+                self.core.run_update_stage(&frame);
 
                 if let Some(mut renderer) = self.platform.take_renderer() {
                     #[cfg(feature = "egui")]
@@ -430,7 +432,7 @@ where
                         self.editor.begin_ui_frame(window_handle.as_ref());
                     }
 
-                    self.core.run_gpu_systems(&mut renderer, frame.dt());
+                    self.core.run_gpu_systems(&mut renderer, &frame);
 
                     #[cfg(feature = "egui")]
                     {
