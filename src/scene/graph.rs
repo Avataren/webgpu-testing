@@ -4,19 +4,11 @@ use crate::asset::Assets;
 use crate::scene::components::TransformComponent;
 use crate::scene::transform::Transform;
 use hecs::{Entity, World};
+use slotmap::new_key_type;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SceneNodeId(u32);
-
-impl SceneNodeId {
-    pub(crate) fn new(value: u32) -> Self {
-        SceneNodeId(value)
-    }
-
-    pub(crate) fn index(self) -> usize {
-        self.0 as usize
-    }
+new_key_type! {
+    pub struct SceneNodeId;
 }
 
 pub(crate) struct SceneNode {
@@ -29,7 +21,7 @@ pub(crate) struct SceneNode {
 }
 
 impl SceneNode {
-    pub(crate) fn new(_id: SceneNodeId, name: impl Into<String>, instance: SceneInstance) -> Self {
+    pub(crate) fn new(name: impl Into<String>, instance: SceneInstance) -> Self {
         Self {
             name: name.into(),
             parent: None,

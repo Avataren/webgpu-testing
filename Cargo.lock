@@ -4320,6 +4320,7 @@ dependencies = [
  "rune-modules",
  "serde",
  "serde_json",
+ "slotmap",
  "tempfile",
  "thiserror 1.0.69",
  "wasm-bindgen",
