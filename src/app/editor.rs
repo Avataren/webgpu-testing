@@ -1,6 +1,10 @@
 use super::core::FrameStep;
+use crate::environment::Environment;
 use crate::renderer::{RenderFrame, RenderRegion, Renderer};
-use crate::scene::{Children, MeshComponent, Name, Parent, Scene, TransformComponent};
+use crate::scene::{
+    Children, MeshComponent, Name, Parent, Scene, SceneHandle, SceneWorkspace,
+    SceneWorkspaceSceneMut, TransformComponent,
+};
 use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
@@ -17,19 +21,27 @@ pub struct EditorState {
     scene_hierarchy: SceneHierarchyHandle,
     render_region_query: Option<Box<dyn FnMut() -> Option<RenderRegion>>>,
     exit_requested: bool,
+    active_scene: Option<SceneHandle>,
 }
 
 impl EditorState {
-    pub fn new(scene: &Scene) -> Self {
+    pub fn new(workspace: &SceneWorkspace) -> Self {
+        let active_scene = workspace.active_scene_handle();
+        let environment_source = workspace
+            .active_scene()
+            .map(|scene| scene.environment().clone())
+            .unwrap_or_else(Environment::default);
+
         Self {
             egui_context: None,
             egui_pending_ui: None,
             frame_stats: FrameStatsHistory::handle(),
             postprocess_effects: PostProcessWindow::handle(),
-            environment_settings: EnvironmentWindow::handle_from_environment(scene.environment()),
+            environment_settings: EnvironmentWindow::handle_from_environment(&environment_source),
             scene_hierarchy: SceneHierarchyState::handle(),
             render_region_query: None,
             exit_requested: false,
+            active_scene,
         }
     }
 
@@ -156,12 +168,13 @@ impl EditorState {
         }
     }
 
-    pub fn apply_environment_settings(&self, scene: &mut Scene) {
+    pub fn apply_environment_settings(&self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         if let Ok(mut controls) = self.environment_settings.lock() {
             if controls.dirty {
                 let mut environment = scene.environment().clone();
                 controls.apply_to_environment(&mut environment);
                 scene.set_environment(environment);
+                scene.mark_dirty();
             }
             *controls = EnvironmentSettingsControls::from_environment(scene.environment());
         }
@@ -173,17 +186,29 @@ impl EditorState {
         }
     }
 
-    pub fn refresh_scene_hierarchy(&self, scene: &Scene) {
-        if let Ok(mut hierarchy) = self.scene_hierarchy.lock() {
+    pub fn refresh_scene_hierarchy(&mut self, workspace: &SceneWorkspace) {
+        self.active_scene = workspace.active_scene_handle();
+        if let (Some(scene), Ok(mut hierarchy)) =
+            (workspace.active_scene(), self.scene_hierarchy.lock())
+        {
             hierarchy.refresh_from_scene(scene);
         }
     }
 
-    pub fn sync_environment_controls(&self, scene: &Scene) {
-        EnvironmentWindow::sync_handle(&self.environment_settings, scene.environment());
+    pub fn sync_environment_controls(&mut self, workspace: &SceneWorkspace) {
+        self.active_scene = workspace.active_scene_handle();
+        if let Some(scene) = workspace.active_scene() {
+            EnvironmentWindow::sync_handle(&self.environment_settings, scene.environment());
+        } else {
+            EnvironmentWindow::sync_handle(&self.environment_settings, &Environment::default());
+        }
     }
 
-    pub fn debug_print_hierarchy(scene: &Scene) {
+    pub fn debug_print_hierarchy(workspace: &SceneWorkspace) {
+        let Some(scene) = workspace.active_scene() else {
+            log::info!("No active scene available for hierarchy dump");
+            return;
+        };
         log::info!("=== Scene Hierarchy ===");
 
         let roots: Vec<_> = scene

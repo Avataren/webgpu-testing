@@ -9,7 +9,9 @@ use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::asset::{Handle, Mesh};
 use wgpu_cube::renderer::RenderRegion;
-use wgpu_cube::scene::{MeshBounds, Scene, SceneStateSnapshot};
+use wgpu_cube::scene::{
+    MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
+};
 use wgpu_cube::SceneHierarchyHandle;
 
 use super::asset_browser_system::AssetBrowserSystem;
@@ -46,6 +48,7 @@ pub struct EditorSharedState {
     pub(super) viewports: ViewportSystem,
     pub(super) windows: WindowToggles,
     pub(super) active_camera_entity: Option<Entity>,
+    pub(super) active_scene_handle: Option<SceneHandle>,
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
@@ -58,6 +61,20 @@ pub struct EditorSharedState {
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
+}
+
+impl EditorSharedState {
+    pub(super) fn set_active_scene_handle(&mut self, handle: SceneHandle) {
+        self.active_scene_handle = Some(handle);
+    }
+
+    pub(super) fn clear_active_scene_handle(&mut self) {
+        self.active_scene_handle = None;
+    }
+
+    pub(super) fn active_scene_handle(&self) -> Option<SceneHandle> {
+        self.active_scene_handle
+    }
 }
 
 pub struct EditorApplication {
@@ -210,6 +227,7 @@ impl EditorApplicationBuilder {
             viewports,
             windows: self.windows.unwrap_or_else(WindowToggles::new),
             active_camera_entity: None,
+            active_scene_handle: None,
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
             pending_mode_transition: None,
@@ -378,10 +396,11 @@ impl EditorApplication {
             .initialize_state(scene, selected, highlighted);
     }
 
-    pub(super) fn record_scene_change(&mut self, scene: &mut Scene) {
+    pub(super) fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
+        scene.mark_dirty();
         self.history_system_mut()
-            .record_scene_change(scene, selected, highlighted);
+            .record_scene_change(&mut **scene, selected, highlighted);
     }
 
     pub(super) fn update_history_selection(&mut self, scene: &Scene) {
