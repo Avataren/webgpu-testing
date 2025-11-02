@@ -2,6 +2,8 @@
 
 > Operating instructions for AI coding agents working in this repository.
 
+This is a very large project, expect compile times and tests to take a very long time to complete! This is normal.
+
 ## Mission
 
 This repository contains Rust code targeting native and the web (WebGPU) using `wgpu` and WGSL. Your job is to:
@@ -11,7 +13,7 @@ This repository contains Rust code targeting native and the web (WebGPU) using `
 - ensure everything builds and runs locally and for WASM,
 - write focused tests and examples,
 - propose safe refactors and small, reviewable PRs.
-
+- avoid unsafe code sections or pointer use, and use idiomatic rust instead
 ---
 
 ## Golden rules
