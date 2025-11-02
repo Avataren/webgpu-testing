@@ -383,6 +383,12 @@ impl EditorApplication {
                 self.enqueue_command(EditorCommand::ActivateScene(document_id));
             }
             SceneTabAction::Close(document_id) => {
+                let is_last_tab = self.scene_tabs().len() <= 1;
+                if is_last_tab {
+                    // Ensure the workspace never becomes empty so the GPU stage keeps
+                    // running and can service the ensuing close request.
+                    self.enqueue_command(EditorCommand::NewScene);
+                }
                 self.enqueue_command(EditorCommand::CloseScene(document_id));
             }
             SceneTabAction::NewScene => {
