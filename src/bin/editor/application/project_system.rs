@@ -57,7 +57,7 @@ impl ProjectSystem {
         let pending = std::mem::take(&mut self.pending_gltf_imports);
         let Some(()) = ctx.with_gpu_app(|app, gpu_ctx| {
             let destination_root = app.asset_browser_state_mut().selected_folder(&content_root);
-            let mut any_spawned = false;
+            let active_scene_handle = gpu_ctx.scene_handle;
 
             for source_path in &pending {
                 match native::copy_gltf_into_project(
@@ -69,17 +69,35 @@ impl ProjectSystem {
                     1.0,
                 ) {
                     Ok(mut package) => {
+                        // Generate a unique scene document ID
+                        let base_name = source_path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("imported_gltf");
+                        let document_id = self.generate_scene_document_id(base_name);
+
+                        // Create a scene asset from the imported glTF
+                        let mut scene_asset = package.bundle.asset.clone();
+                        scene_asset.name = format!("{} (Imported)", base_name);
+
+                        // Save the scene to the project
+                        if let Err(err) = self.save_scene_to_library(
+                            document_id.clone(),
+                            scene_asset,
+                            &project_dir,
+                        ) {
+                            error!("Failed to save imported scene: {}", err);
+                            app.asset_browser_state_mut().report_error(err);
+                            continue;
+                        }
+
+                        // Now instantiate this scene into the current scene
                         let registration = package
                             .bundle
                             .register_resources(gpu_ctx.renderer, &mut gpu_ctx.scene.assets);
 
                         if !package.bundle.asset.entities.is_empty() {
-                            let root_name = source_path
-                                .file_stem()
-                                .and_then(|stem| stem.to_str())
-                                .filter(|name| !name.is_empty())
-                                .unwrap_or("Imported glTF");
-
+                            let root_name = format!("{} (Instance)", base_name);
                             let root_transform =
                                 Transform::from(package.bundle.asset.root_transform.clone());
 
@@ -100,6 +118,7 @@ impl ProjectSystem {
                                 ),
                                 &mut gpu_ctx.scene.assets,
                             );
+
                             let entity_map =
                                 gpu_ctx.scene.merge_world_as_child(parent_entity, world);
                             gpu_ctx.scene.attach_imported_animations(
@@ -115,12 +134,13 @@ impl ProjectSystem {
                                 .update_texture_bind_group(&gpu_ctx.scene.assets);
                         }
 
-                        any_spawned = true;
-
                         app.asset_browser_state_mut().report_info(format!(
-                            "Imported package to {}",
-                            package.project_relative_package.display()
+                            "Imported {} as scene '{}' and instantiated into current scene",
+                            package.project_relative_package.display(),
+                            document_id
                         ));
+
+                        info!("Created scene document '{}' from glTF import", document_id);
                     }
                     Err(err) => {
                         error!("Failed to import glTF asset {:?}: {}", source_path, err);
@@ -134,13 +154,102 @@ impl ProjectSystem {
                 gpu_ctx.scene.update(0.0);
             }
 
-            if any_spawned {
-                app.record_scene_change(&mut gpu_ctx.scene);
+            app.record_scene_change(&mut gpu_ctx.scene);
+
+            // Mark the scene hierarchy as dirty to refresh the UI
+            if let Some(handle) = app.scene_hierarchy_handle_for_scene(active_scene_handle) {
+                if let Ok(mut state) = handle.lock() {
+                    let info = state.workspace_info();
+                    state.refresh_from_scene(&gpu_ctx.scene, info);
+                }
             }
         }) else {
             self.pending_gltf_imports = pending;
             return;
         };
+    }
+
+    fn generate_scene_document_id(&self, base_name: &str) -> String {
+        let existing_ids: std::collections::HashSet<_> = self
+            .controller
+            .scene_documents()
+            .iter()
+            .map(|doc| doc.id.as_str())
+            .collect();
+
+        let sanitized = base_name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+
+        let base = if sanitized.is_empty() {
+            "imported_scene".to_string()
+        } else {
+            sanitized
+        };
+
+        let mut candidate = format!("{}.scene", base);
+        let mut counter = 1;
+
+        while existing_ids.contains(candidate.as_str()) {
+            candidate = format!("{}_{:02}.scene", base, counter);
+            counter += 1;
+        }
+
+        candidate
+    }
+
+    fn save_scene_to_library(
+        &mut self,
+        document_id: String,
+        scene_asset: wgpu_cube::scene::SceneAsset,
+        project_dir: &std::path::Path,
+    ) -> Result<(), String> {
+        use std::fs;
+
+        let scenes_dir = project_dir
+            .join(wgpu_cube::project::CONTENT_DIR)
+            .join("scenes");
+        fs::create_dir_all(&scenes_dir)
+            .map_err(|e| format!("Failed to create scenes directory: {}", e))?;
+
+        let scene_filename = format!("{}.json", document_id);
+        let scene_path = scenes_dir.join(&scene_filename);
+
+        let json = scene_asset
+            .to_json()
+            .map_err(|e| format!("Failed to serialize scene: {}", e))?;
+
+        fs::write(&scene_path, json).map_err(|e| format!("Failed to write scene file: {}", e))?;
+
+        let relative_path = std::path::PathBuf::from(wgpu_cube::project::CONTENT_DIR)
+            .join("scenes")
+            .join(scene_filename);
+
+        // Extract a display name from the document_id
+        let display_name = document_id
+            .strip_suffix(".scene")
+            .unwrap_or(&document_id)
+            .to_string();
+
+        let document = wgpu_cube::project::SceneDocument {
+            id: document_id.clone(),
+            name: display_name,
+            relative_path,
+            dependencies: wgpu_cube::project::SceneDocumentDependencies::default(),
+        };
+
+        self.scene_library.register_document(&document);
+        self.scene_library.insert(document_id.clone(), scene_asset);
+        self.controller.add_scene_document(document);
+
+        Ok(())
     }
 
     pub(super) fn controller_mut(&mut self) -> &mut ProjectController {
@@ -242,12 +351,25 @@ impl ProjectSystem {
         };
 
         let existing_document = self.controller.primary_scene_document();
+
         match ProjectManifest::capture(
             &gpu_ctx.scene,
             self.controller.metadata().clone(),
             existing_document,
         ) {
-            Ok(manifest) => {
+            Ok(mut manifest) => {
+                // Merge with existing scene documents from imports
+                let all_scenes = self.controller.scene_documents();
+                for doc in all_scenes {
+                    if !manifest
+                        .scenes
+                        .iter()
+                        .any(|s| s.name == doc.name && s.relative_path == doc.relative_path)
+                    {
+                        manifest.scenes.push(doc.clone());
+                    }
+                }
+
                 if let Err(err) = manifest.save_to_dir(&dir) {
                     error!("Failed to save project to {:?}: {err}", dir);
                 } else {
@@ -255,13 +377,13 @@ impl ProjectSystem {
                     self.scene_library.clear();
                     for document in manifest.scenes() {
                         self.scene_library.register_document(document);
-                        if let Some(asset) = manifest.scene_asset(&document.id) {
+                        if let Some(asset) = manifest.scene_asset(&document.name) {
                             self.scene_library
-                                .insert(document.id.clone(), asset.clone());
+                                .insert(document.name.clone(), asset.clone());
                         } else if let Err(err) = self.scene_library.load_document(document, &dir) {
                             error!(
                                 "Failed to cache scene document {} after save: {err}",
-                                document.id
+                                document.name
                             );
                         }
                     }

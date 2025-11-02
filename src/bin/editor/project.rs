@@ -43,6 +43,14 @@ impl ProjectController {
         self.metadata = metadata;
     }
 
+    pub(super) fn add_scene_document(&mut self, document: wgpu_cube::project::SceneDocument) {
+        self.scene_documents.push(document);
+    }
+
+    pub(super) fn scene_documents(&self) -> &[wgpu_cube::project::SceneDocument] {
+        &self.scene_documents
+    }
+
     pub fn current_dir(&self) -> Option<&PathBuf> {
         self.current_dir.as_ref()
     }
