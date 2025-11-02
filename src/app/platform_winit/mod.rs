@@ -11,12 +11,14 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
+use crate::{app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition}};
 use crate::renderer::{CustomRenderCallback, CustomRenderStage, RenderRegion, Renderer};
 use crate::scene::SceneWorkspace;
 
 #[cfg(feature = "egui")]
 use crate::app::editor::EditorState;
+#[cfg(feature = "egui")]
+use crate::scene::SceneHandle;
 #[cfg(feature = "egui")]
 use crate::ui::{
     EnvironmentSettingsHandle, FrameStatsHandle, PostProcessEffectsHandle, SceneHierarchyHandle,
@@ -287,6 +289,11 @@ where
         F: FnMut() -> bool + 'static,
     {
         self.core.set_custom_render_shadow_query(query);
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn active_scene_hierarchy(&self) -> Option<(SceneHandle, SceneHierarchyHandle)> {
+        self.editor.active_scene_hierarchy()
     }
 
     #[cfg(feature = "egui")]
