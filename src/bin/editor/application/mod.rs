@@ -157,13 +157,17 @@ impl EditorApplication {
         }
 
         let requests = std::mem::take(&mut self.shared.pending_new_scenes);
-        for _request in requests {
+        for request in requests {
             let document_id = self.allocate_new_scene_id();
             let mut scene = Scene::new();
             Self::ensure_editor_scene_basics(&mut scene, ctx.renderer);
 
             ctx.request_open_scene(document_id.clone(), scene);
-            ctx.request_active_scene(document_id);
+            ctx.request_active_scene(document_id.clone());
+
+            if let Some(replace) = request.replace_document {
+                ctx.request_close_scene(replace);
+            }
 
             self.history_system_mut().reset();
             self.selection_system_mut().reset_workspace();
@@ -387,13 +391,17 @@ impl EditorApplication {
                 if is_last_tab {
                     // Ensure the workspace never becomes empty so the GPU stage keeps
                     // running and can service the ensuing close request.
-                    self.enqueue_command(EditorCommand::NewScene);
+                    self.shared.runtime_state.request_mode(RuntimeMode::Editor);
+                    self.enqueue_command(EditorCommand::NewScene {
+                        replace: Some(document_id.clone()),
+                    });
+                } else {
+                    self.enqueue_command(EditorCommand::CloseScene(document_id));
                 }
-                self.enqueue_command(EditorCommand::CloseScene(document_id));
             }
             SceneTabAction::NewScene => {
                 self.shared.runtime_state.request_mode(RuntimeMode::Editor);
-                self.enqueue_command(EditorCommand::NewScene);
+                self.enqueue_command(EditorCommand::NewScene { replace: None });
             }
         }
     }

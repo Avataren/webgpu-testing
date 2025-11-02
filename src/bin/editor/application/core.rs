@@ -9,6 +9,7 @@ use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::asset::{Handle, Mesh};
 use wgpu_cube::renderer::RenderRegion;
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
@@ -117,7 +118,9 @@ impl EditorSharedState {
 }
 
 #[derive(Default)]
-pub(super) struct NewSceneRequest;
+pub(super) struct NewSceneRequest {
+    pub(super) replace_document: Option<SceneDocumentId>,
+}
 
 pub struct EditorApplication {
     pub(super) shared: EditorSharedState,
@@ -636,7 +639,9 @@ impl EditorApplication {
                 Inspector(action) => pending_inspector.push(action),
                 ActivateScene(document_id) => ctx.request_active_scene(document_id),
                 CloseScene(document_id) => ctx.request_close_scene(document_id),
-                NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
+                NewScene { replace } => self.shared.pending_new_scenes.push(NewSceneRequest {
+                    replace_document: replace,
+                }),
                 Script(action) => remaining.push_back(Script(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
                 HistoryUndo => remaining.push_back(HistoryUndo),

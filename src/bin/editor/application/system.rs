@@ -30,7 +30,7 @@ pub(super) enum EditorCommand {
     Script(PendingScriptAction),
     ActivateScene(SceneDocumentId),
     CloseScene(SceneDocumentId),
-    NewScene,
+    NewScene { replace: Option<SceneDocumentId> },
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,
