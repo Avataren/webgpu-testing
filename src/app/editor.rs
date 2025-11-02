@@ -8,10 +8,10 @@ use crate::scene::{
 use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
-    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState,
+    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistry, SceneHierarchyRegistryHandle,
     SceneHierarchyWorkspaceInfo, SceneTabsHandle, SceneTabsState,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use winit::{event::WindowEvent, window::Window};
 
@@ -36,7 +36,7 @@ impl EditorState {
             .map(|scene| scene.environment().clone())
             .unwrap_or_default();
 
-        let scene_hierarchies = Arc::new(Mutex::new(HashMap::new()));
+        let scene_hierarchies = Arc::new(Mutex::new(SceneHierarchyRegistry::new()));
         let scene_tabs = SceneTabsState::handle();
 
         Self {
@@ -104,15 +104,16 @@ impl EditorState {
     }
 
     pub fn scene_hierarchy_handle(&self) -> Option<SceneHierarchyHandle> {
+        self.active_scene_hierarchy().map(|(_, handle)| handle)
+    }
+
+    pub fn active_scene_hierarchy(&self) -> Option<(SceneHandle, SceneHierarchyHandle)> {
         let active = self.active_scene_handle?;
         let Ok(mut registry) = self.scene_hierarchies.lock() else {
             return None;
         };
-        let handle = registry
-            .entry(active)
-            .or_insert_with(SceneHierarchyState::handle)
-            .clone();
-        Some(handle)
+        let handle = registry.ensure_entry(active);
+        Some((active, handle))
     }
 
     pub fn handle_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
@@ -199,6 +200,7 @@ impl EditorState {
                 controls.apply_to_environment(&mut environment);
                 scene.set_environment(environment);
                 scene.mark_dirty();
+                self.mark_active_scene_hierarchy_dirty();
             }
             *controls = EnvironmentSettingsControls::from_environment(scene.environment());
         }
@@ -214,24 +216,27 @@ impl EditorState {
         self.active_scene_handle = workspace.active_scene_handle();
 
         let open_handles: HashSet<_> = workspace.scene_handles().collect();
-        let mut handle_to_refresh: Option<SceneHierarchyHandle> = None;
+        let workspace_info = SceneHierarchyWorkspaceInfo::from_workspace(workspace);
 
-        if let Ok(mut registry) = self.scene_hierarchies.lock() {
-            registry.retain(|handle, _| open_handles.contains(handle));
+        let dirty_handles = if let Ok(mut registry) = self.scene_hierarchies.lock() {
+            registry.retain_handles(|handle| open_handles.contains(&handle));
 
-            if let Some(active) = self.active_scene_handle {
-                let handle = registry
-                    .entry(active)
-                    .or_insert_with(SceneHierarchyState::handle)
-                    .clone();
-                handle_to_refresh = Some(handle);
+            for &handle in &open_handles {
+                registry.ensure_entry(handle);
             }
-        }
 
-        if let (Some(scene), Some(handle)) = (workspace.active_scene(), handle_to_refresh) {
-            if let Ok(mut hierarchy) = handle.lock() {
-                let info = SceneHierarchyWorkspaceInfo::from_workspace(workspace);
-                hierarchy.refresh_from_scene(scene, info);
+            registry.take_dirty_handles()
+        } else {
+            Vec::new()
+        };
+
+        for (handle, hierarchy_handle) in dirty_handles {
+            let Some(scene) = workspace.scene_by_handle(handle) else {
+                continue;
+            };
+
+            if let Ok(mut hierarchy) = hierarchy_handle.lock() {
+                hierarchy.refresh_from_scene(scene, workspace_info.clone());
             }
         }
 
@@ -246,6 +251,16 @@ impl EditorState {
             EnvironmentWindow::sync_handle(&self.environment_settings, scene.environment());
         } else {
             EnvironmentWindow::sync_handle(&self.environment_settings, &Environment::default());
+        }
+    }
+
+    fn mark_active_scene_hierarchy_dirty(&self) {
+        let Some(handle) = self.active_scene_handle else {
+            return;
+        };
+
+        if let Ok(mut registry) = self.scene_hierarchies.lock() {
+            registry.mark_dirty(handle);
         }
     }
 

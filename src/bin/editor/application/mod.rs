@@ -258,18 +258,28 @@ impl EditorApplication {
         let scene_tabs_handle = default_ui.scene_tabs_handle();
         self.shared.set_scene_tabs_handle(scene_tabs_handle);
 
+        let tabs = self.scene_tabs();
+        let active_tab_handle = tabs.iter().find(|tab| tab.active).map(|tab| tab.handle);
+
         let mut scene_tab_actions = if !show_fullscreen_game {
-            let tabs = self.scene_tabs();
             self.scene_tabs_panel.show(&tabs, ctx)
         } else {
             Vec::new()
         };
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
-        if let Some(scene_handle) = self.shared.active_scene_handle {
-            if let Some(handle) = self.shared.scene_hierarchy_handle_for_scene(scene_handle) {
-                scene_hierarchy_window.set_handle(handle);
+        match active_tab_handle {
+            Some(scene_handle) => {
+                if let Some(handle) = self.shared.scene_hierarchy_handle_for_scene(scene_handle) {
+                    scene_hierarchy_window.set_active_scene(scene_handle, handle);
+                } else {
+                    scene_hierarchy_window.clear_active_scene();
+                }
             }
+            None => scene_hierarchy_window.clear_active_scene(),
         }
+
+        let current_selection = self.selection_system().selected();
+        scene_hierarchy_window.sync_selected_entity(current_selection);
         if let Some(selection) = override_selection {
             scene_hierarchy_window.set_selected_entity(selection);
         }

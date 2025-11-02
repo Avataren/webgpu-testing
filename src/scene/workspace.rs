@@ -251,6 +251,11 @@ impl SceneWorkspace {
         self.scenes.remove(handle).map(|entry| entry.scene)
     }
 
+    /// Returns an immutable reference to the scene identified by the supplied handle.
+    pub fn scene_by_handle(&self, handle: SceneHandle) -> Option<&Scene> {
+        self.scenes.get(handle).map(|entry| &entry.scene)
+    }
+
     /// Returns an iterator over the open scene handles.
     pub fn scene_handles(&self) -> impl Iterator<Item = SceneHandle> + '_ {
         self.scenes.keys()
