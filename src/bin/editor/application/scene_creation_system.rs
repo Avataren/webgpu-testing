@@ -62,7 +62,7 @@ impl SceneCreationSystem {
                 app.record_scene_change(&mut gpu_ctx.scene);
                 app.history_system_mut().clear_redo();
 
-                if let Some(handle) = app.scene_hierarchy_handle().cloned() {
+                if let Some(handle) = app.scene_hierarchy_handle_for_scene(gpu_ctx.scene_handle) {
                     if let Ok(mut state) = handle.lock() {
                         state.refresh_from_scene(&gpu_ctx.scene);
                     }

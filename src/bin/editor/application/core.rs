@@ -12,7 +12,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
-use wgpu_cube::SceneHierarchyHandle;
+use wgpu_cube::{SceneHierarchyHandle, SceneHierarchyRegistryHandle};
 
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
@@ -53,7 +53,7 @@ pub struct EditorSharedState {
     pub(super) last_runtime_mode: RuntimeMode,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<SceneStateSnapshot>,
-    pub(super) scene_hierarchy_handle: Option<SceneHierarchyHandle>,
+    pub(super) scene_hierarchy_registry: Option<SceneHierarchyRegistryHandle>,
     pub(super) commands: VecDeque<EditorCommand>,
     #[allow(dead_code)]
     pub(super) events: Vec<EditorEvent>,
@@ -68,6 +68,12 @@ impl EditorSharedState {
         self.active_scene_handle = Some(handle);
     }
 
+    pub(super) fn set_scene_hierarchy_registry(&mut self, registry: SceneHierarchyRegistryHandle) {
+        if self.scene_hierarchy_registry.is_none() {
+            self.scene_hierarchy_registry = Some(registry);
+        }
+    }
+
     #[allow(dead_code)]
     pub(super) fn clear_active_scene_handle(&mut self) {
         self.active_scene_handle = None;
@@ -76,6 +82,21 @@ impl EditorSharedState {
     #[allow(dead_code)]
     pub(super) fn active_scene_handle(&self) -> Option<SceneHandle> {
         self.active_scene_handle
+    }
+
+    pub(super) fn scene_hierarchy_registry(&self) -> Option<SceneHierarchyRegistryHandle> {
+        self.scene_hierarchy_registry.clone()
+    }
+
+    pub(super) fn scene_hierarchy_handle_for_scene(
+        &self,
+        handle: SceneHandle,
+    ) -> Option<SceneHierarchyHandle> {
+        let registry = self.scene_hierarchy_registry.as_ref()?;
+        let Ok(registry) = registry.lock() else {
+            return None;
+        };
+        registry.get(&handle).cloned()
     }
 }
 
@@ -234,7 +255,7 @@ impl EditorApplicationBuilder {
             last_runtime_mode: RuntimeMode::Editor,
             pending_mode_transition: None,
             editor_scene_snapshot: None,
-            scene_hierarchy_handle: None,
+            scene_hierarchy_registry: None,
             commands: VecDeque::new(),
             events: Vec::new(),
             particle_mesh: None,

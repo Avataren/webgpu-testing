@@ -8,8 +8,10 @@ use crate::scene::{
 use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
-    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyState,
+    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState,
 };
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use winit::{event::WindowEvent, window::Window};
 
 pub struct EditorState {
@@ -18,10 +20,10 @@ pub struct EditorState {
     frame_stats: FrameStatsHandle,
     postprocess_effects: PostProcessEffectsHandle,
     environment_settings: EnvironmentSettingsHandle,
-    scene_hierarchy: SceneHierarchyHandle,
+    scene_hierarchies: SceneHierarchyRegistryHandle,
     render_region_query: Option<Box<dyn FnMut() -> Option<RenderRegion>>>,
     exit_requested: bool,
-    active_scene: Option<SceneHandle>,
+    active_scene_handle: Option<SceneHandle>,
 }
 
 impl EditorState {
@@ -32,16 +34,18 @@ impl EditorState {
             .map(|scene| scene.environment().clone())
             .unwrap_or_default();
 
+        let scene_hierarchies = Arc::new(Mutex::new(HashMap::new()));
+
         Self {
             egui_context: None,
             egui_pending_ui: None,
             frame_stats: FrameStatsHistory::handle(),
             postprocess_effects: PostProcessWindow::handle(),
             environment_settings: EnvironmentWindow::handle_from_environment(&environment_source),
-            scene_hierarchy: SceneHierarchyState::handle(),
+            scene_hierarchies,
             render_region_query: None,
             exit_requested: false,
-            active_scene,
+            active_scene_handle: active_scene,
         }
     }
 
@@ -87,8 +91,20 @@ impl EditorState {
         self.environment_settings.clone()
     }
 
-    pub fn scene_hierarchy_handle(&self) -> SceneHierarchyHandle {
-        self.scene_hierarchy.clone()
+    pub fn scene_hierarchy_registry(&self) -> SceneHierarchyRegistryHandle {
+        self.scene_hierarchies.clone()
+    }
+
+    pub fn scene_hierarchy_handle(&self) -> Option<SceneHierarchyHandle> {
+        let active = self.active_scene_handle?;
+        let Ok(mut registry) = self.scene_hierarchies.lock() else {
+            return None;
+        };
+        let handle = registry
+            .entry(active)
+            .or_insert_with(SceneHierarchyState::handle)
+            .clone();
+        Some(handle)
     }
 
     pub fn handle_window_event(&mut self, window: &Window, event: &WindowEvent) -> bool {
@@ -187,16 +203,32 @@ impl EditorState {
     }
 
     pub fn refresh_scene_hierarchy(&mut self, workspace: &SceneWorkspace) {
-        self.active_scene = workspace.active_scene_handle();
-        if let (Some(scene), Ok(mut hierarchy)) =
-            (workspace.active_scene(), self.scene_hierarchy.lock())
-        {
-            hierarchy.refresh_from_scene(scene);
+        self.active_scene_handle = workspace.active_scene_handle();
+
+        let open_handles: HashSet<_> = workspace.scene_handles().collect();
+        let mut handle_to_refresh: Option<SceneHierarchyHandle> = None;
+
+        if let Ok(mut registry) = self.scene_hierarchies.lock() {
+            registry.retain(|handle, _| open_handles.contains(handle));
+
+            if let Some(active) = self.active_scene_handle {
+                let handle = registry
+                    .entry(active)
+                    .or_insert_with(SceneHierarchyState::handle)
+                    .clone();
+                handle_to_refresh = Some(handle);
+            }
+        }
+
+        if let (Some(scene), Some(handle)) = (workspace.active_scene(), handle_to_refresh) {
+            if let Ok(mut hierarchy) = handle.lock() {
+                hierarchy.refresh_from_scene(scene);
+            }
         }
     }
 
     pub fn sync_environment_controls(&mut self, workspace: &SceneWorkspace) {
-        self.active_scene = workspace.active_scene_handle();
+        self.active_scene_handle = workspace.active_scene_handle();
         if let Some(scene) = workspace.active_scene() {
             EnvironmentWindow::sync_handle(&self.environment_settings, scene.environment());
         } else {
