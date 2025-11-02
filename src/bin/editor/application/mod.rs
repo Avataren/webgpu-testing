@@ -139,11 +139,16 @@ impl EditorApplication {
         #[cfg(not(target_arch = "wasm32"))]
         self.process_shader_file_changes(ctx);
 
+        let scene_changed = self.shared.active_scene_handle != Some(ctx.scene_handle);
+
         self.shared.set_active_scene_handle(ctx.scene_handle);
         self.selection_system_mut()
             .set_active_scene(ctx.scene_handle);
 
-        // PROCESS MODE TRANSITIONS FIRST
+        if scene_changed {
+            ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
+        }
+
         self.process_pending_mode_transition(ctx);
 
         self.process_pending_new_scenes(ctx);
