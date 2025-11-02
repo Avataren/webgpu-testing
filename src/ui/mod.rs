@@ -26,6 +26,9 @@ mod style; // Add this
 mod scene_hierarchy_window;
 
 #[cfg(feature = "egui")]
+mod scene_tabs;
+
+#[cfg(feature = "egui")]
 pub use stats_window::{FrameSample, FrameStatsHandle, FrameStatsHistory, StatsWindow};
 
 #[cfg(feature = "egui")]
@@ -48,3 +51,6 @@ pub use scene_hierarchy_window::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow,
     ScenePrimitivePreset,
 };
+
+#[cfg(feature = "egui")]
+pub use scene_tabs::{SceneTabDescriptor, SceneTabsHandle, SceneTabsState};

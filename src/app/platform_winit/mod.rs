@@ -20,7 +20,7 @@ use crate::app::editor::EditorState;
 #[cfg(feature = "egui")]
 use crate::ui::{
     EnvironmentSettingsHandle, FrameStatsHandle, PostProcessEffectsHandle, SceneHierarchyHandle,
-    SceneHierarchyRegistryHandle,
+    SceneHierarchyRegistryHandle, SceneTabsHandle,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -328,6 +328,11 @@ where
     #[cfg(feature = "egui")]
     pub fn scene_hierarchy_registry(&self) -> SceneHierarchyRegistryHandle {
         self.editor.scene_hierarchy_registry()
+    }
+
+    #[cfg(feature = "egui")]
+    pub fn scene_tabs_handle(&self) -> SceneTabsHandle {
+        self.editor.scene_tabs_handle()
     }
 }
 

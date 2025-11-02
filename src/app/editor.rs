@@ -9,6 +9,7 @@ use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
     PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState,
+    SceneTabsHandle, SceneTabsState,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ pub struct EditorState {
     postprocess_effects: PostProcessEffectsHandle,
     environment_settings: EnvironmentSettingsHandle,
     scene_hierarchies: SceneHierarchyRegistryHandle,
+    scene_tabs: SceneTabsHandle,
     render_region_query: Option<Box<dyn FnMut() -> Option<RenderRegion>>>,
     exit_requested: bool,
     active_scene_handle: Option<SceneHandle>,
@@ -35,6 +37,7 @@ impl EditorState {
             .unwrap_or_default();
 
         let scene_hierarchies = Arc::new(Mutex::new(HashMap::new()));
+        let scene_tabs = SceneTabsState::handle();
 
         Self {
             egui_context: None,
@@ -43,6 +46,7 @@ impl EditorState {
             postprocess_effects: PostProcessWindow::handle(),
             environment_settings: EnvironmentWindow::handle_from_environment(&environment_source),
             scene_hierarchies,
+            scene_tabs,
             render_region_query: None,
             exit_requested: false,
             active_scene_handle: active_scene,
@@ -93,6 +97,10 @@ impl EditorState {
 
     pub fn scene_hierarchy_registry(&self) -> SceneHierarchyRegistryHandle {
         self.scene_hierarchies.clone()
+    }
+
+    pub fn scene_tabs_handle(&self) -> SceneTabsHandle {
+        self.scene_tabs.clone()
     }
 
     pub fn scene_hierarchy_handle(&self) -> Option<SceneHierarchyHandle> {
@@ -224,6 +232,10 @@ impl EditorState {
             if let Ok(mut hierarchy) = handle.lock() {
                 hierarchy.refresh_from_scene(scene);
             }
+        }
+
+        if let Ok(mut tabs) = self.scene_tabs.lock() {
+            tabs.refresh_from_workspace(workspace);
         }
     }
 

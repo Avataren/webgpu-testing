@@ -18,11 +18,9 @@ use glam::Vec2;
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::renderer::{RenderRegion, Renderer};
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{ParticleBehaviorPreset, Scene, SceneHandle, SceneWorkspaceSceneMut};
-use wgpu_cube::{
-    DefaultUI, SceneCreationAction, SceneHierarchyHandle, SceneHierarchyRegistryHandle,
-    ScenePrimitivePreset,
-};
+use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
 
 pub(super) enum EditorCommand {
     ImportPath(PathBuf),
@@ -30,6 +28,9 @@ pub(super) enum EditorCommand {
     Inspector(InspectorAction),
     CreateScene(SceneCreationAction),
     Script(PendingScriptAction),
+    ActivateScene(SceneDocumentId),
+    CloseScene(SceneDocumentId),
+    NewScene,
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,
@@ -149,10 +150,6 @@ impl<'shared> EditorAppAccess<'shared> {
 
     pub(super) fn command_queue_mut(&mut self) -> &mut VecDeque<EditorCommand> {
         &mut self.shared.commands
-    }
-
-    pub(super) fn scene_hierarchy_registry(&self) -> Option<SceneHierarchyRegistryHandle> {
-        self.shared.scene_hierarchy_registry()
     }
 
     pub(super) fn scene_hierarchy_handle_for_scene(

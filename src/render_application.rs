@@ -11,7 +11,8 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
     LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, SceneHierarchyHandle,
-    SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow, StatsWindow, UiStyle,
+    SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow, SceneTabsHandle,
+    StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
@@ -83,6 +84,7 @@ pub struct DefaultUI {
     environment_window: EnvironmentWindow,
     scene_hierarchy_window: SceneHierarchyWindow,
     scene_hierarchy_registry: SceneHierarchyRegistryHandle,
+    scene_tabs: SceneTabsHandle,
     stats_open: bool,
     log_open: bool,
     postprocess_open: bool,
@@ -99,6 +101,7 @@ impl DefaultUI {
         env_handle: EnvironmentSettingsHandle,
         hierarchy_registry: SceneHierarchyRegistryHandle,
         hierarchy_handle: Option<SceneHierarchyHandle>,
+        scene_tabs: SceneTabsHandle,
     ) -> Self {
         let initial_handle = hierarchy_handle.unwrap_or_else(SceneHierarchyState::handle);
         Self {
@@ -108,6 +111,7 @@ impl DefaultUI {
             environment_window: EnvironmentWindow::new(env_handle),
             scene_hierarchy_window: SceneHierarchyWindow::new(initial_handle),
             scene_hierarchy_registry: hierarchy_registry,
+            scene_tabs,
             stats_open: false,
             log_open: false,
             postprocess_open: false,
@@ -191,6 +195,10 @@ impl DefaultUI {
     pub fn scene_hierarchy_registry(&self) -> SceneHierarchyRegistryHandle {
         self.scene_hierarchy_registry.clone()
     }
+
+    pub fn scene_tabs_handle(&self) -> SceneTabsHandle {
+        self.scene_tabs.clone()
+    }
 }
 
 fn build_winit_app_internal<T>(app_rc: Rc<RefCell<T>>, mut builder: AppBuilder) -> WinitApp
@@ -266,6 +274,7 @@ where
         let env_handle = app.environment_settings_handle();
         let hierarchy_handle = app.scene_hierarchy_handle();
         let hierarchy_registry = app.scene_hierarchy_registry();
+        let scene_tabs = app.scene_tabs_handle();
 
         if show_default {
             let mut default_ui = DefaultUI::new(
@@ -275,6 +284,7 @@ where
                 env_handle.clone(),
                 hierarchy_registry.clone(),
                 hierarchy_handle.clone(),
+                scene_tabs.clone(),
             );
             let app_ref = app_rc.clone();
 
@@ -291,6 +301,7 @@ where
                 env_handle.clone(),
                 hierarchy_registry,
                 hierarchy_handle,
+                scene_tabs,
             );
             let app_ref = app_rc.clone();
 
