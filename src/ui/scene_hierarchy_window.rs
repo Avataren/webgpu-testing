@@ -618,9 +618,9 @@ impl SceneHierarchyWindow {
             let selected = self.selected == Some(entity);
             let mut clicked = false;
             ui.horizontal(|ui| {
-                let response = ui.selectable_label(selected, &label);
+                let mut response = ui.selectable_label(selected, &label);
                 if let Some(info) = &prefab_info {
-                    self.decorate_prefab_response(&response, info, workspace, events);
+                    response = self.decorate_prefab_response(response, info, workspace, events);
                     if workspace.is_foreign_document(&info.document_id) {
                         ui.add_space(4.0);
                         self.add_prefab_badge(ui, info);
@@ -643,9 +643,9 @@ impl SceneHierarchyWindow {
         let mut clicked = false;
         let header_response = state.show_header(ui, |ui| {
             ui.horizontal(|ui| {
-                let response = ui.selectable_label(selected, &label);
+                let mut response = ui.selectable_label(selected, &label);
                 if let Some(info) = &prefab_info {
-                    self.decorate_prefab_response(&response, info, workspace, events);
+                    response = self.decorate_prefab_response(response, info, workspace, events);
                     if workspace.is_foreign_document(&info.document_id) {
                         ui.add_space(4.0);
                         self.add_prefab_badge(ui, info);
@@ -705,16 +705,16 @@ impl SceneHierarchyWindow {
 
     fn decorate_prefab_response(
         &self,
-        response: &egui::Response,
+        response: egui::Response,
         info: &ScenePrefabEntityMetadata,
         workspace: &SceneHierarchyWorkspaceInfo,
         events: &mut Vec<SceneHierarchyEvent>,
-    ) {
+    ) -> egui::Response {
         if !workspace.is_foreign_document(&info.document_id) {
-            return;
+            return response;
         }
 
-        response.clone().on_hover_text(Self::prefab_tooltip(info));
+        let response = response.on_hover_text(Self::prefab_tooltip(info));
 
         if workspace.is_open(&info.document_id) {
             response.context_menu(|ui| {
@@ -722,7 +722,9 @@ impl SceneHierarchyWindow {
                     events.push(SceneHierarchyEvent::OpenScene(info.document_id.clone()));
                     ui.close();
                 }
-            });
+            })
+        } else {
+            response
         }
     }
 
