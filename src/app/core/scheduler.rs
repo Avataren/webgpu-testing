@@ -49,6 +49,7 @@ pub struct UpdateContext<'a> {
     pub dt: f64,
     pub runtime: RuntimeMode,
     active_scene_request: Option<SceneDocumentId>,
+    close_scene_requests: Vec<SceneDocumentId>,
 }
 
 impl<'a> UpdateContext<'a> {
@@ -56,8 +57,16 @@ impl<'a> UpdateContext<'a> {
         self.active_scene_request = Some(document_id);
     }
 
+    pub fn request_close_scene(&mut self, document_id: SceneDocumentId) {
+        self.close_scene_requests.push(document_id);
+    }
+
     fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
         self.active_scene_request.take()
+    }
+
+    fn take_close_scene_requests(&mut self) -> Vec<SceneDocumentId> {
+        std::mem::take(&mut self.close_scene_requests)
     }
 }
 
@@ -68,6 +77,8 @@ pub struct GpuUpdateContext<'a> {
     pub dt: f64,
     workspace_swap: Option<WorkspaceSwapRequest>,
     active_scene_request: Option<SceneDocumentId>,
+    close_scene_requests: Vec<SceneDocumentId>,
+    open_scene_requests: Vec<(SceneDocumentId, Scene)>,
 }
 
 impl<'a> GpuUpdateContext<'a> {
@@ -82,12 +93,28 @@ impl<'a> GpuUpdateContext<'a> {
         self.active_scene_request = Some(document_id);
     }
 
+    pub fn request_close_scene(&mut self, document_id: SceneDocumentId) {
+        self.close_scene_requests.push(document_id);
+    }
+
+    pub fn request_open_scene(&mut self, document_id: SceneDocumentId, scene: Scene) {
+        self.open_scene_requests.push((document_id, scene));
+    }
+
     fn take_workspace_swap(&mut self) -> Option<WorkspaceSwapRequest> {
         self.workspace_swap.take()
     }
 
     fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
         self.active_scene_request.take()
+    }
+
+    fn take_close_scene_requests(&mut self) -> Vec<SceneDocumentId> {
+        std::mem::take(&mut self.close_scene_requests)
+    }
+
+    fn take_open_scene_requests(&mut self) -> Vec<(SceneDocumentId, Scene)> {
+        std::mem::take(&mut self.open_scene_requests)
     }
 }
 
@@ -249,8 +276,14 @@ impl Scheduler {
             active_handle = ctx.scene_handle;
             drop(ctx);
 
-            let (new_handle, swap_changed, _swapped) =
-                Self::apply_workspace_requests(workspace, active_handle, swap, active_request);
+            let (new_handle, swap_changed, _swapped) = Self::apply_workspace_requests(
+                workspace,
+                active_handle,
+                swap,
+                active_request,
+                Vec::new(),
+                Vec::new(),
+            );
             active_handle = new_handle;
             textures_changed |= swap_changed;
         }
@@ -324,15 +357,23 @@ impl Scheduler {
                 dt,
                 runtime,
                 active_scene_request: None,
+                close_scene_requests: Vec::new(),
             };
             (system)(&mut ctx);
 
             let active_request = ctx.take_active_scene_request();
+            let close_requests = ctx.take_close_scene_requests();
             active_handle = ctx.scene_handle;
             drop(ctx);
 
-            let (new_handle, _, _) =
-                Self::apply_workspace_requests(workspace, active_handle, None, active_request);
+            let (new_handle, _, _) = Self::apply_workspace_requests(
+                workspace,
+                active_handle,
+                None,
+                active_request,
+                close_requests,
+                Vec::new(),
+            );
             active_handle = new_handle;
         }
 
@@ -375,16 +416,26 @@ impl Scheduler {
                 dt,
                 workspace_swap: None,
                 active_scene_request: None,
+                close_scene_requests: Vec::new(),
+                open_scene_requests: Vec::new(),
             };
             (system)(&mut ctx);
 
             let swap = ctx.take_workspace_swap();
             let active_request = ctx.take_active_scene_request();
+            let close_requests = ctx.take_close_scene_requests();
+            let open_requests = ctx.take_open_scene_requests();
             active_handle = ctx.scene_handle;
             drop(ctx);
 
-            let (new_handle, swap_changed, swapped) =
-                Self::apply_workspace_requests(workspace, active_handle, swap, active_request);
+            let (new_handle, swap_changed, swapped) = Self::apply_workspace_requests(
+                workspace,
+                active_handle,
+                swap,
+                active_request,
+                close_requests,
+                open_requests,
+            );
             active_handle = new_handle;
             textures_changed |= swap_changed;
             workspace_swapped |= swapped;
@@ -416,6 +467,8 @@ impl Scheduler {
         mut handle: SceneHandle,
         swap: Option<WorkspaceSwapRequest>,
         active_request: Option<SceneDocumentId>,
+        close_requests: Vec<SceneDocumentId>,
+        open_requests: Vec<(SceneDocumentId, Scene)>,
     ) -> (SceneHandle, bool, bool) {
         let mut textures_changed = false;
         let mut workspace_swapped = false;
@@ -432,6 +485,53 @@ impl Scheduler {
                     "Workspace swap resulted in no active scene; retaining previous handle {:?}",
                     handle
                 );
+            }
+        }
+
+        if !close_requests.is_empty() {
+            for document_id in close_requests {
+                let was_active = workspace
+                    .active_document_id()
+                    .is_some_and(|id| id == &document_id);
+
+                match workspace.close_scene(&document_id) {
+                    Some(_) => {
+                        if was_active {
+                            textures_changed = true;
+                            if let Some(new_handle) = workspace.active_scene_handle() {
+                                handle = new_handle;
+                            }
+                        }
+                    }
+                    None => {
+                        log::warn!("Failed to close scene '{}': not found", document_id);
+                    }
+                }
+            }
+
+            if let Some(current) = workspace.active_scene_handle() {
+                handle = current;
+            }
+        }
+
+        if !open_requests.is_empty() {
+            for (document_id, mut scene) in open_requests {
+                if workspace.scene_handle(&document_id).is_some() {
+                    log::warn!(
+                        "Ignoring request to open scene '{}': already open",
+                        document_id
+                    );
+                    continue;
+                }
+
+                scene.set_animation_playback(false);
+                scene.update(0.0);
+                workspace.open_scene(document_id, scene);
+                textures_changed = true;
+            }
+
+            if let Some(current) = workspace.active_scene_handle() {
+                handle = current;
             }
         }
 

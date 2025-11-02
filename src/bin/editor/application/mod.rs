@@ -10,6 +10,7 @@ mod picking;
 mod project_system;
 mod runtime_mode;
 mod scene_creation_system;
+mod scene_tabs_panel;
 mod script_editor_system;
 mod scripts;
 mod selection_system;
@@ -23,6 +24,7 @@ use self::asset_browser_system::AssetBrowserSystem;
 pub use self::core::EditorApplicationBuilder;
 use self::core::GameViewDisplayMode;
 pub use self::core::{EditorApplication, EditorSharedState};
+use self::scene_tabs_panel::SceneTabAction;
 
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
@@ -144,7 +146,48 @@ impl EditorApplication {
         // PROCESS MODE TRANSITIONS FIRST
         self.process_pending_mode_transition(ctx);
 
+        self.process_pending_new_scenes(ctx);
+
         self.run_system_gpu_updates(ctx);
+    }
+
+    fn process_pending_new_scenes(&mut self, ctx: &mut GpuUpdateContext) {
+        if self.shared.pending_new_scenes.is_empty() {
+            return;
+        }
+
+        let requests = std::mem::take(&mut self.shared.pending_new_scenes);
+        for _request in requests {
+            let document_id = self.allocate_new_scene_id();
+            let mut scene = Scene::new();
+            Self::ensure_editor_scene_basics(&mut scene, ctx.renderer);
+
+            ctx.request_open_scene(document_id.clone(), scene);
+            ctx.request_active_scene(document_id);
+
+            self.history_system_mut().reset();
+            self.selection_system_mut().reset_workspace();
+        }
+    }
+
+    fn allocate_new_scene_id(&mut self) -> String {
+        loop {
+            let index = self.shared.next_untitled_scene_index;
+            self.shared.next_untitled_scene_index = index + 1;
+            let candidate = if index == 1 {
+                "untitled.scene".to_string()
+            } else {
+                format!("untitled_{index}.scene")
+            };
+
+            if self
+                .scene_tabs()
+                .iter()
+                .all(|tab| tab.document_id != candidate)
+            {
+                return candidate;
+            }
+        }
     }
 
     fn sync_active_scene_state(&mut self, ctx: &mut UpdateContext) {
@@ -212,6 +255,15 @@ impl EditorApplication {
         let hierarchy_registry = default_ui.scene_hierarchy_registry();
         self.shared
             .set_scene_hierarchy_registry(hierarchy_registry.clone());
+        let scene_tabs_handle = default_ui.scene_tabs_handle();
+        self.shared.set_scene_tabs_handle(scene_tabs_handle);
+
+        let mut scene_tab_actions = if !show_fullscreen_game {
+            let tabs = self.scene_tabs();
+            self.scene_tabs_panel.show(&tabs, ctx)
+        } else {
+            Vec::new()
+        };
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
         if let Some(scene_handle) = self.shared.active_scene_handle {
             if let Some(handle) = self.shared.scene_hierarchy_handle_for_scene(scene_handle) {
@@ -304,6 +356,10 @@ impl EditorApplication {
             self.enqueue_command(EditorCommand::CreateScene(action));
         }
 
+        for action in scene_tab_actions.drain(..) {
+            self.handle_scene_tab_action(action);
+        }
+
         if !is_playing {
             self.capture_viewport_pick_input(ctx);
             self.handle_history_shortcuts(ctx);
@@ -320,6 +376,22 @@ impl EditorApplication {
 }
 
 impl EditorApplication {
+    fn handle_scene_tab_action(&mut self, action: SceneTabAction) {
+        match action {
+            SceneTabAction::Activate(document_id) => {
+                self.shared.runtime_state.request_mode(RuntimeMode::Editor);
+                self.enqueue_command(EditorCommand::ActivateScene(document_id));
+            }
+            SceneTabAction::Close(document_id) => {
+                self.enqueue_command(EditorCommand::CloseScene(document_id));
+            }
+            SceneTabAction::NewScene => {
+                self.shared.runtime_state.request_mode(RuntimeMode::Editor);
+                self.enqueue_command(EditorCommand::NewScene);
+            }
+        }
+    }
+
     fn shared_and_asset_browser_state_mut(
         &mut self,
     ) -> (&mut EditorSharedState, &mut AssetBrowserState) {

@@ -97,6 +97,11 @@ impl SceneWorkspace {
         self.scenes.get(handle).map(|entry| &entry.document_id)
     }
 
+    /// Returns the document identifier associated with the supplied handle.
+    pub fn document_id_for_handle(&self, handle: SceneHandle) -> Option<&SceneDocumentId> {
+        self.scenes.get(handle).map(|entry| &entry.document_id)
+    }
+
     /// Returns an immutable reference to the currently active scene, if any.
     pub fn active_scene(&self) -> Option<&Scene> {
         let handle = self.active_scene?;

@@ -12,7 +12,9 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
-use wgpu_cube::{SceneHierarchyHandle, SceneHierarchyRegistryHandle};
+use wgpu_cube::{
+    SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
+};
 
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
@@ -20,6 +22,7 @@ use super::history_system::{HistorySystem, TransformToolSystem};
 use super::particle_system::EditorParticleSystem;
 use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
+use super::scene_tabs_panel::SceneTabsPanel;
 use super::script_editor_system::ScriptEditorSystem;
 use super::selection_system::SelectionSystem;
 #[cfg(not(target_arch = "wasm32"))]
@@ -54,11 +57,14 @@ pub struct EditorSharedState {
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
     pub(super) editor_scene_snapshot: Option<SceneStateSnapshot>,
     pub(super) scene_hierarchy_registry: Option<SceneHierarchyRegistryHandle>,
+    pub(super) scene_tabs: Option<SceneTabsHandle>,
     pub(super) commands: VecDeque<EditorCommand>,
     #[allow(dead_code)]
     pub(super) events: Vec<EditorEvent>,
     pub(super) particle_mesh: Option<Handle<Mesh>>,
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
+    pub(super) pending_new_scenes: Vec<NewSceneRequest>,
+    pub(super) next_untitled_scene_index: u32,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
 }
@@ -84,10 +90,6 @@ impl EditorSharedState {
         self.active_scene_handle
     }
 
-    pub(super) fn scene_hierarchy_registry(&self) -> Option<SceneHierarchyRegistryHandle> {
-        self.scene_hierarchy_registry.clone()
-    }
-
     pub(super) fn scene_hierarchy_handle_for_scene(
         &self,
         handle: SceneHandle,
@@ -98,7 +100,24 @@ impl EditorSharedState {
         };
         registry.get(&handle).cloned()
     }
+
+    pub(super) fn set_scene_tabs_handle(&mut self, handle: SceneTabsHandle) {
+        if self.scene_tabs.is_none() {
+            self.scene_tabs = Some(handle);
+        }
+    }
+
+    pub(super) fn scene_tabs(&self) -> Option<Vec<SceneTabDescriptor>> {
+        let handle = self.scene_tabs.as_ref()?;
+        let Ok(tabs) = handle.lock() else {
+            return None;
+        };
+        Some(tabs.tabs().to_vec())
+    }
 }
+
+#[derive(Default)]
+pub(super) struct NewSceneRequest;
 
 pub struct EditorApplication {
     pub(super) shared: EditorSharedState,
@@ -110,6 +129,7 @@ pub struct EditorApplication {
     pub(super) script_editor_system_index: usize,
     pub(super) asset_browser_system_index: usize,
     pub(super) particle_system_index: usize,
+    pub(super) scene_tabs_panel: SceneTabsPanel,
 }
 
 #[derive(Clone, Copy)]
@@ -256,10 +276,13 @@ impl EditorApplicationBuilder {
             pending_mode_transition: None,
             editor_scene_snapshot: None,
             scene_hierarchy_registry: None,
+            scene_tabs: None,
             commands: VecDeque::new(),
             events: Vec::new(),
             particle_mesh: None,
             particle_mesh_bounds: None,
+            pending_new_scenes: Vec::new(),
+            next_untitled_scene_index: 1,
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
         };
@@ -285,6 +308,7 @@ impl EditorApplicationBuilder {
             script_editor_system_index,
             asset_browser_system_index,
             particle_system_index,
+            scene_tabs_panel: SceneTabsPanel,
         }
     }
 }
@@ -377,6 +401,10 @@ impl EditorApplication {
 
     pub(super) fn asset_browser_state_mut(&mut self) -> &mut AssetBrowserState {
         self.asset_browser_system_mut().state_mut()
+    }
+
+    pub(super) fn scene_tabs(&self) -> Vec<SceneTabDescriptor> {
+        self.shared.scene_tabs().unwrap_or_default()
     }
 
     pub(super) fn particle_system(&self) -> &EditorParticleSystem {
@@ -606,6 +634,9 @@ impl EditorApplication {
                 ImportPath(path) => pending_imports.push(path),
                 DeleteEntity(entity) => pending_deletions.push(entity),
                 Inspector(action) => pending_inspector.push(action),
+                ActivateScene(document_id) => ctx.request_active_scene(document_id),
+                CloseScene(document_id) => ctx.request_close_scene(document_id),
+                NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
                 Script(action) => remaining.push_back(Script(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
                 HistoryUndo => remaining.push_back(HistoryUndo),
