@@ -48,8 +48,8 @@ pub use style::UiStyle;
 #[cfg(feature = "egui")]
 pub use scene_hierarchy_window::{
     InspectorMaterial, SceneCreationAction, SceneEntityComponentsSummary, SceneEntityInspectorData,
-    SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow,
-    ScenePrimitivePreset,
+    SceneHierarchyEvent, SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState,
+    SceneHierarchyWindow, SceneHierarchyWorkspaceInfo, ScenePrimitivePreset,
 };
 
 #[cfg(feature = "egui")]

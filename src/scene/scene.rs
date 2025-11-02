@@ -3,7 +3,9 @@ use super::assets::{
     build_tree_asset_node, serialize_world, SceneAsset, ScenePrefabOverrides, ScenePrefabRef,
     SceneTreeAsset, SceneTreeAssetNode, SerializedAnimationClip, SerializedTransform,
 };
-use super::graph::{SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut};
+use super::graph::{
+    PrefabOriginMetadata, SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut,
+};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::library::SceneLibrary;
 use super::loader::SceneImportDevice;
@@ -36,6 +38,12 @@ pub struct Scene {
     runtime: SceneRuntimeController,
     gizmos: GizmoState,
     imports: SceneImportsManager,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ScenePrefabEntityMetadata {
+    pub document_id: String,
+    pub node_path: Vec<String>,
 }
 
 fn clone_prefab_asset_subtree(asset: &SceneAsset, root_index: usize) -> SceneAsset {
@@ -804,6 +812,7 @@ impl Scene {
         renderer: &mut Option<&mut dyn SceneImportDevice>,
         document_id: Option<&str>,
         prefab_stack: &mut Vec<String>,
+        prefab_origin: Option<PrefabInstanceDescriptor>,
     ) -> SceneNodeId {
         let parent_id = parent.unwrap_or(self.root);
         assert!(self.is_valid_node(parent_id), "Invalid parent node");
@@ -825,9 +834,14 @@ impl Scene {
             None
         };
         let id = self.allocate_node(name, instance);
+        let prefab_metadata = prefab_origin.map(|descriptor| {
+            let paths = prefab_entity_paths_for_asset(asset, &descriptor.node_path);
+            PrefabOriginMetadata::new(descriptor.document_id, paths)
+        });
         {
             let node = self.node_mut(id);
             node.set_local_transform(Transform::from(asset.root_transform.clone()));
+            node.set_prefab_origin(prefab_metadata);
         }
         self.attach_node(id, parent_id);
         self.update_world_transforms();
@@ -860,6 +874,7 @@ impl Scene {
             &mut renderer,
             document_id,
             &mut prefab_stack,
+            None,
         )
     }
 
@@ -885,6 +900,7 @@ impl Scene {
             &mut renderer_opt,
             document_id,
             &mut prefab_stack,
+            None,
         )
     }
 
@@ -960,6 +976,7 @@ impl Scene {
                 renderer,
                 document_id,
                 prefab_stack,
+                None,
             )
         } else if let Some(prefab) = &node_asset.scene_ref {
             self.instantiate_prefab_reference(
@@ -1044,6 +1061,8 @@ impl Scene {
             let child_name = name_override
                 .or_else(|| resolved.entity.name.clone())
                 .unwrap_or_else(|| resolved.asset.name.clone());
+            let descriptor =
+                PrefabInstanceDescriptor::new(target_document.clone(), prefab.node_path.clone());
             let child_id = self.instantiate_asset_internal(
                 library,
                 &child_asset,
@@ -1052,6 +1071,7 @@ impl Scene {
                 renderer,
                 Some(&target_document),
                 prefab_stack,
+                Some(descriptor),
             );
             prefab_stack.pop();
 
@@ -1103,6 +1123,8 @@ impl Scene {
         let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
         let base_transform = Transform::IDENTITY;
         prefab_stack.push(target_document.clone());
+        let descriptor =
+            PrefabInstanceDescriptor::new(target_document.clone(), prefab.node_path.clone());
         let node_id = self.instantiate_asset_internal(
             library,
             &child_asset,
@@ -1111,6 +1133,7 @@ impl Scene {
             renderer,
             Some(&target_document),
             prefab_stack,
+            Some(descriptor),
         );
         prefab_stack.pop();
 
@@ -1189,6 +1212,36 @@ impl Scene {
             self.export_node_asset_internal(node, None, false), // DON'T REMAP FOR SNAPSHOTS
             children,
         )
+    }
+
+    pub fn prefab_entity_metadata(
+        &self,
+    ) -> std::collections::BTreeMap<Entity, ScenePrefabEntityMetadata> {
+        let mut metadata = std::collections::BTreeMap::new();
+
+        for node in self.nodes_iter() {
+            let Some(origin) = node.prefab_origin() else {
+                continue;
+            };
+
+            for (index, path) in origin.entity_paths().iter().enumerate() {
+                let Some(path) = path else {
+                    continue;
+                };
+
+                if let Some(entity) = node.instance().asset_entity(index) {
+                    metadata.insert(
+                        entity,
+                        ScenePrefabEntityMetadata {
+                            document_id: origin.document_id().to_string(),
+                            node_path: path.clone(),
+                        },
+                    );
+                }
+            }
+        }
+
+        metadata
     }
 
     pub fn remove_node(&mut self, node: SceneNodeId) -> Option<SceneTreeAssetNode> {
@@ -1337,6 +1390,60 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone)]
+struct PrefabInstanceDescriptor {
+    document_id: String,
+    node_path: Vec<String>,
+}
+
+impl PrefabInstanceDescriptor {
+    fn new(document_id: String, node_path: Vec<String>) -> Self {
+        Self {
+            document_id,
+            node_path,
+        }
+    }
+}
+
+fn prefab_entity_paths_for_asset(
+    asset: &SceneAsset,
+    root_path: &[String],
+) -> Vec<Option<Vec<String>>> {
+    let mut paths = vec![None; asset.entities.len()];
+    if asset.entities.is_empty() {
+        return paths;
+    }
+
+    let root_index = asset
+        .entities
+        .iter()
+        .enumerate()
+        .find_map(|(index, entity)| entity.parent.is_none().then_some(index))
+        .unwrap_or(0);
+
+    assign_prefab_paths(asset, root_index, root_path.to_vec(), &mut paths);
+    paths
+}
+
+fn assign_prefab_paths(
+    asset: &SceneAsset,
+    index: usize,
+    current_path: Vec<String>,
+    output: &mut [Option<Vec<String>>],
+) {
+    output[index] = Some(current_path.clone());
+
+    for &child in &asset.entities[index].children {
+        let mut child_path = current_path.clone();
+        let name = asset.entities[child]
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("Entity{child}"));
+        child_path.push(name);
+        assign_prefab_paths(asset, child, child_path, output);
     }
 }
 

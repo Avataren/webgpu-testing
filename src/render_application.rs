@@ -123,8 +123,12 @@ impl DefaultUI {
     pub fn show(&mut self, ctx: &egui::Context) {
         self.show_menu_bar(ctx);
 
-        self.scene_hierarchy_window
-            .show(ctx, Some(&mut self.scene_hierarchy_open));
+        let workspace_info = self.scene_hierarchy_window.workspace_info();
+        let _ = self.scene_hierarchy_window.show(
+            ctx,
+            &workspace_info,
+            Some(&mut self.scene_hierarchy_open),
+        );
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.environment_window
             .show(ctx, Some(&mut self.environment_open));

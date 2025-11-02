@@ -21,6 +21,7 @@ pub(crate) struct SceneNode {
     world_transform: Transform,
     instance: SceneInstance,
     prefab: PrefabInstanceInfo,
+    prefab_origin: Option<PrefabOriginMetadata>,
 }
 
 impl SceneNode {
@@ -33,6 +34,7 @@ impl SceneNode {
             world_transform: Transform::IDENTITY,
             instance,
             prefab: PrefabInstanceInfo::new(),
+            prefab_origin: None,
         }
     }
 
@@ -98,6 +100,14 @@ impl SceneNode {
 
     pub(crate) fn instance_mut(&mut self) -> &mut SceneInstance {
         &mut self.instance
+    }
+
+    pub(crate) fn prefab_origin(&self) -> Option<&PrefabOriginMetadata> {
+        self.prefab_origin.as_ref()
+    }
+
+    pub(crate) fn set_prefab_origin(&mut self, origin: Option<PrefabOriginMetadata>) {
+        self.prefab_origin = origin;
     }
 }
 
@@ -379,6 +389,32 @@ impl PrefabInstanceInfo {
 
     pub(crate) fn clear_local_override(&mut self) {
         self.local_override = None;
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PrefabOriginMetadata {
+    document_id: String,
+    entity_paths: Vec<Option<Vec<String>>>,
+}
+
+impl PrefabOriginMetadata {
+    pub(crate) fn new(
+        document_id: impl Into<String>,
+        entity_paths: Vec<Option<Vec<String>>>,
+    ) -> Self {
+        Self {
+            document_id: document_id.into(),
+            entity_paths,
+        }
+    }
+
+    pub(crate) fn document_id(&self) -> &str {
+        &self.document_id
+    }
+
+    pub(crate) fn entity_paths(&self) -> &[Option<Vec<String>>] {
+        &self.entity_paths
     }
 }
 

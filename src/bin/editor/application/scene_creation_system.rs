@@ -64,7 +64,8 @@ impl SceneCreationSystem {
 
                 if let Some(handle) = app.scene_hierarchy_handle_for_scene(gpu_ctx.scene_handle) {
                     if let Ok(mut state) = handle.lock() {
-                        state.refresh_from_scene(&gpu_ctx.scene);
+                        let info = state.workspace_info();
+                        state.refresh_from_scene(&gpu_ctx.scene, info);
                     }
                 }
             }

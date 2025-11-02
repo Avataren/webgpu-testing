@@ -7,11 +7,13 @@ use crate::renderer::Material;
 #[cfg(feature = "egui")]
 use crate::scene::components::Billboard;
 #[cfg(feature = "egui")]
+use crate::scene::workspace::SceneDocumentId;
+#[cfg(feature = "egui")]
 use crate::scene::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EnvironmentComponent,
     MaterialComponent, MeshComponent, Name, Parent, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SceneHandle, SpotLight,
-    Transform, TransformComponent,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SceneHandle,
+    ScenePrefabEntityMetadata, SceneWorkspace, SpotLight, Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -75,6 +77,48 @@ pub enum SceneCreationAction {
 }
 
 #[cfg(feature = "egui")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SceneHierarchyEvent {
+    Create(SceneCreationAction),
+    OpenScene(SceneDocumentId),
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneHierarchyWorkspaceInfo {
+    active_document: Option<SceneDocumentId>,
+    open_documents: BTreeSet<SceneDocumentId>,
+}
+
+#[cfg(feature = "egui")]
+impl SceneHierarchyWorkspaceInfo {
+    pub fn from_workspace(workspace: &SceneWorkspace) -> Self {
+        let active_document = workspace.active_document_id().cloned();
+        let open_documents = workspace
+            .scene_handles()
+            .filter_map(|handle| workspace.document_id_for_handle(handle).cloned())
+            .collect();
+
+        Self {
+            active_document,
+            open_documents,
+        }
+    }
+
+    pub fn active_document_id(&self) -> Option<&SceneDocumentId> {
+        self.active_document.as_ref()
+    }
+
+    pub fn is_open(&self, document_id: &str) -> bool {
+        self.open_documents.contains(document_id)
+    }
+
+    pub fn is_foreign_document(&self, document_id: &str) -> bool {
+        self.active_document.as_deref() != Some(document_id)
+    }
+}
+
+#[cfg(feature = "egui")]
 #[derive(Clone, Debug)]
 struct SceneHierarchyNode {
     entity: Entity,
@@ -89,6 +133,7 @@ pub struct SceneHierarchySnapshot {
     roots: Vec<Entity>,
     nodes: BTreeMap<Entity, SceneHierarchyNode>,
     components: BTreeMap<Entity, SceneEntityComponentsSummary>,
+    prefabs: BTreeMap<Entity, ScenePrefabEntityMetadata>,
 }
 
 #[cfg(feature = "egui")]
@@ -133,6 +178,7 @@ impl SceneHierarchySnapshot {
         let world = scene.world();
         let mut nodes = BTreeMap::new();
         let mut components = BTreeMap::new();
+        let prefabs = scene.prefab_entity_metadata();
 
         for entity_ref in world.iter() {
             let entity = entity_ref.entity();
@@ -255,6 +301,7 @@ impl SceneHierarchySnapshot {
             roots,
             nodes,
             components,
+            prefabs,
         }
     }
 
@@ -277,6 +324,10 @@ impl SceneHierarchySnapshot {
     fn entity_components(&self, entity: Entity) -> Option<&SceneEntityComponentsSummary> {
         self.components.get(&entity)
     }
+
+    fn entity_prefab_metadata(&self, entity: Entity) -> Option<&ScenePrefabEntityMetadata> {
+        self.prefabs.get(&entity)
+    }
 }
 
 #[cfg(feature = "egui")]
@@ -284,6 +335,7 @@ impl SceneHierarchySnapshot {
 pub struct SceneHierarchyState {
     snapshot: SceneHierarchySnapshot,
     revision: u64,
+    workspace: SceneHierarchyWorkspaceInfo,
 }
 
 #[cfg(feature = "egui")]
@@ -296,13 +348,18 @@ impl SceneHierarchyState {
         Arc::new(Mutex::new(Self::default()))
     }
 
-    pub fn refresh_from_scene(&mut self, scene: &Scene) {
+    pub fn refresh_from_scene(&mut self, scene: &Scene, workspace: SceneHierarchyWorkspaceInfo) {
         self.snapshot = SceneHierarchySnapshot::from_scene(scene);
+        self.workspace = workspace;
         self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn snapshot_with_revision(&self) -> (u64, SceneHierarchySnapshot) {
         (self.revision, self.snapshot.clone())
+    }
+
+    pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
+        self.workspace.clone()
     }
 }
 
@@ -337,27 +394,32 @@ impl SceneHierarchyWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
+        workspace: &SceneHierarchyWorkspaceInfo,
         open: Option<&mut bool>,
-    ) -> Vec<SceneCreationAction> {
+    ) -> Vec<SceneHierarchyEvent> {
         if let Some(open_flag) = open {
             if !*open_flag {
                 return Vec::new();
             }
         }
 
-        let mut creations = Vec::new();
+        let mut events = Vec::new();
         egui::SidePanel::left("scene_hierarchy_panel")
             .resizable(true)
             .frame(egui::Frame::side_top_panel(&ctx.style()))
             .show(ctx, |ui| {
-                creations = self.panel_contents(ui);
+                events = self.panel_contents(ui, workspace);
             });
 
-        creations
+        events
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) -> Vec<SceneCreationAction> {
-        self.panel_contents(ui)
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        workspace: &SceneHierarchyWorkspaceInfo,
+    ) -> Vec<SceneHierarchyEvent> {
+        self.panel_contents(ui, workspace)
     }
 
     pub fn selected_entity(&self) -> Option<Entity> {
@@ -388,6 +450,13 @@ impl SceneHierarchyWindow {
         self.handle.clone()
     }
 
+    pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
+        match self.handle.lock() {
+            Ok(state) => state.workspace_info(),
+            Err(_) => SceneHierarchyWorkspaceInfo::default(),
+        }
+    }
+
     pub fn set_handle(&mut self, handle: SceneHierarchyHandle) {
         if Arc::ptr_eq(&self.handle, &handle) {
             return;
@@ -399,7 +468,11 @@ impl SceneHierarchyWindow {
         }
     }
 
-    fn panel_contents(&mut self, ui: &mut egui::Ui) -> Vec<SceneCreationAction> {
+    fn panel_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        workspace: &SceneHierarchyWorkspaceInfo,
+    ) -> Vec<SceneHierarchyEvent> {
         let Some((revision, snapshot)) = self.snapshot() else {
             ui.label("Scene hierarchy unavailable.");
             return Vec::new();
@@ -415,7 +488,7 @@ impl SceneHierarchyWindow {
             }
         }
 
-        let mut creations = Vec::new();
+        let mut events = Vec::new();
 
         ui.horizontal(|ui| {
             ui.heading(&self.title);
@@ -425,7 +498,9 @@ impl SceneHierarchyWindow {
                 ui.menu_button("Primitive", |ui| {
                     for preset in ScenePrimitivePreset::variants() {
                         if ui.button(preset.display_name()).clicked() {
-                            creations.push(SceneCreationAction::Primitive(preset));
+                            events.push(SceneHierarchyEvent::Create(
+                                SceneCreationAction::Primitive(preset),
+                            ));
                             close_top_menu = true;
                             ui.close();
                         }
@@ -434,17 +509,19 @@ impl SceneHierarchyWindow {
 
                 ui.menu_button("Light", |ui| {
                     if ui.button("Directional Light").clicked() {
-                        creations.push(SceneCreationAction::DirectionalLight);
+                        events.push(SceneHierarchyEvent::Create(
+                            SceneCreationAction::DirectionalLight,
+                        ));
                         close_top_menu = true;
                         ui.close();
                     }
                     if ui.button("Point Light").clicked() {
-                        creations.push(SceneCreationAction::PointLight);
+                        events.push(SceneHierarchyEvent::Create(SceneCreationAction::PointLight));
                         close_top_menu = true;
                         ui.close();
                     }
                     if ui.button("Spot Light").clicked() {
-                        creations.push(SceneCreationAction::SpotLight);
+                        events.push(SceneHierarchyEvent::Create(SceneCreationAction::SpotLight));
                         close_top_menu = true;
                         ui.close();
                     }
@@ -453,7 +530,9 @@ impl SceneHierarchyWindow {
                 ui.menu_button("Particle System", |ui| {
                     for preset in ParticleBehaviorPreset::variants() {
                         if ui.button(preset.display_name()).clicked() {
-                            creations.push(SceneCreationAction::ParticleSystem(preset));
+                            events.push(SceneHierarchyEvent::Create(
+                                SceneCreationAction::ParticleSystem(preset),
+                            ));
                             close_top_menu = true;
                             ui.close();
                         }
@@ -461,12 +540,14 @@ impl SceneHierarchyWindow {
                 });
 
                 if ui.button("Camera").clicked() {
-                    creations.push(SceneCreationAction::Camera);
+                    events.push(SceneHierarchyEvent::Create(SceneCreationAction::Camera));
                     close_top_menu = true;
                     ui.close();
                 }
                 if ui.button("Environment").clicked() {
-                    creations.push(SceneCreationAction::Environment);
+                    events.push(SceneHierarchyEvent::Create(
+                        SceneCreationAction::Environment,
+                    ));
                     close_top_menu = true;
                     ui.close();
                 }
@@ -480,12 +561,12 @@ impl SceneHierarchyWindow {
 
         if snapshot.is_empty() {
             ui.label("Scene is empty.");
-            return creations;
+            return events;
         }
 
         let mut visited = BTreeSet::new();
         for &root in snapshot.roots() {
-            self.draw_entity(ui, root, &snapshot, &mut visited);
+            self.draw_entity(ui, root, &snapshot, &mut visited, workspace, &mut events);
         }
 
         for entity in snapshot.iter_nodes() {
@@ -501,9 +582,9 @@ impl SceneHierarchyWindow {
                 continue;
             }
 
-            self.draw_entity(ui, entity, &snapshot, &mut visited);
+            self.draw_entity(ui, entity, &snapshot, &mut visited, workspace, &mut events);
         }
-        creations
+        events
     }
 
     fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {
@@ -519,6 +600,8 @@ impl SceneHierarchyWindow {
         entity: Entity,
         snapshot: &SceneHierarchySnapshot,
         visited: &mut BTreeSet<Entity>,
+        workspace: &SceneHierarchyWorkspaceInfo,
+        events: &mut Vec<SceneHierarchyEvent>,
     ) {
         if !visited.insert(entity) {
             return;
@@ -529,10 +612,25 @@ impl SceneHierarchyWindow {
         };
 
         let label = format!("{} ({:?})", node.name, node.entity);
+        let prefab_info = snapshot.entity_prefab_metadata(entity).cloned();
 
         if node.children.is_empty() {
             let selected = self.selected == Some(entity);
-            if ui.selectable_label(selected, label).clicked() {
+            let mut clicked = false;
+            ui.horizontal(|ui| {
+                let response = ui.selectable_label(selected, &label);
+                if let Some(info) = &prefab_info {
+                    self.decorate_prefab_response(&response, info, workspace, events);
+                    if workspace.is_foreign_document(&info.document_id) {
+                        ui.add_space(4.0);
+                        self.add_prefab_badge(ui, info);
+                    }
+                }
+                if response.clicked() {
+                    clicked = true;
+                }
+            });
+            if clicked {
                 self.selected = Some(entity);
             }
             return;
@@ -542,17 +640,32 @@ impl SceneHierarchyWindow {
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
         let selected = self.selected == Some(entity);
 
+        let mut clicked = false;
         let header_response = state.show_header(ui, |ui| {
-            let response = ui.selectable_label(selected, &label);
-            if response.clicked() {
-                self.selected = Some(entity);
-            }
-            response
+            ui.horizontal(|ui| {
+                let response = ui.selectable_label(selected, &label);
+                if let Some(info) = &prefab_info {
+                    self.decorate_prefab_response(&response, info, workspace, events);
+                    if workspace.is_foreign_document(&info.document_id) {
+                        ui.add_space(4.0);
+                        self.add_prefab_badge(ui, info);
+                    }
+                }
+                if response.clicked() {
+                    clicked = true;
+                }
+                response
+            })
+            .inner
         });
+
+        if clicked {
+            self.selected = Some(entity);
+        }
 
         let _ = header_response.body(|ui| {
             for &child in &node.children {
-                self.draw_entity(ui, child, snapshot, visited);
+                self.draw_entity(ui, child, snapshot, visited, workspace, events);
             }
         });
     }
@@ -578,5 +691,48 @@ impl SceneHierarchyWindow {
         }
 
         false
+    }
+
+    fn add_prefab_badge(&self, ui: &mut egui::Ui, info: &ScenePrefabEntityMetadata) {
+        let badge = egui::Label::new(
+            egui::RichText::new("Prefab")
+                .small()
+                .color(egui::Color32::from_rgb(120, 180, 255)),
+        );
+        let response = ui.add(badge);
+        response.on_hover_text(Self::prefab_tooltip(info));
+    }
+
+    fn decorate_prefab_response(
+        &self,
+        response: &egui::Response,
+        info: &ScenePrefabEntityMetadata,
+        workspace: &SceneHierarchyWorkspaceInfo,
+        events: &mut Vec<SceneHierarchyEvent>,
+    ) {
+        if !workspace.is_foreign_document(&info.document_id) {
+            return;
+        }
+
+        response.clone().on_hover_text(Self::prefab_tooltip(info));
+
+        if workspace.is_open(&info.document_id) {
+            response.context_menu(|ui| {
+                if ui.button("Open source scene").clicked() {
+                    events.push(SceneHierarchyEvent::OpenScene(info.document_id.clone()));
+                    ui.close();
+                }
+            });
+        }
+    }
+
+    fn prefab_tooltip(info: &ScenePrefabEntityMetadata) -> String {
+        let path = if info.node_path.is_empty() {
+            String::from("/")
+        } else {
+            info.node_path.join(" / ")
+        };
+
+        format!("Prefab from {}\n{}", info.document_id, path)
     }
 }

@@ -50,7 +50,7 @@ use wgpu_cube::scene::{
     ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
-use wgpu_cube::{DefaultUI, RenderApplication, ScenePrimitivePreset};
+use wgpu_cube::{DefaultUI, RenderApplication, SceneHierarchyEvent, ScenePrimitivePreset};
 
 use crate::inspector::InspectorAction;
 use crate::layout::{EditorBehavior, EditorPane};
@@ -274,7 +274,7 @@ impl EditorApplication {
             scene_hierarchy_window.set_selected_entity(selection);
         }
         let mut inspector_actions = Vec::new();
-        let mut creation_actions = Vec::new();
+        let mut hierarchy_events = Vec::new();
         let transparent_frame =
             egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
         {
@@ -282,6 +282,7 @@ impl EditorApplication {
             let dock_tree = &mut shared.dock_tree;
             let scene_viewport = &mut shared.viewports.scene_viewport;
             let game_viewport = &mut shared.viewports.game_viewport;
+            let workspace_info = scene_hierarchy_window.workspace_info();
 
             egui::CentralPanel::default()
                 .frame(transparent_frame)
@@ -296,9 +297,10 @@ impl EditorApplication {
                             log_window,
                             is_playing,
                             inspector_actions: &mut inspector_actions,
-                            scene_creation_actions: &mut creation_actions,
+                            scene_events: &mut hierarchy_events,
                             asset_browser: asset_browser_state,
                             content_root,
+                            workspace_info,
                         };
                         dock_tree.ui(&mut behavior, ui);
                     }
@@ -352,8 +354,15 @@ impl EditorApplication {
             }
         }
 
-        for action in creation_actions {
-            self.enqueue_command(EditorCommand::CreateScene(action));
+        for event in hierarchy_events {
+            match event {
+                SceneHierarchyEvent::Create(action) => {
+                    self.enqueue_command(EditorCommand::CreateScene(action));
+                }
+                SceneHierarchyEvent::OpenScene(document_id) => {
+                    scene_tab_actions.push(SceneTabAction::Activate(document_id));
+                }
+            }
         }
 
         for action in scene_tab_actions.drain(..) {

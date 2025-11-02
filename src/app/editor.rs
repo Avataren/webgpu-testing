@@ -9,7 +9,7 @@ use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
     EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
     PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneHierarchyState,
-    SceneTabsHandle, SceneTabsState,
+    SceneHierarchyWorkspaceInfo, SceneTabsHandle, SceneTabsState,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -230,7 +230,8 @@ impl EditorState {
 
         if let (Some(scene), Some(handle)) = (workspace.active_scene(), handle_to_refresh) {
             if let Ok(mut hierarchy) = handle.lock() {
-                hierarchy.refresh_from_scene(scene);
+                let info = SceneHierarchyWorkspaceInfo::from_workspace(workspace);
+                hierarchy.refresh_from_scene(scene, info);
             }
         }
 

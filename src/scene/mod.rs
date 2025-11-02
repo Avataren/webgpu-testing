@@ -46,7 +46,7 @@ pub use graph::SceneNodeId;
 pub use library::SceneLibrary;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
-pub use scene::Scene;
+pub use scene::{Scene, ScenePrefabEntityMetadata};
 pub(crate) use snapshot::SceneSnapshot;
 pub use snapshot::SceneStateSnapshot;
 pub use state::{
