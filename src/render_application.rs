@@ -4,6 +4,8 @@
 #[cfg(feature = "egui")]
 use crate::app::RuntimeStateHandle;
 use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext, WinitApp};
+#[cfg(feature = "egui")]
+use crate::scene::SceneHandle;
 use crate::scene::SceneWorkspace;
 
 use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
@@ -11,8 +13,7 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
     LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, SceneHierarchyHandle,
-    SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow, SceneTabsHandle,
-    StatsWindow, UiStyle,
+    SceneHierarchyRegistryHandle, SceneHierarchyWindow, SceneTabsHandle, StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
@@ -100,16 +101,15 @@ impl DefaultUI {
         post_handle: PostProcessEffectsHandle,
         env_handle: EnvironmentSettingsHandle,
         hierarchy_registry: SceneHierarchyRegistryHandle,
-        hierarchy_handle: Option<SceneHierarchyHandle>,
+        hierarchy_handle: Option<(SceneHandle, SceneHierarchyHandle)>,
         scene_tabs: SceneTabsHandle,
     ) -> Self {
-        let initial_handle = hierarchy_handle.unwrap_or_else(SceneHierarchyState::handle);
         Self {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
             postprocess_window: PostProcessWindow::new(post_handle),
             environment_window: EnvironmentWindow::new(env_handle),
-            scene_hierarchy_window: SceneHierarchyWindow::new(initial_handle),
+            scene_hierarchy_window: SceneHierarchyWindow::new(hierarchy_handle),
             scene_hierarchy_registry: hierarchy_registry,
             scene_tabs,
             stats_open: false,
@@ -276,7 +276,7 @@ where
         let log_handle = init_log_recorder();
         let post_handle = app.postprocess_effects_handle();
         let env_handle = app.environment_settings_handle();
-        let hierarchy_handle = app.scene_hierarchy_handle();
+        let hierarchy_entry = app.active_scene_hierarchy();
         let hierarchy_registry = app.scene_hierarchy_registry();
         let scene_tabs = app.scene_tabs_handle();
 
@@ -287,7 +287,7 @@ where
                 post_handle,
                 env_handle.clone(),
                 hierarchy_registry.clone(),
-                hierarchy_handle.clone(),
+                hierarchy_entry.clone(),
                 scene_tabs.clone(),
             );
             let app_ref = app_rc.clone();
@@ -304,7 +304,7 @@ where
                 post_handle,
                 env_handle.clone(),
                 hierarchy_registry,
-                hierarchy_handle,
+                hierarchy_entry,
                 scene_tabs,
             );
             let app_ref = app_rc.clone();

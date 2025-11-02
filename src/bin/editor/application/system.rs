@@ -134,6 +134,9 @@ impl<'shared> EditorAppAccess<'shared> {
     pub fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
+        if let Some(handle) = self.shared.active_scene_handle {
+            self.shared.mark_scene_hierarchy_dirty(handle);
+        }
         self.history_system_mut()
             .record_scene_change(scene, selected, highlighted);
     }

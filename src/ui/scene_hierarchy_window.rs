@@ -367,28 +367,102 @@ impl SceneHierarchyState {
 pub type SceneHierarchyHandle = Arc<Mutex<SceneHierarchyState>>;
 
 #[cfg(feature = "egui")]
-pub type SceneHierarchyRegistry = HashMap<SceneHandle, SceneHierarchyHandle>;
-
-#[cfg(feature = "egui")]
 pub type SceneHierarchyRegistryHandle = Arc<Mutex<SceneHierarchyRegistry>>;
 
 #[cfg(feature = "egui")]
-pub struct SceneHierarchyWindow {
+#[derive(Default)]
+pub struct SceneHierarchyRegistry {
+    entries: HashMap<SceneHandle, SceneHierarchyRegistryEntry>,
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone)]
+struct SceneHierarchyRegistryEntry {
     handle: SceneHierarchyHandle,
-    title: String,
+    dirty: bool,
+}
+
+#[cfg(feature = "egui")]
+impl SceneHierarchyRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn ensure_entry(&mut self, handle: SceneHandle) -> SceneHierarchyHandle {
+        let entry = self
+            .entries
+            .entry(handle)
+            .or_insert_with(|| SceneHierarchyRegistryEntry {
+                handle: SceneHierarchyState::handle(),
+                dirty: true,
+            });
+        entry.handle.clone()
+    }
+
+    pub fn get_handle(&self, handle: SceneHandle) -> Option<SceneHierarchyHandle> {
+        self.entries.get(&handle).map(|entry| entry.handle.clone())
+    }
+
+    pub fn mark_dirty(&mut self, handle: SceneHandle) {
+        if let Some(entry) = self.entries.get_mut(&handle) {
+            entry.dirty = true;
+        }
+    }
+
+    pub fn retain_handles<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(SceneHandle) -> bool,
+    {
+        self.entries.retain(|handle, _| keep(*handle));
+    }
+
+    pub fn take_dirty_handles(&mut self) -> Vec<(SceneHandle, SceneHierarchyHandle)> {
+        let mut dirty = Vec::new();
+        for (handle, entry) in self.entries.iter_mut() {
+            if entry.dirty {
+                entry.dirty = false;
+                dirty.push((*handle, entry.handle.clone()));
+            }
+        }
+        dirty
+    }
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Debug, Default)]
+struct SceneHierarchyViewState {
     selected: Option<Entity>,
+    _expanded: BTreeSet<Entity>,
     last_revision: Option<u64>,
 }
 
 #[cfg(feature = "egui")]
+pub struct SceneHierarchyWindow {
+    handle: Option<SceneHierarchyHandle>,
+    title: String,
+    active_scene: Option<SceneHandle>,
+    view_states: HashMap<SceneHandle, SceneHierarchyViewState>,
+    pending_scroll_to_selection: bool,
+}
+
+#[cfg(feature = "egui")]
 impl SceneHierarchyWindow {
-    pub fn new(handle: SceneHierarchyHandle) -> Self {
-        Self {
-            handle,
+    pub fn new(initial: Option<(SceneHandle, SceneHierarchyHandle)>) -> Self {
+        let mut window = Self {
+            handle: None,
             title: "Scene Hierarchy".to_string(),
-            selected: None,
-            last_revision: None,
+            active_scene: None,
+            view_states: HashMap::new(),
+            pending_scroll_to_selection: false,
+        };
+
+        if let Some((scene_handle, handle)) = initial {
+            window.active_scene = Some(scene_handle);
+            window.handle = Some(handle);
+            window.view_states.entry(scene_handle).or_default();
         }
+
+        window
     }
 
     pub fn show(
@@ -423,11 +497,11 @@ impl SceneHierarchyWindow {
     }
 
     pub fn selected_entity(&self) -> Option<Entity> {
-        self.selected
+        self.active_view_state().and_then(|state| state.selected)
     }
 
     pub fn selected_entity_data(&self) -> Option<SceneEntityInspectorData> {
-        let entity = self.selected?;
+        let entity = self.selected_entity()?;
         let (_, snapshot) = self.snapshot()?;
         let node = snapshot.node(entity)?;
         let components = snapshot
@@ -443,29 +517,72 @@ impl SceneHierarchyWindow {
     }
 
     pub fn set_selected_entity(&mut self, entity: Option<Entity>) {
-        self.selected = entity;
+        self.update_selected_entity(entity, true);
     }
 
-    pub fn handle(&self) -> SceneHierarchyHandle {
-        self.handle.clone()
+    pub fn sync_selected_entity(&mut self, entity: Option<Entity>) {
+        self.update_selected_entity(entity, false);
+    }
+
+    pub fn set_active_scene(&mut self, scene_handle: SceneHandle, handle: SceneHierarchyHandle) {
+        let same_scene = self.active_scene == Some(scene_handle);
+        let same_handle = self
+            .handle
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &handle));
+
+        if same_scene && same_handle {
+            return;
+        }
+
+        self.active_scene = Some(scene_handle);
+        self.handle = Some(handle);
+        let view_state = self.view_states.entry(scene_handle).or_default();
+        self.pending_scroll_to_selection = view_state.selected.is_some();
+    }
+
+    pub fn clear_active_scene(&mut self) {
+        self.active_scene = None;
+        self.handle = None;
+        self.pending_scroll_to_selection = false;
     }
 
     pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
-        match self.handle.lock() {
+        let Some(handle) = &self.handle else {
+            return SceneHierarchyWorkspaceInfo::default();
+        };
+        match handle.lock() {
             Ok(state) => state.workspace_info(),
             Err(_) => SceneHierarchyWorkspaceInfo::default(),
         }
     }
 
-    pub fn set_handle(&mut self, handle: SceneHierarchyHandle) {
-        if Arc::ptr_eq(&self.handle, &handle) {
+    fn update_selected_entity(&mut self, entity: Option<Entity>, scroll_to_selection: bool) {
+        let Some(view_state) = self.active_view_state_mut() else {
+            return;
+        };
+
+        if view_state.selected == entity {
+            if scroll_to_selection && entity.is_some() {
+                self.pending_scroll_to_selection = true;
+            } else if entity.is_none() {
+                self.pending_scroll_to_selection = false;
+            }
             return;
         }
-        self.handle = handle;
-        self.last_revision = None;
-        if self.snapshot().is_none() {
-            self.selected = None;
-        }
+
+        view_state.selected = entity;
+        self.pending_scroll_to_selection = scroll_to_selection && entity.is_some();
+    }
+
+    fn active_view_state_mut(&mut self) -> Option<&mut SceneHierarchyViewState> {
+        let handle = self.active_scene?;
+        Some(self.view_states.entry(handle).or_default())
+    }
+
+    fn active_view_state(&self) -> Option<&SceneHierarchyViewState> {
+        let handle = self.active_scene?;
+        self.view_states.get(&handle)
     }
 
     fn panel_contents(
@@ -473,18 +590,26 @@ impl SceneHierarchyWindow {
         ui: &mut egui::Ui,
         workspace: &SceneHierarchyWorkspaceInfo,
     ) -> Vec<SceneHierarchyEvent> {
+        let Some(active_scene) = self.active_scene else {
+            ui.label("No active scene selected.");
+            return Vec::new();
+        };
+
         let Some((revision, snapshot)) = self.snapshot() else {
             ui.label("Scene hierarchy unavailable.");
             return Vec::new();
         };
 
-        if self.last_revision != Some(revision) {
-            self.last_revision = Some(revision);
-            if self
+        let view_state = self.view_states.entry(active_scene).or_default();
+
+        if view_state.last_revision != Some(revision) {
+            view_state.last_revision = Some(revision);
+            if view_state
                 .selected
                 .is_some_and(|entity| snapshot.node(entity).is_none())
             {
-                self.selected = None;
+                view_state.selected = None;
+                self.pending_scroll_to_selection = false;
             }
         }
 
@@ -588,7 +713,8 @@ impl SceneHierarchyWindow {
     }
 
     fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {
-        let Ok(state) = self.handle.lock() else {
+        let handle = self.handle.as_ref()?;
+        let Ok(state) = handle.lock() else {
             return None;
         };
         Some(state.snapshot_with_revision())
@@ -613,9 +739,9 @@ impl SceneHierarchyWindow {
 
         let label = format!("{} ({:?})", node.name, node.entity);
         let prefab_info = snapshot.entity_prefab_metadata(entity).cloned();
+        let selected = self.is_selected(entity);
 
         if node.children.is_empty() {
-            let selected = self.selected == Some(entity);
             let mut clicked = false;
             ui.horizontal(|ui| {
                 let response = ui.selectable_label(selected, &label);
@@ -629,16 +755,19 @@ impl SceneHierarchyWindow {
                 if response.clicked() {
                     clicked = true;
                 }
+                if selected && self.pending_scroll_to_selection {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    self.pending_scroll_to_selection = false;
+                }
             });
             if clicked {
-                self.selected = Some(entity);
+                self.update_selected_entity(Some(entity), false);
             }
             return;
         }
 
-        let id = egui::Id::new(("scene_hierarchy", entity));
+        let id = egui::Id::new(("scene_hierarchy", self.active_scene, entity));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
-        let selected = self.selected == Some(entity);
 
         let mut clicked = false;
         let header_response = state.show_header(ui, |ui| {
@@ -654,13 +783,17 @@ impl SceneHierarchyWindow {
                 if response.clicked() {
                     clicked = true;
                 }
+                if selected && self.pending_scroll_to_selection {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    self.pending_scroll_to_selection = false;
+                }
                 response
             })
             .inner
         });
 
         if clicked {
-            self.selected = Some(entity);
+            self.update_selected_entity(Some(entity), false);
         }
 
         let _ = header_response.body(|ui| {
@@ -679,7 +812,7 @@ impl SceneHierarchyWindow {
         let mut current = node.parent;
 
         while let Some(parent_entity) = current {
-            let id = egui::Id::new(("scene_hierarchy", parent_entity));
+            let id = egui::Id::new(("scene_hierarchy", self.active_scene, parent_entity));
             let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
             if !state.is_open() {
                 return true;
@@ -691,6 +824,10 @@ impl SceneHierarchyWindow {
         }
 
         false
+    }
+
+    fn is_selected(&self, entity: Entity) -> bool {
+        self.selected_entity() == Some(entity)
     }
 
     fn add_prefab_badge(&self, ui: &mut egui::Ui, info: &ScenePrefabEntityMetadata) {

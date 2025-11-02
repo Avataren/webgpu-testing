@@ -98,7 +98,17 @@ impl EditorSharedState {
         let Ok(registry) = registry.lock() else {
             return None;
         };
-        registry.get(&handle).cloned()
+        registry.get_handle(handle)
+    }
+
+    pub(super) fn mark_scene_hierarchy_dirty(&self, handle: SceneHandle) {
+        let Some(registry) = &self.scene_hierarchy_registry else {
+            return;
+        };
+
+        if let Ok(mut registry) = registry.lock() {
+            registry.mark_dirty(handle);
+        }
     }
 
     pub(super) fn set_scene_tabs_handle(&mut self, handle: SceneTabsHandle) {
@@ -450,6 +460,9 @@ impl EditorApplication {
     pub(super) fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
+        if let Some(handle) = self.shared.active_scene_handle {
+            self.shared.mark_scene_hierarchy_dirty(handle);
+        }
         self.history_system_mut()
             .record_scene_change(scene, selected, highlighted);
     }
