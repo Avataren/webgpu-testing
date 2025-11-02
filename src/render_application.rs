@@ -11,7 +11,7 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
     LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, SceneHierarchyHandle,
-    SceneHierarchyWindow, StatsWindow, UiStyle,
+    SceneHierarchyRegistryHandle, SceneHierarchyState, SceneHierarchyWindow, StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
@@ -82,6 +82,7 @@ pub struct DefaultUI {
     postprocess_window: PostProcessWindow,
     environment_window: EnvironmentWindow,
     scene_hierarchy_window: SceneHierarchyWindow,
+    scene_hierarchy_registry: SceneHierarchyRegistryHandle,
     stats_open: bool,
     log_open: bool,
     postprocess_open: bool,
@@ -96,14 +97,17 @@ impl DefaultUI {
         log_handle: LogBufferHandle,
         post_handle: PostProcessEffectsHandle,
         env_handle: EnvironmentSettingsHandle,
-        hierarchy_handle: SceneHierarchyHandle,
+        hierarchy_registry: SceneHierarchyRegistryHandle,
+        hierarchy_handle: Option<SceneHierarchyHandle>,
     ) -> Self {
+        let initial_handle = hierarchy_handle.unwrap_or_else(SceneHierarchyState::handle);
         Self {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
             postprocess_window: PostProcessWindow::new(post_handle),
             environment_window: EnvironmentWindow::new(env_handle),
-            scene_hierarchy_window: SceneHierarchyWindow::new(hierarchy_handle),
+            scene_hierarchy_window: SceneHierarchyWindow::new(initial_handle),
+            scene_hierarchy_registry: hierarchy_registry,
             stats_open: false,
             log_open: false,
             postprocess_open: false,
@@ -183,6 +187,10 @@ impl DefaultUI {
     pub fn scene_hierarchy_window_mut(&mut self) -> &mut SceneHierarchyWindow {
         &mut self.scene_hierarchy_window
     }
+
+    pub fn scene_hierarchy_registry(&self) -> SceneHierarchyRegistryHandle {
+        self.scene_hierarchy_registry.clone()
+    }
 }
 
 fn build_winit_app_internal<T>(app_rc: Rc<RefCell<T>>, mut builder: AppBuilder) -> WinitApp
@@ -257,6 +265,7 @@ where
         let post_handle = app.postprocess_effects_handle();
         let env_handle = app.environment_settings_handle();
         let hierarchy_handle = app.scene_hierarchy_handle();
+        let hierarchy_registry = app.scene_hierarchy_registry();
 
         if show_default {
             let mut default_ui = DefaultUI::new(
@@ -264,6 +273,7 @@ where
                 log_handle,
                 post_handle,
                 env_handle.clone(),
+                hierarchy_registry.clone(),
                 hierarchy_handle.clone(),
             );
             let app_ref = app_rc.clone();
@@ -279,6 +289,7 @@ where
                 log_handle,
                 post_handle,
                 env_handle.clone(),
+                hierarchy_registry,
                 hierarchy_handle,
             );
             let app_ref = app_rc.clone();

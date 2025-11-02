@@ -19,7 +19,10 @@ use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::renderer::{RenderRegion, Renderer};
 use wgpu_cube::scene::{ParticleBehaviorPreset, Scene, SceneHandle, SceneWorkspaceSceneMut};
-use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
+use wgpu_cube::{
+    DefaultUI, SceneCreationAction, SceneHierarchyHandle, SceneHierarchyRegistryHandle,
+    ScenePrimitivePreset,
+};
 
 pub(super) enum EditorCommand {
     ImportPath(PathBuf),
@@ -148,8 +151,15 @@ impl<'shared> EditorAppAccess<'shared> {
         &mut self.shared.commands
     }
 
-    pub(super) fn scene_hierarchy_handle(&self) -> Option<&SceneHierarchyHandle> {
-        self.shared.scene_hierarchy_handle.as_ref()
+    pub(super) fn scene_hierarchy_registry(&self) -> Option<SceneHierarchyRegistryHandle> {
+        self.shared.scene_hierarchy_registry()
+    }
+
+    pub(super) fn scene_hierarchy_handle_for_scene(
+        &self,
+        handle: SceneHandle,
+    ) -> Option<SceneHierarchyHandle> {
+        self.shared.scene_hierarchy_handle_for_scene(handle)
     }
 
     pub fn request_runtime_mode(&mut self, mode: RuntimeMode) {

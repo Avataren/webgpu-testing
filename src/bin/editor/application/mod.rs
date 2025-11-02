@@ -209,7 +209,15 @@ impl EditorApplication {
 
         let content_root = self.project_system().content_root();
         let override_selection = { self.selection_system_mut().take_override() };
+        let hierarchy_registry = default_ui.scene_hierarchy_registry();
+        self.shared
+            .set_scene_hierarchy_registry(hierarchy_registry.clone());
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
+        if let Some(scene_handle) = self.shared.active_scene_handle {
+            if let Some(handle) = self.shared.scene_hierarchy_handle_for_scene(scene_handle) {
+                scene_hierarchy_window.set_handle(handle);
+            }
+        }
         if let Some(selection) = override_selection {
             scene_hierarchy_window.set_selected_entity(selection);
         }
@@ -243,10 +251,6 @@ impl EditorApplication {
                         dock_tree.ui(&mut behavior, ui);
                     }
                 });
-        }
-
-        if self.shared.scene_hierarchy_handle.is_none() {
-            self.shared.scene_hierarchy_handle = Some(scene_hierarchy_window.handle());
         }
 
         let game_tile_active = self

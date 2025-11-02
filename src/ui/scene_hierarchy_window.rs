@@ -10,8 +10,8 @@ use crate::scene::components::Billboard;
 use crate::scene::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EnvironmentComponent,
     MaterialComponent, MeshComponent, Name, Parent, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SpotLight, Transform,
-    TransformComponent,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SceneHandle, SpotLight,
+    Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::RuneScriptComponent;
@@ -22,7 +22,7 @@ use egui::collapsing_header::CollapsingState;
 #[cfg(feature = "egui")]
 use hecs::Entity;
 #[cfg(feature = "egui")]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[cfg(feature = "egui")]
 use std::sync::{Arc, Mutex};
 
@@ -310,6 +310,12 @@ impl SceneHierarchyState {
 pub type SceneHierarchyHandle = Arc<Mutex<SceneHierarchyState>>;
 
 #[cfg(feature = "egui")]
+pub type SceneHierarchyRegistry = HashMap<SceneHandle, SceneHierarchyHandle>;
+
+#[cfg(feature = "egui")]
+pub type SceneHierarchyRegistryHandle = Arc<Mutex<SceneHierarchyRegistry>>;
+
+#[cfg(feature = "egui")]
 pub struct SceneHierarchyWindow {
     handle: SceneHierarchyHandle,
     title: String,
@@ -380,6 +386,17 @@ impl SceneHierarchyWindow {
 
     pub fn handle(&self) -> SceneHierarchyHandle {
         self.handle.clone()
+    }
+
+    pub fn set_handle(&mut self, handle: SceneHierarchyHandle) {
+        if Arc::ptr_eq(&self.handle, &handle) {
+            return;
+        }
+        self.handle = handle;
+        self.last_revision = None;
+        if self.snapshot().is_none() {
+            self.selected = None;
+        }
     }
 
     fn panel_contents(&mut self, ui: &mut egui::Ui) -> Vec<SceneCreationAction> {
