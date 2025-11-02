@@ -1101,7 +1101,10 @@ impl Scene {
         };
 
         let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
-        let base_transform = Transform::IDENTITY;
+        let entity_transform =
+            asset_entity_accumulated_transform(resolved.asset, resolved.entity_index);
+        let base_transform =
+            Transform::from(resolved.asset.root_transform.clone()).mul_transform(&entity_transform);
         prefab_stack.push(target_document.clone());
         let node_id = self.instantiate_asset_internal(
             library,
@@ -1114,7 +1117,7 @@ impl Scene {
         );
         prefab_stack.pop();
 
-        self.apply_prefab_overrides(node_id, base_transform, &prefab.overrides, true);
+        self.apply_prefab_overrides(node_id, base_transform, &prefab.overrides, false);
 
         if let Some(source) = document_id {
             library.track_prefab_dependency(source.to_string(), target_document);
