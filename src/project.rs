@@ -336,6 +336,10 @@ impl ProjectManifest {
         &self.engine_camera
     }
 
+    pub fn add_scene_asset(&mut self, document_id: String, asset: SceneAsset) {
+        self.scene_assets.insert(document_id, asset);
+    }
+
     pub fn scene_asset(&self, document_id: &str) -> Option<&SceneAsset> {
         self.scene_assets.get(document_id)
     }

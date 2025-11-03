@@ -384,12 +384,13 @@ impl ProjectSystem {
                 // Merge with existing scene documents from imports
                 let all_scenes = self.controller.scene_documents();
                 for doc in all_scenes {
-                    if !manifest
-                        .scenes
-                        .iter()
-                        .any(|s| s.name == doc.name && s.relative_path == doc.relative_path)
-                    {
+                    if !manifest.scenes.iter().any(|s| s.id == doc.id) {
                         manifest.scenes.push(doc.clone());
+
+                        // Add the scene asset from our library if we have it
+                        if let Some(asset) = self.scene_library.asset(&doc.id) {
+                            manifest.add_scene_asset(doc.id.clone(), asset.clone());
+                        }
                     }
                 }
 
@@ -400,13 +401,13 @@ impl ProjectSystem {
                     self.scene_library.clear();
                     for document in manifest.scenes() {
                         self.scene_library.register_document(document);
-                        if let Some(asset) = manifest.scene_asset(&document.name) {
+                        if let Some(asset) = manifest.scene_asset(&document.id) {
                             self.scene_library
-                                .insert(document.name.clone(), asset.clone());
+                                .insert(document.id.clone(), asset.clone());
                         } else if let Err(err) = self.scene_library.load_document(document, &dir) {
                             error!(
                                 "Failed to cache scene document {} after save: {err}",
-                                document.name
+                                document.id
                             );
                         }
                     }
