@@ -15,17 +15,18 @@ mod script_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod shader_watcher;
 mod ui;
-
 use self::asset_browser_system::AssetBrowserSystem;
 #[allow(unused_imports)]
 pub use self::core::EditorApplicationBuilder;
 use self::core::GameViewDisplayMode;
 pub use self::core::{EditorApplication, EditorSharedState};
+use self::project_system::ProjectSystem;
 use self::scene_tabs_panel::SceneTabAction;
-
+use self::selection_system::SelectionSystem;
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;
@@ -1432,21 +1433,20 @@ impl EditorApplication {
     }
 
     pub(super) fn instance_scene_prefab(
-        &mut self,
+        selected_entity: Option<Entity>,
+        project_system: &mut ProjectSystem,
         ctx: &mut GpuUpdateContext,
         document_id: SceneDocumentId,
         node_path: Vec<String>,
     ) -> Option<Entity> {
-        let parent_entity = self.selection_system().selected();
-        let parent_node = parent_entity
+        let parent_node = selected_entity
             .and_then(|entity| ctx.scene.node_for_entity(entity))
             .unwrap_or_else(|| ctx.scene.main_scene());
 
         let host_document = ctx.scene.document_id().to_string();
 
         let display_name = {
-            let project = self.project_system();
-            project
+            project_system
                 .scene_document(&document_id)
                 .map(|doc| {
                     if doc.name.is_empty() {
@@ -1458,7 +1458,7 @@ impl EditorApplication {
                 .unwrap_or_else(|| document_id.clone())
         };
 
-        let library = self.project_system_mut().scene_library_mut();
+        let library = project_system.scene_library_mut();
         let resolved_path = {
             let asset = match library.asset(&document_id) {
                 Some(asset) => asset,
@@ -1513,11 +1513,13 @@ impl EditorApplication {
         fn first_entity(scene: &Scene, node: SceneNodeId) -> Option<Entity> {
             let mut index = 0;
             loop {
-                match scene.node_asset_entity(node, index) {
-                    Some(entity) => return Some(entity),
-                    None => break,
+                if let Some(entity) = scene.node_asset_entity(node, index) {
+                    return Some(entity);
                 }
                 index += 1;
+                if index > 1000 {
+                    break;
+                }
             }
 
             for &child in scene.node_children(node) {

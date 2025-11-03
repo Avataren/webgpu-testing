@@ -113,6 +113,23 @@ impl<'shared> EditorAppAccess<'shared> {
         self.systems.selection_system()
     }
 
+    pub fn instance_scene_prefab(
+        &mut self,
+        ctx: &mut GpuUpdateContext<'_>,
+        document_id: SceneDocumentId,
+        node_path: Vec<String>,
+    ) -> Option<Entity> {
+        let selected_entity = self.systems.selection_system().selected();
+        let project_system = self.systems.project_system_mut();
+        EditorApplication::instance_scene_prefab(
+            selected_entity,
+            project_system,
+            ctx,
+            document_id,
+            node_path,
+        )
+    }
+
     pub fn selection_system_mut(&mut self) -> &mut SelectionSystem {
         let handle = self.shared.active_scene_handle;
         let system = self.systems.selection_system_mut();
