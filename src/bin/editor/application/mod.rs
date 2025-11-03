@@ -44,13 +44,18 @@ use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, Rend
 use wgpu_cube::scene::components::{
     Billboard, BillboardOrientation, DepthState, PrimitiveMeshComponent,
 };
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
     MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
-    ParticleSystemComponent, PointLight, Scene, SpotLight, Transform, TransformComponent,
+    ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
+    SceneTreeAsset, SceneTreeAssetNode, SpotLight, Transform, TransformComponent,
 };
 use wgpu_cube::scripting::RuneScriptingPlugin;
-use wgpu_cube::{DefaultUI, RenderApplication, SceneHierarchyEvent, ScenePrimitivePreset};
+use wgpu_cube::{
+    DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
+    ScenePrimitivePreset,
+};
 
 use crate::inspector::InspectorAction;
 use crate::layout::{EditorBehavior, EditorPane};
@@ -266,12 +271,27 @@ impl EditorApplication {
         let tabs = self.scene_tabs();
         let active_tab_handle = tabs.iter().find(|tab| tab.active).map(|tab| tab.handle);
 
+        let available_scene_docs: Vec<_> = self
+            .project_system()
+            .scene_documents()
+            .iter()
+            .map(|doc| {
+                let display_name = if doc.name.is_empty() {
+                    doc.id.clone()
+                } else {
+                    doc.name.clone()
+                };
+                SceneHierarchySceneDescriptor::new(doc.id.clone(), display_name)
+            })
+            .collect();
+
         let mut scene_tab_actions = if !show_fullscreen_game {
             self.scene_tabs_panel.show(&tabs, ctx)
         } else {
             Vec::new()
         };
         let (scene_hierarchy_window, log_window) = default_ui.scene_hierarchy_and_log_windows_mut();
+        scene_hierarchy_window.set_available_scenes(available_scene_docs);
         match active_tab_handle {
             Some(scene_handle) => {
                 if let Some(handle) = self.shared.scene_hierarchy_handle_for_scene(scene_handle) {
@@ -1409,6 +1429,107 @@ impl EditorApplication {
         ctx.scene.set_environment(component.to_environment());
 
         Some(entity)
+    }
+
+    pub(super) fn instance_scene_prefab(
+        &mut self,
+        ctx: &mut GpuUpdateContext,
+        document_id: SceneDocumentId,
+        node_path: Vec<String>,
+    ) -> Option<Entity> {
+        let parent_entity = self.selection_system().selected();
+        let parent_node = parent_entity
+            .and_then(|entity| ctx.scene.node_for_entity(entity))
+            .unwrap_or_else(|| ctx.scene.main_scene());
+
+        let host_document = ctx.scene.document_id().to_string();
+
+        let display_name = {
+            let project = self.project_system();
+            project
+                .scene_document(&document_id)
+                .map(|doc| {
+                    if doc.name.is_empty() {
+                        doc.id.clone()
+                    } else {
+                        doc.name.clone()
+                    }
+                })
+                .unwrap_or_else(|| document_id.clone())
+        };
+
+        let library = self.project_system_mut().scene_library_mut();
+        let resolved_path = {
+            let asset = match library.asset(&document_id) {
+                Some(asset) => asset,
+                None => {
+                    log::warn!(
+                        "Scene document '{}' is not loaded; cannot instance into hierarchy.",
+                        document_id
+                    );
+                    return None;
+                }
+            };
+
+            if node_path.is_empty() {
+                asset
+                    .entities
+                    .iter()
+                    .find(|entity| entity.parent.is_none())
+                    .and_then(|entity| entity.name.clone())
+                    .map(|name| vec![name])
+                    .unwrap_or_default()
+            } else {
+                node_path
+            }
+        };
+
+        if resolved_path.is_empty() {
+            log::warn!(
+                "Scene document '{}' has no identifiable root node to instance.",
+                document_id
+            );
+            return None;
+        }
+
+        let prefab_ref = ScenePrefabRef {
+            document: document_id.clone(),
+            node_path: resolved_path,
+            overrides: ScenePrefabOverrides::default(),
+        };
+
+        let tree_node = SceneTreeAssetNode::builder(display_name.clone())
+            .with_scene_ref(prefab_ref)
+            .build();
+        let tree_asset = SceneTreeAsset::new(display_name, tree_node);
+
+        let node_id = ctx.scene.instantiate_tree_asset(
+            library,
+            &tree_asset,
+            Some(parent_node),
+            Some(host_document.as_str()),
+        );
+
+        fn first_entity(scene: &Scene, node: SceneNodeId) -> Option<Entity> {
+            let mut index = 0;
+            loop {
+                match scene.node_asset_entity(node, index) {
+                    Some(entity) => return Some(entity),
+                    None => break,
+                }
+                index += 1;
+            }
+
+            for &child in scene.node_children(node) {
+                if let Some(entity) = first_entity(scene, child) {
+                    return Some(entity);
+                }
+            }
+
+            None
+        }
+
+        first_entity(&ctx.scene, node_id)
     }
 
     #[cfg(not(target_arch = "wasm32"))]

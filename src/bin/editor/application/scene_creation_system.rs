@@ -47,6 +47,10 @@ impl SceneCreationSystem {
                     SceneCreationAction::SpotLight => app.create_spot_light(gpu_ctx),
                     SceneCreationAction::Camera => app.create_camera(gpu_ctx),
                     SceneCreationAction::Environment => app.create_environment(gpu_ctx),
+                    SceneCreationAction::SceneInstance {
+                        document_id,
+                        node_path,
+                    } => app.instance_scene_prefab(gpu_ctx, document_id, node_path),
                 };
 
                 if let Some(entity) = created {

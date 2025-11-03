@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
-use wgpu_cube::project::{ProjectError, ProjectManifest};
+use wgpu_cube::project::{ProjectError, ProjectManifest, SceneDocument};
 use wgpu_cube::scene::{
     InstantiatedSceneAsset, Name, SceneLibrary, Transform, TransformComponent, Visible,
 };
@@ -254,6 +254,29 @@ impl ProjectSystem {
 
     pub(super) fn controller_mut(&mut self) -> &mut ProjectController {
         &mut self.controller
+    }
+
+    pub(super) fn controller(&self) -> &ProjectController {
+        &self.controller
+    }
+
+    pub(super) fn scene_documents(&self) -> &[SceneDocument] {
+        self.controller.scene_documents()
+    }
+
+    pub(super) fn scene_document(&self, document_id: &str) -> Option<&SceneDocument> {
+        self.controller
+            .scene_documents()
+            .iter()
+            .find(|doc| doc.id == document_id)
+    }
+
+    pub(super) fn scene_library(&self) -> &SceneLibrary {
+        &self.scene_library
+    }
+
+    pub(super) fn scene_library_mut(&mut self) -> &mut SceneLibrary {
+        &mut self.scene_library
     }
 
     pub(super) fn is_startup_dialog_visible(&self) -> bool {

@@ -315,6 +315,19 @@ impl Scene {
         self.node(node).instance().asset_entity(index)
     }
 
+    pub fn node_for_entity(&self, entity: Entity) -> Option<SceneNodeId> {
+        for (node_id, node) in self.nodes.iter() {
+            let instance = node.instance();
+            for index in 0..instance.asset_entity_count() {
+                if instance.asset_entity(index) == Some(entity) {
+                    return Some(node_id);
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn clear_node_local_transform_override(&mut self, node: SceneNodeId) {
         self.node_mut(node).clear_local_transform_override();
     }
