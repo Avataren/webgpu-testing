@@ -261,6 +261,10 @@ impl SceneInstance {
         self.asset_entity_map.get(index).copied().flatten()
     }
 
+    pub(crate) fn asset_entity_count(&self) -> usize {
+        self.asset_entity_map.len()
+    }
+
     pub(crate) fn clear_asset_entity(&mut self, index: usize) {
         if let Some(entry) = self.asset_entity_map.get_mut(index) {
             *entry = None;

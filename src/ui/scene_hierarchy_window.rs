@@ -65,7 +65,7 @@ impl ScenePrimitivePreset {
 }
 
 #[cfg(feature = "egui")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneCreationAction {
     Primitive(ScenePrimitivePreset),
     ParticleSystem(ParticleBehaviorPreset),
@@ -74,6 +74,10 @@ pub enum SceneCreationAction {
     SpotLight,
     Camera,
     Environment,
+    SceneInstance {
+        document_id: SceneDocumentId,
+        node_path: Vec<String>,
+    },
 }
 
 #[cfg(feature = "egui")]
@@ -85,9 +89,27 @@ pub enum SceneHierarchyEvent {
 
 #[cfg(feature = "egui")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneHierarchySceneDescriptor {
+    pub document_id: SceneDocumentId,
+    pub display_name: String,
+}
+
+#[cfg(feature = "egui")]
+impl SceneHierarchySceneDescriptor {
+    pub fn new(document_id: SceneDocumentId, display_name: impl Into<String>) -> Self {
+        Self {
+            document_id,
+            display_name: display_name.into(),
+        }
+    }
+}
+
+#[cfg(feature = "egui")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SceneHierarchyWorkspaceInfo {
     active_document: Option<SceneDocumentId>,
     open_documents: BTreeSet<SceneDocumentId>,
+    available_scenes: Vec<SceneHierarchySceneDescriptor>,
 }
 
 #[cfg(feature = "egui")]
@@ -99,10 +121,13 @@ impl SceneHierarchyWorkspaceInfo {
             .filter_map(|handle| workspace.document_id_for_handle(handle).cloned())
             .collect();
 
-        Self {
+        let mut info = Self {
             active_document,
             open_documents,
-        }
+            available_scenes: Vec::new(),
+        };
+
+        info
     }
 
     pub fn active_document_id(&self) -> Option<&SceneDocumentId> {
@@ -115,6 +140,14 @@ impl SceneHierarchyWorkspaceInfo {
 
     pub fn is_foreign_document(&self, document_id: &str) -> bool {
         self.active_document.as_deref() != Some(document_id)
+    }
+
+    pub fn available_scenes(&self) -> &[SceneHierarchySceneDescriptor] {
+        &self.available_scenes
+    }
+
+    pub fn set_available_scenes(&mut self, scenes: Vec<SceneHierarchySceneDescriptor>) {
+        self.available_scenes = scenes;
     }
 }
 
@@ -361,6 +394,10 @@ impl SceneHierarchyState {
     pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
         self.workspace.clone()
     }
+
+    pub fn set_workspace_info(&mut self, workspace: SceneHierarchyWorkspaceInfo) {
+        self.workspace = workspace;
+    }
 }
 
 #[cfg(feature = "egui")]
@@ -443,6 +480,7 @@ pub struct SceneHierarchyWindow {
     active_scene: Option<SceneHandle>,
     view_states: HashMap<SceneHandle, SceneHierarchyViewState>,
     pending_scroll_to_selection: bool,
+    workspace_cache: SceneHierarchyWorkspaceInfo,
 }
 
 #[cfg(feature = "egui")]
@@ -454,6 +492,7 @@ impl SceneHierarchyWindow {
             active_scene: None,
             view_states: HashMap::new(),
             pending_scroll_to_selection: false,
+            workspace_cache: SceneHierarchyWorkspaceInfo::default(),
         };
 
         if let Some((scene_handle, handle)) = initial {
@@ -547,13 +586,29 @@ impl SceneHierarchyWindow {
         self.pending_scroll_to_selection = false;
     }
 
-    pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
-        let Some(handle) = &self.handle else {
-            return SceneHierarchyWorkspaceInfo::default();
-        };
-        match handle.lock() {
-            Ok(state) => state.workspace_info(),
-            Err(_) => SceneHierarchyWorkspaceInfo::default(),
+    pub fn workspace_info(&mut self) -> SceneHierarchyWorkspaceInfo {
+        if let Some(handle) = &self.handle {
+            if let Ok(state) = handle.lock() {
+                let info = state.workspace_info();
+                self.workspace_cache = info.clone();
+                return info;
+            }
+        }
+
+        self.workspace_cache.clone()
+    }
+
+    pub fn set_available_scenes(&mut self, scenes: Vec<SceneHierarchySceneDescriptor>) {
+        self.workspace_cache.set_available_scenes(scenes.clone());
+
+        if let Some(handle) = &self.handle {
+            if let Ok(mut state) = handle.lock() {
+                let mut info = state.workspace_info();
+                if info.available_scenes() != scenes.as_slice() {
+                    info.set_available_scenes(scenes);
+                    state.set_workspace_info(info);
+                }
+            }
         }
     }
 
@@ -631,6 +686,27 @@ impl SceneHierarchyWindow {
                         }
                     }
                 });
+
+                if workspace.available_scenes().is_empty() {
+                    ui.add_enabled(false, egui::Button::new("Instance Scene"));
+                    ui.label("Open a project with scenes to enable instancing.");
+                } else {
+                    ui.menu_button("Instance Scene", |ui| {
+                        for scene in workspace.available_scenes() {
+                            let label = scene.display_name.as_str();
+                            if ui.button(label).clicked() {
+                                events.push(SceneHierarchyEvent::Create(
+                                    SceneCreationAction::SceneInstance {
+                                        document_id: scene.document_id.clone(),
+                                        node_path: Vec::new(),
+                                    },
+                                ));
+                                close_top_menu = true;
+                                ui.close();
+                            }
+                        }
+                    });
+                }
 
                 ui.menu_button("Light", |ui| {
                     if ui.button("Directional Light").clicked() {

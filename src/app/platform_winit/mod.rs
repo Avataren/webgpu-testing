@@ -11,7 +11,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::{app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition}};
+use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
 use crate::renderer::{CustomRenderCallback, CustomRenderStage, RenderRegion, Renderer};
 use crate::scene::SceneWorkspace;
 
