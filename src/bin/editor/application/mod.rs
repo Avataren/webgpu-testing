@@ -79,6 +79,8 @@ impl RenderApplication for EditorApplication {
     }
 
     fn setup(&mut self, ctx: &mut StartupContext) {
+        Self::ensure_editor_scene_basics(&mut ctx.scene, ctx.renderer);
+        self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         self.initialize_history_state(&mut ctx.scene);
     }
 
@@ -153,6 +155,7 @@ impl EditorApplication {
 
         if scene_changed {
             ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
+            self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         }
 
         self.process_pending_mode_transition(ctx);
@@ -213,6 +216,7 @@ impl EditorApplication {
 
         if scene_changed {
             self.shared.active_camera_entity = ctx.scene.active_camera_entity();
+            self.shared.mark_scene_hierarchy_dirty(handle);
             let (selected, highlighted) = {
                 let selection = self.selection_system();
                 (selection.selected(), selection.highlighted())
