@@ -15,7 +15,7 @@ use thiserror::Error;
 use log::{debug, error, info, warn};
 
 use crate::app::{AppBuilder, Plugin, StartupContext};
-use crate::scene::{InputState, Name, Transform, TransformComponent};
+use crate::scene::{InputState, Name, Parent, Transform, TransformComponent};
 use crate::scripting::component_registry::{ComponentRegistry, ComponentRegistryError};
 
 /// Error type produced by the Rune scripting integration.
@@ -602,6 +602,7 @@ struct PendingEntity {
     translation: Option<Vec3>,
     rotation: Option<Quat>,
     script: Option<RuneScriptSource>,
+    parent: Option<i64>,
 }
 
 enum ExistingCommand {
@@ -915,6 +916,12 @@ impl ScriptCommands {
     }
 
     fn set_parent(&mut self, handle: i64, parent_handle: Option<i64>) -> VmResult<()> {
+        // If the child is a pending entity, store the parent handle to be resolved later
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.parent = parent_handle;
+            return VmResult::Ok(());
+        }
+
         let entity_bits = match self.resolve_entity_bits(handle) {
             VmResult::Ok(bits) => bits,
             VmResult::Err(err) => return VmResult::Err(err),
@@ -997,6 +1004,26 @@ impl ScriptCommands {
             if let Some(script) = pending.script {
                 world.insert_one(entity, RuneScriptComponent::new(script))?;
                 result.scripts_added.push(entity);
+            }
+
+            if let Some(parent_handle) = pending.parent {
+                // Resolve the parent handle - it could be a real entity or a pending entity that was already spawned
+                let registry = self.registry.borrow();
+                let parent_bits = if let Some(bits) = registry.resolved_bits(parent_handle) {
+                    bits
+                } else if parent_handle > 0 {
+                    // It's a real entity bits value, not a registry handle
+                    parent_handle as u64
+                } else {
+                    // Parent handle is not resolved yet - this shouldn't happen if entities are processed in order,
+                    // but we'll skip setting the parent in this case
+                    continue;
+                };
+                drop(registry);
+
+                if let Some(parent_entity) = Entity::from_bits(parent_bits) {
+                    world.insert_one(entity, Parent(parent_entity))?;
+                }
             }
         }
 
