@@ -108,9 +108,10 @@ impl ShaderEditorState {
         let mut open = self.open;
         let window_title = format!("Shader Editor - {}", self.window_label());
         egui::Window::new(window_title)
+            .id(egui::Id::new("shader_editor_window")) 
             .open(&mut open)
             .resizable(true)
-            .default_size(egui::vec2(900.0, 400.0))
+            .default_size(egui::vec2(720.0, 520.0))
             .show(ctx, |ui| {
                 if let Some(status) = &self.status {
                     let color = status.color(ui.visuals());
