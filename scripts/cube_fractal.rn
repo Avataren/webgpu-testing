@@ -1,0 +1,131 @@
+// Rotating Cube Fractal Script
+// Recreates the CreateTestScene2() fractal from the C++ engine
+// This creates a recursive cube structure where each cube spawns children in 6 directions
+
+const FRACTAL_ITERATIONS = 5;
+const FRACTAL_SPEED = 1.0;
+const ROOT_SCALE = 0.75;
+const BRANCH_SCALE = 0.42;
+const BRANCH_OFFSET = 1.42; // 1.0 + 1.0 * BRANCH_SCALE
+
+struct FractalState {
+    initialized,
+    angle_x,
+    angle_y,
+    angle_z,
+}
+
+pub fn on_created(self_entity) {
+    log_info("Creating rotating cube fractal...");
+
+    // Initialize root state
+    set_state(self_entity, "fractal_state", FractalState {
+        initialized: true,
+        angle_x: 0.0,
+        angle_y: 0.0,
+        angle_z: 0.0,
+    });
+
+    // Add cube mesh to root
+    add_component(self_entity, "PrimitiveMeshComponent", "cube");
+    add_component(self_entity, "Visible", true);
+
+    // Set root scale
+    set_scale(self_entity, ROOT_SCALE, ROOT_SCALE, ROOT_SCALE);
+
+    // Position the root
+    set_translation(self_entity, -2.0, 3.0, -5.0);
+
+    // Start recursive creation
+    add_next_recursion(self_entity, [0.0, 0.0, 0.0], FRACTAL_ITERATIONS, true);
+
+    log_info(`Fractal creation complete!`);
+}
+
+pub fn update(self_entity, dt) {
+    // Rotate the root entity
+    let state = get_state(self_entity, "fractal_state", FractalState {
+        initialized: false,
+        angle_x: 0.0,
+        angle_y: 0.0,
+        angle_z: 0.0,
+    });
+
+    // Root rotation speeds (based on the C++ code)
+    let speed_x = FRACTAL_SPEED * 0.25;
+    let speed_y = FRACTAL_SPEED * 0.3;
+    let speed_z = FRACTAL_SPEED * 0.4;
+
+    let new_angle_x = state.angle_x + dt * speed_x;
+    let new_angle_y = state.angle_y + dt * speed_y;
+    let new_angle_z = state.angle_z + dt * speed_z;
+
+    // Apply rotation (YXZ order: yaw, pitch, roll)
+    set_rotation(self_entity, new_angle_y, new_angle_x, new_angle_z);
+
+    set_state(self_entity, "fractal_state", FractalState {
+        initialized: true,
+        angle_x: new_angle_x,
+        angle_y: new_angle_y,
+        angle_z: new_angle_z,
+    });
+}
+
+fn add_next_recursion(parent, from_dir, recursion_count, is_root) {
+    if recursion_count <= 0 {
+        return;
+    }
+
+    // Six directions for branching
+    let directions = [
+        [1.0, 0.0, 0.0],   // +X
+        [-1.0, 0.0, 0.0],  // -X
+        [0.0, 1.0, 0.0],   // +Y
+        [0.0, -1.0, 0.0],  // -Y
+        [0.0, 0.0, 1.0],   // +Z
+        [0.0, 0.0, -1.0],  // -Z
+    ];
+
+    // Calculate speed multiplier (alternates based on recursion depth)
+    let flip = if recursion_count % 2 == 0 { 1.5 } else { -0.75 };
+
+    for direction in directions {
+        // Check if this direction is opposite to where we came from
+        let dot = direction[0] * from_dir[0] + direction[1] * from_dir[1] + direction[2] * from_dir[2];
+
+        // If dot product is less than -0.9, skip (opposite direction)
+        if dot <= -0.9 {
+            continue;
+        }
+
+        // Create child cube
+        let child = spawn_entity(None);
+
+        // Add cube mesh
+        add_component(child, "PrimitiveMeshComponent", "cube");
+        add_component(child, "Visible", true);
+
+        // Position relative to parent
+        let offset_x = direction[0] * BRANCH_OFFSET;
+        let offset_y = direction[1] * BRANCH_OFFSET;
+        let offset_z = direction[2] * BRANCH_OFFSET;
+        set_translation(child, offset_x, offset_y, offset_z);
+
+        // Scale
+        set_scale(child, BRANCH_SCALE, BRANCH_SCALE, BRANCH_SCALE);
+
+        // Set parent-child relationship
+        set_parent(child, parent);
+
+        // Store rotation state for this child
+        set_state(child, "rotation_axis", direction);
+        set_state(child, "rotation_speed", FRACTAL_SPEED * flip);
+        set_state(child, "angle", 0.0);
+
+        // Attach rotation script to child
+        attach_script(child, "scripts/fractal_cube_rotate.rn");
+
+        // Recursively add more children
+        add_next_recursion(child, direction, recursion_count - 1, false);
+    }
+}
