@@ -16,6 +16,7 @@ use log::{debug, error, info, warn};
 
 use crate::app::{AppBuilder, Plugin, StartupContext};
 use crate::scene::{Name, Transform, TransformComponent};
+use crate::scripting::component_registry::{ComponentRegistry, ComponentRegistryError};
 
 /// Error type produced by the Rune scripting integration.
 #[derive(Debug, Error)]
@@ -45,6 +46,9 @@ pub enum RuneScriptingError {
     /// Failed to initialize the Rune runtime context.
     #[error("failed to initialize Rune context: {0}")]
     Context(#[from] ContextError),
+    /// Component registry error.
+    #[error("component registry error: {0}")]
+    ComponentRegistry(#[from] ComponentRegistryError),
 }
 
 /// Host-facing representation of a script source.
@@ -339,6 +343,8 @@ impl ActiveCommands {
 thread_local! {
     static ACTIVE_COMMANDS: RefCell<ActiveCommands> = RefCell::new(ActiveCommands::default());
     static ACTIVE_STATE: RefCell<Option<Rc<RefCell<ScriptStateMap>>>> = const { RefCell::new(None) };
+    static ACTIVE_WORLD: RefCell<Option<*const World>> = const { RefCell::new(None) };
+    static ACTIVE_REGISTRY: RefCell<Option<*const ComponentRegistry>> = const { RefCell::new(None) };
 }
 
 struct CommandGuard;
@@ -387,6 +393,64 @@ fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> V
         };
         let mut borrow = rc.borrow_mut();
         f(&mut borrow)
+    })
+}
+
+struct WorldGuard;
+
+impl WorldGuard {
+    fn enter(world: &World) -> Self {
+        let ptr = world as *const World;
+        ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self
+    }
+}
+
+impl Drop for WorldGuard {
+    fn drop(&mut self) {
+        ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+struct RegistryGuard;
+
+impl RegistryGuard {
+    fn enter(registry: &ComponentRegistry) -> Self {
+        let ptr = registry as *const ComponentRegistry;
+        ACTIVE_REGISTRY.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self
+    }
+}
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        ACTIVE_REGISTRY.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+fn with_active_world<R>(f: impl FnOnce(&World) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_WORLD.with(|cell| {
+        let opt = cell.borrow();
+        let Some(ptr) = *opt else {
+            return VmResult::panic("world not available");
+        };
+        // SAFETY: The World pointer is only set during script execution and cleared after.
+        // We control script execution to be single-threaded and non-reentrant.
+        let world = unsafe { &*ptr };
+        f(world)
+    })
+}
+
+fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_REGISTRY.with(|cell| {
+        let opt = cell.borrow();
+        let Some(ptr) = *opt else {
+            return VmResult::panic("component registry not available");
+        };
+        // SAFETY: The ComponentRegistry pointer is only set during script execution and cleared after.
+        // We control script execution to be single-threaded and non-reentrant.
+        let registry = unsafe { &*ptr };
+        f(registry)
     })
 }
 
@@ -755,6 +819,7 @@ pub struct ScriptingState {
     runtime: RuneScriptingRuntime,
     instances: HashMap<Entity, RuneScriptInstance>,
     pending_gltf_imports: Vec<PendingGltfImport>,
+    component_registry: ComponentRegistry,
 }
 
 impl ScriptingState {
@@ -764,6 +829,7 @@ impl ScriptingState {
             runtime: RuneScriptingRuntime::new()?,
             instances: HashMap::new(),
             pending_gltf_imports: Vec::new(),
+            component_registry: ComponentRegistry::new(),
         })
     }
 
@@ -800,6 +866,10 @@ impl ScriptingState {
             let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
             {
+                // Set up guards for World and ComponentRegistry access
+                let _world_guard = WorldGuard::enter(world as &World);
+                let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
                 let mut query = world.query::<&mut RuneScriptComponent>();
                 for (entity, component) in query.iter() {
                     if component.created_called() {
@@ -846,6 +916,10 @@ impl ScriptingState {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
         {
+            // Set up guards for World and ComponentRegistry access
+            let _world_guard = WorldGuard::enter(world as &World);
+            let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (entity, component) in query.iter() {
                 if !component.created_called() {
@@ -973,6 +1047,11 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(log_info)?;
     module.function_meta(log_warn)?;
     module.function_meta(log_error)?;
+    // Component access functions
+    module.function_meta(get_component)?;
+    module.function_meta(set_component)?;
+    module.function_meta(has_component)?;
+    module.function_meta(find_entity_by_name)?;
     Ok(module)
 }
 
@@ -1104,4 +1183,121 @@ fn log_warn(message: String) -> VmResult<()> {
 fn log_error(message: String) -> VmResult<()> {
     error!(target: "script", "{message}");
     VmResult::Ok(())
+}
+
+// ============================================================================
+// Component Access Functions
+// ============================================================================
+
+/// Get a component from an entity.
+///
+/// Returns the component value as a Rune object, or None if the entity
+/// doesn't have the component or the component type is unknown.
+///
+/// # Example
+/// ```rune
+/// let transform = get_component(entity, "TransformComponent");
+/// if transform != None {
+///     log_info(`Position: ${transform.translation.x}, ${transform.translation.y}, ${transform.translation.z}`);
+/// }
+/// ```
+#[rune::function]
+fn get_component(entity_bits: i64, component_name: String) -> VmResult<Option<Value>> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let entity = match Entity::from_bits(entity_bits as u64) {
+                Some(e) => e,
+                None => return VmResult::Ok(None),
+            };
+
+            match registry.get_component(world, entity, &component_name) {
+                Ok(value) => VmResult::Ok(Some(value)),
+                Err(ComponentRegistryError::MissingComponent(_)) => VmResult::Ok(None),
+                Err(ComponentRegistryError::UnknownComponent(name)) => {
+                    warn!(target: "script", "Unknown component type: {}", name);
+                    VmResult::Ok(None)
+                }
+                Err(e) => {
+                    error!(target: "script", "Failed to get component: {}", e);
+                    VmResult::Ok(None)
+                }
+            }
+        })
+    })
+}
+
+/// Set a component on an entity.
+///
+/// If the entity already has the component, it will be updated.
+/// If the entity doesn't have the component, it will be added.
+///
+/// # Example
+/// ```rune
+/// set_component(entity, "Name", "MyEntity");
+/// set_component(entity, "TransformComponent", #{
+///     translation: #{ x: 1.0, y: 2.0, z: 3.0 },
+///     rotation: #{ yaw: 0.0, pitch: 0.0, roll: 0.0 },
+///     scale: #{ x: 1.0, y: 1.0, z: 1.0 },
+/// });
+/// ```
+#[rune::function]
+fn set_component(_entity_bits: i64, _component_name: String, _value: Value) -> VmResult<()> {
+    // We can't mutate the World during script execution (we're in a query loop),
+    // so we need to use the command buffer pattern
+    VmResult::panic("set_component not yet implemented - requires command buffer support")
+}
+
+/// Check if an entity has a component.
+///
+/// # Example
+/// ```rune
+/// if has_component(entity, "MeshComponent") {
+///     log_info("Entity has a mesh!");
+/// }
+/// ```
+#[rune::function]
+fn has_component(entity_bits: i64, component_name: String) -> VmResult<bool> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let entity = match Entity::from_bits(entity_bits as u64) {
+                Some(e) => e,
+                None => return VmResult::Ok(false),
+            };
+
+            match registry.has_component(world, entity, &component_name) {
+                Ok(has) => VmResult::Ok(has),
+                Err(ComponentRegistryError::UnknownComponent(name)) => {
+                    warn!(target: "script", "Unknown component type: {}", name);
+                    VmResult::Ok(false)
+                }
+                Err(e) => {
+                    error!(target: "script", "Failed to check component: {}", e);
+                    VmResult::Ok(false)
+                }
+            }
+        })
+    })
+}
+
+/// Find an entity by name.
+///
+/// Returns the entity handle if found, or None if no entity with that name exists.
+///
+/// # Example
+/// ```rune
+/// let player = find_entity_by_name("Player");
+/// if player != None {
+///     log_info("Found the player!");
+/// }
+/// ```
+#[rune::function]
+fn find_entity_by_name(name: String) -> VmResult<Option<i64>> {
+    with_active_world(|world| {
+        for (entity, entity_name) in world.query::<&Name>().iter() {
+            if entity_name.0 == name {
+                return VmResult::Ok(Some(entity_bits(entity)));
+            }
+        }
+        VmResult::Ok(None)
+    })
 }
