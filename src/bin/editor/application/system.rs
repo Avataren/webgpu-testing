@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
-use super::core::{EditorApplication, EditorSharedState, EditorSystemIndices, PendingScriptAction};
+use super::core::{EditorApplication, EditorSharedState, EditorSystemIndices, PendingScriptAction, PendingShaderAction};
 use super::history_system::HistorySystem;
 use super::project_system::ProjectSystem;
 use super::script_editor_system::ScriptEditorSystem;
+use super::shader_editor_system::ShaderEditorSystem;
 use super::selection_system::SelectionSystem;
 use crate::asset_browser::AssetBrowserState;
 use crate::history::EditorHistory;
@@ -28,6 +29,7 @@ pub(super) enum EditorCommand {
     Inspector(InspectorAction),
     CreateScene(SceneCreationAction),
     Script(PendingScriptAction),
+    Shader(PendingShaderAction),
     ActivateScene(SceneDocumentId),
     CloseScene(SceneDocumentId),
     NewScene,
@@ -333,6 +335,10 @@ impl<'app> EditorSystemsAccess<'app> {
         self.system_mut(self.indices.script_editor)
     }
 
+    pub fn shader_editor_system_mut(&mut self) -> &mut ShaderEditorSystem {
+        self.system_mut(self.indices.shader_editor)
+    }
+
     pub fn asset_browser_system(&self) -> &AssetBrowserSystem {
         self.system_ref(self.indices.asset_browser)
     }
@@ -494,6 +500,10 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
 
     pub fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
         self.systems_mut().script_editor_system_mut()
+    }
+
+    pub fn shader_editor_system_mut(&mut self) -> &mut ShaderEditorSystem {
+        self.systems_mut().shader_editor_system_mut()
     }
 
     pub fn history(&mut self) -> &mut EditorHistory {

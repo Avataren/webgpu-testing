@@ -12,6 +12,7 @@ mod runtime_mode;
 mod scene_creation_system;
 mod scene_tabs_panel;
 mod script_editor_system;
+mod shader_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
@@ -388,6 +389,14 @@ impl EditorApplication {
                     self.script_editor_system_mut()
                         .open_script_editor(entity, component);
                 }
+                InspectorAction::EditShader {
+                    entity,
+                    handle,
+                    metadata,
+                } => {
+                    self.shader_editor_system_mut()
+                        .open_shader_editor(entity, handle, &metadata);
+                }
                 other => {
                     self.enqueue_command(EditorCommand::Inspector(other));
                 }
@@ -419,6 +428,8 @@ impl EditorApplication {
         }
 
         self.script_editor_system_mut()
+            .set_window_enabled(!show_fullscreen_game);
+        self.shader_editor_system_mut()
             .set_window_enabled(!show_fullscreen_game);
         self.run_system_ui(ctx, default_ui);
     }
@@ -1161,6 +1172,9 @@ impl EditorApplication {
                 }
                 InspectorAction::EditScript { .. } => {
                     // Script edits are handled immediately in the UI stage.
+                }
+                InspectorAction::EditShader { .. } => {
+                    // Shader edits are handled immediately in the UI stage.
                 }
             }
         }

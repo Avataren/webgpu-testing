@@ -24,6 +24,7 @@ use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
 use super::scene_tabs_panel::SceneTabsPanel;
 use super::script_editor_system::ScriptEditorSystem;
+use super::shader_editor_system::ShaderEditorSystem;
 use super::selection_system::SelectionSystem;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shader_watcher::ShaderWatcher;
@@ -140,6 +141,7 @@ pub struct EditorApplication {
     pub(super) history_system_index: usize,
     pub(super) project_system_index: usize,
     pub(super) script_editor_system_index: usize,
+    pub(super) shader_editor_system_index: usize,
     pub(super) asset_browser_system_index: usize,
     pub(super) particle_system_index: usize,
     pub(super) scene_tabs_panel: SceneTabsPanel,
@@ -152,6 +154,7 @@ pub(super) struct EditorSystemIndices {
     pub(super) history: usize,
     pub(super) project: usize,
     pub(super) script_editor: usize,
+    pub(super) shader_editor: usize,
     pub(super) asset_browser: usize,
 }
 
@@ -263,6 +266,12 @@ impl EditorApplicationBuilder {
             systems.push(Box::new(system));
             index
         };
+        let shader_editor_system_index = {
+            let system = ShaderEditorSystem::default();
+            let index = systems.len();
+            systems.push(Box::new(system));
+            index
+        };
         let asset_browser_system_index = {
             let state = self.asset_browser.unwrap_or_default();
             let system = AssetBrowserSystem::new(state);
@@ -319,6 +328,7 @@ impl EditorApplicationBuilder {
             history_system_index,
             project_system_index,
             script_editor_system_index,
+            shader_editor_system_index,
             asset_browser_system_index,
             particle_system_index,
             scene_tabs_panel: SceneTabsPanel,
@@ -405,6 +415,13 @@ impl EditorApplication {
             .expect("script editor system registered")
     }
 
+    pub(super) fn shader_editor_system_mut(&mut self) -> &mut ShaderEditorSystem {
+        self.systems[self.shader_editor_system_index]
+            .as_any_mut()
+            .downcast_mut::<ShaderEditorSystem>()
+            .expect("shader editor system registered")
+    }
+
     pub(super) fn asset_browser_system_mut(&mut self) -> &mut AssetBrowserSystem {
         self.systems[self.asset_browser_system_index]
             .as_any_mut()
@@ -445,6 +462,7 @@ impl EditorApplication {
             history: self.history_system_index,
             project: self.project_system_index,
             script_editor: self.script_editor_system_index,
+            shader_editor: self.shader_editor_system_index,
             asset_browser: self.asset_browser_system_index,
         }
     }
@@ -774,6 +792,14 @@ pub(super) enum PendingScriptAction {
     },
     ReloadRuntime {
         entity: Entity,
+        message: String,
+    },
+}
+
+pub(super) enum PendingShaderAction {
+    Save {
+        handle: Handle<MaterialAsset>,
+        contents: String,
         message: String,
     },
 }
