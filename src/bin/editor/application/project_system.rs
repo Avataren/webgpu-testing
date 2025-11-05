@@ -455,7 +455,9 @@ impl ProjectSystem {
 
                             app.history_system_mut().reset();
 
-                            if let Some(active_handle) = workspace.active_scene_handle() {
+                            let active_handle = workspace.active_scene_handle();
+
+                            if let Some(active_handle) = active_handle {
                                 if let Some(mut scene) =
                                     workspace.scene_mut_by_handle(active_handle)
                                 {
@@ -472,6 +474,11 @@ impl ProjectSystem {
                             }
 
                             gpu_ctx.request_workspace_swap(workspace, textures_changed);
+
+                            // Mark the scene hierarchy as dirty to refresh the UI
+                            if let Some(handle) = active_handle {
+                                app.mark_scene_hierarchy_dirty(handle);
+                            }
 
                             self.controller.set_current_dir(dir.clone());
                             self.controller.set_scene_documents(manifest.scenes.clone());
