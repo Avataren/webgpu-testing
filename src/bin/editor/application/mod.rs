@@ -27,7 +27,6 @@ use self::core::GameViewDisplayMode;
 pub use self::core::{EditorApplication, EditorSharedState};
 use self::project_system::ProjectSystem;
 use self::scene_tabs_panel::SceneTabAction;
-use self::selection_system::SelectionSystem;
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;

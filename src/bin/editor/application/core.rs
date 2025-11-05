@@ -7,7 +7,7 @@ use egui_tiles::{Tile, TileId, Tree};
 use glam::{Vec2, Vec3};
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
-use wgpu_cube::asset::{Handle, Mesh};
+use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
@@ -672,6 +672,7 @@ impl EditorApplication {
                 CloseScene(document_id) => ctx.request_close_scene(document_id),
                 NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
                 Script(action) => remaining.push_back(Script(action)),
+                Shader(action) => remaining.push_back(Shader(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
                 HistoryUndo => remaining.push_back(HistoryUndo),
                 HistoryRedo => remaining.push_back(HistoryRedo),

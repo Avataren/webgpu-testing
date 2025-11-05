@@ -178,7 +178,7 @@ impl ShaderEditorSystem {
 
 impl EditorSystem for ShaderEditorSystem {
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
-        if ctx.gpu_update_context_mut().is_none() {
+        if ctx.update_context_mut().is_none() {
             return;
         }
 
@@ -187,7 +187,7 @@ impl EditorSystem for ShaderEditorSystem {
             Self::drain_shader_commands(queue)
         };
 
-        let _ = ctx.with_gpu_update_app(move |app, gpu_ctx| {
+        let _ = ctx.with_update_app(move |app, gpu_ctx| {
             self.ensure_target_valid(&gpu_ctx.scene);
             self.process_pending_actions(app, &mut gpu_ctx.scene, Some(gpu_ctx), actions);
         });
