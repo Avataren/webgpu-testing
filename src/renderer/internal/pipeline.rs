@@ -682,28 +682,32 @@ pub(crate) struct BindlessTextureBinder {
 }
 
 impl BindlessTextureBinder {
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("BindlessSamplerLinear"),
+    fn create_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
+        let filter = if linear {
+            wgpu::FilterMode::Linear
+        } else {
+            wgpu::FilterMode::Nearest
+        };
+        let label = if linear {
+            "BindlessSamplerLinear"
+        } else {
+            "BindlessSamplerNearest"
+        };
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(label),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mag_filter: filter,
+            min_filter: filter,
+            mipmap_filter: filter,
             ..Default::default()
-        });
+        })
+    }
 
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("BindlessSamplerNearest"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
+        let linear_sampler = Self::create_sampler(device, true);
+        let nearest_sampler = Self::create_sampler(device, false);
 
         let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BindlessFallbackTexture"),
@@ -807,28 +811,32 @@ pub(crate) struct TraditionalTextureBinder {
 }
 
 impl TraditionalTextureBinder {
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
-        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("TraditionalSamplerLinear"),
+    fn create_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
+        let filter = if linear {
+            wgpu::FilterMode::Linear
+        } else {
+            wgpu::FilterMode::Nearest
+        };
+        let label = if linear {
+            "TraditionalSamplerLinear"
+        } else {
+            "TraditionalSamplerNearest"
+        };
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some(label),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mag_filter: filter,
+            min_filter: filter,
+            mipmap_filter: filter,
             ..Default::default()
-        });
+        })
+    }
 
-        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("TraditionalSamplerNearest"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Self {
+        let linear_sampler = Self::create_sampler(device, true);
+        let nearest_sampler = Self::create_sampler(device, false);
 
         let fallback_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("TraditionalFallbackTexture"),
@@ -912,7 +920,11 @@ impl TraditionalTextureBinder {
     }
 
     fn update(&mut self, _device: &wgpu::Device, _assets: &Assets) {
-        self.material_bind_groups.clear();
+        // Traditional binder lazily creates bind groups per material,
+        // so no need to clear them on update. Bind groups remain valid
+        // as long as the texture handles referenced by materials don't change.
+        // If textures are updated in assets, bind groups will be recreated
+        // on next access via bind_group_for_material.
     }
 
     fn bind_group_for_material(
