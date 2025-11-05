@@ -1,0 +1,62 @@
+// Event Listener Example
+// This script subscribes to and handles events emitted by other scripts
+// Attach this script to a different entity to test inter-script communication
+
+pub fn on_created(self_entity) {
+    log_info("Event Listener initialized - subscribing to events");
+
+    // Subscribe to various events
+    subscribe_event("space_pressed", "on_space_pressed");
+    subscribe_event("entity_moved", "on_entity_moved");
+    subscribe_event("counter_updated", "on_counter_updated");
+
+    set_state(self_entity, "events_received", 0.0);
+}
+
+pub fn update(self_entity, dt) {
+    // Display info when I key is pressed
+    if is_key_just_pressed("I") {
+        let count = get_f64(self_entity, "events_received", 0.0);
+        log_info(`Event Listener has received ${count} events so far`);
+    }
+
+    // Unsubscribe from space_pressed when U is pressed
+    if is_key_just_pressed("U") {
+        log_info("Unsubscribing from 'space_pressed' event");
+        unsubscribe_event("space_pressed");
+    }
+}
+
+// Event handler for space_pressed event
+pub fn on_space_pressed(event_data) {
+    log_info("=== EVENT RECEIVED: space_pressed ===");
+    log_info(`  Message: ${event_data.message}`);
+    log_info(`  From entity: ${event_data.entity}`);
+
+    // Increment received counter
+    let self_entity = event_data.entity; // Use any entity to track our state
+    let count = get_f64(self_entity, "events_received", 0.0);
+    set_f64(self_entity, "events_received", count + 1.0);
+}
+
+// Event handler for entity_moved event
+pub fn on_entity_moved(event_data) {
+    log_info("=== EVENT RECEIVED: entity_moved ===");
+    log_info(`  Entity: ${event_data.entity}`);
+    let pos = event_data.position;
+    log_info(`  Position: [${pos[0]}, ${pos[1]}, ${pos[2]}]`);
+}
+
+// Event handler for counter_updated event
+pub fn on_counter_updated(event_data) {
+    log_info("=== EVENT RECEIVED: counter_updated ===");
+    log_info(`  Entity: ${event_data.entity}`);
+    log_info(`  Counter value: ${event_data.count}`);
+
+    // React to specific counter values
+    if event_data.count == 5.0 {
+        log_warn("Counter reached 5!");
+    } else if event_data.count == 10.0 {
+        log_error("Counter reached 10!");
+    }
+}
