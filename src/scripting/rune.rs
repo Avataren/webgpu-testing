@@ -15,7 +15,8 @@ use thiserror::Error;
 use log::{debug, error, info, warn};
 
 use crate::app::{AppBuilder, Plugin, StartupContext};
-use crate::scene::{Name, Transform, TransformComponent};
+use crate::scene::{InputState, Name, Transform, TransformComponent};
+use crate::scripting::component_registry::{ComponentRegistry, ComponentRegistryError};
 
 /// Error type produced by the Rune scripting integration.
 #[derive(Debug, Error)]
@@ -45,6 +46,9 @@ pub enum RuneScriptingError {
     /// Failed to initialize the Rune runtime context.
     #[error("failed to initialize Rune context: {0}")]
     Context(#[from] ContextError),
+    /// Component registry error.
+    #[error("component registry error: {0}")]
+    ComponentRegistry(#[from] ComponentRegistryError),
 }
 
 /// Host-facing representation of a script source.
@@ -339,6 +343,9 @@ impl ActiveCommands {
 thread_local! {
     static ACTIVE_COMMANDS: RefCell<ActiveCommands> = RefCell::new(ActiveCommands::default());
     static ACTIVE_STATE: RefCell<Option<Rc<RefCell<ScriptStateMap>>>> = const { RefCell::new(None) };
+    static ACTIVE_WORLD: RefCell<Option<*const World>> = const { RefCell::new(None) };
+    static ACTIVE_REGISTRY: RefCell<Option<*const ComponentRegistry>> = const { RefCell::new(None) };
+    static ACTIVE_INPUT_STATE: RefCell<Option<*const InputState>> = const { RefCell::new(None) };
 }
 
 struct CommandGuard;
@@ -387,6 +394,93 @@ fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> V
         };
         let mut borrow = rc.borrow_mut();
         f(&mut borrow)
+    })
+}
+
+struct WorldGuard;
+
+impl WorldGuard {
+    fn enter(world: &World) -> Self {
+        let ptr = world as *const World;
+        ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self
+    }
+}
+
+impl Drop for WorldGuard {
+    fn drop(&mut self) {
+        ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+struct RegistryGuard;
+
+impl RegistryGuard {
+    fn enter(registry: &ComponentRegistry) -> Self {
+        let ptr = registry as *const ComponentRegistry;
+        ACTIVE_REGISTRY.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self
+    }
+}
+
+impl Drop for RegistryGuard {
+    fn drop(&mut self) {
+        ACTIVE_REGISTRY.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+struct InputStateGuard;
+
+impl InputStateGuard {
+    fn enter(input_state: &InputState) -> Self {
+        let ptr = input_state as *const InputState;
+        ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = Some(ptr));
+        Self
+    }
+}
+
+impl Drop for InputStateGuard {
+    fn drop(&mut self) {
+        ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+fn with_active_world<R>(f: impl FnOnce(&World) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_WORLD.with(|cell| {
+        let opt = cell.borrow();
+        let Some(ptr) = *opt else {
+            return VmResult::panic("world not available");
+        };
+        // SAFETY: The World pointer is only set during script execution and cleared after.
+        // We control script execution to be single-threaded and non-reentrant.
+        let world = unsafe { &*ptr };
+        f(world)
+    })
+}
+
+fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_REGISTRY.with(|cell| {
+        let opt = cell.borrow();
+        let Some(ptr) = *opt else {
+            return VmResult::panic("component registry not available");
+        };
+        // SAFETY: The ComponentRegistry pointer is only set during script execution and cleared after.
+        // We control script execution to be single-threaded and non-reentrant.
+        let registry = unsafe { &*ptr };
+        f(registry)
+    })
+}
+
+fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_INPUT_STATE.with(|cell| {
+        let opt = cell.borrow();
+        let Some(ptr) = *opt else {
+            return VmResult::panic("input state not available");
+        };
+        // SAFETY: The InputState pointer is only set during script execution and cleared after.
+        // We control script execution to be single-threaded and non-reentrant.
+        let input_state = unsafe { &*ptr };
+        f(input_state)
     })
 }
 
@@ -446,6 +540,41 @@ enum ExistingCommand {
         entity_bits: u64,
         path: String,
         scale: f32,
+    },
+    SetComponent {
+        entity_bits: u64,
+        component_name: String,
+        value: Value,
+    },
+    AddComponent {
+        entity_bits: u64,
+        component_name: String,
+        value: Value,
+    },
+    RemoveComponent {
+        entity_bits: u64,
+        component_name: String,
+    },
+    Translate {
+        entity_bits: u64,
+        delta: Vec3,
+    },
+    Rotate {
+        entity_bits: u64,
+        axis: Vec3,
+        angle: f32,
+    },
+    SetScale {
+        entity_bits: u64,
+        scale: Vec3,
+    },
+    LookAt {
+        entity_bits: u64,
+        target: Vec3,
+    },
+    SetParent {
+        entity_bits: u64,
+        parent_bits: Option<u64>,
     },
 }
 
@@ -597,11 +726,127 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
+    fn set_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::SetComponent {
+            entity_bits,
+            component_name,
+            value,
+        });
+        VmResult::Ok(())
+    }
+
+    fn add_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::AddComponent {
+            entity_bits,
+            component_name,
+            value,
+        });
+        VmResult::Ok(())
+    }
+
+    fn remove_component(&mut self, handle: i64, component_name: String) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::RemoveComponent {
+            entity_bits,
+            component_name,
+        });
+        VmResult::Ok(())
+    }
+
+    fn translate(&mut self, handle: i64, delta: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::Translate {
+            entity_bits,
+            delta,
+        });
+        VmResult::Ok(())
+    }
+
+    fn rotate(&mut self, handle: i64, axis: Vec3, angle: f32) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::Rotate {
+            entity_bits,
+            axis,
+            angle,
+        });
+        VmResult::Ok(())
+    }
+
+    fn set_scale(&mut self, handle: i64, scale: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::SetScale {
+            entity_bits,
+            scale,
+        });
+        VmResult::Ok(())
+    }
+
+    fn look_at(&mut self, handle: i64, target: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::LookAt {
+            entity_bits,
+            target,
+        });
+        VmResult::Ok(())
+    }
+
+    fn set_parent(&mut self, handle: i64, parent_handle: Option<i64>) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        let parent_bits = if let Some(parent) = parent_handle {
+            Some(match self.resolve_entity_bits(parent) {
+                VmResult::Ok(bits) => bits,
+                VmResult::Err(err) => return VmResult::Err(err),
+            })
+        } else {
+            None
+        };
+
+        self.existing.push(ExistingCommand::SetParent {
+            entity_bits,
+            parent_bits,
+        });
+        VmResult::Ok(())
+    }
+
     fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, RuneScriptingError> {
+    fn apply(&mut self, world: &mut World, registry: &ComponentRegistry) -> Result<ScriptApplyResult, RuneScriptingError> {
         let mut result = ScriptApplyResult::default();
 
         for (handle, mut pending) in self.pending.drain() {
@@ -706,6 +951,164 @@ impl ScriptCommands {
                     world.insert_one(entity, RuneScriptComponent::new(source))?;
                     result.scripts_added.push(entity);
                 }
+                ExistingCommand::SetComponent {
+                    entity_bits,
+                    component_name,
+                    value,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Use the registry to set the component
+                    registry.set_component(world, entity, &component_name, &value)?;
+                }
+                ExistingCommand::AddComponent {
+                    entity_bits,
+                    component_name,
+                    value,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Use the registry to add the component
+                    registry.set_component(world, entity, &component_name, &value)?;
+                }
+                ExistingCommand::RemoveComponent {
+                    entity_bits,
+                    component_name,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // We need a remove_component method in the registry
+                    // For now, log a warning
+                    warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
+                }
+                ExistingCommand::Translate {
+                    entity_bits,
+                    delta,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.translation += delta;
+                    })?;
+                }
+                ExistingCommand::Rotate {
+                    entity_bits,
+                    axis,
+                    angle,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        let rotation = glam::Quat::from_axis_angle(axis.normalize(), angle);
+                        transform.rotation = rotation * transform.rotation;
+                    })?;
+                }
+                ExistingCommand::SetScale {
+                    entity_bits,
+                    scale,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.scale = scale;
+                    })?;
+                }
+                ExistingCommand::LookAt {
+                    entity_bits,
+                    target,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        let direction = (target - transform.translation).normalize();
+                        if direction.length_squared() > 0.0 {
+                            transform.rotation = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                        }
+                    })?;
+                }
+                ExistingCommand::SetParent {
+                    entity_bits,
+                    parent_bits,
+                } => {
+                    use crate::scene::components::{Parent, Children};
+
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Get old parent entity (if any) before any mutable borrows
+                    let old_parent_entity = world.get::<&Parent>(entity).ok().map(|p| p.0);
+
+                    // Remove from old parent's children list
+                    if let Some(old_parent) = old_parent_entity {
+                        if let Ok(mut children) = world.get::<&mut Children>(old_parent) {
+                            children.0.retain(|&child| child != entity);
+                        }
+                    }
+
+                    // Set new parent
+                    if let Some(parent_bits_val) = parent_bits {
+                        let Some(parent_entity) = Entity::from_bits(parent_bits_val) else {
+                            continue;
+                        };
+
+                        if world.entity(parent_entity).is_err() {
+                            return Err(ComponentError::NoSuchEntity.into());
+                        }
+
+                        // Set parent component
+                        world.insert_one(entity, Parent(parent_entity))?;
+
+                        // Add to parent's children
+                        // Check if parent has Children component first
+                        let has_children = world.satisfies::<&Children>(parent_entity).unwrap_or(false);
+
+                        if has_children {
+                            // Parent has Children, add this entity
+                            if let Ok(mut children) = world.get::<&mut Children>(parent_entity) {
+                                if !children.0.contains(&entity) {
+                                    children.0.push(entity);
+                                }
+                            }
+                        } else {
+                            // Parent doesn't have Children component yet
+                            world.insert_one(parent_entity, Children(vec![entity]))?;
+                        }
+                    } else {
+                        // Remove parent (unparent)
+                        let _ = world.remove_one::<Parent>(entity);
+                    }
+                }
             }
         }
 
@@ -755,6 +1158,7 @@ pub struct ScriptingState {
     runtime: RuneScriptingRuntime,
     instances: HashMap<Entity, RuneScriptInstance>,
     pending_gltf_imports: Vec<PendingGltfImport>,
+    component_registry: ComponentRegistry,
 }
 
 impl ScriptingState {
@@ -764,6 +1168,7 @@ impl ScriptingState {
             runtime: RuneScriptingRuntime::new()?,
             instances: HashMap::new(),
             pending_gltf_imports: Vec::new(),
+            component_registry: ComponentRegistry::new(),
         })
     }
 
@@ -800,6 +1205,10 @@ impl ScriptingState {
             let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
             {
+                // Set up guards for World and ComponentRegistry access
+                let _world_guard = WorldGuard::enter(world as &World);
+                let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
                 let mut query = world.query::<&mut RuneScriptComponent>();
                 for (entity, component) in query.iter() {
                     if component.created_called() {
@@ -824,7 +1233,7 @@ impl ScriptingState {
             let mut any_scripts_added = false;
             for commands in pending_commands.iter_mut() {
                 let mut borrow = commands.borrow_mut();
-                let result = borrow.apply(world)?;
+                let result = borrow.apply(world, &self.component_registry)?;
                 if !result.scripts_added.is_empty() {
                     any_scripts_added = true;
                 }
@@ -846,6 +1255,10 @@ impl ScriptingState {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
 
         {
+            // Set up guards for World and ComponentRegistry access
+            let _world_guard = WorldGuard::enter(world as &World);
+            let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (entity, component) in query.iter() {
                 if !component.created_called() {
@@ -868,7 +1281,7 @@ impl ScriptingState {
 
         for commands in pending_commands.iter_mut() {
             let mut borrow = commands.borrow_mut();
-            let result = borrow.apply(world)?;
+            let result = borrow.apply(world, &self.component_registry)?;
             if !result.gltf_imports.is_empty() {
                 self.pending_gltf_imports
                     .extend(result.gltf_imports.into_iter());
@@ -973,6 +1386,41 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(log_info)?;
     module.function_meta(log_warn)?;
     module.function_meta(log_error)?;
+    // Component access functions
+    module.function_meta(get_component)?;
+    module.function_meta(set_component)?;
+    module.function_meta(add_component)?;
+    module.function_meta(remove_component)?;
+    module.function_meta(has_component)?;
+    module.function_meta(find_entity_by_name)?;
+    // Transform manipulation functions
+    module.function_meta(translate)?;
+    module.function_meta(rotate)?;
+    module.function_meta(set_scale)?;
+    module.function_meta(look_at)?;
+    module.function_meta(get_world_translation)?;
+    module.function_meta(get_world_rotation)?;
+    // Hierarchy functions
+    module.function_meta(set_parent)?;
+    module.function_meta(get_parent)?;
+    module.function_meta(get_children)?;
+    // Input functions
+    module.function_meta(is_key_pressed)?;
+    module.function_meta(is_key_just_pressed)?;
+    module.function_meta(is_key_just_released)?;
+    module.function_meta(is_mouse_button_pressed)?;
+    module.function_meta(is_mouse_button_just_pressed)?;
+    module.function_meta(is_mouse_button_just_released)?;
+    module.function_meta(get_mouse_position)?;
+    module.function_meta(get_mouse_delta)?;
+    module.function_meta(get_mouse_scroll_delta)?;
+    // Entity query functions
+    module.function_meta(query_entities_with_component)?;
+    // Spatial query functions
+    module.function_meta(get_entities_in_radius)?;
+    module.function_meta(get_nearest_entity)?;
+    module.function_meta(get_nearest_entity_with_component)?;
+    module.function_meta(get_entities_in_box)?;
     Ok(module)
 }
 
@@ -1104,4 +1552,881 @@ fn log_warn(message: String) -> VmResult<()> {
 fn log_error(message: String) -> VmResult<()> {
     error!(target: "script", "{message}");
     VmResult::Ok(())
+}
+
+// ============================================================================
+// Component Access Functions
+// ============================================================================
+
+/// Get a component from an entity.
+///
+/// Returns the component value as a Rune object, or None if the entity
+/// doesn't have the component or the component type is unknown.
+///
+/// # Example
+/// ```rune
+/// let transform = get_component(entity, "TransformComponent");
+/// if transform != None {
+///     log_info(`Position: ${transform.translation.x}, ${transform.translation.y}, ${transform.translation.z}`);
+/// }
+/// ```
+#[rune::function]
+fn get_component(entity_bits: i64, component_name: String) -> VmResult<Option<Value>> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let entity = match Entity::from_bits(entity_bits as u64) {
+                Some(e) => e,
+                None => return VmResult::Ok(None),
+            };
+
+            match registry.get_component(world, entity, &component_name) {
+                Ok(value) => VmResult::Ok(Some(value)),
+                Err(ComponentRegistryError::MissingComponent(_)) => VmResult::Ok(None),
+                Err(ComponentRegistryError::UnknownComponent(name)) => {
+                    warn!(target: "script", "Unknown component type: {}", name);
+                    VmResult::Ok(None)
+                }
+                Err(e) => {
+                    error!(target: "script", "Failed to get component: {}", e);
+                    VmResult::Ok(None)
+                }
+            }
+        })
+    })
+}
+
+/// Set a component on an entity.
+///
+/// If the entity already has the component, it will be updated.
+/// If the entity doesn't have the component, it will be added.
+///
+/// # Example
+/// ```rune
+/// set_component(entity, "Visible", true);
+/// ```
+#[rune::function]
+fn set_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.set_component(entity_bits, component_name, value))
+    })
+}
+
+/// Add a component to an entity.
+///
+/// This is an alias for set_component - both functions work the same way.
+///
+/// # Example
+/// ```rune
+/// add_component(entity, "PointLight", #{
+///     color: [1.0, 0.8, 0.6],
+///     intensity: 5.0,
+///     range: 10.0
+/// });
+/// ```
+#[rune::function]
+fn add_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.add_component(entity_bits, component_name, value))
+    })
+}
+
+/// Remove a component from an entity.
+///
+/// # Example
+/// ```rune
+/// remove_component(entity, "RotateAnimation");
+/// ```
+#[rune::function]
+fn remove_component(entity_bits: i64, component_name: String) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.remove_component(entity_bits, component_name))
+    })
+}
+
+/// Check if an entity has a component.
+///
+/// # Example
+/// ```rune
+/// if has_component(entity, "MeshComponent") {
+///     log_info("Entity has a mesh!");
+/// }
+/// ```
+#[rune::function]
+fn has_component(entity_bits: i64, component_name: String) -> VmResult<bool> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let entity = match Entity::from_bits(entity_bits as u64) {
+                Some(e) => e,
+                None => return VmResult::Ok(false),
+            };
+
+            match registry.has_component(world, entity, &component_name) {
+                Ok(has) => VmResult::Ok(has),
+                Err(ComponentRegistryError::UnknownComponent(name)) => {
+                    warn!(target: "script", "Unknown component type: {}", name);
+                    VmResult::Ok(false)
+                }
+                Err(e) => {
+                    error!(target: "script", "Failed to check component: {}", e);
+                    VmResult::Ok(false)
+                }
+            }
+        })
+    })
+}
+
+/// Find an entity by name.
+///
+/// Returns the entity handle if found, or None if no entity with that name exists.
+///
+/// # Example
+/// ```rune
+/// let player = find_entity_by_name("Player");
+/// if player != None {
+///     log_info("Found the player!");
+/// }
+/// ```
+#[rune::function]
+fn find_entity_by_name(name: String) -> VmResult<Option<i64>> {
+    with_active_world(|world| {
+        for (entity, entity_name) in world.query::<&Name>().iter() {
+            if entity_name.0 == name {
+                return VmResult::Ok(Some(entity_bits(entity)));
+            }
+        }
+        VmResult::Ok(None)
+    })
+}
+
+// ============================================================================
+// Transform Manipulation Functions
+// ============================================================================
+
+/// Translate an entity by a delta vector.
+///
+/// Adds the delta to the entity's current position.
+///
+/// # Example
+/// ```rune
+/// translate(entity, 1.0, 0.0, 0.0);  // Move right by 1 unit
+/// ```
+#[rune::function]
+fn translate(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.translate(entity_bits, Vec3::new(x as f32, y as f32, z as f32))
+        })
+    })
+}
+
+/// Rotate an entity around an axis by an angle in radians.
+///
+/// # Example
+/// ```rune
+/// // Rotate 45 degrees around Y axis
+/// rotate(entity, 0.0, 1.0, 0.0, 0.785);
+/// ```
+#[rune::function]
+fn rotate(entity_bits: i64, axis_x: f64, axis_y: f64, axis_z: f64, angle: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.rotate(
+                entity_bits,
+                Vec3::new(axis_x as f32, axis_y as f32, axis_z as f32),
+                angle as f32,
+            )
+        })
+    })
+}
+
+/// Set the scale of an entity.
+///
+/// # Example
+/// ```rune
+/// set_scale(entity, 2.0, 2.0, 2.0);  // Double the size
+/// ```
+#[rune::function]
+fn set_scale(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.set_scale(entity_bits, Vec3::new(x as f32, y as f32, z as f32))
+        })
+    })
+}
+
+/// Make an entity look at a target position.
+///
+/// # Example
+/// ```rune
+/// look_at(entity, 0.0, 0.0, 10.0);  // Look at point in front
+/// ```
+#[rune::function]
+fn look_at(entity_bits: i64, target_x: f64, target_y: f64, target_z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.look_at(
+                entity_bits,
+                Vec3::new(target_x as f32, target_y as f32, target_z as f32),
+            )
+        })
+    })
+}
+
+/// Get the world-space translation of an entity.
+///
+/// Returns an array [x, y, z] of the entity's world position.
+/// Note: Currently returns local translation. World transform will be added later.
+///
+/// # Example
+/// ```rune
+/// let pos = get_world_translation(entity);
+/// if pos != None {
+///     log_info("Got position");
+/// }
+/// ```
+#[rune::function]
+fn get_world_translation(entity_bits: i64) -> VmResult<Option<rune::alloc::Vec<f64>>> {
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_bits as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        // Get local transform for now
+        if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+            let translation = transform.0.translation;
+            let mut vec = rune::alloc::Vec::new();
+            if let Err(e) = vec.try_push(translation.x as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(translation.y as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(translation.z as f64) {
+                return VmResult::Err(e.into());
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+/// Get the world-space rotation of an entity as euler angles.
+///
+/// Returns an array [yaw, pitch, roll] in radians.
+/// Note: Currently returns local rotation. World transform will be added later.
+///
+/// # Example
+/// ```rune
+/// let rot = get_world_rotation(entity);
+/// if rot != None {
+///     log_info("Got rotation");
+/// }
+/// ```
+#[rune::function]
+fn get_world_rotation(entity_bits: i64) -> VmResult<Option<rune::alloc::Vec<f64>>> {
+    use glam::EulerRot;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_bits as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        // Get local transform for now
+        if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+            let (yaw, pitch, roll) = transform.0.rotation.to_euler(EulerRot::YXZ);
+            let mut vec = rune::alloc::Vec::new();
+            if let Err(e) = vec.try_push(yaw as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(pitch as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(roll as f64) {
+                return VmResult::Err(e.into());
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+// ============================================================================
+// Hierarchy Functions
+// ============================================================================
+
+/// Set the parent of an entity.
+///
+/// Pass None to unparent the entity.
+///
+/// # Example
+/// ```rune
+/// let parent = find_entity_by_name("ParentObject");
+/// // Note: Can't easily unwrap Option in Rune yet
+/// set_parent(child_entity, parent);
+/// ```
+#[rune::function]
+fn set_parent(entity_bits: i64, parent_bits: Option<i64>) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.set_parent(entity_bits, parent_bits))
+    })
+}
+
+/// Get the parent of an entity.
+///
+/// Returns the entity handle of the parent, or None if no parent.
+///
+/// # Example
+/// ```rune
+/// let parent = get_parent(entity);
+/// if parent != None {
+///     log_info("Has parent");
+/// }
+/// ```
+#[rune::function]
+fn get_parent(entity_handle: i64) -> VmResult<Option<i64>> {
+    use crate::scene::components::Parent;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_handle as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        if let Ok(parent) = world.get::<&Parent>(entity) {
+            return VmResult::Ok(Some(entity_bits(parent.0)));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+/// Get the children of an entity.
+///
+/// Returns an array of entity handles.
+///
+/// # Example
+/// ```rune
+/// let children = get_children(entity);
+/// if children != None {
+///     log_info("Has children");
+/// }
+/// ```
+#[rune::function]
+fn get_children(entity_handle: i64) -> VmResult<Option<rune::alloc::Vec<i64>>> {
+    use crate::scene::components::Children;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_handle as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        if let Ok(children) = world.get::<&Children>(entity) {
+            let mut vec = rune::alloc::Vec::new();
+            for &child in &children.0 {
+                if let Err(e) = vec.try_push(entity_bits(child)) {
+                    return VmResult::Err(e.into());
+                }
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+// ============================================================================
+// INPUT FUNCTIONS
+// ============================================================================
+
+/// Check if a keyboard key is currently pressed (down).
+///
+/// # Arguments
+/// * `key` - The key name as a string (e.g., "W", "Space", "Escape", "A", "D", "S")
+///
+/// Returns `true` if the key is currently held down, `false` otherwise.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_key_pressed("W") {
+///         translate(self_entity, 0.0, 0.0, -5.0 * dt);
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_key_pressed(key: String) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_key_pressed(&key))
+    })
+}
+
+/// Check if a keyboard key was just pressed this frame.
+///
+/// # Arguments
+/// * `key` - The key name as a string
+///
+/// Returns `true` only on the frame the key transitions from up to down.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_key_just_pressed("Space") {
+///         log_info("Jump!");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_key_just_pressed(key: String) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_key_just_pressed(&key))
+    })
+}
+
+/// Check if a keyboard key was just released this frame.
+///
+/// # Arguments
+/// * `key` - The key name as a string
+///
+/// Returns `true` only on the frame the key transitions from down to up.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_key_just_released("W") {
+///         log_info("Stopped moving forward");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_key_just_released(key: String) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_key_just_released(&key))
+    })
+}
+
+/// Check if a mouse button is currently pressed (down).
+///
+/// # Arguments
+/// * `button` - The mouse button index (0 = left, 1 = right, 2 = middle)
+///
+/// Returns `true` if the button is currently held down, `false` otherwise.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_mouse_button_pressed(0) {
+///         log_info("Left mouse button is down");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_mouse_button_pressed(button: i64) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_mouse_button_pressed(button as u32))
+    })
+}
+
+/// Check if a mouse button was just pressed this frame.
+///
+/// # Arguments
+/// * `button` - The mouse button index (0 = left, 1 = right, 2 = middle)
+///
+/// Returns `true` only on the frame the button transitions from up to down.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_mouse_button_just_pressed(0) {
+///         log_info("Click!");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_mouse_button_just_pressed(button: i64) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_mouse_button_just_pressed(button as u32))
+    })
+}
+
+/// Check if a mouse button was just released this frame.
+///
+/// # Arguments
+/// * `button` - The mouse button index (0 = left, 1 = right, 2 = middle)
+///
+/// Returns `true` only on the frame the button transitions from down to up.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_mouse_button_just_released(0) {
+///         log_info("Released left click");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn is_mouse_button_just_released(button: i64) -> VmResult<bool> {
+    with_active_input_state(|input_state| {
+        VmResult::Ok(input_state.is_mouse_button_just_released(button as u32))
+    })
+}
+
+/// Get the current mouse position.
+///
+/// Returns an array `[x, y]` with the mouse position in screen coordinates.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     let pos = get_mouse_position();
+///     log_info(`Mouse at ${pos[0]}, ${pos[1]}`);
+/// }
+/// ```
+#[rune::function]
+fn get_mouse_position() -> VmResult<rune::alloc::Vec<f64>> {
+    with_active_input_state(|input_state| {
+        let pos = input_state.mouse_position();
+        let mut vec = rune::alloc::Vec::new();
+        if let Err(e) = vec.try_push(pos.x as f64) {
+            return VmResult::Err(e.into());
+        }
+        if let Err(e) = vec.try_push(pos.y as f64) {
+            return VmResult::Err(e.into());
+        }
+        VmResult::Ok(vec)
+    })
+}
+
+/// Get the mouse movement delta for this frame.
+///
+/// Returns an array `[dx, dy]` with the mouse movement since last frame.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     let delta = get_mouse_delta();
+///     if delta[0].abs() > 0.0 || delta[1].abs() > 0.0 {
+///         log_info(`Mouse moved by ${delta[0]}, ${delta[1]}`);
+///     }
+/// }
+/// ```
+#[rune::function]
+fn get_mouse_delta() -> VmResult<rune::alloc::Vec<f64>> {
+    with_active_input_state(|input_state| {
+        let delta = input_state.mouse_delta();
+        let mut vec = rune::alloc::Vec::new();
+        if let Err(e) = vec.try_push(delta.x as f64) {
+            return VmResult::Err(e.into());
+        }
+        if let Err(e) = vec.try_push(delta.y as f64) {
+            return VmResult::Err(e.into());
+        }
+        VmResult::Ok(vec)
+    })
+}
+
+/// Get the mouse scroll delta for this frame.
+///
+/// Returns an array `[dx, dy]` with the scroll amount. Typically `dy` is used for vertical scrolling.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     let scroll = get_mouse_scroll_delta();
+///     if scroll[1] > 0.0 {
+///         log_info("Scrolled up");
+///     } else if scroll[1] < 0.0 {
+///         log_info("Scrolled down");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn get_mouse_scroll_delta() -> VmResult<rune::alloc::Vec<f64>> {
+    with_active_input_state(|input_state| {
+        let scroll = input_state.scroll_delta();
+        let mut vec = rune::alloc::Vec::new();
+        if let Err(e) = vec.try_push(scroll.x as f64) {
+            return VmResult::Err(e.into());
+        }
+        if let Err(e) = vec.try_push(scroll.y as f64) {
+            return VmResult::Err(e.into());
+        }
+        VmResult::Ok(vec)
+    })
+}
+
+// ============================================================================
+// ENTITY QUERY FUNCTIONS
+// ============================================================================
+
+/// Query all entities that have a specific component.
+///
+/// # Arguments
+/// * `component_name` - The name of the component to search for (e.g., "MeshComponent", "CameraComponent")
+///
+/// Returns an array of entity handles that have the specified component.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     // Find all entities with cameras
+///     let cameras = query_entities_with_component("CameraComponent");
+///     log_info(`Found ${cameras.len()} cameras`);
+///
+///     // Find all entities with meshes
+///     let meshes = query_entities_with_component("MeshComponent");
+///     for entity in meshes {
+///         // Do something with each mesh entity
+///     }
+/// }
+/// ```
+#[rune::function]
+fn query_entities_with_component(component_name: String) -> VmResult<rune::alloc::Vec<i64>> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let mut result = rune::alloc::Vec::new();
+
+            // Check if component exists in registry
+            if !registry.is_registered(&component_name) {
+                return VmResult::Ok(result);
+            }
+
+            // Iterate all entities and check if they have the component
+            for entity_ref in world.iter() {
+                let entity = entity_ref.entity();
+                match registry.has_component(world, entity, &component_name) {
+                    Ok(true) => {
+                        let handle = entity_bits(entity);
+                        if let Err(e) = result.try_push(handle) {
+                            return VmResult::Err(e.into());
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(_) => {}
+                }
+            }
+
+            VmResult::Ok(result)
+        })
+    })
+}
+
+// ============================================================================
+// SPATIAL QUERY FUNCTIONS
+// ============================================================================
+
+/// Find all entities within a radius of a point.
+///
+/// # Arguments
+/// * `x`, `y`, `z` - The center position
+/// * `radius` - The search radius
+///
+/// Returns an array of entity handles within the radius.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     // Find all entities within 10 units
+///     let nearby = get_entities_in_radius(0.0, 0.0, 0.0, 10.0);
+///     log_info(`Found ${nearby.len()} nearby entities`);
+///
+///     for entity in nearby {
+///         // Do something with nearby entities
+///     }
+/// }
+/// ```
+#[rune::function]
+fn get_entities_in_radius(x: f64, y: f64, z: f64, radius: f64) -> VmResult<rune::alloc::Vec<i64>> {
+    with_active_world(|world| {
+        let center = Vec3::new(x as f32, y as f32, z as f32);
+        let radius_sq = (radius * radius) as f32;
+        let mut result = rune::alloc::Vec::new();
+
+        // Query all entities with TransformComponent
+        for (entity, transform) in world.query::<&TransformComponent>().iter() {
+            let pos = transform.0.translation;
+            let dist_sq = center.distance_squared(pos);
+
+            if dist_sq <= radius_sq {
+                let handle = entity_bits(entity);
+                if let Err(e) = result.try_push(handle) {
+                    return VmResult::Err(e.into());
+                }
+            }
+        }
+
+        VmResult::Ok(result)
+    })
+}
+
+/// Find the nearest entity to a point.
+///
+/// # Arguments
+/// * `x`, `y`, `z` - The position to search from
+///
+/// Returns the entity handle of the nearest entity, or `None` if no entities found.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     let pos = get_world_translation(self_entity);
+///     if pos != None {
+///         let nearest = get_nearest_entity(pos[0], pos[1], pos[2]);
+///         if nearest != None {
+///             log_info(`Nearest entity: ${nearest}`);
+///         }
+///     }
+/// }
+/// ```
+#[rune::function]
+fn get_nearest_entity(x: f64, y: f64, z: f64) -> VmResult<Option<i64>> {
+    with_active_world(|world| {
+        let pos = Vec3::new(x as f32, y as f32, z as f32);
+        let mut nearest: Option<(Entity, f32)> = None;
+
+        // Query all entities with TransformComponent
+        for (entity, transform) in world.query::<&TransformComponent>().iter() {
+            let entity_pos = transform.0.translation;
+            let dist_sq = pos.distance_squared(entity_pos);
+
+            match nearest {
+                None => nearest = Some((entity, dist_sq)),
+                Some((_, best_dist_sq)) => {
+                    if dist_sq < best_dist_sq {
+                        nearest = Some((entity, dist_sq));
+                    }
+                }
+            }
+        }
+
+        match nearest {
+            Some((entity, _)) => VmResult::Ok(Some(entity_bits(entity))),
+            None => VmResult::Ok(None),
+        }
+    })
+}
+
+/// Find the nearest entity with a specific component.
+///
+/// # Arguments
+/// * `x`, `y`, `z` - The position to search from
+/// * `component_name` - The component to filter by
+///
+/// Returns the entity handle of the nearest entity with the component, or `None` if not found.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     // Find nearest enemy
+///     let nearest_enemy = get_nearest_entity_with_component(0.0, 0.0, 0.0, "EnemyTag");
+///     if nearest_enemy != None {
+///         log_info(`Nearest enemy found!`);
+///     }
+/// }
+/// ```
+#[rune::function]
+fn get_nearest_entity_with_component(
+    x: f64,
+    y: f64,
+    z: f64,
+    component_name: String,
+) -> VmResult<Option<i64>> {
+    with_active_world(|world| {
+        with_active_registry(|registry| {
+            let pos = Vec3::new(x as f32, y as f32, z as f32);
+            let mut nearest: Option<(Entity, f32)> = None;
+
+            // Check if component exists in registry
+            if !registry.is_registered(&component_name) {
+                return VmResult::Ok(None);
+            }
+
+            // Query all entities with TransformComponent
+            for (entity, transform) in world.query::<&TransformComponent>().iter() {
+                // Check if entity has the required component
+                match registry.has_component(world, entity, &component_name) {
+                    Ok(true) => {
+                        let entity_pos = transform.0.translation;
+                        let dist_sq = pos.distance_squared(entity_pos);
+
+                        match nearest {
+                            None => nearest = Some((entity, dist_sq)),
+                            Some((_, best_dist_sq)) => {
+                                if dist_sq < best_dist_sq {
+                                    nearest = Some((entity, dist_sq));
+                                }
+                            }
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+
+            match nearest {
+                Some((entity, _)) => VmResult::Ok(Some(entity_bits(entity))),
+                None => VmResult::Ok(None),
+            }
+        })
+    })
+}
+
+/// Find all entities within an axis-aligned bounding box.
+///
+/// # Arguments
+/// * `min` - Minimum corner of the box as `[x, y, z]`
+/// * `max` - Maximum corner of the box as `[x, y, z]`
+///
+/// Returns an array of entity handles within the box.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     // Find entities in a region
+///     let min = [-10.0, 0.0, -10.0];
+///     let max = [10.0, 5.0, 10.0];
+///     let entities = get_entities_in_box(min, max);
+///     log_info(`Found ${entities.len()} entities in box`);
+/// }
+/// ```
+#[rune::function]
+fn get_entities_in_box(
+    min: rune::alloc::Vec<f64>,
+    max: rune::alloc::Vec<f64>,
+) -> VmResult<rune::alloc::Vec<i64>> {
+    with_active_world(|world| {
+        // Validate array sizes
+        if min.len() != 3 || max.len() != 3 {
+            return VmResult::panic("min and max must be arrays of length 3");
+        }
+
+        let min_vec = Vec3::new(min[0] as f32, min[1] as f32, min[2] as f32);
+        let max_vec = Vec3::new(max[0] as f32, max[1] as f32, max[2] as f32);
+        let mut result = rune::alloc::Vec::new();
+
+        // Query all entities with TransformComponent
+        for (entity, transform) in world.query::<&TransformComponent>().iter() {
+            let pos = transform.0.translation;
+
+            // Check if position is within bounds
+            if pos.x >= min_vec.x && pos.x <= max_vec.x
+                && pos.y >= min_vec.y && pos.y <= max_vec.y
+                && pos.z >= min_vec.z && pos.z <= max_vec.z
+            {
+                let handle = entity_bits(entity);
+                if let Err(e) = result.try_push(handle) {
+                    return VmResult::Err(e.into());
+                }
+            }
+        }
+
+        VmResult::Ok(result)
+    })
 }
