@@ -110,6 +110,9 @@ pub enum InspectorAction {
         entity: Entity,
         billboard: Option<Billboard>,
     },
+    AddScript {
+        entity: Entity,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -186,6 +189,11 @@ pub fn show_entity_inspector(
     if let Some(script) = data.components.script.clone() {
         begin_section(ui, &mut first_section);
         if let Some(action) = show_script_section(ui, data.entity, &script) {
+            actions.push(action);
+        }
+    } else {
+        begin_section(ui, &mut first_section);
+        if let Some(action) = show_add_script_section(ui, data.entity) {
             actions.push(action);
         }
     }
@@ -1908,6 +1916,17 @@ fn show_script_section(
                 entity,
                 component: script.clone(),
             });
+        }
+    });
+    action
+}
+
+fn show_add_script_section(ui: &mut egui::Ui, entity: Entity) -> Option<InspectorAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label("Script");
+        if ui.button("Add Script").clicked() {
+            action = Some(InspectorAction::AddScript { entity });
         }
     });
     action
