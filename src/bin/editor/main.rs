@@ -9,6 +9,7 @@ mod layout;
 mod postprocess;
 mod project;
 mod script_editor;
+mod shader_editor;
 mod windows;
 
 use application::EditorApplication;

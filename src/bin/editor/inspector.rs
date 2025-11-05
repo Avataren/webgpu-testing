@@ -36,6 +36,11 @@ pub enum InspectorAction {
         entity: Entity,
         component: RuneScriptComponent,
     },
+    EditShader {
+        entity: Entity,
+        handle: Handle<MaterialAsset>,
+        metadata: ShaderMaterialMetadata,
+    },
     UpdateTransform {
         entity: Entity,
         transform: Transform,
@@ -1974,7 +1979,16 @@ fn show_shader_controls(
             }
         });
 
-        if metadata.is_none() {
+        if let Some(metadata) = metadata {
+            ui.separator();
+            if ui.button("Edit Shader").clicked() {
+                actions.push(InspectorAction::EditShader {
+                    entity,
+                    handle: material.handle,
+                    metadata: metadata.clone(),
+                });
+            }
+        } else {
             ui.label("Assign a shader file or create one to customize this material.");
         }
         if !has_root {
