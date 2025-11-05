@@ -226,6 +226,7 @@ impl Scene {
 
             if let Some((_, (world_transform, _))) = world
                 .query::<(&WorldTransform, &SelectedInEditor)>()
+                .without::<&CameraComponent>()
                 .iter()
                 .next()
             {
@@ -234,6 +235,7 @@ impl Scene {
 
             if let Some((_, (local_transform, _))) = world
                 .query::<(&TransformComponent, &SelectedInEditor)>()
+                .without::<&CameraComponent>()
                 .iter()
                 .next()
             {
