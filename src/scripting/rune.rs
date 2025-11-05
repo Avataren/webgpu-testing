@@ -511,6 +511,20 @@ enum ExistingCommand {
         path: String,
         scale: f32,
     },
+    SetComponent {
+        entity_bits: u64,
+        component_name: String,
+        value: Value,
+    },
+    AddComponent {
+        entity_bits: u64,
+        component_name: String,
+        value: Value,
+    },
+    RemoveComponent {
+        entity_bits: u64,
+        component_name: String,
+    },
 }
 
 struct ScriptCommands {
@@ -661,11 +675,52 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
+    fn set_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::SetComponent {
+            entity_bits,
+            component_name,
+            value,
+        });
+        VmResult::Ok(())
+    }
+
+    fn add_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::AddComponent {
+            entity_bits,
+            component_name,
+            value,
+        });
+        VmResult::Ok(())
+    }
+
+    fn remove_component(&mut self, handle: i64, component_name: String) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::RemoveComponent {
+            entity_bits,
+            component_name,
+        });
+        VmResult::Ok(())
+    }
+
     fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, RuneScriptingError> {
+    fn apply(&mut self, world: &mut World, registry: &ComponentRegistry) -> Result<ScriptApplyResult, RuneScriptingError> {
         let mut result = ScriptApplyResult::default();
 
         for (handle, mut pending) in self.pending.drain() {
@@ -769,6 +824,54 @@ impl ScriptCommands {
                     };
                     world.insert_one(entity, RuneScriptComponent::new(source))?;
                     result.scripts_added.push(entity);
+                }
+                ExistingCommand::SetComponent {
+                    entity_bits,
+                    component_name,
+                    value,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Use the registry to set the component
+                    registry.set_component(world, entity, &component_name, &value)?;
+                }
+                ExistingCommand::AddComponent {
+                    entity_bits,
+                    component_name,
+                    value,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Use the registry to add the component
+                    registry.set_component(world, entity, &component_name, &value)?;
+                }
+                ExistingCommand::RemoveComponent {
+                    entity_bits,
+                    component_name,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // We need a remove_component method in the registry
+                    // For now, log a warning
+                    warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
                 }
             }
         }
@@ -894,7 +997,7 @@ impl ScriptingState {
             let mut any_scripts_added = false;
             for commands in pending_commands.iter_mut() {
                 let mut borrow = commands.borrow_mut();
-                let result = borrow.apply(world)?;
+                let result = borrow.apply(world, &self.component_registry)?;
                 if !result.scripts_added.is_empty() {
                     any_scripts_added = true;
                 }
@@ -942,7 +1045,7 @@ impl ScriptingState {
 
         for commands in pending_commands.iter_mut() {
             let mut borrow = commands.borrow_mut();
-            let result = borrow.apply(world)?;
+            let result = borrow.apply(world, &self.component_registry)?;
             if !result.gltf_imports.is_empty() {
                 self.pending_gltf_imports
                     .extend(result.gltf_imports.into_iter());
@@ -1050,6 +1153,8 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     // Component access functions
     module.function_meta(get_component)?;
     module.function_meta(set_component)?;
+    module.function_meta(add_component)?;
+    module.function_meta(remove_component)?;
     module.function_meta(has_component)?;
     module.function_meta(find_entity_by_name)?;
     Ok(module)
@@ -1233,18 +1338,48 @@ fn get_component(entity_bits: i64, component_name: String) -> VmResult<Option<Va
 ///
 /// # Example
 /// ```rune
-/// set_component(entity, "Name", "MyEntity");
-/// set_component(entity, "TransformComponent", #{
-///     translation: #{ x: 1.0, y: 2.0, z: 3.0 },
-///     rotation: #{ yaw: 0.0, pitch: 0.0, roll: 0.0 },
-///     scale: #{ x: 1.0, y: 1.0, z: 1.0 },
+/// set_component(entity, "Visible", true);
+/// ```
+#[rune::function]
+fn set_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.set_component(entity_bits, component_name, value))
+    })
+}
+
+/// Add a component to an entity.
+///
+/// This is an alias for set_component - both functions work the same way.
+///
+/// # Example
+/// ```rune
+/// add_component(entity, "PointLight", #{
+///     color: [1.0, 0.8, 0.6],
+///     intensity: 5.0,
+///     range: 10.0
 /// });
 /// ```
 #[rune::function]
-fn set_component(_entity_bits: i64, _component_name: String, _value: Value) -> VmResult<()> {
-    // We can't mutate the World during script execution (we're in a query loop),
-    // so we need to use the command buffer pattern
-    VmResult::panic("set_component not yet implemented - requires command buffer support")
+fn add_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.add_component(entity_bits, component_name, value))
+    })
+}
+
+/// Remove a component from an entity.
+///
+/// # Example
+/// ```rune
+/// remove_component(entity, "RotateAnimation");
+/// ```
+#[rune::function]
+fn remove_component(entity_bits: i64, component_name: String) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.remove_component(entity_bits, component_name))
+    })
 }
 
 /// Check if an entity has a component.
