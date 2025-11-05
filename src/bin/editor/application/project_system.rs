@@ -447,14 +447,11 @@ impl ProjectSystem {
                         &dir,
                         &mut self.scene_library,
                     ) {
-                        Ok((mut workspace, mut textures_changed)) => {
-                            let handles: Vec<_> = workspace.scene_handles().collect();
-                            for handle in handles {
-                                if let Some(mut scene) = workspace.scene_mut_by_handle(handle) {
-                                    app.ensure_editor_scene_basics(&mut scene, gpu_ctx.renderer);
-                                    textures_changed = true;
-                                }
-                            }
+                        Ok((mut workspace, textures_changed)) => {
+                            // Note: We intentionally do NOT call ensure_editor_scene_basics() here
+                            // because we're loading a saved project that should be restored exactly
+                            // as it was saved. The user may have intentionally deleted default
+                            // objects like the Editor Cube, and we should respect that choice.
 
                             app.history_system_mut().reset();
 
