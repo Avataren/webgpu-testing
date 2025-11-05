@@ -920,11 +920,7 @@ impl TraditionalTextureBinder {
     }
 
     fn update(&mut self, _device: &wgpu::Device, _assets: &Assets) {
-        // Traditional binder lazily creates bind groups per material,
-        // so no need to clear them on update. Bind groups remain valid
-        // as long as the texture handles referenced by materials don't change.
-        // If textures are updated in assets, bind groups will be recreated
-        // on next access via bind_group_for_material.
+        self.material_bind_groups.clear();
     }
 
     fn bind_group_for_material(
