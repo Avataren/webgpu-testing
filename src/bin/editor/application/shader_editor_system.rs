@@ -177,22 +177,6 @@ impl ShaderEditorSystem {
 }
 
 impl EditorSystem for ShaderEditorSystem {
-    fn update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
-        if ctx.update_context_mut().is_none() {
-            return;
-        }
-
-        let actions = {
-            let queue = ctx.command_queue();
-            Self::drain_shader_commands(queue)
-        };
-
-        let _ = ctx.with_update_app(move |app, update_ctx| {
-            self.ensure_target_valid(&update_ctx.scene);
-            self.process_pending_actions(app, &mut update_ctx.scene, None, actions);
-        });
-    }
-
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
         if ctx.gpu_update_context_mut().is_none() {
             return;
