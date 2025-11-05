@@ -242,6 +242,18 @@ impl ScriptingState {
                     let commands = instance.command_buffer();
                     let event_data = event.data.clone();
 
+                    // Pre-register self_entity in the registry to prevent collision with allocated handles
+                    {
+                        use hecs::Entity;
+                        use std::num::NonZeroU64;
+                        let entity_bits_val = entity_bits(subscription.entity_id);
+                        if let Some(nz) = NonZeroU64::new(entity_bits_val as u64) {
+                            if let Some(entity) = Entity::from_bits(nz.into()) {
+                                commands.borrow_mut().registry.borrow_mut().resolve(entity_bits_val, entity);
+                            }
+                        }
+                    }
+
                     {
                         let _commands_guard = CommandGuard::enter(commands.clone());
                         let state = Rc::clone(&instance.state_store);
