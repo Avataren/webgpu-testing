@@ -107,6 +107,9 @@ impl EditorSharedState {
         };
 
         if let Ok(mut registry) = registry.lock() {
+            // Ensure entry exists (creates it if missing with dirty=true)
+            registry.ensure_entry(handle);
+            // Mark as dirty (in case entry already existed)
             registry.mark_dirty(handle);
         }
     }
