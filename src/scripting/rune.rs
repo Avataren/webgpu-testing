@@ -1440,6 +1440,9 @@ impl ScriptingState {
                 }
             }
 
+            // Dispatch any events emitted during on_created callbacks
+            self.dispatch_events(world, event_queue.clone())?;
+
             if !any_scripts_added {
                 break;
             }
