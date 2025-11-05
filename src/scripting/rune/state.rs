@@ -10,7 +10,7 @@ use crate::scripting::component_registry::ComponentRegistry;
 use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, RuneScriptComponent, RuneScriptInstance};
 use super::error::RuneScriptingError;
-use super::guards::{CommandGuard, EntityGuard, RegistryGuard, StateGuard, WorldGuard};
+use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, RegistryGuard, StateGuard, WorldGuard};
 use super::runtime::RuneScriptingRuntime;
 use super::types::{EventSubscription, EventSubscriptions, ScriptEvent};
 
@@ -246,6 +246,7 @@ impl ScriptingState {
                         let _commands_guard = CommandGuard::enter(commands.clone());
                         let state = Rc::clone(&instance.state_store);
                         let _state_guard = StateGuard::enter(&state);
+                        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
                         let _entity_guard = EntityGuard::enter(entity_bits(subscription.entity_id));
 
                         // Call the event handler function
