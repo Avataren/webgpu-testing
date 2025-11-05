@@ -24,6 +24,11 @@ impl Default for EntityHandleRegistry {
 
 impl EntityHandleRegistry {
     pub fn allocate(&mut self) -> i64 {
+        // Keep decrementing until we find an unused handle
+        // This ensures we don't overwrite pre-registered entries (e.g., self_entity)
+        while self.handles.contains_key(&self.next_handle) {
+            self.next_handle -= 1;
+        }
         let handle = self.next_handle;
         self.next_handle -= 1;
         self.handles.insert(handle, None);
