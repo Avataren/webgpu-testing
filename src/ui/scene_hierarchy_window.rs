@@ -85,6 +85,7 @@ pub enum SceneCreationAction {
 pub enum SceneHierarchyEvent {
     Create(SceneCreationAction),
     OpenScene(SceneDocumentId),
+    AddScriptToEntity(Entity),
 }
 
 #[cfg(feature = "egui")]
@@ -821,6 +822,15 @@ impl SceneHierarchyWindow {
             let mut clicked = false;
             ui.horizontal(|ui| {
                 let response = ui.selectable_label(selected, &label);
+
+                // Add context menu for entity actions
+                response.context_menu(|ui| {
+                    if ui.button("Add Script").clicked() {
+                        events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
+                        ui.close();
+                    }
+                });
+
                 if let Some(info) = &prefab_info {
                     self.decorate_prefab_response(&response, info, workspace, events);
                     if workspace.is_foreign_document(&info.document_id) {
@@ -849,6 +859,15 @@ impl SceneHierarchyWindow {
         let header_response = state.show_header(ui, |ui| {
             ui.horizontal(|ui| {
                 let response = ui.selectable_label(selected, &label);
+
+                // Add context menu for entity actions
+                response.context_menu(|ui| {
+                    if ui.button("Add Script").clicked() {
+                        events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
+                        ui.close();
+                    }
+                });
+
                 if let Some(info) = &prefab_info {
                     self.decorate_prefab_response(&response, info, workspace, events);
                     if workspace.is_foreign_document(&info.document_id) {

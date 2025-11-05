@@ -52,7 +52,7 @@ use wgpu_cube::scene::{
     ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
     SceneTreeAsset, SceneTreeAssetNode, SpotLight, Transform, TransformComponent,
 };
-use wgpu_cube::scripting::RuneScriptingPlugin;
+use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource, RuneScriptingPlugin};
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
     ScenePrimitivePreset,
@@ -409,6 +409,11 @@ impl EditorApplication {
                 }
                 SceneHierarchyEvent::OpenScene(document_id) => {
                     scene_tab_actions.push(SceneTabAction::Activate(document_id));
+                }
+                SceneHierarchyEvent::AddScriptToEntity(entity) => {
+                    self.enqueue_command(EditorCommand::Inspector(InspectorAction::AddScript {
+                        entity,
+                    }));
                 }
             }
         }
@@ -1159,6 +1164,39 @@ impl EditorApplication {
                                         "Failed to add CanCastShadow to {:?}: {}",
                                         entity,
                                         insert_err
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(&mut ctx.scene);
+                    }
+                }
+                InspectorAction::AddScript { entity } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        // Check if entity already has a script component
+                        if world.get::<&RuneScriptComponent>(entity).is_ok() {
+                            log::warn!("Entity {:?} already has a script component", entity);
+                        } else {
+                            // Create a default inline script
+                            let default_script = RuneScriptComponent::new(RuneScriptSource::inline(
+                                "new_script",
+                                "// New script\n\npub fn on_update(dt) {\n    // Your code here\n}\n",
+                            ));
+                            match world.insert(entity, (default_script,)) {
+                                Ok(_) => {
+                                    updated = true;
+                                    log::info!("Added script component to entity {:?}", entity);
+                                }
+                                Err(err) => {
+                                    log::warn!(
+                                        "Failed to add script component to {:?}: {}",
+                                        entity,
+                                        err
                                     );
                                 }
                             }
