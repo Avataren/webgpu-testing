@@ -226,6 +226,11 @@ impl ComponentRegistry {
     pub fn registered_types(&self) -> Vec<String> {
         self.handlers.keys().cloned().collect()
     }
+
+    /// Check if a component type is registered.
+    pub fn is_registered(&self, component_name: &str) -> bool {
+        self.handlers.contains_key(component_name)
+    }
 }
 
 impl Default for ComponentRegistry {
