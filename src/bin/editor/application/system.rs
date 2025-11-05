@@ -185,6 +185,10 @@ impl<'shared> EditorAppAccess<'shared> {
         self.shared.runtime_state.request_mode(mode);
     }
 
+    pub fn mark_scene_hierarchy_dirty(&mut self, handle: SceneHandle) {
+        self.shared.mark_scene_hierarchy_dirty(handle);
+    }
+
     pub fn create_primitive(
         &mut self,
         ctx: &mut GpuUpdateContext<'_>,
