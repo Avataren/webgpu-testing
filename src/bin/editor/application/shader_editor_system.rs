@@ -144,7 +144,7 @@ impl ShaderEditorSystem {
 
                             // Invalidate shader modules to force recompilation
                             if updated {
-                                if let Some(gpu_ctx) = gpu_ctx.as_ref() {
+                                if let Some(gpu_ctx) = gpu_ctx.as_mut() {
                                     gpu_ctx.renderer.invalidate_material_shader_modules(handle, None);
                                 }
                             }
@@ -178,7 +178,7 @@ impl ShaderEditorSystem {
 
 impl EditorSystem for ShaderEditorSystem {
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
-        if ctx.update_context_mut().is_none() {
+        if ctx.gpu_context_mut().is_none() {
             return;
         }
 
@@ -187,7 +187,7 @@ impl EditorSystem for ShaderEditorSystem {
             Self::drain_shader_commands(queue)
         };
 
-        let _ = ctx.with_update_app(move |app, gpu_ctx| {
+        let _ = ctx.with_gpu_app(move |app, gpu_ctx| {
             self.ensure_target_valid(&gpu_ctx.scene);
             self.process_pending_actions(app, &mut gpu_ctx.scene, Some(gpu_ctx), actions);
         });
