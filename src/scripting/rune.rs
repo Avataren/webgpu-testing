@@ -242,6 +242,27 @@ impl RuneScriptComponent {
 
 type ScriptStateMap = HashMap<(i64, String), Value>;
 
+// ============================================================================
+// EVENT SYSTEM DATA STRUCTURES
+// ============================================================================
+
+/// An event that can be emitted by scripts.
+#[derive(Debug, Clone)]
+pub struct ScriptEvent {
+    pub name: String,
+    pub data: Value,
+}
+
+/// A subscription to an event by a specific entity.
+#[derive(Debug, Clone)]
+struct EventSubscription {
+    entity_id: Entity,
+    callback_name: String,
+}
+
+/// Map of event names to their subscribers.
+type EventSubscriptions = HashMap<String, Vec<EventSubscription>>;
+
 #[derive(Debug)]
 struct RuneScriptInstance {
     _script: Arc<RuneScript>,
@@ -274,10 +295,13 @@ impl RuneScriptInstance {
         &mut self,
         entity_bits: i64,
         commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         let _commands_guard = CommandGuard::enter(commands.clone());
         let state = Rc::clone(&self.state_store);
         let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _entity_guard = EntityGuard::enter(entity_bits);
         self.call_function(["on_created"], (entity_bits,))
     }
 
@@ -286,10 +310,13 @@ impl RuneScriptInstance {
         entity_bits: i64,
         dt: f64,
         commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         let _commands_guard = CommandGuard::enter(commands.clone());
         let state = Rc::clone(&self.state_store);
         let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _entity_guard = EntityGuard::enter(entity_bits);
         self.call_function(["update"], (entity_bits, dt))
     }
 
@@ -346,6 +373,8 @@ thread_local! {
     static ACTIVE_WORLD: RefCell<Option<*const World>> = const { RefCell::new(None) };
     static ACTIVE_REGISTRY: RefCell<Option<*const ComponentRegistry>> = const { RefCell::new(None) };
     static ACTIVE_INPUT_STATE: RefCell<Option<*const InputState>> = const { RefCell::new(None) };
+    static ACTIVE_EVENT_QUEUE: RefCell<Option<Rc<RefCell<Vec<ScriptEvent>>>>> = const { RefCell::new(None) };
+    static ACTIVE_ENTITY: RefCell<Option<i64>> = const { RefCell::new(None) };
 }
 
 struct CommandGuard;
@@ -445,6 +474,41 @@ impl Drop for InputStateGuard {
     }
 }
 
+struct EventQueueGuard {
+    _queue: Rc<RefCell<Vec<ScriptEvent>>>,
+}
+
+impl EventQueueGuard {
+    fn enter(queue: &Rc<RefCell<Vec<ScriptEvent>>>) -> Self {
+        let queue_clone = Rc::clone(queue);
+        ACTIVE_EVENT_QUEUE.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&queue_clone)));
+        Self {
+            _queue: queue_clone,
+        }
+    }
+}
+
+impl Drop for EventQueueGuard {
+    fn drop(&mut self) {
+        ACTIVE_EVENT_QUEUE.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
+struct EntityGuard;
+
+impl EntityGuard {
+    fn enter(entity_bits: i64) -> Self {
+        ACTIVE_ENTITY.with(|cell| *cell.borrow_mut() = Some(entity_bits));
+        Self
+    }
+}
+
+impl Drop for EntityGuard {
+    fn drop(&mut self) {
+        ACTIVE_ENTITY.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
 fn with_active_world<R>(f: impl FnOnce(&World) -> VmResult<R>) -> VmResult<R> {
     ACTIVE_WORLD.with(|cell| {
         let opt = cell.borrow();
@@ -481,6 +545,27 @@ fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> VmResult<R>) -> VmR
         // We control script execution to be single-threaded and non-reentrant.
         let input_state = unsafe { &*ptr };
         f(input_state)
+    })
+}
+
+fn with_active_event_queue<R>(f: impl FnOnce(&mut Vec<ScriptEvent>) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_EVENT_QUEUE.with(|cell| {
+        let opt = cell.borrow();
+        let Some(rc) = opt.as_ref() else {
+            return VmResult::panic("event queue not available");
+        };
+        let mut borrow = rc.borrow_mut();
+        f(&mut borrow)
+    })
+}
+
+fn get_active_entity() -> VmResult<i64> {
+    ACTIVE_ENTITY.with(|cell| {
+        let opt = cell.borrow();
+        match *opt {
+            Some(entity_bits) => VmResult::Ok(entity_bits),
+            None => VmResult::panic("active entity not available"),
+        }
     })
 }
 
@@ -575,6 +660,15 @@ enum ExistingCommand {
     SetParent {
         entity_bits: u64,
         parent_bits: Option<u64>,
+    },
+    SubscribeEvent {
+        entity_bits: u64,
+        event_name: String,
+        callback_name: String,
+    },
+    UnsubscribeEvent {
+        entity_bits: u64,
+        event_name: String,
     },
 }
 
@@ -838,6 +932,38 @@ impl ScriptCommands {
         self.existing.push(ExistingCommand::SetParent {
             entity_bits,
             parent_bits,
+        });
+        VmResult::Ok(())
+    }
+
+    fn subscribe_event(
+        &mut self,
+        handle: i64,
+        event_name: String,
+        callback_name: String,
+    ) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::SubscribeEvent {
+            entity_bits,
+            event_name,
+            callback_name,
+        });
+        VmResult::Ok(())
+    }
+
+    fn unsubscribe_event(&mut self, handle: i64, event_name: String) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::UnsubscribeEvent {
+            entity_bits,
+            event_name,
         });
         VmResult::Ok(())
     }
@@ -1109,6 +1235,42 @@ impl ScriptCommands {
                         let _ = world.remove_one::<Parent>(entity);
                     }
                 }
+                ExistingCommand::SubscribeEvent {
+                    entity_bits,
+                    event_name,
+                    callback_name,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    result.event_subscriptions.push(PendingEventSubscription {
+                        entity,
+                        event_name,
+                        callback_name,
+                    });
+                }
+                ExistingCommand::UnsubscribeEvent {
+                    entity_bits,
+                    event_name,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    result.event_unsubscriptions.push(PendingEventUnsubscription {
+                        entity,
+                        event_name,
+                    });
+                }
             }
         }
 
@@ -1143,10 +1305,25 @@ pub struct PendingGltfImport {
     pub scale: f32,
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingEventSubscription {
+    pub entity: Entity,
+    pub event_name: String,
+    pub callback_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingEventUnsubscription {
+    pub entity: Entity,
+    pub event_name: String,
+}
+
 #[derive(Default)]
 struct ScriptApplyResult {
     scripts_added: Vec<Entity>,
     gltf_imports: Vec<PendingGltfImport>,
+    event_subscriptions: Vec<PendingEventSubscription>,
+    event_unsubscriptions: Vec<PendingEventUnsubscription>,
 }
 
 fn entity_bits(entity: Entity) -> i64 {
@@ -1159,6 +1336,7 @@ pub struct ScriptingState {
     instances: HashMap<Entity, RuneScriptInstance>,
     pending_gltf_imports: Vec<PendingGltfImport>,
     component_registry: ComponentRegistry,
+    event_subscriptions: EventSubscriptions,
 }
 
 impl ScriptingState {
@@ -1169,6 +1347,7 @@ impl ScriptingState {
             instances: HashMap::new(),
             pending_gltf_imports: Vec::new(),
             component_registry: ComponentRegistry::new(),
+            event_subscriptions: HashMap::new(),
         })
     }
 
@@ -1187,6 +1366,7 @@ impl ScriptingState {
     pub fn reset_runtime(&mut self) {
         self.instances.clear();
         self.pending_gltf_imports.clear();
+        self.event_subscriptions.clear();
     }
 
     /// Run pending scripts for the current frame.
@@ -1203,6 +1383,7 @@ impl ScriptingState {
     fn process_on_created(&mut self, world: &mut World) -> Result<(), RuneScriptingError> {
         loop {
             let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
+            let event_queue = Rc::new(RefCell::new(Vec::new()));
 
             {
                 // Set up guards for World and ComponentRegistry access
@@ -1217,7 +1398,7 @@ impl ScriptingState {
 
                     let instance = self.ensure_instance(entity, component)?;
                     let commands = instance.command_buffer();
-                    instance.call_on_created(entity_bits(entity), commands.clone())?;
+                    instance.call_on_created(entity_bits(entity), commands.clone(), event_queue.clone())?;
                     component.mark_created();
 
                     if !commands.borrow().is_empty() {
@@ -1241,7 +1422,26 @@ impl ScriptingState {
                     self.pending_gltf_imports
                         .extend(result.gltf_imports.into_iter());
                 }
+                // Apply event subscriptions
+                for sub in result.event_subscriptions {
+                    self.event_subscriptions
+                        .entry(sub.event_name)
+                        .or_insert_with(Vec::new)
+                        .push(EventSubscription {
+                            entity_id: sub.entity,
+                            callback_name: sub.callback_name,
+                        });
+                }
+                // Apply event unsubscriptions
+                for unsub in result.event_unsubscriptions {
+                    if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
+                        subs.retain(|s| s.entity_id != unsub.entity);
+                    }
+                }
             }
+
+            // Dispatch any events emitted during on_created callbacks
+            self.dispatch_events(world, event_queue.clone())?;
 
             if !any_scripts_added {
                 break;
@@ -1253,6 +1453,7 @@ impl ScriptingState {
 
     fn process_updates(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
+        let event_queue = Rc::new(RefCell::new(Vec::new()));
 
         {
             // Set up guards for World and ComponentRegistry access
@@ -1267,7 +1468,7 @@ impl ScriptingState {
 
                 let instance = self.ensure_instance(entity, component)?;
                 let commands = instance.command_buffer();
-                instance.call_update(entity_bits(entity), dt, commands.clone())?;
+                instance.call_update(entity_bits(entity), dt, commands.clone(), event_queue.clone())?;
 
                 if !commands.borrow().is_empty() {
                     pending_commands.push(commands.clone());
@@ -1275,16 +1476,157 @@ impl ScriptingState {
             }
         }
 
-        if pending_commands.is_empty() {
-            return Ok(());
-        }
-
+        // Apply pending commands
         for commands in pending_commands.iter_mut() {
             let mut borrow = commands.borrow_mut();
             let result = borrow.apply(world, &self.component_registry)?;
             if !result.gltf_imports.is_empty() {
                 self.pending_gltf_imports
                     .extend(result.gltf_imports.into_iter());
+            }
+            // Apply event subscriptions
+            for sub in result.event_subscriptions {
+                self.event_subscriptions
+                    .entry(sub.event_name)
+                    .or_insert_with(Vec::new)
+                    .push(EventSubscription {
+                        entity_id: sub.entity,
+                        callback_name: sub.callback_name,
+                    });
+            }
+            // Apply event unsubscriptions
+            for unsub in result.event_unsubscriptions {
+                if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
+                    subs.retain(|s| s.entity_id != unsub.entity);
+                }
+            }
+        }
+
+        // Dispatch events to subscribers
+        self.dispatch_events(world, event_queue)?;
+
+        Ok(())
+    }
+
+    fn dispatch_events(
+        &mut self,
+        world: &mut World,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<(), RuneScriptingError> {
+        let events = event_queue.borrow_mut().drain(..).collect::<Vec<_>>();
+
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        for event in events {
+            // Get subscribers for this event
+            let subscribers = match self.event_subscriptions.get(&event.name) {
+                Some(subs) => subs.clone(),
+                None => continue,
+            };
+
+            // Call each subscriber's callback
+            for subscription in subscribers {
+                // Check if the entity still exists
+                if world.entity(subscription.entity_id).is_err() {
+                    continue;
+                }
+
+                // Prepare the command buffer and call the event handler
+                let commands = {
+                    // Get the script component in a scope to drop the borrow
+                    let component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
+                        Ok(comp) => comp,
+                        Err(_) => continue,
+                    };
+
+                    if !component.created_called() {
+                        continue;
+                    }
+
+                    // Get the script instance
+                    let instance = match self.ensure_instance(subscription.entity_id, &component) {
+                        Ok(inst) => inst,
+                        Err(e) => {
+                            error!(target: "script", "Failed to get script instance for event dispatch: {}", e);
+                            continue;
+                        }
+                    };
+
+                    // Set up execution context
+                    let commands = instance.command_buffer();
+                    let event_data = event.data.clone();
+
+                    {
+                        let _commands_guard = CommandGuard::enter(commands.clone());
+                        let state = Rc::clone(&instance.state_store);
+                        let _state_guard = StateGuard::enter(&state);
+                        let _entity_guard = EntityGuard::enter(entity_bits(subscription.entity_id));
+
+                        // Call the event handler function
+                        let result = instance.call_function([subscription.callback_name.as_str()], (event_data,));
+
+                        match result {
+                            Ok(FunctionCallOutcome::Executed) => {},
+                            Ok(FunctionCallOutcome::Missing) => {
+                                warn!(target: "script",
+                                    "Event handler '{}' not found on entity {:?}",
+                                    subscription.callback_name, subscription.entity_id);
+                            }
+                            Err(e) => {
+                                error!(target: "script",
+                                    "Error calling event handler '{}': {}",
+                                    subscription.callback_name, e);
+                            }
+                        }
+                    }
+
+                    commands
+                };  // component borrow is dropped here
+
+                // Apply any commands generated by the event handler
+                if !commands.borrow().is_empty() {
+                    let mut borrow = commands.borrow_mut();
+                    match borrow.apply(world, &self.component_registry) {
+                        Ok(result) => {
+                            // Process GLTF imports
+                            if !result.gltf_imports.is_empty() {
+                                self.pending_gltf_imports
+                                    .extend(result.gltf_imports.into_iter());
+                            }
+
+                            // Process event subscriptions
+                            for sub in result.event_subscriptions {
+                                self.event_subscriptions
+                                    .entry(sub.event_name)
+                                    .or_insert_with(Vec::new)
+                                    .push(EventSubscription {
+                                        entity_id: sub.entity,
+                                        callback_name: sub.callback_name,
+                                    });
+                            }
+
+                            // Process event unsubscriptions
+                            for unsub in result.event_unsubscriptions {
+                                if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
+                                    subs.retain(|s| s.entity_id != unsub.entity);
+                                }
+                            }
+
+                            // Note: scripts_added are not processed here to avoid recursion during event dispatch
+                            // Any scripts spawned by event handlers will be initialized on the next frame
+                            if !result.scripts_added.is_empty() {
+                                warn!(target: "script",
+                                    "Event handler spawned {} script(s) - they will be initialized on the next frame",
+                                    result.scripts_added.len());
+                            }
+                        }
+                        Err(e) => {
+                            error!(target: "script", "Failed to apply commands from event handler: {}", e);
+                        }
+                    }
+                }
             }
         }
 
@@ -1421,6 +1763,10 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(get_nearest_entity)?;
     module.function_meta(get_nearest_entity_with_component)?;
     module.function_meta(get_entities_in_box)?;
+    // Event system functions
+    module.function_meta(emit_event)?;
+    module.function_meta(subscribe_event)?;
+    module.function_meta(unsubscribe_event)?;
     Ok(module)
 }
 
@@ -2428,5 +2774,109 @@ fn get_entities_in_box(
         }
 
         VmResult::Ok(result)
+    })
+}
+
+// ============================================================================
+// EVENT SYSTEM FUNCTIONS
+// ============================================================================
+
+/// Emit an event that can be received by subscribed scripts.
+///
+/// # Arguments
+/// * `event_name` - The name of the event to emit
+/// * `data` - The event data (can be any Rune value: string, number, object, etc.)
+///
+/// Events are queued during script execution and dispatched after all scripts
+/// have finished updating. Subscribed scripts will have their registered callback
+/// function called with the event data.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_key_just_pressed("Space") {
+///         // Emit an event when space is pressed
+///         emit_event("player_jumped", #{
+///             entity: self_entity,
+///             height: 5.0,
+///             timestamp: 12345.0
+///         });
+///     }
+/// }
+/// ```
+#[rune::function]
+fn emit_event(event_name: String, data: Value) -> VmResult<()> {
+    with_active_event_queue(|queue| {
+        queue.push(ScriptEvent {
+            name: event_name,
+            data,
+        });
+        VmResult::Ok(())
+    })
+}
+
+/// Subscribe to an event with a callback function.
+///
+/// # Arguments
+/// * `event_name` - The name of the event to subscribe to
+/// * `callback_name` - The name of the function to call when the event is received
+///
+/// The callback function must accept one parameter: the event data.
+/// When an event with the matching name is emitted, the callback will be called
+/// with the event data.
+///
+/// # Example
+/// ```rune
+/// pub fn on_created(self_entity) {
+///     // Subscribe to player_jumped event
+///     subscribe_event("player_jumped", "on_player_jumped");
+/// }
+///
+/// pub fn on_player_jumped(event_data) {
+///     log_info(`Player jumped! Height: ${event_data.height}`);
+/// }
+/// ```
+#[rune::function]
+fn subscribe_event(event_name: String, callback_name: String) -> VmResult<()> {
+    // Get the current entity from the active context
+    let entity_bits = match get_active_entity() {
+        VmResult::Ok(bits) => bits,
+        VmResult::Err(err) => return VmResult::Err(err),
+    };
+
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.subscribe_event(entity_bits, event_name, callback_name)
+        })
+    })
+}
+
+/// Unsubscribe from an event.
+///
+/// # Arguments
+/// * `event_name` - The name of the event to unsubscribe from
+///
+/// Removes the subscription for the current entity from the specified event.
+///
+/// # Example
+/// ```rune
+/// pub fn update(self_entity, dt) {
+///     if is_key_just_pressed("U") {
+///         unsubscribe_event("player_jumped");
+///         log_info("Unsubscribed from player_jumped event");
+///     }
+/// }
+/// ```
+#[rune::function]
+fn unsubscribe_event(event_name: String) -> VmResult<()> {
+    // Get the current entity from the active context
+    let entity_bits = match get_active_entity() {
+        VmResult::Ok(bits) => bits,
+        VmResult::Err(err) => return VmResult::Err(err),
+    };
+
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.unsubscribe_event(entity_bits, event_name))
     })
 }

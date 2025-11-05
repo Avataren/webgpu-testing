@@ -1,0 +1,45 @@
+// Event Emitter Example
+// This script emits various events when keys are pressed
+// Attach this script to an entity to test the event system
+
+pub fn on_created(self_entity) {
+    log_info("Event Emitter initialized");
+    set_state(self_entity, "initialized", true);
+}
+
+pub fn update(self_entity, dt) {
+    // Emit a simple event when Space is pressed
+    if is_key_just_pressed("Space") {
+        log_info("Emitting 'space_pressed' event");
+        emit_event("space_pressed", #{
+            entity: self_entity,
+            message: "Space was pressed!"
+        });
+    }
+
+    // Emit an event with position data when E is pressed
+    if is_key_just_pressed("E") {
+        let pos = get_world_translation(self_entity);
+        if pos != None {
+            log_info("Emitting 'entity_moved' event");
+            emit_event("entity_moved", #{
+                entity: self_entity,
+                position: pos,
+                timestamp: dt
+            });
+        }
+    }
+
+    // Emit a counter event when C is pressed
+    if is_key_just_pressed("C") {
+        let count = get_f64(self_entity, "counter", 0.0);
+        let new_count = count + 1.0;
+        set_f64(self_entity, "counter", new_count);
+
+        log_info(`Emitting 'counter_updated' event with count: ${new_count}`);
+        emit_event("counter_updated", #{
+            entity: self_entity,
+            count: new_count
+        });
+    }
+}
