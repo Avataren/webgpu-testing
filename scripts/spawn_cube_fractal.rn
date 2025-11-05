@@ -1,0 +1,15 @@
+// Spawn Cube Fractal
+// Simple launcher script that creates a cube fractal entity
+// Attach this to any entity to spawn the fractal
+
+pub fn on_created(self_entity) {
+    log_info("Spawning cube fractal...");
+
+    // Create the fractal root entity
+    let fractal_root = spawn_entity(Some("Cube Fractal"));
+
+    // Attach the fractal script to it
+    attach_script(fractal_root, "scripts/cube_fractal.rn");
+
+    log_info("Cube fractal spawned!");
+}
