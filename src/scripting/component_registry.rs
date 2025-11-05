@@ -12,6 +12,12 @@ use rune::alloc::String as RuneString;
 use thiserror::Error;
 
 use crate::scene::{Name, TransformComponent, Transform};
+use crate::scene::components::{
+    Visible, CameraComponent, PointLight, DirectionalLight, SpotLight,
+    RotateAnimation, OrbitAnimation, Parent, Children,
+    MeshComponent, MaterialComponent, PrimitiveMeshComponent,
+    ParticleEmitterComponent, CanCastShadow,
+};
 
 /// Error type for component registry operations.
 #[derive(Debug, Error)]
@@ -124,10 +130,39 @@ impl ComponentRegistry {
             handlers: HashMap::new(),
         };
 
-        // Register built-in components
+        // Register core components
         registry.register::<Name>("Name");
         registry.register::<TransformComponent>("TransformComponent");
         registry.register::<TransformComponent>("Transform"); // Alias
+        registry.register::<Visible>("Visible");
+
+        // Register camera
+        registry.register::<CameraComponent>("CameraComponent");
+        registry.register::<CameraComponent>("Camera"); // Alias
+
+        // Register lights
+        registry.register::<PointLight>("PointLight");
+        registry.register::<DirectionalLight>("DirectionalLight");
+        registry.register::<SpotLight>("SpotLight");
+        registry.register::<CanCastShadow>("CanCastShadow");
+
+        // Register rendering components
+        registry.register::<MeshComponent>("MeshComponent");
+        registry.register::<MeshComponent>("Mesh"); // Alias
+        registry.register::<MaterialComponent>("MaterialComponent");
+        registry.register::<MaterialComponent>("Material"); // Alias
+        registry.register::<PrimitiveMeshComponent>("PrimitiveMeshComponent");
+
+        // Register animation components
+        registry.register::<RotateAnimation>("RotateAnimation");
+        registry.register::<OrbitAnimation>("OrbitAnimation");
+
+        // Register hierarchy components
+        registry.register::<Parent>("Parent");
+        registry.register::<Children>("Children");
+
+        // Register particle components
+        registry.register::<ParticleEmitterComponent>("ParticleEmitterComponent");
 
         registry
     }
@@ -266,6 +301,367 @@ impl FromRuneValue for TransformComponent {
         // TODO: Implement proper deserialization when we need set_component
 
         Ok(TransformComponent(transform))
+    }
+}
+
+// ============================================================================
+// Visible Component
+// ============================================================================
+
+impl ToRuneValue for Visible {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        Ok(Value::from(self.0))
+    }
+}
+
+impl FromRuneValue for Visible {
+    fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
+        let visible = rune::from_value::<bool>(value.clone())
+            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected bool: {}", e)))?;
+        Ok(Visible(visible))
+    }
+}
+
+// ============================================================================
+// Camera Component
+// ============================================================================
+
+impl ToRuneValue for CameraComponent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+
+        let mut obj = Object::new();
+
+        // Expose projection data
+        obj.insert(RuneString::try_from("near")?, Value::from(self.near() as f64))?;
+        obj.insert(RuneString::try_from("far")?, Value::from(self.far() as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for CameraComponent {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Return default camera for now
+        // TODO: Parse projection parameters
+        Ok(CameraComponent::default())
+    }
+}
+
+// ============================================================================
+// Light Components
+// ============================================================================
+
+impl ToRuneValue for PointLight {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+        use rune::alloc::Vec as RuneVec;
+
+        let mut obj = Object::new();
+
+        // Color as array
+        let mut color_vec = RuneVec::new();
+        color_vec.try_push(Value::from(self.color.x as f64))?;
+        color_vec.try_push(Value::from(self.color.y as f64))?;
+        color_vec.try_push(Value::from(self.color.z as f64))?;
+        obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
+
+        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
+        obj.insert(RuneString::try_from("range")?, Value::from(self.range as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for PointLight {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // TODO: Parse light parameters
+        Ok(PointLight {
+            color: glam::Vec3::ONE,
+            intensity: 1.0,
+            range: 10.0,
+        })
+    }
+}
+
+impl ToRuneValue for DirectionalLight {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+        use rune::alloc::Vec as RuneVec;
+
+        let mut obj = Object::new();
+
+        // Color as array
+        let mut color_vec = RuneVec::new();
+        color_vec.try_push(Value::from(self.color.x as f64))?;
+        color_vec.try_push(Value::from(self.color.y as f64))?;
+        color_vec.try_push(Value::from(self.color.z as f64))?;
+        obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
+
+        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
+        obj.insert(RuneString::try_from("shadow_size")?, Value::from(self.shadow_size as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for DirectionalLight {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // TODO: Parse light parameters
+        Ok(DirectionalLight {
+            color: glam::Vec3::ONE,
+            intensity: 1.0,
+            shadow_size: DirectionalLight::DEFAULT_SHADOW_SIZE,
+        })
+    }
+}
+
+impl ToRuneValue for SpotLight {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+        use rune::alloc::Vec as RuneVec;
+
+        let mut obj = Object::new();
+
+        // Color as array
+        let mut color_vec = RuneVec::new();
+        color_vec.try_push(Value::from(self.color.x as f64))?;
+        color_vec.try_push(Value::from(self.color.y as f64))?;
+        color_vec.try_push(Value::from(self.color.z as f64))?;
+        obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
+
+        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
+        obj.insert(RuneString::try_from("inner_angle")?, Value::from(self.inner_angle as f64))?;
+        obj.insert(RuneString::try_from("outer_angle")?, Value::from(self.outer_angle as f64))?;
+        obj.insert(RuneString::try_from("range")?, Value::from(self.range as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for SpotLight {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // TODO: Parse light parameters
+        Ok(SpotLight {
+            color: glam::Vec3::ONE,
+            intensity: 1.0,
+            inner_angle: std::f32::consts::PI / 8.0,
+            outer_angle: std::f32::consts::PI / 4.0,
+            range: 10.0,
+        })
+    }
+}
+
+impl ToRuneValue for CanCastShadow {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        Ok(Value::from(self.0))
+    }
+}
+
+impl FromRuneValue for CanCastShadow {
+    fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
+        let can_cast = rune::from_value::<bool>(value.clone())
+            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected bool: {}", e)))?;
+        Ok(CanCastShadow(can_cast))
+    }
+}
+
+// ============================================================================
+// Mesh and Material Components
+// ============================================================================
+
+impl ToRuneValue for MeshComponent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        // Return handle index as i64
+        Ok(Value::from(self.0.index() as i64))
+    }
+}
+
+impl FromRuneValue for MeshComponent {
+    fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
+        let index = rune::from_value::<i64>(value.clone())
+            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e)))?;
+        Ok(MeshComponent(crate::asset::Handle::new(index as usize)))
+    }
+}
+
+impl ToRuneValue for MaterialComponent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        // Return handle index as i64
+        Ok(Value::from(self.0.index() as i64))
+    }
+}
+
+impl FromRuneValue for MaterialComponent {
+    fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
+        let index = rune::from_value::<i64>(value.clone())
+            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e)))?;
+        Ok(MaterialComponent(crate::asset::Handle::new(index as usize)))
+    }
+}
+
+impl ToRuneValue for PrimitiveMeshComponent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use crate::renderer::primitives::PrimitiveMeshDescriptor;
+
+        let type_name = match self.descriptor {
+            PrimitiveMeshDescriptor::Cube => "cube",
+            PrimitiveMeshDescriptor::Sphere => "sphere",
+            PrimitiveMeshDescriptor::Plane => "plane",
+            PrimitiveMeshDescriptor::Cylinder => "cylinder",
+            PrimitiveMeshDescriptor::Cone => "cone",
+            PrimitiveMeshDescriptor::Torus => "torus",
+        };
+
+        Ok(rune::to_value(type_name)?)
+    }
+}
+
+impl FromRuneValue for PrimitiveMeshComponent {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Default to cube
+        use crate::renderer::primitives::PrimitiveMeshDescriptor;
+        Ok(PrimitiveMeshComponent {
+            descriptor: PrimitiveMeshDescriptor::Cube,
+        })
+    }
+}
+
+// ============================================================================
+// Animation Components
+// ============================================================================
+
+impl ToRuneValue for RotateAnimation {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+        use rune::alloc::Vec as RuneVec;
+
+        let mut obj = Object::new();
+
+        // Axis as array
+        let mut axis_vec = RuneVec::new();
+        axis_vec.try_push(Value::from(self.axis.x as f64))?;
+        axis_vec.try_push(Value::from(self.axis.y as f64))?;
+        axis_vec.try_push(Value::from(self.axis.z as f64))?;
+        obj.insert(RuneString::try_from("axis")?, rune::to_value(axis_vec)?)?;
+
+        obj.insert(RuneString::try_from("speed")?, Value::from(self.speed as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for RotateAnimation {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Default rotation around Y axis
+        Ok(RotateAnimation {
+            axis: glam::Vec3::Y,
+            speed: 1.0,
+        })
+    }
+}
+
+impl ToRuneValue for OrbitAnimation {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+        use rune::alloc::Vec as RuneVec;
+
+        let mut obj = Object::new();
+
+        // Center as array
+        let mut center_vec = RuneVec::new();
+        center_vec.try_push(Value::from(self.center.x as f64))?;
+        center_vec.try_push(Value::from(self.center.y as f64))?;
+        center_vec.try_push(Value::from(self.center.z as f64))?;
+        obj.insert(RuneString::try_from("center")?, rune::to_value(center_vec)?)?;
+
+        obj.insert(RuneString::try_from("radius")?, Value::from(self.radius as f64))?;
+        obj.insert(RuneString::try_from("speed")?, Value::from(self.speed as f64))?;
+        obj.insert(RuneString::try_from("offset")?, Value::from(self.offset as f64))?;
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for OrbitAnimation {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Default orbit
+        Ok(OrbitAnimation {
+            center: glam::Vec3::ZERO,
+            radius: 5.0,
+            speed: 1.0,
+            offset: 0.0,
+        })
+    }
+}
+
+// ============================================================================
+// Hierarchy Components
+// ============================================================================
+
+impl ToRuneValue for Parent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        // Return entity bits as i64
+        Ok(Value::from(self.0.to_bits().get() as i64))
+    }
+}
+
+impl FromRuneValue for Parent {
+    fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
+        let bits = rune::from_value::<i64>(value.clone())
+            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected entity bits: {}", e)))?;
+        let entity = hecs::Entity::from_bits(bits as u64)
+            .ok_or_else(|| ComponentRegistryError::FromRuneValue("invalid entity bits".to_string()))?;
+        Ok(Parent(entity))
+    }
+}
+
+impl ToRuneValue for Children {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::alloc::Vec as RuneVec;
+
+        let mut children_vec = RuneVec::new();
+        for child in &self.0 {
+            children_vec.try_push(Value::from(child.to_bits().get() as i64))?;
+        }
+
+        Ok(rune::to_value(children_vec)?)
+    }
+}
+
+impl FromRuneValue for Children {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Return empty children for now
+        // TODO: Parse array of entity bits
+        Ok(Children(Vec::new()))
+    }
+}
+
+// ============================================================================
+// Particle System Components
+// ============================================================================
+
+impl ToRuneValue for ParticleEmitterComponent {
+    fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
+        use rune::runtime::Object;
+
+        let mut obj = Object::new();
+
+        obj.insert(RuneString::try_from("spawn_rate")?, Value::from(self.spawn_rate as f64))?;
+        obj.insert(RuneString::try_from("auto_respawn")?, Value::from(self.auto_respawn))?;
+
+        if let Some(burst) = self.burst_count {
+            obj.insert(RuneString::try_from("burst_count")?, Value::from(burst as i64))?;
+        }
+
+        Ok(rune::to_value(obj)?)
+    }
+}
+
+impl FromRuneValue for ParticleEmitterComponent {
+    fn from_rune_value(_value: &Value) -> Result<Self, ComponentRegistryError> {
+        // Return default emitter
+        Ok(ParticleEmitterComponent::default())
     }
 }
 
