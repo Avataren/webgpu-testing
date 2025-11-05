@@ -110,7 +110,7 @@ impl ShaderEditorState {
         egui::Window::new(window_title)
             .open(&mut open)
             .resizable(true)
-            .default_size(egui::vec2(900.0, 650.0))
+            .default_size(egui::vec2(900.0, 400.0))
             .show(ctx, |ui| {
                 if let Some(status) = &self.status {
                     let color = status.color(ui.visuals());
