@@ -970,12 +970,12 @@ fn create_noise_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Tex
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct PostProcessUniform {
+    view_proj: [[f32; 4]; 4],
+    view_proj_inv: [[f32; 4]; 4],
     proj: [[f32; 4]; 4],
     proj_inv: [[f32; 4]; 4],
     view: [[f32; 4]; 4],
     view_inv: [[f32; 4]; 4],
-    view_proj: [[f32; 4]; 4],
-    view_proj_inv: [[f32; 4]; 4],
     camera_position: [f32; 4],
     viewport_resolution: [f32; 2],
     viewport_offset: [f32; 2],
@@ -1016,12 +1016,12 @@ impl PostProcessUniform {
         let bloom = effects.bloom_settings;
         let effects_arr = effects.uniform_components();
         Self {
+            view_proj: view_proj.to_cols_array_2d(),
+            view_proj_inv: view_proj_inv.to_cols_array_2d(),
             proj: proj.to_cols_array_2d(),
             proj_inv: proj_inv.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             view_inv: view_inv.to_cols_array_2d(),
-            view_proj: view_proj.to_cols_array_2d(),
-            view_proj_inv: view_proj_inv.to_cols_array_2d(),
             camera_position: [camera_position.x, camera_position.y, camera_position.z, 1.0],
             viewport_resolution: [viewport_resolution.x, viewport_resolution.y],
             viewport_offset: [viewport_offset.x, viewport_offset.y],
