@@ -5,8 +5,11 @@ use egui::{
 use glam::{EulerRot, Quat, Vec3};
 use std::cmp::Ordering;
 use std::f32::consts::PI;
+use std::fs;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use hecs::Entity;
 
@@ -112,6 +115,10 @@ pub enum InspectorAction {
     },
     AddScript {
         entity: Entity,
+    },
+    ChangeScriptSource {
+        entity: Entity,
+        script_path: PathBuf,
     },
 }
 
@@ -1917,6 +1924,40 @@ fn show_script_section(
                 component: script.clone(),
             });
         }
+
+        ui.separator();
+        ui.label("Select existing script:");
+
+        let available_scripts = list_available_scripts();
+        if available_scripts.is_empty() {
+            ui.label("No script files found in scripts/");
+        } else {
+            let current_path = match script.source() {
+                RuneScriptSource::File { path } => Some(path.clone()),
+                _ => None,
+            };
+
+            for script_path in available_scripts {
+                let file_name = script_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+
+                let is_current = current_path.as_ref() == Some(&script_path);
+                let button_text = if is_current {
+                    format!("● {}", file_name)
+                } else {
+                    file_name.to_string()
+                };
+
+                if ui.button(button_text).clicked() && !is_current {
+                    action = Some(InspectorAction::ChangeScriptSource {
+                        entity,
+                        script_path,
+                    });
+                }
+            }
+        }
     });
     action
 }
@@ -1930,6 +1971,67 @@ fn show_add_script_section(ui: &mut egui::Ui, entity: Entity) -> Option<Inspecto
         }
     });
     action
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct ScriptListCache {
+    scripts: Vec<PathBuf>,
+    last_update: Instant,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static SCRIPT_LIST_CACHE: Mutex<Option<ScriptListCache>> = Mutex::new(None);
+
+#[cfg(not(target_arch = "wasm32"))]
+const CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn list_available_scripts() -> Vec<PathBuf> {
+    // Check cache first
+    if let Ok(mut cache) = SCRIPT_LIST_CACHE.lock() {
+        if let Some(cached) = cache.as_ref() {
+            if cached.last_update.elapsed() < CACHE_REFRESH_INTERVAL {
+                return cached.scripts.clone();
+            }
+        }
+
+        // Cache miss or expired, refresh from filesystem
+        let scripts_dir = PathBuf::from("scripts");
+        let mut scripts = Vec::new();
+
+        if scripts_dir.exists() && scripts_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&scripts_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_file() {
+                            let path = entry.path();
+                            if path.extension().and_then(|s| s.to_str()) == Some("rn") {
+                                scripts.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+            scripts.sort();
+        }
+
+        // Update cache
+        *cache = Some(ScriptListCache {
+            scripts: scripts.clone(),
+            last_update: Instant::now(),
+        });
+
+        scripts
+    } else {
+        // Fallback if mutex is poisoned
+        Vec::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn list_available_scripts() -> Vec<PathBuf> {
+    // File system access is not available on wasm32
+    Vec::new()
 }
 
 fn show_shader_controls(
