@@ -569,10 +569,20 @@ fn get_active_entity() -> VmResult<i64> {
     })
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct EntityHandleRegistry {
     next_handle: i64,
     handles: HashMap<i64, Option<u64>>,
+}
+
+impl Default for EntityHandleRegistry {
+    fn default() -> Self {
+        Self {
+            // Start from -1 to avoid collision with entity bits 0
+            next_handle: -1,
+            handles: HashMap::new(),
+        }
+    }
 }
 
 impl EntityHandleRegistry {
