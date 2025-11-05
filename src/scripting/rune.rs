@@ -981,7 +981,9 @@ impl ScriptCommands {
 
     fn apply(&mut self, world: &mut World, registry: &ComponentRegistry) -> Result<ScriptApplyResult, RuneScriptingError> {
         let mut result = ScriptApplyResult::default();
+        let mut deferred_parents: Vec<(Entity, i64)> = Vec::new();
 
+        // First pass: spawn all entities and collect parent relationships
         for (handle, mut pending) in self.pending.drain() {
             let entity = world.spawn(());
             self.registry.borrow_mut().resolve(handle, entity);
@@ -1006,24 +1008,29 @@ impl ScriptCommands {
                 result.scripts_added.push(entity);
             }
 
+            // Defer parent setting until all entities are spawned
             if let Some(parent_handle) = pending.parent {
-                // Resolve the parent handle - it could be a real entity or a pending entity that was already spawned
-                let registry = self.registry.borrow();
-                let parent_bits = if let Some(bits) = registry.resolved_bits(parent_handle) {
-                    bits
-                } else if parent_handle > 0 {
-                    // It's a real entity bits value, not a registry handle
-                    parent_handle as u64
-                } else {
-                    // Parent handle is not resolved yet - this shouldn't happen if entities are processed in order,
-                    // but we'll skip setting the parent in this case
-                    continue;
-                };
-                drop(registry);
+                deferred_parents.push((entity, parent_handle));
+            }
+        }
 
-                if let Some(parent_entity) = Entity::from_bits(parent_bits) {
-                    world.insert_one(entity, Parent(parent_entity))?;
-                }
+        // Second pass: set all parent relationships now that all entities are spawned
+        for (child_entity, parent_handle) in deferred_parents {
+            let registry = self.registry.borrow();
+            let parent_bits = if let Some(bits) = registry.resolved_bits(parent_handle) {
+                bits
+            } else if parent_handle > 0 {
+                // It's a real entity bits value, not a registry handle
+                parent_handle as u64
+            } else {
+                // Parent handle is not resolved - this shouldn't happen now that all entities are spawned
+                error!("Failed to resolve parent handle {} for entity {:?}", parent_handle, child_entity);
+                continue;
+            };
+            drop(registry);
+
+            if let Some(parent_entity) = Entity::from_bits(parent_bits) {
+                world.insert_one(child_entity, Parent(parent_entity))?;
             }
         }
 

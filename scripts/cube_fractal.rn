@@ -115,7 +115,7 @@ fn add_next_recursion(parent, from_dir, recursion_count, is_root) {
         set_scale(child, BRANCH_SCALE, BRANCH_SCALE, BRANCH_SCALE);
 
         // Set parent-child relationship
-        set_parent(child, parent);
+        set_parent(child, Some(parent));
 
         // Store rotation state for this child
         set_state(child, "rotation_axis", direction);
