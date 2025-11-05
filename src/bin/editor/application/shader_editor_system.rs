@@ -6,8 +6,8 @@ use log::warn;
 use super::core::PendingShaderAction;
 use super::system::{EditorAppAccess, EditorCommand, EditorContext, EditorSystem};
 use crate::shader_editor::{ShaderEditorEvent, ShaderEditorState};
-use wgpu_cube::app::GpuUpdateContext;
 use wgpu_cube::asset::{Handle, MaterialAsset, MaterialKind, ShaderMaterialMetadata};
+use wgpu_cube::renderer::Renderer;
 use wgpu_cube::scene::{Scene, SceneWorkspaceSceneMut};
 
 #[derive(Default)]
@@ -95,7 +95,7 @@ impl ShaderEditorSystem {
         &mut self,
         app: &mut EditorAppAccess<'_>,
         scene: &mut SceneWorkspaceSceneMut<'_>,
-        gpu_ctx: Option<&mut GpuUpdateContext<'_>>,
+        mut renderer: Option<&mut Renderer>,
         actions: Vec<PendingShaderAction>,
     ) {
         if actions.is_empty() {
@@ -144,8 +144,8 @@ impl ShaderEditorSystem {
 
                             // Invalidate shader modules to force recompilation
                             if updated {
-                                if let Some(gpu_ctx) = gpu_ctx.as_mut() {
-                                    gpu_ctx.renderer.invalidate_material_shader_modules(handle, None);
+                                if let Some(renderer) = renderer.as_mut() {
+                                    renderer.invalidate_material_shader_modules(handle, None);
                                 }
                             }
                         } else {
@@ -189,7 +189,7 @@ impl EditorSystem for ShaderEditorSystem {
 
         let _ = ctx.with_gpu_app(move |app, gpu_ctx| {
             self.ensure_target_valid(&gpu_ctx.scene);
-            self.process_pending_actions(app, &mut gpu_ctx.scene, Some(gpu_ctx), actions);
+            self.process_pending_actions(app, &mut gpu_ctx.scene, Some(gpu_ctx.renderer), actions);
         });
     }
 
