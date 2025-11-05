@@ -525,6 +525,27 @@ enum ExistingCommand {
         entity_bits: u64,
         component_name: String,
     },
+    Translate {
+        entity_bits: u64,
+        delta: Vec3,
+    },
+    Rotate {
+        entity_bits: u64,
+        axis: Vec3,
+        angle: f32,
+    },
+    SetScale {
+        entity_bits: u64,
+        scale: Vec3,
+    },
+    LookAt {
+        entity_bits: u64,
+        target: Vec3,
+    },
+    SetParent {
+        entity_bits: u64,
+        parent_bits: Option<u64>,
+    },
 }
 
 struct ScriptCommands {
@@ -716,6 +737,81 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
+    fn translate(&mut self, handle: i64, delta: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::Translate {
+            entity_bits,
+            delta,
+        });
+        VmResult::Ok(())
+    }
+
+    fn rotate(&mut self, handle: i64, axis: Vec3, angle: f32) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::Rotate {
+            entity_bits,
+            axis,
+            angle,
+        });
+        VmResult::Ok(())
+    }
+
+    fn set_scale(&mut self, handle: i64, scale: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::SetScale {
+            entity_bits,
+            scale,
+        });
+        VmResult::Ok(())
+    }
+
+    fn look_at(&mut self, handle: i64, target: Vec3) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        self.existing.push(ExistingCommand::LookAt {
+            entity_bits,
+            target,
+        });
+        VmResult::Ok(())
+    }
+
+    fn set_parent(&mut self, handle: i64, parent_handle: Option<i64>) -> VmResult<()> {
+        let entity_bits = match self.resolve_entity_bits(handle) {
+            VmResult::Ok(bits) => bits,
+            VmResult::Err(err) => return VmResult::Err(err),
+        };
+
+        let parent_bits = if let Some(parent) = parent_handle {
+            Some(match self.resolve_entity_bits(parent) {
+                VmResult::Ok(bits) => bits,
+                VmResult::Err(err) => return VmResult::Err(err),
+            })
+        } else {
+            None
+        };
+
+        self.existing.push(ExistingCommand::SetParent {
+            entity_bits,
+            parent_bits,
+        });
+        VmResult::Ok(())
+    }
+
     fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.existing.is_empty()
     }
@@ -872,6 +968,116 @@ impl ScriptCommands {
                     // We need a remove_component method in the registry
                     // For now, log a warning
                     warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
+                }
+                ExistingCommand::Translate {
+                    entity_bits,
+                    delta,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.translation += delta;
+                    })?;
+                }
+                ExistingCommand::Rotate {
+                    entity_bits,
+                    axis,
+                    angle,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        let rotation = glam::Quat::from_axis_angle(axis.normalize(), angle);
+                        transform.rotation = rotation * transform.rotation;
+                    })?;
+                }
+                ExistingCommand::SetScale {
+                    entity_bits,
+                    scale,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        transform.scale = scale;
+                    })?;
+                }
+                ExistingCommand::LookAt {
+                    entity_bits,
+                    target,
+                } => {
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    Self::modify_transform(world, entity, |transform| {
+                        let direction = (target - transform.translation).normalize();
+                        if direction.length_squared() > 0.0 {
+                            transform.rotation = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                        }
+                    })?;
+                }
+                ExistingCommand::SetParent {
+                    entity_bits,
+                    parent_bits,
+                } => {
+                    use crate::scene::components::{Parent, Children};
+
+                    let Some(entity) = Entity::from_bits(entity_bits) else {
+                        continue;
+                    };
+
+                    if world.entity(entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Get old parent entity (if any) before any mutable borrows
+                    let old_parent_entity = world.get::<&Parent>(entity).ok().map(|p| p.0);
+
+                    // Remove from old parent's children list
+                    if let Some(old_parent) = old_parent_entity {
+                        if let Ok(mut children) = world.get::<&mut Children>(old_parent) {
+                            children.0.retain(|&child| child != entity);
+                        }
+                    }
+
+                    // Set new parent
+                    if let Some(parent_bits_val) = parent_bits {
+                        let Some(parent_entity) = Entity::from_bits(parent_bits_val) else {
+                            continue;
+                        };
+
+                        if world.entity(parent_entity).is_err() {
+                            return Err(ComponentError::NoSuchEntity.into());
+                        }
+
+                        // Set parent component
+                        world.insert_one(entity, Parent(parent_entity))?;
+
+                        // Add to parent's children
+                        // Check if parent has Children component first
+                        let has_children = world.satisfies::<&Children>(parent_entity).unwrap_or(false);
+
+                        if has_children {
+                            // Parent has Children, add this entity
+                            if let Ok(mut children) = world.get::<&mut Children>(parent_entity) {
+                                if !children.0.contains(&entity) {
+                                    children.0.push(entity);
+                                }
+                            }
+                        } else {
+                            // Parent doesn't have Children component yet
+                            world.insert_one(parent_entity, Children(vec![entity]))?;
+                        }
+                    } else {
+                        // Remove parent (unparent)
+                        let _ = world.remove_one::<Parent>(entity);
+                    }
                 }
             }
         }
@@ -1157,6 +1363,17 @@ fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(remove_component)?;
     module.function_meta(has_component)?;
     module.function_meta(find_entity_by_name)?;
+    // Transform manipulation functions
+    module.function_meta(translate)?;
+    module.function_meta(rotate)?;
+    module.function_meta(set_scale)?;
+    module.function_meta(look_at)?;
+    module.function_meta(get_world_translation)?;
+    module.function_meta(get_world_rotation)?;
+    // Hierarchy functions
+    module.function_meta(set_parent)?;
+    module.function_meta(get_parent)?;
+    module.function_meta(get_children)?;
     Ok(module)
 }
 
@@ -1433,6 +1650,248 @@ fn find_entity_by_name(name: String) -> VmResult<Option<i64>> {
                 return VmResult::Ok(Some(entity_bits(entity)));
             }
         }
+        VmResult::Ok(None)
+    })
+}
+
+// ============================================================================
+// Transform Manipulation Functions
+// ============================================================================
+
+/// Translate an entity by a delta vector.
+///
+/// Adds the delta to the entity's current position.
+///
+/// # Example
+/// ```rune
+/// translate(entity, 1.0, 0.0, 0.0);  // Move right by 1 unit
+/// ```
+#[rune::function]
+fn translate(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.translate(entity_bits, Vec3::new(x as f32, y as f32, z as f32))
+        })
+    })
+}
+
+/// Rotate an entity around an axis by an angle in radians.
+///
+/// # Example
+/// ```rune
+/// // Rotate 45 degrees around Y axis
+/// rotate(entity, 0.0, 1.0, 0.0, 0.785);
+/// ```
+#[rune::function]
+fn rotate(entity_bits: i64, axis_x: f64, axis_y: f64, axis_z: f64, angle: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.rotate(
+                entity_bits,
+                Vec3::new(axis_x as f32, axis_y as f32, axis_z as f32),
+                angle as f32,
+            )
+        })
+    })
+}
+
+/// Set the scale of an entity.
+///
+/// # Example
+/// ```rune
+/// set_scale(entity, 2.0, 2.0, 2.0);  // Double the size
+/// ```
+#[rune::function]
+fn set_scale(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.set_scale(entity_bits, Vec3::new(x as f32, y as f32, z as f32))
+        })
+    })
+}
+
+/// Make an entity look at a target position.
+///
+/// # Example
+/// ```rune
+/// look_at(entity, 0.0, 0.0, 10.0);  // Look at point in front
+/// ```
+#[rune::function]
+fn look_at(entity_bits: i64, target_x: f64, target_y: f64, target_z: f64) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(|commands| {
+            commands.look_at(
+                entity_bits,
+                Vec3::new(target_x as f32, target_y as f32, target_z as f32),
+            )
+        })
+    })
+}
+
+/// Get the world-space translation of an entity.
+///
+/// Returns an array [x, y, z] of the entity's world position.
+/// Note: Currently returns local translation. World transform will be added later.
+///
+/// # Example
+/// ```rune
+/// let pos = get_world_translation(entity);
+/// if pos != None {
+///     log_info("Got position");
+/// }
+/// ```
+#[rune::function]
+fn get_world_translation(entity_bits: i64) -> VmResult<Option<rune::alloc::Vec<f64>>> {
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_bits as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        // Get local transform for now
+        if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+            let translation = transform.0.translation;
+            let mut vec = rune::alloc::Vec::new();
+            if let Err(e) = vec.try_push(translation.x as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(translation.y as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(translation.z as f64) {
+                return VmResult::Err(e.into());
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+/// Get the world-space rotation of an entity as euler angles.
+///
+/// Returns an array [yaw, pitch, roll] in radians.
+/// Note: Currently returns local rotation. World transform will be added later.
+///
+/// # Example
+/// ```rune
+/// let rot = get_world_rotation(entity);
+/// if rot != None {
+///     log_info("Got rotation");
+/// }
+/// ```
+#[rune::function]
+fn get_world_rotation(entity_bits: i64) -> VmResult<Option<rune::alloc::Vec<f64>>> {
+    use glam::EulerRot;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_bits as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        // Get local transform for now
+        if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+            let (yaw, pitch, roll) = transform.0.rotation.to_euler(EulerRot::YXZ);
+            let mut vec = rune::alloc::Vec::new();
+            if let Err(e) = vec.try_push(yaw as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(pitch as f64) {
+                return VmResult::Err(e.into());
+            }
+            if let Err(e) = vec.try_push(roll as f64) {
+                return VmResult::Err(e.into());
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+// ============================================================================
+// Hierarchy Functions
+// ============================================================================
+
+/// Set the parent of an entity.
+///
+/// Pass None to unparent the entity.
+///
+/// # Example
+/// ```rune
+/// let parent = find_entity_by_name("ParentObject");
+/// // Note: Can't easily unwrap Option in Rune yet
+/// set_parent(child_entity, parent);
+/// ```
+#[rune::function]
+fn set_parent(entity_bits: i64, parent_bits: Option<i64>) -> VmResult<()> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut()
+            .with(|commands| commands.set_parent(entity_bits, parent_bits))
+    })
+}
+
+/// Get the parent of an entity.
+///
+/// Returns the entity handle of the parent, or None if no parent.
+///
+/// # Example
+/// ```rune
+/// let parent = get_parent(entity);
+/// if parent != None {
+///     log_info("Has parent");
+/// }
+/// ```
+#[rune::function]
+fn get_parent(entity_handle: i64) -> VmResult<Option<i64>> {
+    use crate::scene::components::Parent;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_handle as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        if let Ok(parent) = world.get::<&Parent>(entity) {
+            return VmResult::Ok(Some(entity_bits(parent.0)));
+        }
+
+        VmResult::Ok(None)
+    })
+}
+
+/// Get the children of an entity.
+///
+/// Returns an array of entity handles.
+///
+/// # Example
+/// ```rune
+/// let children = get_children(entity);
+/// if children != None {
+///     log_info("Has children");
+/// }
+/// ```
+#[rune::function]
+fn get_children(entity_handle: i64) -> VmResult<Option<rune::alloc::Vec<i64>>> {
+    use crate::scene::components::Children;
+
+    with_active_world(|world| {
+        let entity = match Entity::from_bits(entity_handle as u64) {
+            Some(e) => e,
+            None => return VmResult::Ok(None),
+        };
+
+        if let Ok(children) = world.get::<&Children>(entity) {
+            let mut vec = rune::alloc::Vec::new();
+            for &child in &children.0 {
+                if let Err(e) = vec.try_push(entity_bits(child)) {
+                    return VmResult::Err(e.into());
+                }
+            }
+            return VmResult::Ok(Some(vec));
+        }
+
         VmResult::Ok(None)
     })
 }
