@@ -199,7 +199,7 @@ impl PreparedBatches {
 }
 
 fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3) {
-    instances.sort_by(|a, b| {
+    instances.sort_unstable_by(|a, b| {
         let da = (a.transform.translation - camera_pos).length_squared();
         let db = (b.transform.translation - camera_pos).length_squared();
         db.partial_cmp(&da).unwrap_or(Ordering::Equal)
@@ -207,7 +207,7 @@ fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3
 }
 
 fn sort_batches_back_to_front(batches: &mut [OrderedBatch], camera_pos: Vec3) {
-    batches.sort_by(|a, b| {
+    batches.sort_unstable_by(|a, b| {
         farthest_distance_sq(b, camera_pos)
             .partial_cmp(&farthest_distance_sq(a, camera_pos))
             .unwrap_or(Ordering::Equal)
@@ -237,12 +237,12 @@ fn optimize_instance_order(pass: RenderPass, instances: &mut [InstanceData]) {
         .iter()
         .all(|inst| inst.source == InstanceSource::Gpu)
     {
-        instances.sort_by_key(|inst| inst.gpu_index.unwrap_or(u32::MAX));
+        instances.sort_unstable_by_key(|inst| inst.gpu_index.unwrap_or(u32::MAX));
         return;
     }
 
     if matches!(pass, RenderPass::Opaque) {
-        instances.sort_by_key(|inst| inst.material_index);
+        instances.sort_unstable_by_key(|inst| inst.material_index);
     }
 }
 
@@ -288,7 +288,7 @@ fn collect_gpu_ranges(batches: &[OrderedBatch]) -> Vec<Range<u32>> {
         }
     }
 
-    ranges.sort_by_key(|range| range.start);
+    ranges.sort_unstable_by_key(|range| range.start);
 
     let mut merged: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
     for range in ranges {

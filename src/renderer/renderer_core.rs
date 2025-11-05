@@ -727,7 +727,6 @@ impl Renderer {
         )?;
         self.lights_buffer.update(&self.context.queue, lights);
 
-        let depth_view = self.context.depth.view.clone();
         let render_region = self
             .render_region
             .or_else(|| RenderRegion::full(self.context.config.width, self.context.config.height));
@@ -755,7 +754,7 @@ impl Renderer {
             surface_view,
             scene_view,
             scene_resolve_view,
-            depth_view,
+            depth_view: self.context.depth.view.clone(),
             resolved_depth_view: None,
             shadow_invocations: Vec::new(),
         })
