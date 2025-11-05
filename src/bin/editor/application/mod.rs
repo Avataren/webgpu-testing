@@ -1207,6 +1207,35 @@ impl EditorApplication {
                         self.record_scene_change(&mut ctx.scene);
                     }
                 }
+                InspectorAction::ChangeScriptSource {
+                    entity,
+                    script_path,
+                } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        // Check if entity has a script component
+                        if let Ok(mut script) = world.get::<&mut RuneScriptComponent>(entity) {
+                            // Create new script source from file
+                            let new_source = RuneScriptSource::File { path: script_path.clone() };
+                            *script = RuneScriptComponent::new(new_source);
+                            updated = true;
+                            log::info!(
+                                "Changed script source for entity {:?} to {:?}",
+                                entity,
+                                script_path
+                            );
+                        } else {
+                            log::warn!("Entity {:?} does not have a script component", entity);
+                        }
+                    }
+
+                    if updated {
+                        self.record_scene_change(&mut ctx.scene);
+                        // Reload the script runtime to pick up the new script
+                        ctx.scene.reset_script_runtime();
+                    }
+                }
                 InspectorAction::EditScript { .. } => {
                     // Script edits are handled immediately in the UI stage.
                 }

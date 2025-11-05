@@ -5,6 +5,7 @@ use egui::{
 use glam::{EulerRot, Quat, Vec3};
 use std::cmp::Ordering;
 use std::f32::consts::PI;
+use std::fs;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
@@ -112,6 +113,10 @@ pub enum InspectorAction {
     },
     AddScript {
         entity: Entity,
+    },
+    ChangeScriptSource {
+        entity: Entity,
+        script_path: PathBuf,
     },
 }
 
@@ -1917,6 +1922,40 @@ fn show_script_section(
                 component: script.clone(),
             });
         }
+
+        ui.separator();
+        ui.label("Select existing script:");
+
+        let available_scripts = list_available_scripts();
+        if available_scripts.is_empty() {
+            ui.label("No script files found in scripts/");
+        } else {
+            let current_path = match script.source() {
+                RuneScriptSource::File { path } => Some(path.clone()),
+                _ => None,
+            };
+
+            for script_path in available_scripts {
+                let file_name = script_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+
+                let is_current = current_path.as_ref() == Some(&script_path);
+                let button_text = if is_current {
+                    format!("● {}", file_name)
+                } else {
+                    file_name.to_string()
+                };
+
+                if ui.button(button_text).clicked() && !is_current {
+                    action = Some(InspectorAction::ChangeScriptSource {
+                        entity,
+                        script_path,
+                    });
+                }
+            }
+        }
     });
     action
 }
@@ -1930,6 +1969,29 @@ fn show_add_script_section(ui: &mut egui::Ui, entity: Entity) -> Option<Inspecto
         }
     });
     action
+}
+
+fn list_available_scripts() -> Vec<PathBuf> {
+    let scripts_dir = PathBuf::from("scripts");
+    if !scripts_dir.exists() || !scripts_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut scripts = Vec::new();
+    if let Ok(entries) = fs::read_dir(&scripts_dir) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_file() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("rn") {
+                        scripts.push(path);
+                    }
+                }
+            }
+        }
+    }
+    scripts.sort();
+    scripts
 }
 
 fn show_shader_controls(
