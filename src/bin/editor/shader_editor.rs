@@ -110,7 +110,10 @@ impl ShaderEditorState {
         egui::Window::new(window_title)
             .open(&mut open)
             .resizable(true)
+            .movable(true)
+            .constrain(true)
             .default_size(egui::vec2(900.0, 400.0))
+            .max_height(600.0)
             .show(ctx, |ui| {
                 if let Some(status) = &self.status {
                     let color = status.color(ui.visuals());
