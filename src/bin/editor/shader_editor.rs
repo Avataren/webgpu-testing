@@ -53,7 +53,7 @@ const ATTRIBUTES: &[&str] = &[
 pub enum ShaderEditorEvent {
     None,
     Save {
-        entity: Entity,
+        _entity: Entity,
         handle: Handle<MaterialAsset>,
         contents: String,
         message: String,
@@ -170,7 +170,7 @@ impl ShaderEditorState {
                                         "Shader saved and hot-reloaded.".to_string()
                                     };
                                     event = ShaderEditorEvent::Save {
-                                        entity: self.entity,
+                                        _entity: self.entity,
                                         handle: self.handle,
                                         contents: self.buffer.clone(),
                                         message,

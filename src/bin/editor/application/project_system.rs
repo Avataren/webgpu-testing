@@ -12,7 +12,7 @@ use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, Proj
 
 use super::{EditorContext, EditorSystem};
 
-pub(super) struct ProjectSystem {
+pub(crate) struct ProjectSystem {
     controller: ProjectController,
     aux_windows_enabled: bool,
     pending_gltf_imports: Vec<PathBuf>,
@@ -256,10 +256,6 @@ impl ProjectSystem {
         &mut self.controller
     }
 
-    pub(super) fn controller(&self) -> &ProjectController {
-        &self.controller
-    }
-
     pub(super) fn scene_documents(&self) -> &[SceneDocument] {
         self.controller.scene_documents()
     }
@@ -269,10 +265,6 @@ impl ProjectSystem {
             .scene_documents()
             .iter()
             .find(|doc| doc.id == document_id)
-    }
-
-    pub(super) fn scene_library(&self) -> &SceneLibrary {
-        &self.scene_library
     }
 
     pub(super) fn scene_library_mut(&mut self) -> &mut SceneLibrary {

@@ -18,7 +18,7 @@ use egui::Context as EguiContext;
 use glam::Vec2;
 use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
-use wgpu_cube::renderer::{RenderRegion, Renderer};
+use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{ParticleBehaviorPreset, Scene, SceneHandle, SceneWorkspaceSceneMut};
 use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
@@ -158,10 +158,6 @@ impl<'shared> EditorAppAccess<'shared> {
         }
         self.history_system_mut()
             .record_scene_change(scene, selected, highlighted);
-    }
-
-    pub fn ensure_editor_scene_basics(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
-        EditorApplication::ensure_editor_scene_basics(scene, renderer);
     }
 
     pub fn initialize_history_state(&mut self, scene: &mut Scene) {
