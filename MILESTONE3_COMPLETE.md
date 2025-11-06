@@ -230,6 +230,31 @@ let is_hero = ui.checkbox("hero", get_state("hero"), "Is Hero");
 ✅ Example scripts demonstrating all widgets
 ✅ Practical editor tool examples
 
+## Critical Bug Fix (Post-Milestone 3)
+
+**Commit:** `3857388` - Fix critical bug: Implement UI response feedback loop for interactive widgets
+
+**Issue:** After initial Milestone 3 implementation, automated code review identified that interactive widgets were completely non-functional. UI responses were being collected during rendering but never fed back to scripts.
+
+**Fix:** Implemented complete response feedback loop:
+- Added `ui_responses` storage to `ScriptingState`
+- Added `set_ui_responses()` method chain through all layers
+- Modified `process_ui()` to set responses before calling `on_ui()`
+- Editor now stores responses and feeds them back before collecting new commands
+
+**Result:** All interactive widgets (text_edit, slider, drag_value, checkbox, color_edit) now work correctly with proper state updates.
+
+**Files Changed:**
+- src/scripting/rune/api/ui/mod.rs (export UiResponse)
+- src/scripting/rune/state.rs (response storage and feedback)
+- src/scene/runtime_state.rs (delegation)
+- src/scene/runtime_control.rs (delegation)
+- src/scene/scene.rs (public API)
+- src/bin/editor/application/core.rs (response storage)
+- src/bin/editor/application/mod.rs (collection and feedback)
+
+See `CRITICAL_BUGFIX_RESPONSE_FEEDBACK.md` for complete details.
+
 ## Known Limitations
 
 1. **No multi-line text input** - Only single-line text_edit
