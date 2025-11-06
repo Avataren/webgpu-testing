@@ -84,6 +84,22 @@ impl UiContext {
             .unwrap_or(current_value)
     }
 
+    /// Display a multiline text editor and return the new value.
+    /// If width and height are not provided, the editor will fill available space.
+    #[rune::function(instance)]
+    pub fn text_edit_multiline(&self, id: String, current_value: String, width: Option<f64>, height: Option<f64>) -> String {
+        self.commands.borrow_mut().push(UiCommand::TextEditMultiline {
+            id: id.clone(),
+            current_value: current_value.clone(),
+            width: width.map(|v| v as f32),
+            height: height.map(|v| v as f32),
+        });
+
+        self.get_response(&id)
+            .and_then(|r| r.text_value)
+            .unwrap_or(current_value)
+    }
+
     /// Display a slider and return the new value.
     #[rune::function(instance)]
     pub fn slider(&self, id: String, current_value: f64, min: f64, max: f64) -> f64 {

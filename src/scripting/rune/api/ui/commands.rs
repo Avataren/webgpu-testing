@@ -10,6 +10,7 @@ pub enum UiCommand {
     Heading { text: String },
     Separator,
     TextEdit { id: String, current_value: String },
+    TextEditMultiline { id: String, current_value: String, width: Option<f32>, height: Option<f32> },
     Slider { id: String, current_value: f64, min: f64, max: f64 },
     DragValue { id: String, current_value: f64 },
     Checkbox { id: String, current_value: bool, label: String },
@@ -44,6 +45,28 @@ impl UiCommand {
             UiCommand::TextEdit { id: _, current_value } => {
                 let mut text = current_value.clone();
                 let response = ui.text_edit_singleline(&mut text);
+                Some(UiResponse {
+                    clicked: response.clicked(),
+                    hovered: response.hovered(),
+                    changed: response.changed(),
+                    text_value: Some(text),
+                    ..Default::default()
+                })
+            }
+            UiCommand::TextEditMultiline { id: _, current_value, width, height } => {
+                let mut text = current_value.clone();
+                let mut text_edit = egui::TextEdit::multiline(&mut text)
+                    .code_editor();
+
+                // Calculate size based on provided dimensions or use available space
+                let size = match (width, height) {
+                    (Some(w), Some(h)) => egui::vec2(*w, *h),
+                    (Some(w), None) => egui::vec2(*w, ui.available_height()),
+                    (None, Some(h)) => egui::vec2(ui.available_width(), *h),
+                    (None, None) => ui.available_size(),
+                };
+
+                let response = ui.add_sized(size, text_edit);
                 Some(UiResponse {
                     clicked: response.clicked(),
                     hovered: response.hovered(),

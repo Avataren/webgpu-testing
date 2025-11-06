@@ -537,6 +537,7 @@ impl EditorApplication {
                                     let id = match command {
                                         UiCommand::Button { text } => format!("button_{}", text),
                                         UiCommand::TextEdit { id, .. } => id.clone(),
+                                        UiCommand::TextEditMultiline { id, .. } => id.clone(),
                                         UiCommand::Slider { id, .. } => id.clone(),
                                         UiCommand::DragValue { id, .. } => id.clone(),
                                         UiCommand::Checkbox { id, .. } => id.clone(),
@@ -565,6 +566,7 @@ impl EditorApplication {
                                     let id = match command {
                                         UiCommand::Button { text } => format!("button_{}", text),
                                         UiCommand::TextEdit { id, .. } => id.clone(),
+                                        UiCommand::TextEditMultiline { id, .. } => id.clone(),
                                         UiCommand::Slider { id, .. } => id.clone(),
                                         UiCommand::DragValue { id, .. } => id.clone(),
                                         UiCommand::Checkbox { id, .. } => id.clone(),
