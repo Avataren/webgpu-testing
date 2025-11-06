@@ -217,7 +217,7 @@ impl EditorSystem for ShaderEditorSystem {
                 self.editor = None;
             }
             ShaderEditorEvent::Save {
-                entity: _,
+                _entity,
                 handle,
                 contents,
                 message,
