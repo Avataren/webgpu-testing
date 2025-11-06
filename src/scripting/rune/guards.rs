@@ -172,6 +172,17 @@ pub(crate) fn with_active_world<R>(f: impl FnOnce(&World) -> VmResult<R>) -> VmR
     })
 }
 
+pub(crate) fn with_active_entity<R>(f: impl FnOnce(i64) -> VmResult<R>) -> VmResult<R> {
+    ACTIVE_ENTITY.with(|cell| {
+        let opt = cell.borrow();
+        let Some(entity_bits) = *opt else {
+            return VmResult::panic("entity not available");
+        };
+        f(entity_bits)
+    })
+}
+
+
 pub(crate) fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> VmResult<R>) -> VmResult<R> {
     ACTIVE_REGISTRY.with(|cell| {
         let opt = cell.borrow();
