@@ -31,7 +31,7 @@ pub fn on_created(self_entity) {
 }
 
 pub fn on_ui(self_entity, ui) {
-    let mut state = get_state("editor", EditorState {
+    let state = get_state("editor", EditorState {
         scripts: [],
         selected_index: -1,
         current_content: "",
@@ -152,7 +152,7 @@ pub fn on_ui(self_entity, ui) {
 
 fn refresh_script_list() {
     let scripts = get_all_script_entities();
-    let mut state = get_state("editor", EditorState {
+    let state = get_state("editor", EditorState {
         scripts: [],
         selected_index: -1,
         current_content: "",
