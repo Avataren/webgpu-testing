@@ -13,6 +13,24 @@ category = "Debug"
 enabled = true
 default_visible = true
 
+# Script Editor - Edit RuneScript files directly in the editor
+[[plugin]]
+name = "Script Editor"
+script = "script_editor_plugin.rn"
+description = "Full-featured script editor for editing RuneScript files"
+category = "Development"
+enabled = true
+default_visible = true
+
+# Simple Text Editor - General purpose text editor
+[[plugin]]
+name = "Text Editor"
+script = "simple_text_editor.rn"
+description = "Simple text editor with file I/O support"
+category = "Development"
+enabled = true
+default_visible = false
+
 # Disabled plugins for now while we fix the scripting issues
 [[plugin]]
 name = "Scene Statistics"

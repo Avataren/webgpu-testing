@@ -11,6 +11,7 @@ mod hierarchy;
 mod input;
 mod logging;
 mod query;
+mod script_access;
 mod state;
 mod transform;
 pub mod ui;
@@ -113,6 +114,12 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(file_io::write_file)?;
     module.function_meta(file_io::file_exists)?;
     module.function_meta(file_io::list_files)?;
+
+    // Script access functions
+    module.ty::<script_access::ScriptInfo>()?;
+    module.function_meta(script_access::get_all_script_entities)?;
+    module.function_meta(script_access::get_script_info)?;
+    module.function_meta(script_access::get_entity_name)?;
 
     // UI types and functions
     module.ty::<ui::UiContext>()?;
