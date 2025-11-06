@@ -1,10 +1,11 @@
 use winit::dpi::PhysicalSize;
 
 pub struct Depth {
-    pub texture: wgpu::Texture, // keep the texture alive
+    // CRITICAL: views must drop before texture
     pub view: wgpu::TextureView,
-    pub format: wgpu::TextureFormat,
     pub sampled_view: wgpu::TextureView,
+    pub texture: wgpu::Texture,
+    pub format: wgpu::TextureFormat,
 }
 
 impl Depth {

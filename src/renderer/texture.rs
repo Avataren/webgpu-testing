@@ -24,9 +24,10 @@ struct RgbaTextureSource<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Texture {
-    pub texture: wgpu::Texture,
+    // CRITICAL: view and sampler must drop before texture
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    pub texture: wgpu::Texture,
 }
 
 impl Texture {
