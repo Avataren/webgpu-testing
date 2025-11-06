@@ -63,8 +63,9 @@ pub(crate) fn set_f64(key: String, value: f64) -> VmResult<()> {
     })
 }
 
-// Three-parameter versions for setting state on arbitrary entities (backward compatibility)
-#[rune::function(path = set_state)]
+// Three-parameter versions for setting state on arbitrary entities
+// Use these when you need to set/get state on entities other than self
+#[rune::function]
 pub(crate) fn set_state_for(handle: i64, key: String, value: Value) -> VmResult<()> {
     with_active_state(move |map| {
         map.insert((handle, key), value);
@@ -72,7 +73,7 @@ pub(crate) fn set_state_for(handle: i64, key: String, value: Value) -> VmResult<
     })
 }
 
-#[rune::function(path = get_state)]
+#[rune::function]
 pub(crate) fn get_state_for(handle: i64, key: String, default: Value) -> VmResult<Value> {
     with_active_state(move |map| {
         let entry_key = (handle, key);
@@ -83,7 +84,7 @@ pub(crate) fn get_state_for(handle: i64, key: String, default: Value) -> VmResul
     })
 }
 
-#[rune::function(path = try_get_state)]
+#[rune::function]
 pub(crate) fn try_get_state_for(handle: i64, key: String) -> VmResult<Value> {
     with_active_state(move |map| {
         let entry_key = (handle, key);
@@ -94,7 +95,7 @@ pub(crate) fn try_get_state_for(handle: i64, key: String) -> VmResult<Value> {
     })
 }
 
-#[rune::function(path = get_f64)]
+#[rune::function]
 pub(crate) fn get_f64_for(handle: i64, key: String, default: f64) -> VmResult<f64> {
     with_active_state(move |map| {
         let entry_key = (handle, key);
@@ -105,7 +106,7 @@ pub(crate) fn get_f64_for(handle: i64, key: String, default: f64) -> VmResult<f6
     })
 }
 
-#[rune::function(path = set_f64)]
+#[rune::function]
 pub(crate) fn set_f64_for(handle: i64, key: String, value: f64) -> VmResult<()> {
     with_active_state(move |map| {
         map.insert((handle, key), Value::from(value));
