@@ -39,27 +39,34 @@ pub fn handle_change_script_source(
     entity: Entity,
     script_path: PathBuf,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
+    let updated = {
+        let world = ctx.scene.main_world_mut();
 
-    // Check if entity has a script component
-    if let Ok(mut script) = world.get::<&mut RuneScriptComponent>(entity) {
-        // Create new script source from file
-        let new_source = RuneScriptSource::File {
-            path: script_path.clone(),
-        };
-        *script = RuneScriptComponent::new(new_source);
-        log::info!(
-            "Changed script source for entity {:?} to {:?}",
-            entity,
-            script_path
-        );
+        // Check if entity has a script component
+        if let Ok(mut script) = world.get::<&mut RuneScriptComponent>(entity) {
+            // Create new script source from file
+            let new_source = RuneScriptSource::File {
+                path: script_path.clone(),
+            };
+            *script = RuneScriptComponent::new(new_source);
+            log::info!(
+                "Changed script source for entity {:?} to {:?}",
+                entity,
+                script_path
+            );
+            true
+        } else {
+            log::warn!("Entity {:?} does not have a script component", entity);
+            false
+        }
+    };
 
+    if updated {
         ctx.app.record_scene_change(ctx.scene);
         // Reload the script runtime to pick up the new script
         ctx.scene.reset_script_runtime();
         ActionResult::scene_changed()
     } else {
-        log::warn!("Entity {:?} does not have a script component", entity);
         ActionResult::no_change()
     }
 }

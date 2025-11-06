@@ -1,5 +1,5 @@
 use hecs::Entity;
-use wgpu_cube::asset::MaterialAsset;
+use wgpu_cube::asset::{Handle, MaterialAsset, ShaderMaterialMetadata};
 
 use super::{ActionContext, ActionResult};
 
@@ -9,8 +9,8 @@ use super::{ActionContext, ActionResult};
 pub fn handle_edit_shader(
     _ctx: &mut ActionContext,
     _entity: Entity,
-    _handle: slotmap::DefaultKey,
-    _material_asset: MaterialAsset,
+    _handle: Handle<MaterialAsset>,
+    _metadata: ShaderMaterialMetadata,
 ) -> ActionResult {
     // Shader edits are handled immediately in the UI stage
     ActionResult::no_change()

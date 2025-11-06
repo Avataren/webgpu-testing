@@ -1,8 +1,9 @@
 use hecs::Entity;
 use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
-use wgpu_cube::renderer::primitives::{PrimitiveMeshDescriptor, ScenePrimitivePreset};
+use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Material;
+use wgpu_cube::ScenePrimitivePreset;
 use wgpu_cube::scene::{
     CameraComponent, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshComponent,
     ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight,

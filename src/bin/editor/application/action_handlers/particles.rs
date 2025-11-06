@@ -1,7 +1,7 @@
 use hecs::Entity;
 use wgpu_cube::scene::{
-    Billboard, ParticleBehavior, ParticleBehaviorConfig, ParticleEmitterComponent,
-    ParticleSystemComponent,
+    components::Billboard, ParticleBehaviorConfig, ParticleBehaviorPreset,
+    ParticleEmitterComponent, ParticleSystemComponent,
 };
 
 use super::{ActionContext, ActionResult};
@@ -62,21 +62,29 @@ pub fn handle_update_particle_emitter(
     entity: Entity,
     component: ParticleEmitterComponent,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut ParticleEmitterComponent>(entity) {
-        Ok(mut existing) => {
-            if *existing != component {
-                *existing = component;
-                ctx.app.record_scene_change(ctx.scene);
-                ActionResult::scene_changed()
-            } else {
-                ActionResult::no_change()
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut ParticleEmitterComponent>(entity) {
+            Ok(mut existing) => {
+                if *existing != component {
+                    *existing = component;
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to update particle emitter for {:?}: {}", entity, err);
+                false
             }
         }
-        Err(err) => {
-            log::warn!("Failed to update particle emitter for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    };
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }
 
@@ -84,26 +92,32 @@ pub fn handle_update_particle_emitter(
 pub fn handle_update_particle_behavior(
     ctx: &mut ActionContext,
     entity: Entity,
-    behavior: ParticleBehavior,
+    behavior: ParticleBehaviorPreset,
     config: ParticleBehaviorConfig,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut ParticleSystemComponent>(entity) {
-        Ok(mut existing) => {
-            let config = config.ensure_variant(behavior);
-            if existing.behavior != behavior || existing.behavior_config != config {
-                existing.behavior = behavior;
-                existing.behavior_config = config;
-                ctx.app.record_scene_change(ctx.scene);
-                ActionResult::scene_changed()
-            } else {
-                ActionResult::no_change()
+    let mut updated = false;
+    {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut ParticleSystemComponent>(entity) {
+            Ok(mut existing) => {
+                let config = config.ensure_variant(behavior);
+                if existing.behavior != behavior || existing.behavior_config != config {
+                    existing.behavior = behavior;
+                    existing.behavior_config = config;
+                    updated = true;
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to update particle behavior for {:?}: {}", entity, err);
             }
         }
-        Err(err) => {
-            log::warn!("Failed to update particle behavior for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    }
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }
 

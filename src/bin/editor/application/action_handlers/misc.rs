@@ -58,14 +58,22 @@ pub fn handle_rename_entity(
     entity: Entity,
     new_name: String,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
-        name.0 = new_name;
-        log::info!("Renamed entity {:?}", entity);
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
+            name.0 = new_name;
+            log::info!("Renamed entity {:?}", entity);
+            true
+        } else {
+            log::warn!("Entity {:?} does not have a Name component", entity);
+            false
+        }
+    };
+
+    if updated {
         ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
-        log::warn!("Entity {:?} does not have a Name component", entity);
         ActionResult::no_change()
     }
 }

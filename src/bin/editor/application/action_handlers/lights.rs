@@ -9,17 +9,25 @@ pub fn handle_update_point_light(
     entity: Entity,
     light: PointLight,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut PointLight>(entity) {
-        Ok(mut component) => {
-            *component = light;
-            ctx.app.record_scene_change(ctx.scene);
-            ActionResult::scene_changed()
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut PointLight>(entity) {
+            Ok(mut component) => {
+                *component = light;
+                true
+            }
+            Err(err) => {
+                log::warn!("Failed to update point light for {:?}: {}", entity, err);
+                false
+            }
         }
-        Err(err) => {
-            log::warn!("Failed to update point light for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    };
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }
 
@@ -29,17 +37,25 @@ pub fn handle_update_directional_light(
     entity: Entity,
     light: DirectionalLight,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut DirectionalLight>(entity) {
-        Ok(mut component) => {
-            *component = light;
-            ctx.app.record_scene_change(ctx.scene);
-            ActionResult::scene_changed()
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut DirectionalLight>(entity) {
+            Ok(mut component) => {
+                *component = light;
+                true
+            }
+            Err(err) => {
+                log::warn!("Failed to update directional light for {:?}: {}", entity, err);
+                false
+            }
         }
-        Err(err) => {
-            log::warn!("Failed to update directional light for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    };
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }
 
@@ -49,16 +65,24 @@ pub fn handle_update_spot_light(
     entity: Entity,
     light: SpotLight,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut SpotLight>(entity) {
-        Ok(mut component) => {
-            *component = light;
-            ctx.app.record_scene_change(ctx.scene);
-            ActionResult::scene_changed()
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut SpotLight>(entity) {
+            Ok(mut component) => {
+                *component = light;
+                true
+            }
+            Err(err) => {
+                log::warn!("Failed to update spot light for {:?}: {}", entity, err);
+                false
+            }
         }
-        Err(err) => {
-            log::warn!("Failed to update spot light for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    };
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }

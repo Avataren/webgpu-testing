@@ -9,16 +9,24 @@ pub fn handle_update_transform(
     entity: Entity,
     transform: Transform,
 ) -> ActionResult {
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut TransformComponent>(entity) {
-        Ok(mut component) => {
-            component.0 = transform;
-            ctx.app.record_scene_change(ctx.scene);
-            ActionResult::transforms_changed()
+    let updated = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut TransformComponent>(entity) {
+            Ok(mut component) => {
+                component.0 = transform;
+                true
+            }
+            Err(err) => {
+                log::warn!("Failed to update transform for {:?}: {}", entity, err);
+                false
+            }
         }
-        Err(err) => {
-            log::warn!("Failed to update transform for {:?}: {}", entity, err);
-            ActionResult::no_change()
-        }
+    };
+
+    if updated {
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::transforms_changed()
+    } else {
+        ActionResult::no_change()
     }
 }

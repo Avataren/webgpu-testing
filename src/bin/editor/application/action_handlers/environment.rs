@@ -57,21 +57,31 @@ pub fn handle_update_environment(
     }
 
     // Update the environment component
-    let world = ctx.scene.main_world_mut();
-    match world.get::<&mut EnvironmentComponent>(entity) {
-        Ok(mut existing) => {
-            if *existing != component {
-                *existing = component.clone();
-                ctx.scene.set_environment(component.to_environment());
-                ctx.app.record_scene_change(ctx.scene);
-                ActionResult::scene_changed()
-            } else {
-                ActionResult::no_change()
+    let (updated, environment) = {
+        let world = ctx.scene.main_world_mut();
+        match world.get::<&mut EnvironmentComponent>(entity) {
+            Ok(mut existing) => {
+                if *existing != component {
+                    *existing = component.clone();
+                    (true, Some(component.to_environment()))
+                } else {
+                    (false, None)
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to update environment for {:?}: {}", entity, err);
+                (false, None)
             }
         }
-        Err(err) => {
-            log::warn!("Failed to update environment for {:?}: {}", entity, err);
-            ActionResult::no_change()
+    };
+
+    if updated {
+        if let Some(env) = environment {
+            ctx.scene.set_environment(env);
         }
+        ctx.app.record_scene_change(ctx.scene);
+        ActionResult::scene_changed()
+    } else {
+        ActionResult::no_change()
     }
 }

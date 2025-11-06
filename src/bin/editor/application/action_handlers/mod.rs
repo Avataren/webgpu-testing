@@ -19,13 +19,13 @@ pub mod dispatch;
 
 pub use dispatch::dispatch_action;
 
-use wgpu_cube::scene::Scene;
+use wgpu_cube::scene::SceneWorkspaceSceneMut;
 use crate::application::EditorApplication;
 
 /// Context passed to action handlers
-pub struct ActionContext<'a> {
-    pub scene: &'a mut Scene,
-    pub app: &'a mut EditorApplication,
+pub struct ActionContext<'scene, 'app> {
+    pub scene: &'scene mut SceneWorkspaceSceneMut<'scene>,
+    pub app: &'app mut EditorApplication,
 }
 
 /// Result from an action handler indicating what changed

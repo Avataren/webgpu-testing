@@ -32,14 +32,12 @@ use self::scene_tabs_panel::SceneTabAction;
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
 use std::path::PathBuf;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
 use wgpu_cube::asset::{
-    AssetTypeTag, Handle, MaterialAsset, MaterialKind, Mesh, ShaderMaterialMetadata,
+    Handle, MaterialAsset, Mesh,
 };
 use wgpu_cube::gpu_particles::ParticleEmitter;
 use wgpu_cube::renderer::primitives::{quad_mesh, PrimitiveMeshDescriptor};
@@ -50,11 +48,11 @@ use wgpu_cube::scene::components::{
 use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
-    MaterialComponent, MeshBounds, MeshComponent, ParticleBehaviorPreset, ParticleEmitterComponent,
+    MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
     ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
-    SceneTreeAsset, SceneTreeAssetNode, SpotLight, Transform, TransformComponent,
+    SceneTreeAsset, SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
-use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource, RuneScriptingPlugin};
+use wgpu_cube::scripting::RuneScriptingPlugin;
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
     ScenePrimitivePreset,
@@ -641,15 +639,20 @@ impl EditorApplication {
         let mut transforms_changed = false;
 
         // Route all actions through the dispatcher
-        use action_handlers::{dispatch_action, ActionContext};
+        use action_handlers::dispatch_action;
 
         for action in actions {
-            let mut action_ctx = ActionContext {
-                scene: &mut ctx.scene,
-                app: self,
+            // SAFETY: We need to use unsafe here to work around a limitation in the borrow checker.
+            // The borrow checker thinks that the mutable borrow of ctx.scene from the previous
+            // iteration is still active, but in reality each iteration's borrows are completely
+            // independent and don't overlap. We use raw pointers to explicitly control the borrow
+            // lifetime and make it clear to the compiler that each call to dispatch_action is
+            // independent.
+            let result = unsafe {
+                let scene_ptr: *mut SceneWorkspaceSceneMut = &mut ctx.scene;
+                let app_ptr: *mut EditorApplication = self as *mut _;
+                dispatch_action(&mut *scene_ptr, &mut *app_ptr, action)
             };
-
-            let result = dispatch_action(&mut action_ctx, action);
 
             if result.transforms_changed {
                 transforms_changed = true;
@@ -1591,7 +1594,7 @@ impl EditorApplication {
         }
     }
 
-    fn resolve_active_camera_entity(&mut self, scene: &mut Scene) {
+    fn resolve_active_camera_entity(&mut self, scene: &mut SceneWorkspaceSceneMut) {
         if let Some(entity) = self.shared.active_camera_entity {
             if scene.main_world().contains(entity) {
                 return;

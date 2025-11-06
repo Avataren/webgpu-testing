@@ -4,6 +4,8 @@
 /// with a cleaner dispatch mechanism that calls focused handler functions.
 
 use crate::inspector::InspectorAction;
+use crate::application::EditorApplication;
+use wgpu_cube::scene::SceneWorkspaceSceneMut;
 use super::{ActionContext, ActionResult};
 use super::transform::handle_update_transform;
 use super::camera::handle_update_camera;
@@ -34,113 +36,115 @@ use super::shader::handle_edit_shader;
 /// This function routes each action to its specific handler function.
 /// Handlers are organized by concern (transform, camera, lights, etc.)
 /// and return ActionResult indicating what changed.
-pub fn dispatch_action(
-    ctx: &mut ActionContext,
+pub fn dispatch_action<'a>(
+    scene: &'a mut SceneWorkspaceSceneMut<'a>,
+    app: &mut EditorApplication,
     action: InspectorAction,
 ) -> ActionResult {
+    let mut ctx = ActionContext { scene, app };
     match action {
         // Transform actions
         InspectorAction::UpdateTransform { entity, transform } => {
-            handle_update_transform(ctx, entity, transform)
+            handle_update_transform(&mut ctx, entity, transform)
         }
 
         // Camera actions
         InspectorAction::UpdateCamera { entity, component } => {
-            handle_update_camera(ctx, entity, component)
+            handle_update_camera(&mut ctx, entity, component)
         }
 
         // Light actions
         InspectorAction::UpdatePointLight { entity, light } => {
-            handle_update_point_light(ctx, entity, light)
+            handle_update_point_light(&mut ctx, entity, light)
         }
         InspectorAction::UpdateDirectionalLight { entity, light } => {
-            handle_update_directional_light(ctx, entity, light)
+            handle_update_directional_light(&mut ctx, entity, light)
         }
         InspectorAction::UpdateSpotLight { entity, light } => {
-            handle_update_spot_light(ctx, entity, light)
+            handle_update_spot_light(&mut ctx, entity, light)
         }
 
         // Misc actions
         InspectorAction::SetCanCastShadow { entity, casts_shadow } => {
-            handle_set_can_cast_shadow(ctx, entity, casts_shadow)
+            handle_set_can_cast_shadow(&mut ctx, entity, casts_shadow)
         }
         InspectorAction::RenameEntity { entity, new_name } => {
-            handle_rename_entity(ctx, entity, new_name)
+            handle_rename_entity(&mut ctx, entity, new_name)
         }
 
         // Add component actions
         InspectorAction::AddCamera { entity } => {
-            handle_add_camera(ctx, entity)
+            handle_add_camera(&mut ctx, entity)
         }
         InspectorAction::AddMesh { entity } => {
-            handle_add_mesh(ctx, entity)
+            handle_add_mesh(&mut ctx, entity)
         }
         InspectorAction::AddPointLight { entity } => {
-            handle_add_point_light(ctx, entity)
+            handle_add_point_light(&mut ctx, entity)
         }
         InspectorAction::AddDirectionalLight { entity } => {
-            handle_add_directional_light(ctx, entity)
+            handle_add_directional_light(&mut ctx, entity)
         }
         InspectorAction::AddSpotLight { entity } => {
-            handle_add_spot_light(ctx, entity)
+            handle_add_spot_light(&mut ctx, entity)
         }
         InspectorAction::AddEnvironment { entity } => {
-            handle_add_environment(ctx, entity)
+            handle_add_environment(&mut ctx, entity)
         }
         InspectorAction::AddParticleSystem { entity } => {
-            handle_add_particle_system(ctx, entity)
+            handle_add_particle_system(&mut ctx, entity)
         }
 
         // Material actions
         InspectorAction::UpdateMaterial { entity, handle, material } => {
-            handle_update_material(ctx, entity, handle, material)
+            handle_update_material(&mut ctx, entity, handle, material)
         }
         InspectorAction::SetMaterialKind { entity, handle, kind } => {
-            handle_set_material_kind(ctx, entity, handle, kind)
+            handle_set_material_kind(&mut ctx, entity, handle, kind)
         }
         InspectorAction::AssignShaderSource { entity, handle, shader_path } => {
-            handle_assign_shader_source(ctx, entity, handle, shader_path)
+            handle_assign_shader_source(&mut ctx, entity, handle, shader_path)
         }
         InspectorAction::CreateShaderSource { entity, handle, suggested_stem } => {
-            handle_create_shader_source(ctx, entity, handle, suggested_stem)
+            handle_create_shader_source(&mut ctx, entity, handle, suggested_stem)
         }
         InspectorAction::CreateShaderMaterial { entity, source } => {
-            handle_create_shader_material(ctx, entity, source)
+            handle_create_shader_material(&mut ctx, entity, source)
         }
 
         // Script actions
         InspectorAction::AddScript { entity } => {
-            handle_add_script(ctx, entity)
+            handle_add_script(&mut ctx, entity)
         }
         InspectorAction::ChangeScriptSource { entity, script_path } => {
-            handle_change_script_source(ctx, entity, script_path)
+            handle_change_script_source(&mut ctx, entity, script_path)
         }
         InspectorAction::EditScript { entity, component } => {
-            handle_edit_script(ctx, entity, component)
+            handle_edit_script(&mut ctx, entity, component)
         }
 
         // Particle actions
         InspectorAction::UpdateParticleSystem { entity, component } => {
-            handle_update_particle_system(ctx, entity, component)
+            handle_update_particle_system(&mut ctx, entity, component)
         }
         InspectorAction::UpdateParticleEmitter { entity, component } => {
-            handle_update_particle_emitter(ctx, entity, component)
+            handle_update_particle_emitter(&mut ctx, entity, component)
         }
         InspectorAction::UpdateParticleBehavior { entity, behavior, config } => {
-            handle_update_particle_behavior(ctx, entity, behavior, config)
+            handle_update_particle_behavior(&mut ctx, entity, behavior, config)
         }
         InspectorAction::SetBillboard { entity, billboard } => {
-            handle_set_billboard(ctx, entity, billboard)
+            handle_set_billboard(&mut ctx, entity, billboard)
         }
 
         // Environment actions
         InspectorAction::UpdateEnvironment { entity, component } => {
-            handle_update_environment(ctx, entity, component)
+            handle_update_environment(&mut ctx, entity, component)
         }
 
         // Shader actions
-        InspectorAction::EditShader { entity, handle, material_asset } => {
-            handle_edit_shader(ctx, entity, handle, material_asset)
+        InspectorAction::EditShader { entity, handle, metadata } => {
+            handle_edit_shader(&mut ctx, entity, handle, metadata)
         }
     }
 }
