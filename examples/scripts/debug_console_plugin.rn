@@ -1,0 +1,174 @@
+// @tool
+// Debug Console Plugin
+//
+// An engine UI plugin providing a debug console with command execution.
+// Demonstrates how scripted plugins can create complex interactive tools.
+
+pub fn on_created(self_entity) {
+    log_info("Debug Console Plugin initialized");
+
+    // Console state
+    set_state("command_input", "");
+    set_state("show_help", false);
+    set_state("auto_clear", true);
+
+    // Performance monitoring
+    set_f64("frame_time", 0.0);
+    set_f64("fps", 0.0);
+    set_f64("update_counter", 0.0);
+}
+
+pub fn update(self_entity, dt) {
+    // Track performance metrics
+    if dt > 0.0 {
+        set_f64("frame_time", dt);
+        set_f64("fps", 1.0 / dt);
+    }
+
+    let counter = get_f64("update_counter") + 1.0;
+    set_f64("update_counter", counter);
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Debug Console");
+    ui.separator();
+
+    // === Performance Monitor ===
+    ui.label("Performance");
+
+    let fps = get_f64("fps");
+    let frame_time = get_f64("frame_time");
+
+    if fps > 0.0 {
+        ui.label(`FPS: ${fps}`);
+        ui.label(`Frame Time: ${frame_time}ms`);
+    } else {
+        ui.label("FPS: (Editor mode)");
+    }
+
+    let update_count = get_f64("update_counter");
+    ui.label(`Updates: ${update_count}`);
+
+    ui.separator();
+
+    // === Command Input ===
+    ui.label("Command");
+
+    let cmd = get_state("command_input");
+    let new_cmd = ui.text_edit("command_input", cmd);
+    if new_cmd != cmd {
+        set_state("command_input", new_cmd);
+    }
+
+    if ui.button("Execute") {
+        execute_command(self_entity, new_cmd);
+
+        let auto_clear = try_get_state("auto_clear");
+        let should_clear = if auto_clear is () { true } else { auto_clear };
+        if should_clear {
+            set_state("command_input", "");
+        }
+    }
+
+    ui.separator();
+
+    // === Quick Commands ===
+    ui.label("Quick Commands");
+
+    if ui.button("stats") {
+        execute_command(self_entity, "stats");
+    }
+
+    if ui.button("clear") {
+        execute_command(self_entity, "clear");
+    }
+
+    if ui.button("spawn test") {
+        execute_command(self_entity, "spawn test");
+    }
+
+    if ui.button("list entities") {
+        execute_command(self_entity, "list");
+    }
+
+    ui.separator();
+
+    // === Options ===
+    ui.label("Options");
+
+    let show_help = try_get_state("show_help");
+    let show = if show_help is () { false } else { show_help };
+    let new_show = ui.checkbox("show_help", show, "Show Help");
+    if new_show != show {
+        set_state("show_help", new_show);
+    }
+
+    let auto_clear = try_get_state("auto_clear");
+    let clear = if auto_clear is () { true } else { auto_clear };
+    let new_clear = ui.checkbox("auto_clear", clear, "Auto-clear input");
+    if new_clear != clear {
+        set_state("auto_clear", new_clear);
+    }
+
+    if new_show {
+        ui.separator();
+        ui.label("Available Commands:");
+        ui.label("  stats - Show scene statistics");
+        ui.label("  clear - Clear console");
+        ui.label("  spawn <name> - Spawn entity");
+        ui.label("  list - List all entities");
+        ui.label("  help - Show this help");
+    }
+}
+
+fn execute_command(self_entity, command) {
+    log_info(`> ${command}`);
+
+    if command == "stats" {
+        let entities = query_entities_with_component("Transform");
+        log_info(`Total entities: ${entities.len()}`);
+
+        let meshes = query_entities_with_component("MeshRenderer");
+        log_info(`Mesh renderers: ${meshes.len()}`);
+
+        let lights = query_entities_with_component("Light");
+        log_info(`Lights: ${lights.len()}`);
+
+        let scripts = query_entities_with_component("RuneScript");
+        log_info(`Scripts: ${scripts.len()}`);
+
+    } else if command == "clear" {
+        log_info("Console cleared");
+
+    } else if command == "list" {
+        let entities = query_entities_with_component("Transform");
+        log_info(`Listing ${entities.len()} entities:`);
+        // In production, would iterate and log each
+
+    } else if command == "help" {
+        log_info("=== Debug Console Help ===");
+        log_info("stats - Show scene statistics");
+        log_info("clear - Clear console");
+        log_info("spawn <name> - Spawn entity");
+        log_info("list - List all entities");
+        log_info("help - Show this help");
+
+    } else if command.starts_with("spawn ") {
+        // Parse spawn command
+        let parts = command.split(" ");
+        if parts.len() >= 2 {
+            let name = parts[1];
+            let entity = spawn_entity(name);
+            log_info(`Spawned entity: ${name}`);
+        } else {
+            log_error("Usage: spawn <name>");
+        }
+
+    } else if command == "" {
+        // Empty command, do nothing
+
+    } else {
+        log_warn(`Unknown command: ${command}`);
+        log_info("Type 'help' for available commands");
+    }
+}

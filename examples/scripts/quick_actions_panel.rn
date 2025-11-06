@@ -1,0 +1,139 @@
+// @tool
+// Quick Actions Panel
+//
+// An engine UI plugin providing shortcuts for common editor operations.
+// Demonstrates how scripted plugins can streamline workflows.
+
+pub fn on_created(self_entity) {
+    log_info("Quick Actions Panel initialized");
+
+    // Initialize spawn settings
+    set_state("spawn_name", "NewEntity");
+    set_f64("spawn_x", 0.0);
+    set_f64("spawn_y", 0.0);
+    set_f64("spawn_z", 0.0);
+
+    // Light settings
+    set_f64("light_intensity", 1.0);
+    set_f64("light_r", 1.0);
+    set_f64("light_g", 1.0);
+    set_f64("light_b", 1.0);
+
+    // Model import
+    set_state("model_path", "assets/models/cube.glb");
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Quick Actions");
+    ui.separator();
+
+    // === Entity Creation Section ===
+    ui.label("Create Entity");
+
+    let name = get_state("spawn_name");
+    let new_name = ui.text_edit("spawn_name", name);
+    if new_name != name {
+        set_state("spawn_name", new_name);
+    }
+
+    let x = get_f64("spawn_x");
+    let new_x = ui.drag_value("spawn_x", x);
+    if new_x != x {
+        set_f64("spawn_x", new_x);
+    }
+    ui.label(`X: ${new_x}`);
+
+    let y = get_f64("spawn_y");
+    let new_y = ui.drag_value("spawn_y", y);
+    if new_y != y {
+        set_f64("spawn_y", new_y);
+    }
+    ui.label(`Y: ${new_y}`);
+
+    let z = get_f64("spawn_z");
+    let new_z = ui.drag_value("spawn_z", z);
+    if new_z != z {
+        set_f64("spawn_z", new_z);
+    }
+    ui.label(`Z: ${new_z}`);
+
+    if ui.button("Spawn Empty Entity") {
+        let entity = spawn_entity(get_state("spawn_name"));
+        set_translation(entity, new_x, new_y, new_z);
+        log_info(`Spawned entity at (${new_x}, ${new_y}, ${new_z})`);
+    }
+
+    ui.separator();
+
+    // === Lighting Section ===
+    ui.label("Create Light");
+
+    let intensity = get_f64("light_intensity");
+    let new_intensity = ui.slider("light_intensity", intensity, 0.0, 10.0);
+    if new_intensity != intensity {
+        set_f64("light_intensity", new_intensity);
+    }
+    ui.label(`Intensity: ${new_intensity}`);
+
+    let r = get_f64("light_r");
+    let g = get_f64("light_g");
+    let b = get_f64("light_b");
+    let (new_r, new_g, new_b) = ui.color_edit("light_color", r, g, b);
+    if new_r != r || new_g != g || new_b != b {
+        set_f64("light_r", new_r);
+        set_f64("light_g", new_g);
+        set_f64("light_b", new_b);
+    }
+
+    if ui.button("Add Point Light") {
+        let light_entity = spawn_entity("PointLight");
+        set_translation(light_entity, new_x, new_y, new_z);
+        // Note: In production, would add Light component with color/intensity
+        log_info(`Created point light at (${new_x}, ${new_y}, ${new_z})`);
+        log_info(`Color: RGB(${new_r}, ${new_g}, ${new_b}), Intensity: ${new_intensity}`);
+    }
+
+    ui.separator();
+
+    // === Model Import Section ===
+    ui.label("Import Model");
+
+    let path = get_state("model_path");
+    let new_path = ui.text_edit("model_path", path);
+    if new_path != path {
+        set_state("model_path", new_path);
+    }
+
+    if ui.button("Import GLTF") {
+        log_info(`Importing model from: ${new_path}`);
+        // Note: import_gltf requires the full implementation
+        // This demonstrates the API usage
+    }
+
+    ui.separator();
+
+    // === Scene Management ===
+    ui.label("Scene Actions");
+
+    if ui.button("Find Camera") {
+        let cameras = query_entities_with_component("Camera");
+        if cameras.len() > 0 {
+            log_info(`Found ${cameras.len()} camera(s)`);
+        } else {
+            log_warn("No cameras found in scene");
+        }
+    }
+
+    if ui.button("List All Entities") {
+        let entities = query_entities_with_component("Transform");
+        log_info(`=== Scene Entities (${entities.len()}) ===`);
+        // In production, would iterate and log each entity name
+    }
+
+    if ui.button("Clear Position Fields") {
+        set_f64("spawn_x", 0.0);
+        set_f64("spawn_y", 0.0);
+        set_f64("spawn_z", 0.0);
+        log_info("Position fields cleared");
+    }
+}
