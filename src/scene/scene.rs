@@ -597,6 +597,12 @@ impl Scene {
     }
 
     pub fn update(&mut self, dt: f64) {
+        // Determine editor mode: dt == 0 typically means editor mode
+        let editor_mode = dt == 0.0;
+        self.update_with_mode(dt, editor_mode);
+    }
+
+    pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);
         let assets = &mut self.assets;
@@ -608,7 +614,7 @@ impl Scene {
 
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
-            self.runtime.run_scripts(world, dt);
+            self.runtime.run_scripts(world, dt, editor_mode);
         } else {
             error!("Rune scripting error: main scene node is missing");
         }

@@ -1,0 +1,32 @@
+// @tool
+// This script runs in editor mode (when dt == 0)
+//
+// Example of an editor tool script that logs messages in the editor
+
+pub fn on_created(self_entity) {
+    log_info("Editor tool created! This runs in editor mode.");
+}
+
+pub fn update(self_entity, dt) {
+    // In editor mode, dt will be 0
+    // In play mode, dt will be > 0
+
+    if dt == 0.0 {
+        // We're in editor mode
+        log_debug("Editor tool update - editor mode");
+    } else {
+        // We're in play mode
+        log_info(`Editor tool update - play mode (dt: ${dt})`);
+    }
+}
+
+// Future: on_ui function will be called to render UI
+// pub fn on_ui(ui) {
+//     ui.heading("Editor Tool");
+//     ui.separator();
+//     ui.label("This is an editor tool script");
+//
+//     if ui.button("Click me!") {
+//         log_info("Button clicked in editor!");
+//     }
+// }

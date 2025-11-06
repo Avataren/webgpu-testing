@@ -80,8 +80,8 @@ impl SceneRuntime {
         self.time
     }
 
-    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64) {
-        if let Err(err) = self.scripting.update_scripts(world, dt) {
+    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        if let Err(err) = self.scripting.update_scripts(world, dt, editor_mode) {
             error!("Rune scripting error: {err}");
         }
     }
@@ -124,7 +124,7 @@ mod tests {
             ),
         ));
 
-        runtime.run_scripts(&mut world, 0.0);
+        runtime.run_scripts(&mut world, 0.0, false);
         {
             let transform = world.get::<&TransformComponent>(entity).unwrap();
             assert_eq!(transform.0.translation, Vec3::new(1.0, 2.0, 3.0));
@@ -133,7 +133,7 @@ mod tests {
         let absolute_time = runtime.advance_time(0.5);
         assert!((absolute_time - 0.5).abs() < f64::EPSILON);
 
-        runtime.run_scripts(&mut world, 0.5);
+        runtime.run_scripts(&mut world, 0.5, false);
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert_eq!(transform.0.translation, Vec3::splat(0.5));
     }

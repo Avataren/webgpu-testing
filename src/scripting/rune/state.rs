@@ -54,11 +54,19 @@ impl ScriptingState {
     }
 
     /// Run pending scripts for the current frame.
-    pub fn update_scripts(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
+    ///
+    /// * `world` - The entity world
+    /// * `dt` - Delta time in seconds. If 0, only editor tool scripts will run.
+    /// * `editor_mode` - If true, editor tool scripts will run even when dt is 0
+    pub fn update_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
         self.retain_instances(world);
         self.process_on_created(world)?;
-        if dt != 0.0 {
-            self.process_updates(world, dt)?;
+
+        // Run updates for:
+        // - All scripts in play mode (dt > 0)
+        // - Editor tool scripts in editor mode (dt == 0 && editor_mode)
+        if dt != 0.0 || editor_mode {
+            self.process_updates(world, dt, editor_mode)?;
         }
         self.process_on_created(world)?;
         Ok(())
@@ -135,7 +143,7 @@ impl ScriptingState {
         Ok(())
     }
 
-    fn process_updates(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
+    fn process_updates(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -147,6 +155,11 @@ impl ScriptingState {
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (entity, component) in query.iter() {
                 if !component.created_called() {
+                    continue;
+                }
+
+                // Skip non-editor-tool scripts in editor mode
+                if editor_mode && dt == 0.0 && !component.is_editor_tool() {
                     continue;
                 }
 
@@ -220,7 +233,7 @@ impl ScriptingState {
                 // Prepare the command buffer and call the event handler
                 let commands = {
                     // Get the script component in a scope to drop the borrow
-                    let component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
+                    let mut component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
                         Ok(comp) => comp,
                         Err(_) => continue,
                     };
@@ -230,7 +243,7 @@ impl ScriptingState {
                     }
 
                     // Get the script instance
-                    let instance = match self.ensure_instance(subscription.entity_id, &component) {
+                    let instance = match self.ensure_instance(subscription.entity_id, &mut *component) {
                         Ok(inst) => inst,
                         Err(e) => {
                             error!(target: "script", "Failed to get script instance for event dispatch: {}", e);
@@ -347,7 +360,7 @@ impl ScriptingState {
     fn ensure_instance(
         &mut self,
         entity: Entity,
-        component: &RuneScriptComponent,
+        component: &mut RuneScriptComponent,
     ) -> Result<&mut RuneScriptInstance, RuneScriptingError> {
         let needs_rebuild = !matches!(
             self.instances.get(&entity),
@@ -355,7 +368,8 @@ impl ScriptingState {
         );
 
         if needs_rebuild {
-            let script = self.runtime.compile(component.source())?;
+            let (script, is_editor_tool) = self.runtime.compile(component.source())?;
+            component.set_editor_tool(is_editor_tool);
             let source = component.source().clone();
             let instance = self.runtime.instantiate(script, source);
             self.instances.insert(entity, instance);

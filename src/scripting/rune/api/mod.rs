@@ -11,6 +11,7 @@ mod logging;
 mod query;
 mod state;
 mod transform;
+pub mod ui;
 
 pub(crate) use component::{add_component, get_component, has_component, remove_component, set_component};
 pub(crate) use entity::{attach_inline_script, attach_script_file, find_entity_by_name, import_gltf, set_name, set_rotation, set_translation, spawn_entity};
@@ -88,5 +89,13 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(emit_event)?;
     module.function_meta(subscribe_event)?;
     module.function_meta(unsubscribe_event)?;
+
+    // UI types and functions
+    module.ty::<ui::UiContext>()?;
+    module.function_meta(ui::UiContext::label)?;
+    module.function_meta(ui::UiContext::button)?;
+    module.function_meta(ui::UiContext::heading)?;
+    module.function_meta(ui::UiContext::separator)?;
+
     Ok(module)
 }

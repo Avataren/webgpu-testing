@@ -37,8 +37,11 @@ impl RuneScriptingRuntime {
     pub(crate) fn compile(
         &mut self,
         source: &RuneScriptSource,
-    ) -> Result<Arc<RuneScript>, RuneScriptingError> {
+    ) -> Result<(Arc<RuneScript>, bool), RuneScriptingError> {
         let loaded = source.load(self.script_root.as_deref())?;
+
+        // Parse metadata annotations from source
+        let is_editor_tool = parse_editor_tool_annotation(&loaded.contents);
 
         let mut sources = Sources::new();
         let source = if let Some(path) = &loaded.path {
@@ -66,10 +69,29 @@ impl RuneScriptingRuntime {
             message: error.to_string(),
         })?;
 
-        Ok(RuneScript::new(loaded.name, unit))
+        Ok((RuneScript::new(loaded.name, unit), is_editor_tool))
     }
 
     pub(crate) fn instantiate(&self, script: Arc<RuneScript>, source: RuneScriptSource) -> RuneScriptInstance {
         RuneScriptInstance::new(self.runtime.clone(), script, source)
     }
+}
+
+/// Parse metadata annotations from script source to determine if it's an editor tool.
+/// Looks for `// @tool` or `// @editor_tool` comment annotations.
+fn parse_editor_tool_annotation(source: &str) -> bool {
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") {
+            let comment = trimmed[2..].trim();
+            if comment == "@tool" || comment == "@editor_tool" {
+                return true;
+            }
+        }
+        // Stop at first non-comment, non-empty line (annotations should be at the top)
+        if !trimmed.is_empty() && !trimmed.starts_with("//") {
+            break;
+        }
+    }
+    false
 }
