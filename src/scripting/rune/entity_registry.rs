@@ -39,6 +39,12 @@ impl EntityHandleRegistry {
         self.handles.insert(handle, Some(entity.to_bits().get()));
     }
 
+    /// Directly resolve a handle to entity bits without needing an Entity object.
+    /// This is useful for pre-registering entity_bits to prevent "not yet available" errors.
+    pub fn resolve_bits(&mut self, handle: i64, bits: u64) {
+        self.handles.insert(handle, Some(bits));
+    }
+
     pub fn resolved_bits(&self, handle: i64) -> Option<u64> {
         self.handles.get(&handle).and_then(|bits| *bits)
     }
