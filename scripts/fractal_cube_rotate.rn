@@ -3,9 +3,9 @@
 
 pub fn update(self_entity, dt) {
     // Get rotation axis and speed from state
-    let axis = get_state(self_entity, "rotation_axis", [0.0, 1.0, 0.0]);
-    let speed = get_f64(self_entity, "rotation_speed", 1.0);
-    let angle = get_f64(self_entity, "angle", 0.0);
+    let axis = get_state_for(self_entity, "rotation_axis", [0.0, 1.0, 0.0]);
+    let speed = get_f64_for(self_entity, "rotation_speed", 1.0);
+    let angle = get_f64_for(self_entity, "angle", 0.0);
 
     // Update angle
     let new_angle = angle + dt * speed;
@@ -23,5 +23,5 @@ pub fn update(self_entity, dt) {
     set_rotation(self_entity, axis_y * new_angle, axis_x * new_angle, axis_z * new_angle);
 
     // Store updated angle
-    set_f64(self_entity, "angle", new_angle);
+    set_f64("angle", new_angle);
 }

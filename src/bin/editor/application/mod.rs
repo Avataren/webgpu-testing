@@ -516,7 +516,8 @@ impl EditorApplication {
 
                     egui::Window::new(window_title)
                         .resizable(true)
-                        .default_size([300.0, 200.0])
+                        .default_size([500.0, 400.0])
+                        .collapsible(true)
                         .show(ctx, |ui| {
                             for command in commands {
                                 if let Some(response) = command.render(ui) {
