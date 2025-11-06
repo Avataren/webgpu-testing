@@ -22,6 +22,10 @@ use super::materials::{
 use super::scripts::{
     handle_add_script, handle_change_script_source, handle_edit_script,
 };
+use super::particles::{
+    handle_update_particle_system, handle_update_particle_emitter,
+    handle_update_particle_behavior, handle_set_billboard,
+};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -113,9 +117,22 @@ pub fn dispatch_action(
             handle_edit_script(ctx, entity, component)
         }
 
+        // Particle actions
+        InspectorAction::UpdateParticleSystem { entity, component } => {
+            handle_update_particle_system(ctx, entity, component)
+        }
+        InspectorAction::UpdateParticleEmitter { entity, component } => {
+            handle_update_particle_emitter(ctx, entity, component)
+        }
+        InspectorAction::UpdateParticleBehavior { entity, behavior, config } => {
+            handle_update_particle_behavior(ctx, entity, behavior, config)
+        }
+        InspectorAction::SetBillboard { entity, billboard } => {
+            handle_set_billboard(ctx, entity, billboard)
+        }
+
         // TODO: Add remaining action handlers:
         // - Environment: UpdateEnvironment
-        // - Particles: UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
         // - Shader: EditShader
         //
         // For now, fall back to unhandled action (will be removed as handlers are added)
