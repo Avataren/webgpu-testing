@@ -656,52 +656,51 @@ impl EditorApplication {
             }
         }
 
-        if transforms_changed {
-            ctx.scene.propagate_transforms();
-        }
-    }
+        /* OLD IMPLEMENTATION REMOVED - kept for reference during transition
+        for action in actions {
+            match action {
+                InspectorAction::UpdateTransform { entity, transform } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut TransformComponent>(entity) {
+                            Ok(mut component) => {
+                                component.0 = transform;
+                                updated = true;
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update transform for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
 
-    fn resolve_active_camera_entity(&mut self, scene: &mut Scene) {
-        if let Some(entity) = self.shared.active_camera_entity {
-            if scene.main_world().contains(entity) {
-                return;
-            }
-            scene.set_active_camera_entity(None);
-            self.shared.active_camera_entity = scene.active_camera_entity();
-        }
+                    if updated {
+                        transforms_changed = true;
+                        self.record_scene_change(&mut ctx.scene);
+                    }
+                }
+                InspectorAction::UpdateCamera { entity, component } => {
+                    let mut updated = false;
+                    {
+                        let world = ctx.scene.main_world_mut();
+                        match world.get::<&mut CameraComponent>(entity) {
+                            Ok(mut existing) => {
+                                if *existing != component {
+                                    *existing = component;
+                                    updated = true;
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("Failed to update camera for {:?}: {}", entity, err);
+                            }
+                        }
+                    }
 
-        let target_projection = scene.camera().projection();
-        let candidate = {
-            let world = scene.main_world();
-            world
-                .query::<&CameraComponent>()
-                .iter()
-                .find(|(_, component)| component.projection == target_projection)
-                .map(|(entity, _)| entity)
-        };
-
-        if let Some(entity) = candidate {
-            scene.set_active_camera_entity(Some(entity));
-            self.shared.active_camera_entity = scene.active_camera_entity();
-        }
-    }
-
-    pub(super) fn create_empty_entity(ctx: &mut GpuUpdateContext) -> Option<Entity> {
-        let entity = EntityBuilder::new(&mut ctx.scene)
-            .with_name("Empty")
-            .with_transform(Transform::default())
-            .visible(true)
-            .spawn();
-        Some(entity)
-    }
-
-    pub(super) fn create_primitive(
-        ctx: &mut GpuUpdateContext,
-        preset: ScenePrimitivePreset,
-    ) -> Option<Entity> {
-        let descriptor = PrimitiveMeshDescriptor::from(preset);
-        let mesh_handle = ctx
-            .scene
+                    if updated {
+                        if self.shared.active_camera_entity.is_none()
+                            || self.shared.active_camera_entity == Some(entity)
+                        {
+                            ctx.scene.set_active_camera_entity(Some(entity));
                             self.shared.active_camera_entity = ctx.scene.active_camera_entity();
                         }
 
@@ -1585,8 +1584,7 @@ impl EditorApplication {
                 }
             }
         }
-        */
-        // END OF OLD IMPLEMENTATION
+        */ // END OF OLD IMPLEMENTATION
 
         if transforms_changed {
             ctx.scene.propagate_transforms();
