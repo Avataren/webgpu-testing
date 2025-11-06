@@ -1,7 +1,8 @@
 /// Clipboard API for RuneScript
 ///
-/// Provides functions to access the system clipboard for copy/paste operations.
-/// Uses thread-local context to access the egui clipboard provider.
+/// Provides functions to copy text to the system clipboard.
+/// Note: Reading from clipboard is not supported by egui for security reasons.
+/// Users must paste text using Ctrl+V into text fields.
 
 use std::cell::RefCell;
 
@@ -11,7 +12,6 @@ thread_local! {
 
 /// Internal struct to hold clipboard access
 pub struct ClipboardAccess {
-    pub get_fn: Box<dyn Fn() -> Option<String>>,
     pub set_fn: Box<dyn Fn(String)>,
 }
 
@@ -23,11 +23,9 @@ impl ClipboardGuard {
     pub fn enter(ctx: &egui::Context) -> Self {
         CLIPBOARD_CONTEXT.with(|cell| {
             let ctx_clone = ctx.clone();
-            let ctx_clone2 = ctx.clone();
 
             *cell.borrow_mut() = Some(ClipboardAccess {
-                get_fn: Box::new(move || ctx_clone.input(|i| i.raw.clipboard_text.clone())),
-                set_fn: Box::new(move |text| ctx_clone2.copy_text(text)),
+                set_fn: Box::new(move |text| ctx_clone.copy_text(text)),
             });
         });
         Self
@@ -48,18 +46,16 @@ impl Drop for ClipboardGuard {
 }
 
 /// Get text from the clipboard.
-/// Returns an empty string if clipboard is unavailable or empty.
+/// NOTE: This function always returns an empty string because egui does not provide
+/// clipboard read access for security reasons. Users should paste text using Ctrl+V
+/// or Cmd+V directly into text edit fields.
 #[rune::function]
 pub fn get_clipboard() -> String {
-    CLIPBOARD_CONTEXT.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .and_then(|access| (access.get_fn)())
-            .unwrap_or_default()
-    })
+    String::new()
 }
 
-/// Set text to the clipboard.
+/// Set text to the clipboard (copy).
+/// The text can then be pasted elsewhere using Ctrl+V or Cmd+V.
 #[rune::function]
 pub fn set_clipboard(text: String) {
     CLIPBOARD_CONTEXT.with(|cell| {
