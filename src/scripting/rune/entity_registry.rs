@@ -59,8 +59,10 @@ pub(crate) struct PendingEntity {
     pub name: Option<String>,
     pub translation: Option<Vec3>,
     pub rotation: Option<Quat>,
+    pub scale: Option<Vec3>,
     pub script: Option<RuneScriptSource>,
     pub parent: Option<i64>,
+    pub components: Vec<(String, Value)>,
 }
 
 pub(crate) enum ExistingCommand {
