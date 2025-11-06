@@ -1,3 +1,4 @@
+use rune::alloc::String as RuneString;
 use rune::runtime::{try_result, VmResult};
 use rune::{FromValue, Value};
 
@@ -81,6 +82,37 @@ pub(crate) fn set_bool(key: String, value: bool) -> VmResult<()> {
     with_active_entity(move |handle| {
         with_active_state(move |map| {
             map.insert((handle, key), Value::from(value));
+            VmResult::Ok(())
+        })
+    })
+}
+
+#[rune::function]
+pub(crate) fn get_string(key: String, default: String) -> VmResult<String> {
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            let entry_key = (handle, key);
+            match map.get(&entry_key) {
+                Some(value) => try_result(String::from_value(value.clone())),
+                None => VmResult::Ok(default),
+            }
+        })
+    })
+}
+
+#[rune::function]
+pub(crate) fn set_string(key: String, value: String) -> VmResult<()> {
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            let rune_str = match RuneString::try_from(value.as_str()) {
+                Ok(s) => s,
+                Err(_) => return VmResult::panic("Failed to allocate string"),
+            };
+            let val = match Value::try_from(rune_str) {
+                Ok(v) => v,
+                Err(_) => return VmResult::panic("Failed to create value from string"),
+            };
+            map.insert((handle, key), val);
             VmResult::Ok(())
         })
     })
