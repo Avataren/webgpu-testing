@@ -15,6 +15,10 @@ use super::components::{
     handle_add_camera, handle_add_mesh, handle_add_point_light, handle_add_directional_light,
     handle_add_spot_light, handle_add_environment, handle_add_particle_system,
 };
+use super::materials::{
+    handle_update_material, handle_set_material_kind, handle_assign_shader_source,
+    handle_create_shader_source, handle_create_shader_material,
+};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -78,8 +82,24 @@ pub fn dispatch_action(
             handle_add_particle_system(ctx, entity)
         }
 
+        // Material actions
+        InspectorAction::UpdateMaterial { entity, handle, material } => {
+            handle_update_material(ctx, entity, handle, material)
+        }
+        InspectorAction::SetMaterialKind { entity, handle, kind } => {
+            handle_set_material_kind(ctx, entity, handle, kind)
+        }
+        InspectorAction::AssignShaderSource { entity, handle, shader_path } => {
+            handle_assign_shader_source(ctx, entity, handle, shader_path)
+        }
+        InspectorAction::CreateShaderSource { entity, handle, suggested_stem } => {
+            handle_create_shader_source(ctx, entity, handle, suggested_stem)
+        }
+        InspectorAction::CreateShaderMaterial { entity, source } => {
+            handle_create_shader_material(ctx, entity, source)
+        }
+
         // TODO: Add remaining action handlers:
-        // - Materials: UpdateMaterial, SetMaterialKind, CreateShaderMaterial, AssignShaderSource, CreateShaderSource
         // - Environment: UpdateEnvironment
         // - Particles: UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
         // - Scripts: EditScript, ChangeScriptSource, AddScript
