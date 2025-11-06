@@ -70,19 +70,22 @@ pub trait PlatformDriver {
 }
 
 pub struct PlatformState<H: AsRef<Window> + Clone> {
-    window: Option<H>,
-    window_id: Option<WindowId>,
+    // CRITICAL: renderer must drop before window!
+    // Renderer contains RenderContext with wgpu::Surface which was created from the window.
+    // The Surface needs the window to still be alive when it drops.
     renderer: Option<Renderer>,
     renderer_initialized: bool,
+    window: Option<H>,
+    window_id: Option<WindowId>,
 }
 
 impl<H: AsRef<Window> + Clone> PlatformState<H> {
     pub fn new() -> Self {
         Self {
-            window: None,
-            window_id: None,
             renderer: None,
             renderer_initialized: false,
+            window: None,
+            window_id: None,
         }
     }
 
