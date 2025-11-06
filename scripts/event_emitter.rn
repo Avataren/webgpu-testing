@@ -4,7 +4,7 @@
 
 pub fn on_created(self_entity) {
     log_info("Event Emitter initialized");
-    set_state(self_entity, "initialized", true);
+    set_state("initialized", true);
 }
 
 pub fn update(self_entity, dt) {
@@ -32,9 +32,9 @@ pub fn update(self_entity, dt) {
 
     // Emit a counter event when C is pressed
     if is_key_just_pressed("C") {
-        let count = get_f64(self_entity, "counter", 0.0);
+        let count = get_f64_for(self_entity, "counter", 0.0);
         let new_count = count + 1.0;
-        set_f64(self_entity, "counter", new_count);
+        set_f64("counter", new_count);
 
         log_info(`Emitting 'counter_updated' event with count: ${new_count}`);
         emit_event("counter_updated", #{

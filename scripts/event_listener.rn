@@ -10,13 +10,13 @@ pub fn on_created(self_entity) {
     subscribe_event("entity_moved", "on_entity_moved");
     subscribe_event("counter_updated", "on_counter_updated");
 
-    set_state(self_entity, "events_received", 0.0);
+    set_state("events_received", 0.0);
 }
 
 pub fn update(self_entity, dt) {
     // Display info when I key is pressed
     if is_key_just_pressed("I") {
-        let count = get_f64(self_entity, "events_received", 0.0);
+        let count = get_f64_for(self_entity, "events_received", 0.0);
         log_info(`Event Listener has received ${count} events so far`);
     }
 
@@ -34,9 +34,9 @@ pub fn on_space_pressed(event_data) {
     log_info(`  From entity: ${event_data.entity}`);
 
     // Increment received counter
-    let self_entity = event_data.entity; // Use any entity to track our state
-    let count = get_f64(self_entity, "events_received", 0.0);
-    set_f64(self_entity, "events_received", count + 1.0);
+    let entity = event_data.entity;
+    let count = get_f64_for(entity, "events_received", 0.0);
+    set_f64_for(entity, "events_received", count + 1.0);
 }
 
 // Event handler for entity_moved event

@@ -19,7 +19,7 @@ pub fn on_created(self_entity) {
     log_info("Creating rotating cube fractal...");
 
     // Initialize root state
-    set_state(self_entity, "fractal_state", FractalState {
+    set_state("fractal_state", FractalState {
         initialized: true,
         angle_x: 0.0,
         angle_y: 0.0,
@@ -44,7 +44,7 @@ pub fn on_created(self_entity) {
 
 pub fn update(self_entity, dt) {
     // Rotate the root entity
-    let state = get_state(self_entity, "fractal_state", FractalState {
+    let state = get_state_for(self_entity, "fractal_state", FractalState {
         initialized: false,
         angle_x: 0.0,
         angle_y: 0.0,
@@ -63,7 +63,7 @@ pub fn update(self_entity, dt) {
     // Apply rotation (YXZ order: yaw, pitch, roll)
     set_rotation(self_entity, new_angle_y, new_angle_x, new_angle_z);
 
-    set_state(self_entity, "fractal_state", FractalState {
+    set_state("fractal_state", FractalState {
         initialized: true,
         angle_x: new_angle_x,
         angle_y: new_angle_y,
