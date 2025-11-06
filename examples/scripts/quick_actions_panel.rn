@@ -8,7 +8,7 @@ pub fn on_created(self_entity) {
     log_info("Quick Actions Panel initialized");
 
     // Initialize spawn settings
-    set_state("spawn_name", "NewEntity");
+    set_string("spawn_name", "NewEntity");
     set_f64("spawn_x", 0.0);
     set_f64("spawn_y", 0.0);
     set_f64("spawn_z", 0.0);
@@ -20,7 +20,7 @@ pub fn on_created(self_entity) {
     set_f64("light_b", 1.0);
 
     // Model import
-    set_state("model_path", "assets/models/cube.glb");
+    set_string("model_path", "assets/models/cube.glb");
 }
 
 pub fn on_ui(self_entity, ui) {
@@ -30,10 +30,10 @@ pub fn on_ui(self_entity, ui) {
     // === Entity Creation Section ===
     ui.label("Create Entity");
 
-    let name = get_state("spawn_name");
+    let name = get_string("spawn_name", "NewEntity");
     let new_name = ui.text_edit("spawn_name", name);
     if new_name != name {
-        set_state("spawn_name", new_name);
+        set_string("spawn_name", new_name);
     }
 
     let x = get_f64("spawn_x");
@@ -58,7 +58,7 @@ pub fn on_ui(self_entity, ui) {
     ui.label(`Z: ${new_z}`);
 
     if ui.button("Spawn Empty Entity") {
-        let entity = spawn_entity(get_state("spawn_name"));
+        let entity = spawn_entity(get_string("spawn_name", "NewEntity"));
         set_translation(entity, new_x, new_y, new_z);
         log_info(`Spawned entity at (${new_x}, ${new_y}, ${new_z})`);
     }
@@ -98,10 +98,10 @@ pub fn on_ui(self_entity, ui) {
     // === Model Import Section ===
     ui.label("Import Model");
 
-    let path = get_state("model_path");
+    let path = get_string("model_path", "assets/models/cube.glb");
     let new_path = ui.text_edit("model_path", path);
     if new_path != path {
-        set_state("model_path", new_path);
+        set_string("model_path", new_path);
     }
 
     if ui.button("Import GLTF") {

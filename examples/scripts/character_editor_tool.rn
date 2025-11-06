@@ -8,12 +8,12 @@ pub fn on_created(self_entity) {
     log_info("Character Editor Tool initialized");
 
     // Character properties
-    set_state("char_name", "Hero");
+    set_string("char_name", "Hero");
     set_f64("char_level", 1.0);
     set_f64("char_str", 10.0);
     set_f64("char_dex", 10.0);
     set_f64("char_int", 10.0);
-    // Note: char_is_npc not initialized so try_get_state returns () initially
+    // Note: char_is_npc not initialized so get_bool returns default
     set_f64("char_color_r", 0.2);
     set_f64("char_color_g", 0.6);
     set_f64("char_color_b", 0.9);
@@ -26,10 +26,10 @@ pub fn on_ui(self_entity, ui) {
     // Basic Info Section
     ui.label("Basic Information");
 
-    let name = get_state("char_name");
+    let name = get_string("char_name", "Hero");
     let new_name = ui.text_edit("char_name", name);
     if new_name != name {
-        set_state("char_name", new_name);
+        set_string("char_name", new_name);
     }
 
     let level = get_f64("char_level");
@@ -94,19 +94,19 @@ pub fn on_ui(self_entity, ui) {
     // Actions
     if ui.button("Apply to Entity") {
         log_info("Applying character configuration...");
-        log_info(`Name: ${get_state("char_name")}`);
+        log_info(`Name: ${get_string("char_name", "Hero")}`);
         log_info(`Level: ${get_f64("char_level")}`);
         log_info(`Stats: STR=${get_f64("char_str")}, DEX=${get_f64("char_dex")}, INT=${get_f64("char_int")}`);
         // In a real tool, this would modify the entity's components
     }
 
     if ui.button("Reset to Defaults") {
-        set_state("char_name", "Hero");
+        set_string("char_name", "Hero");
         set_f64("char_level", 1.0);
         set_f64("char_str", 10.0);
         set_f64("char_dex", 10.0);
         set_f64("char_int", 10.0);
-        set_state("char_is_npc", false);
+        set_bool("char_is_npc", false);
         set_f64("char_color_r", 0.2);
         set_f64("char_color_g", 0.6);
         set_f64("char_color_b", 0.9);
