@@ -62,8 +62,7 @@ pub fn on_ui(self_entity, ui) {
     if ui.button("Execute") {
         execute_command(self_entity, new_cmd);
 
-        let auto_clear = try_get_state("auto_clear");
-        let should_clear = if auto_clear is () { true } else { auto_clear };
+        let should_clear = get_bool("auto_clear", true);
         if should_clear {
             set_state("command_input", "");
         }
@@ -95,18 +94,16 @@ pub fn on_ui(self_entity, ui) {
     // === Options ===
     ui.label("Options");
 
-    let show_help = try_get_state("show_help");
-    let show = if show_help is () { false } else { show_help };
+    let show = get_bool("show_help", false);
     let new_show = ui.checkbox("show_help", show, "Show Help");
     if new_show != show {
-        set_state("show_help", new_show);
+        set_bool("show_help", new_show);
     }
 
-    let auto_clear = try_get_state("auto_clear");
-    let clear = if auto_clear is () { true } else { auto_clear };
+    let clear = get_bool("auto_clear", true);
     let new_clear = ui.checkbox("auto_clear", clear, "Auto-clear input");
     if new_clear != clear {
-        set_state("auto_clear", new_clear);
+        set_bool("auto_clear", new_clear);
     }
 
     if new_show {

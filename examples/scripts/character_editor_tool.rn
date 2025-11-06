@@ -39,11 +39,10 @@ pub fn on_ui(self_entity, ui) {
     }
     ui.label(`Level: ${new_level}`);
 
-    let is_npc = try_get_state("char_is_npc");
-    let npc_val = if is_npc is () { false } else { is_npc };
+    let npc_val = get_bool("char_is_npc", false);
     let new_npc = ui.checkbox("char_is_npc", npc_val, "Is NPC");
     if new_npc != npc_val {
-        set_state("char_is_npc", new_npc);
+        set_bool("char_is_npc", new_npc);
     }
 
     ui.separator();

@@ -67,11 +67,10 @@ pub fn on_ui(self_entity, ui) {
     ui.separator();
 
     // Checkbox
-    let god_mode = try_get_state("god_mode");
-    let is_god_mode = if god_mode is () { false } else { god_mode };
+    let is_god_mode = get_bool("god_mode", false);
     let new_god_mode = ui.checkbox("god_mode", is_god_mode, "Enable God Mode");
     if new_god_mode != is_god_mode {
-        set_state("god_mode", new_god_mode);
+        set_bool("god_mode", new_god_mode);
         log_info(`God mode: ${new_god_mode}`);
     }
 

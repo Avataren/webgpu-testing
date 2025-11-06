@@ -65,11 +65,10 @@ pub fn on_ui(self_entity, ui) {
     ui.separator();
 
     // Advanced toggle
-    let show_advanced = try_get_state("show_advanced");
-    let show = if show_advanced is () { false } else { show_advanced };
+    let show = get_bool("show_advanced", false);
     let new_show = ui.checkbox("show_advanced", show, "Show Advanced");
     if new_show != show {
-        set_state("show_advanced", new_show);
+        set_bool("show_advanced", new_show);
     }
 
     if new_show {
