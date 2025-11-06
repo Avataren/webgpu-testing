@@ -60,6 +60,17 @@ impl EditorApplication {
             snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
+        // Reload UI plugins after restoring the scene
+        // The snapshot doesn't include UI plugin entities (they're not part of the scene tree),
+        // so we need to recreate them
+        if self.shared.ui_plugins_loaded {
+            info!("Reloading UI plugins after scene restore");
+            Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
+
+            // Initialize the newly loaded scripts
+            ctx.scene.update(0.0);
+        }
+
         // Reinitialize editor state
         {
             self.history_system_mut()
