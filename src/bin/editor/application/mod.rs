@@ -232,6 +232,9 @@ impl EditorApplication {
                 }
             }
         }
+
+        // Collect UI commands from scripts that implement on_ui()
+        self.shared.script_ui_commands = ctx.scene.process_script_ui();
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
@@ -435,11 +438,30 @@ impl EditorApplication {
             .set_window_enabled(!show_fullscreen_game);
         self.shader_editor_system_mut()
             .set_window_enabled(!show_fullscreen_game);
+
+        // Render script UI
+        self.render_script_ui(ctx);
+
         self.run_system_ui(ctx, default_ui);
     }
 }
 
 impl EditorApplication {
+    /// Render UI from scripts that implement on_ui()
+    fn render_script_ui(&mut self, ctx: &egui::Context) {
+        // Render each script's UI in a separate window
+        for (entity, commands) in &self.shared.script_ui_commands {
+            egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                .resizable(true)
+                .default_size([300.0, 200.0])
+                .show(ctx, |ui| {
+                    for command in commands {
+                        command.render(ui);
+                    }
+                });
+        }
+    }
+
     fn handle_scene_tab_action(&mut self, action: SceneTabAction) {
         match action {
             SceneTabAction::Activate(document_id) => {

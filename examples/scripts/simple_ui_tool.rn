@@ -1,0 +1,18 @@
+// @tool
+// Simple editor tool with UI
+//
+// This demonstrates a minimal editor tool that runs in editor mode
+// and provides a simple UI interface.
+
+pub fn on_created(self_entity) {
+    log_info("Simple UI tool loaded");
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Simple Tool");
+    ui.label("This tool runs in editor mode");
+
+    if ui.button("Log Message") {
+        log_info("Button pressed in editor!");
+    }
+}

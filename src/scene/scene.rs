@@ -124,6 +124,19 @@ impl Scene {
         self.runtime.scripting_mut()
     }
 
+    /// Process UI for all scripts in the main scene and return their UI commands.
+    ///
+    /// This should be called during the UI phase to collect UI commands from scripts
+    /// that implement on_ui().
+    pub fn process_script_ui(&mut self) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
+            let world = main_node.instance().world();
+            self.runtime.process_script_ui(world)
+        } else {
+            HashMap::new()
+        }
+    }
+
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
         self.gizmos.mode()
     }

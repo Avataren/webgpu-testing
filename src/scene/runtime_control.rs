@@ -58,6 +58,10 @@ impl SceneRuntimeController {
     pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
         self.runtime.run_scripts(world, dt, editor_mode);
     }
+
+    pub(crate) fn process_script_ui(&mut self, world: &World) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.runtime.process_script_ui(world)
+    }
 }
 
 impl Default for SceneRuntimeController {

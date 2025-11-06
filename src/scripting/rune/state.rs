@@ -347,6 +347,57 @@ impl ScriptingState {
         std::mem::take(&mut self.pending_gltf_imports)
     }
 
+    /// Call on_ui() for all scripts and collect their UI commands.
+    ///
+    /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
+    pub fn process_ui(&mut self, world: &World) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+        use super::api::ui::UiContext;
+        use super::commands::entity_bits;
+
+        let mut ui_commands = HashMap::new();
+        let event_queue = Rc::new(RefCell::new(Vec::new()));
+
+        // Set up guards for World and ComponentRegistry access
+        let _world_guard = WorldGuard::enter(world);
+        let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
+        let mut query = world.query::<&mut RuneScriptComponent>();
+        for (entity, component) in query.iter() {
+            if !component.created_called() {
+                continue;
+            }
+
+            // Get the script instance
+            let instance = match self.instances.get_mut(&entity) {
+                Some(inst) => inst,
+                None => continue,
+            };
+
+            // Create a UI context for this script
+            let ui_context = UiContext::new();
+            let commands = instance.command_buffer();
+
+            // Call the on_ui function (if it exists)
+            match instance.call_on_ui(entity_bits(entity), ui_context.clone(), commands, event_queue.clone()) {
+                Ok(FunctionCallOutcome::Executed) => {
+                    // Collect the UI commands from the context
+                    let cmds = ui_context.take_commands();
+                    if !cmds.is_empty() {
+                        ui_commands.insert(entity, cmds);
+                    }
+                }
+                Ok(FunctionCallOutcome::Missing) => {
+                    // Script doesn't have on_ui() - that's fine
+                }
+                Err(e) => {
+                    error!(target: "script", "Error calling on_ui for entity {:?}: {}", entity, e);
+                }
+            }
+        }
+
+        ui_commands
+    }
+
     fn retain_instances(&mut self, world: &World) {
         self.instances.retain(|entity, _| {
             world

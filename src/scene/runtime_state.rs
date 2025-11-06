@@ -1,7 +1,8 @@
 use crate::scripting::{RuneScriptComponent, RuneScriptSource, ScriptingState};
 use crate::time::Instant;
-use hecs::World;
+use hecs::{Entity, World};
 use log::error;
+use std::collections::HashMap;
 
 pub(crate) struct SceneRuntime {
     time: f64,
@@ -84,6 +85,11 @@ impl SceneRuntime {
         if let Err(err) = self.scripting.update_scripts(world, dt, editor_mode) {
             error!("Rune scripting error: {err}");
         }
+    }
+
+    /// Process UI for all scripts and return their UI commands.
+    pub(crate) fn process_script_ui(&mut self, world: &World) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.scripting.process_ui(world)
     }
 }
 

@@ -14,7 +14,7 @@ pub enum UiCommand {
 impl UiCommand {
     /// Render this command using a real egui::Ui context.
     #[cfg(feature = "egui")]
-    pub fn render(&self, ui: &mut crate::ui::egui_integration::egui::Ui) -> Option<UiResponse> {
+    pub fn render(&self, ui: &mut egui::Ui) -> Option<UiResponse> {
         match self {
             UiCommand::Label { text } => {
                 ui.label(text);

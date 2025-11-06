@@ -152,6 +152,26 @@ impl RuneScriptInstance {
         self.call_function(["update"], (entity_bits, dt))
     }
 
+    pub fn call_on_ui(
+        &mut self,
+        entity_bits: i64,
+        ui_context: crate::scripting::rune::api::ui::UiContext,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<FunctionCallOutcome, RuneScriptingError> {
+        // Pre-register self_entity in the registry to prevent collision with allocated handles
+        if entity_bits != 0 {
+            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+        }
+
+        let _commands_guard = CommandGuard::enter(commands.clone());
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _entity_guard = EntityGuard::enter(entity_bits);
+        self.call_function(["on_ui"], (entity_bits, ui_context))
+    }
+
     pub fn call_function(
         &mut self,
         path: impl rune::ToTypeHash,

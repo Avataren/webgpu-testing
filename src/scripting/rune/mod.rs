@@ -1,6 +1,6 @@
 // Modular Rune scripting system
 
-mod api;
+pub mod api;
 mod commands;
 mod component;
 mod entity_registry;
