@@ -252,6 +252,8 @@ impl EditorApplication {
         // Collect UI commands from scripts that implement on_ui()
         // Pass editor_mode based on actual runtime state
         let editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
+        log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
+            editor_mode, ctx.runtime);
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
     }
 
