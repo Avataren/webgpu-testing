@@ -180,6 +180,12 @@ impl ScriptCommands {
     }
 
     pub fn add_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+        // Check if this is a pending entity first
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.components.push((component_name, value));
+            return VmResult::Ok(());
+        }
+
         let entity_bits = match self.resolve_entity_bits(handle) {
             VmResult::Ok(bits) => bits,
             VmResult::Err(err) => return VmResult::Err(err),
@@ -234,6 +240,12 @@ impl ScriptCommands {
     }
 
     pub fn set_scale(&mut self, handle: i64, scale: Vec3) -> VmResult<()> {
+        // Check if this is a pending entity first
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.scale = Some(scale);
+            return VmResult::Ok(());
+        }
+
         let entity_bits = match self.resolve_entity_bits(handle) {
             VmResult::Ok(bits) => bits,
             VmResult::Err(err) => return VmResult::Err(err),
@@ -338,7 +350,7 @@ impl ScriptCommands {
                 world.insert_one(entity, Name(name))?;
             }
 
-            if pending.translation.is_some() || pending.rotation.is_some() {
+            if pending.translation.is_some() || pending.rotation.is_some() || pending.scale.is_some() {
                 let mut transform = Transform::default();
                 if let Some(translation) = pending.translation.take() {
                     transform.translation = translation;
@@ -346,12 +358,20 @@ impl ScriptCommands {
                 if let Some(rotation) = pending.rotation.take() {
                     transform.rotation = rotation;
                 }
+                if let Some(scale) = pending.scale.take() {
+                    transform.scale = scale;
+                }
                 world.insert_one(entity, TransformComponent(transform))?;
             }
 
             if let Some(script) = pending.script {
                 world.insert_one(entity, RuneScriptComponent::new(script))?;
                 result.scripts_added.push(entity);
+            }
+
+            // Add pending components to the entity
+            for (component_name, value) in pending.components {
+                registry.set_component(world, entity, &component_name, &value)?;
             }
 
             // Defer parent setting until all entities are spawned
