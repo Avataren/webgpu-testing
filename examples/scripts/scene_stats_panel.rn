@@ -1,0 +1,101 @@
+// @tool
+// Scene Statistics Panel
+//
+// An engine UI plugin that displays real-time scene statistics.
+// This demonstrates how scripted plugins can provide essential editor functionality.
+
+pub fn on_created(self_entity) {
+    log_info("Scene Stats Panel initialized");
+
+    // Initialize refresh settings
+    set_f64("refresh_interval", 0.5);
+    set_f64("time_since_refresh", 0.0);
+
+    // Stats cache - initialize all counters to prevent undefined values on first UI frame
+    set_f64("entity_count", 0.0);
+    set_f64("mesh_count", 0.0);
+    set_f64("light_count", 0.0);
+    set_f64("script_count", 0.0);
+    set_state("show_advanced", false);
+}
+
+pub fn update(self_entity, dt) {
+    // Only update stats periodically to avoid performance impact
+    let time = get_f64("time_since_refresh") + dt;
+    let interval = get_f64("refresh_interval");
+
+    if time >= interval {
+        // Query scene statistics
+        let all_entities = query_entities_with_component("Transform");
+        set_f64("entity_count", all_entities.len());
+
+        // Count entities with various components
+        let mesh_count = query_entities_with_component("MeshRenderer").len();
+        set_f64("mesh_count", mesh_count);
+
+        let light_count = query_entities_with_component("Light").len();
+        set_f64("light_count", light_count);
+
+        let script_count = query_entities_with_component("RuneScript").len();
+        set_f64("script_count", script_count);
+
+        set_f64("time_since_refresh", 0.0);
+    } else {
+        set_f64("time_since_refresh", time);
+    }
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Scene Statistics");
+    ui.separator();
+
+    // Display core stats
+    let entity_count = get_f64("entity_count");
+    ui.label(`Total Entities: ${entity_count}`);
+
+    let mesh_count = get_f64("mesh_count");
+    ui.label(`Mesh Renderers: ${mesh_count}`);
+
+    let light_count = get_f64("light_count");
+    ui.label(`Lights: ${light_count}`);
+
+    let script_count = get_f64("script_count");
+    ui.label(`Scripts: ${script_count}`);
+
+    ui.separator();
+
+    // Advanced toggle
+    let show_advanced = try_get_state("show_advanced");
+    let show = if show_advanced is () { false } else { show_advanced };
+    let new_show = ui.checkbox("show_advanced", show, "Show Advanced");
+    if new_show != show {
+        set_state("show_advanced", new_show);
+    }
+
+    if new_show {
+        ui.separator();
+        ui.label("Advanced Settings");
+
+        let interval = get_f64("refresh_interval");
+        let new_interval = ui.slider("refresh_interval", interval, 0.1, 5.0);
+        if new_interval != interval {
+            set_f64("refresh_interval", new_interval);
+        }
+        ui.label(`Refresh Rate: ${new_interval}s`);
+    }
+
+    ui.separator();
+
+    // Actions
+    if ui.button("Refresh Now") {
+        set_f64("time_since_refresh", 999.0); // Force refresh on next update
+    }
+
+    if ui.button("Log Details") {
+        log_info("=== Scene Statistics ===");
+        log_info(`Total Entities: ${entity_count}`);
+        log_info(`Mesh Renderers: ${mesh_count}`);
+        log_info(`Lights: ${light_count}`);
+        log_info(`Scripts: ${script_count}`);
+    }
+}
