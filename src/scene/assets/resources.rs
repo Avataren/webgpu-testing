@@ -1,6 +1,5 @@
-use super::core::{SceneAsset, InstantiatedSceneAsset};
+use super::core::SceneAsset;
 use super::entity::{SceneMaterialHandle, load_material_asset_from_file};
-use super::prefabs::ScenePrefabRef;
 use crate::scene::loader::SceneImportDevice;
 use super::serialization::SerializedMaterial;
 use crate::asset::{Assets, Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot, Mesh};

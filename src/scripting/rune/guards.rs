@@ -124,22 +124,6 @@ impl Drop for RegistryGuard {
     }
 }
 
-pub(crate) struct InputStateGuard;
-
-impl InputStateGuard {
-    pub fn enter(input_state: &InputState) -> Self {
-        let ptr = input_state as *const InputState;
-        ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = Some(ptr));
-        Self
-    }
-}
-
-impl Drop for InputStateGuard {
-    fn drop(&mut self) {
-        ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = None);
-    }
-}
-
 pub(crate) struct EventQueueGuard {
     _queue: Rc<RefCell<Vec<ScriptEvent>>>,
 }

@@ -1,10 +1,10 @@
 use crate::scene::animation::{AnimationClip, AnimationState};
 use super::builder::SceneAssetBuilder;
 use crate::scene::components::{
-    Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId, EnvironmentComponent,
+    Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId,
     GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds,
     MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible, CameraComponent,
+    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use super::entity::{
     SceneAssetEntity, SceneMaterialHandle, absolute_gltf_source, generate_material_asset_path,
@@ -14,7 +14,7 @@ use super::entity::{
 use crate::scene::graph::SceneInstance;
 use crate::scene::gltf_material_registry::GltfMaterialRegistry;
 use crate::scene::loader::SceneImportDevice;
-use super::resources::{resolve_material_handle, with_import_device};
+use super::resources::resolve_material_handle;
 use super::serialization::{
     ImportedGltfMeta, SerializedAnimationClip, SerializedTransform,
 };
