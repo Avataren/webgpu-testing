@@ -1,12 +1,13 @@
 use glam::Vec3;
-use log::error;
+use log::{error, info};
 use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
 use wgpu_cube::scene::{Camera, EntityBuilder, Scene, Transform};
 
-use super::core::EditorApplication;
+use super::core::{EditorApplication, EditorSharedState};
+use super::ui_plugin_manager::{create_plugin_script_source, UiPluginManager};
 
 const EDITOR_CUBE_MATERIAL_CANONICAL_PATH: &str = "builtin/editor/editor_cube.material";
 
@@ -134,5 +135,67 @@ impl EditorApplication {
             camera.target = Vec3::new(0.0, 0.5, 0.0);
             camera.up = Vec3::Y;
         }
+    }
+
+    /// Load UI plugins from manifest and create entities for them
+    pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, scene: &mut Scene) {
+        info!("Loading UI plugins...");
+
+        // Try to find ui_plugins.toml in examples/scripts
+        let manifest_path = PathBuf::from("examples/scripts/ui_plugins.toml");
+
+        if !manifest_path.exists() {
+            info!("No UI plugin manifest found at {}", manifest_path.display());
+            return;
+        }
+
+        // Create plugin manager with base path for scripts
+        let mut manager = UiPluginManager::new(PathBuf::from("examples/scripts"));
+
+        // Load manifest
+        let manifest = match manager.load_manifest(&manifest_path) {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                error!("Failed to load plugin manifest: {}", err);
+                return;
+            }
+        };
+
+        info!("Found {} plugins in manifest", manifest.plugins.len());
+
+        // Create entities for enabled plugins
+        let mut loaded_count = 0;
+        for plugin_meta in manifest.plugins {
+            if !plugin_meta.enabled {
+                info!("Skipping disabled plugin: {}", plugin_meta.name);
+                continue;
+            }
+
+            info!("Loading plugin: {} ({})", plugin_meta.name, plugin_meta.script);
+
+            // Create script source
+            let script_source = match create_plugin_script_source(&manager, &plugin_meta) {
+                Ok(source) => source,
+                Err(err) => {
+                    error!("Failed to create script source for {}: {}", plugin_meta.name, err);
+                    continue;
+                }
+            };
+
+            // Create entity with script
+            let entity = EntityBuilder::new(scene)
+                .with_name(format!("Plugin: {}", plugin_meta.name))
+                .with_script(script_source)
+                .spawn();
+
+            // Register with manager
+            manager.register_plugin(plugin_meta, entity);
+            loaded_count += 1;
+        }
+
+        info!("Loaded {} UI plugins", loaded_count);
+
+        // Store manager in shared state
+        shared.ui_plugin_manager = Some(manager);
     }
 }

@@ -16,6 +16,7 @@ mod shader_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
+mod ui_plugin_manager;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod shader_watcher;
@@ -80,6 +81,7 @@ impl RenderApplication for EditorApplication {
 
     fn setup(&mut self, ctx: &mut StartupContext) {
         Self::ensure_editor_scene_basics(&mut ctx.scene, ctx.renderer);
+        Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
         self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         self.initialize_history_state(&mut ctx.scene);
     }
@@ -459,33 +461,133 @@ impl EditorApplication {
 
         let mut all_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
 
-        // Render each script's UI in a separate window
-        for (entity, commands) in &self.shared.script_ui_commands {
-            let mut responses = HashMap::new();
-
-            egui::Window::new(format!("Script UI - Entity {:?}", entity))
+        // Render plugin manager window if we have plugins
+        if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+            egui::Window::new("UI Plugins")
                 .resizable(true)
-                .default_size([300.0, 200.0])
+                .default_size([300.0, 400.0])
                 .show(ctx, |ui| {
-                    for command in commands {
-                        if let Some(response) = command.render(ui) {
-                            // Extract the ID from the command and store the response
-                            let id = match command {
-                                UiCommand::Button { text } => format!("button_{}", text),
-                                UiCommand::TextEdit { id, .. } => id.clone(),
-                                UiCommand::Slider { id, .. } => id.clone(),
-                                UiCommand::DragValue { id, .. } => id.clone(),
-                                UiCommand::Checkbox { id, .. } => id.clone(),
-                                UiCommand::ColorEdit { id, .. } => id.clone(),
-                                _ => continue,
-                            };
-                            responses.insert(id, response);
+                    ui.heading("Installed Plugins");
+                    ui.separator();
+
+                    let plugins = manager.plugins_mut();
+                    for plugin in plugins {
+                        if !plugin.metadata.enabled {
+                            continue;
                         }
+
+                        ui.horizontal(|ui| {
+                            let was_visible = plugin.visible;
+                            if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                log::info!(
+                                    "Plugin '{}' visibility changed: {} -> {}",
+                                    plugin.metadata.name,
+                                    was_visible,
+                                    plugin.visible
+                                );
+                            }
+                            ui.label(&plugin.metadata.category);
+                        });
+
+                        ui.label(format!("  {}", plugin.metadata.description));
+                        ui.add_space(4.0);
                     }
                 });
 
-            if !responses.is_empty() {
-                all_responses.insert(*entity, responses);
+            // Render each plugin's UI in a separate window (only if visible)
+            for (entity, commands) in &self.shared.script_ui_commands {
+                // Check if this entity is a plugin and if it's visible
+                if let Some(plugin) = manager.get_plugin(*entity) {
+                    if !plugin.visible {
+                        continue;
+                    }
+
+                    let mut responses = HashMap::new();
+                    let window_title = plugin.metadata.name.clone();
+
+                    egui::Window::new(window_title)
+                        .resizable(true)
+                        .default_size([300.0, 200.0])
+                        .show(ctx, |ui| {
+                            for command in commands {
+                                if let Some(response) = command.render(ui) {
+                                    // Extract the ID from the command and store the response
+                                    let id = match command {
+                                        UiCommand::Button { text } => format!("button_{}", text),
+                                        UiCommand::TextEdit { id, .. } => id.clone(),
+                                        UiCommand::Slider { id, .. } => id.clone(),
+                                        UiCommand::DragValue { id, .. } => id.clone(),
+                                        UiCommand::Checkbox { id, .. } => id.clone(),
+                                        UiCommand::ColorEdit { id, .. } => id.clone(),
+                                        _ => continue,
+                                    };
+                                    responses.insert(id, response);
+                                }
+                            }
+                        });
+
+                    if !responses.is_empty() {
+                        all_responses.insert(*entity, responses);
+                    }
+                } else {
+                    // Not a plugin, render with default title
+                    let mut responses = HashMap::new();
+
+                    egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                        .resizable(true)
+                        .default_size([300.0, 200.0])
+                        .show(ctx, |ui| {
+                            for command in commands {
+                                if let Some(response) = command.render(ui) {
+                                    // Extract the ID from the command and store the response
+                                    let id = match command {
+                                        UiCommand::Button { text } => format!("button_{}", text),
+                                        UiCommand::TextEdit { id, .. } => id.clone(),
+                                        UiCommand::Slider { id, .. } => id.clone(),
+                                        UiCommand::DragValue { id, .. } => id.clone(),
+                                        UiCommand::Checkbox { id, .. } => id.clone(),
+                                        UiCommand::ColorEdit { id, .. } => id.clone(),
+                                        _ => continue,
+                                    };
+                                    responses.insert(id, response);
+                                }
+                            }
+                        });
+
+                    if !responses.is_empty() {
+                        all_responses.insert(*entity, responses);
+                    }
+                }
+            }
+        } else {
+            // No plugin manager, render all script UIs with default titles
+            for (entity, commands) in &self.shared.script_ui_commands {
+                let mut responses = HashMap::new();
+
+                egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                    .resizable(true)
+                    .default_size([300.0, 200.0])
+                    .show(ctx, |ui| {
+                        for command in commands {
+                            if let Some(response) = command.render(ui) {
+                                // Extract the ID from the command and store the response
+                                let id = match command {
+                                    UiCommand::Button { text } => format!("button_{}", text),
+                                    UiCommand::TextEdit { id, .. } => id.clone(),
+                                    UiCommand::Slider { id, .. } => id.clone(),
+                                    UiCommand::DragValue { id, .. } => id.clone(),
+                                    UiCommand::Checkbox { id, .. } => id.clone(),
+                                    UiCommand::ColorEdit { id, .. } => id.clone(),
+                                    _ => continue,
+                                };
+                                responses.insert(id, response);
+                            }
+                        }
+                    });
+
+                if !responses.is_empty() {
+                    all_responses.insert(*entity, responses);
+                }
             }
         }
 

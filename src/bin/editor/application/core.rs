@@ -72,6 +72,8 @@ pub struct EditorSharedState {
     pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
     pub(super) script_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
+    /// UI plugin manager for loading and managing editor plugins
+    pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
 }
 
 impl EditorSharedState {
@@ -313,6 +315,7 @@ impl EditorApplicationBuilder {
             shader_watcher: None,
             script_ui_commands: std::collections::HashMap::new(),
             script_ui_responses: std::collections::HashMap::new(),
+            ui_plugin_manager: None,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
