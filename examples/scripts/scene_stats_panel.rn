@@ -16,7 +16,7 @@ pub fn on_created(self_entity) {
     set_f64("mesh_count", 0.0);
     set_f64("light_count", 0.0);
     set_f64("script_count", 0.0);
-    set_state("show_advanced", false);
+    // Note: show_advanced is not initialized so try_get_state returns () initially
 }
 
 pub fn update(self_entity, dt) {
