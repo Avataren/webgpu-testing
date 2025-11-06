@@ -80,7 +80,8 @@ impl RenderApplication for EditorApplication {
 
     fn setup(&mut self, ctx: &mut StartupContext) {
         Self::ensure_editor_scene_basics(&mut ctx.scene, ctx.renderer);
-        Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
+        // Don't load UI plugins at startup - wait until a project is opened/created
+        // Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
         self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         self.initialize_history_state(&mut ctx.scene);
     }
@@ -157,6 +158,15 @@ impl EditorApplication {
         if scene_changed {
             ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
             self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
+        }
+
+        // Load UI plugins if a project is open and plugins haven't been loaded yet
+        if !self.shared.ui_plugins_loaded {
+            let has_project = self.project_system().controller().current_dir().is_some();
+            if has_project {
+                Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
+                self.shared.ui_plugins_loaded = true;
+            }
         }
 
         self.process_pending_mode_transition(ctx);

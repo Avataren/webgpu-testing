@@ -4,12 +4,22 @@
 # Each plugin is a Rune script with @tool annotation that provides
 # editor functionality through the UI scripting system.
 
+# Minimal test plugin for debugging
+[[plugin]]
+name = "Minimal Test"
+script = "test_minimal_ui.rn"
+description = "Minimal UI test script for debugging"
+category = "Debug"
+enabled = true
+default_visible = true
+
+# Disabled plugins for now while we fix the scripting issues
 [[plugin]]
 name = "Scene Statistics"
 script = "scene_stats_panel.rn"
 description = "Real-time scene statistics panel showing entity counts and component usage"
 category = "Debug"
-enabled = true
+enabled = false
 default_visible = true
 
 [[plugin]]
@@ -17,7 +27,7 @@ name = "Quick Actions"
 script = "quick_actions_panel.rn"
 description = "Quick access panel for common editor operations like spawning entities and creating lights"
 category = "Workflow"
-enabled = true
+enabled = false
 default_visible = true
 
 [[plugin]]
@@ -25,7 +35,7 @@ name = "Debug Console"
 script = "debug_console_plugin.rn"
 description = "Interactive debug console with command execution and performance monitoring"
 category = "Debug"
-enabled = true
+enabled = false
 default_visible = false
 
 [[plugin]]
@@ -33,7 +43,7 @@ name = "Character Editor"
 script = "character_editor_tool.rn"
 description = "Example tool for editing character properties with various widgets"
 category = "Examples"
-enabled = true
+enabled = false
 default_visible = false
 
 [[plugin]]
@@ -41,7 +51,7 @@ name = "Advanced Widgets Demo"
 script = "advanced_widgets_example.rn"
 description = "Demonstration of all available UI widget types"
 category = "Examples"
-enabled = true
+enabled = false
 default_visible = false
 
 # Future plugin ideas (not yet implemented):

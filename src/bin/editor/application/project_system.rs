@@ -252,6 +252,10 @@ impl ProjectSystem {
         Ok(())
     }
 
+    pub(super) fn controller(&self) -> &ProjectController {
+        &self.controller
+    }
+
     pub(super) fn controller_mut(&mut self) -> &mut ProjectController {
         &mut self.controller
     }

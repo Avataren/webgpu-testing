@@ -1,6 +1,33 @@
 Summary: Rune UI Integration "Cannot take, value is M-000000" Error Investigation
 
-  Problem Statement
+  **STATUS: RESOLVED** (2025-11-06)
+
+  ## Resolution
+
+  The primary issues have been resolved:
+
+  1. **Script Loading Timing**: UI plugins were loading at startup before any project was opened,
+     causing errors because there was no project context. Fixed by deferring plugin loading until
+     after a project is opened or created.
+
+  2. **Incorrect API Usage**: The test_minimal_ui.rn script was using an incorrect API pattern:
+     - Wrong: `on_ui(self_entity)` with free function calls like `heading("Test")`
+     - Correct: `on_ui(self_entity, ui)` with instance method calls like `ui.heading("Test")`
+
+  The "M-000000" errors were likely caused by the incorrect API usage attempting to call functions
+  that didn't match the registered Rune module functions. The UiContext API uses instance methods,
+  which is the correct pattern.
+
+  ## Changes Made
+
+  1. Deferred UI plugin loading to gpu_update phase (after project opens)
+  2. Added ui_plugins_loaded flag to track loading state
+  3. Fixed test_minimal_ui.rn to use correct on_ui(self_entity, ui) signature
+  4. Disabled all UI plugins except test_minimal_ui.rn for initial testing
+
+  ---
+
+  ## Original Problem Statement (For Historical Reference)
 
   When Rune scripts call UI functions in their on_ui() callbacks, the application generates errors:
   - [ERROR script] Error calling on_ui for entity Xv1: Cannot read, value is M-000000
