@@ -2,9 +2,11 @@ use rune::Module;
 
 use super::error::RuneScriptingError;
 
+mod clipboard;
 mod component;
 mod entity;
 mod event;
+mod file_io;
 mod hierarchy;
 mod input;
 mod logging;
@@ -102,6 +104,16 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(subscribe_event)?;
     module.function_meta(unsubscribe_event)?;
 
+    // Clipboard functions
+    module.function_meta(clipboard::get_clipboard)?;
+    module.function_meta(clipboard::set_clipboard)?;
+
+    // File I/O functions
+    module.function_meta(file_io::read_file)?;
+    module.function_meta(file_io::write_file)?;
+    module.function_meta(file_io::file_exists)?;
+    module.function_meta(file_io::list_files)?;
+
     // UI types and functions
     module.ty::<ui::UiContext>()?;
     module.function_meta(ui::UiContext::label)?;
@@ -109,6 +121,7 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(ui::UiContext::heading)?;
     module.function_meta(ui::UiContext::separator)?;
     module.function_meta(ui::UiContext::text_edit)?;
+    module.function_meta(ui::UiContext::text_edit_multiline)?;
     module.function_meta(ui::UiContext::slider)?;
     module.function_meta(ui::UiContext::drag_value)?;
     module.function_meta(ui::UiContext::checkbox)?;
