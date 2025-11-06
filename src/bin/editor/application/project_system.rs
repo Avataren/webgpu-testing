@@ -448,11 +448,6 @@ impl ProjectSystem {
                         &mut self.scene_library,
                     ) {
                         Ok((mut workspace, textures_changed)) => {
-                            // Note: We intentionally do NOT call ensure_editor_scene_basics() here
-                            // because we're loading a saved project that should be restored exactly
-                            // as it was saved. The user may have intentionally deleted default
-                            // objects like the Editor Cube, and we should respect that choice.
-
                             app.history_system_mut().reset();
 
                             let active_handle = workspace.active_scene_handle();
@@ -461,6 +456,19 @@ impl ProjectSystem {
                                 if let Some(mut scene) =
                                     workspace.scene_mut_by_handle(active_handle)
                                 {
+                                    // Check if this is a newly created empty project by checking
+                                    // if the scene has any named entities
+                                    let is_empty_scene = {
+                                        use wgpu_cube::scene::components::Name;
+                                        scene.main_world().query::<&Name>().iter().count() == 0
+                                    };
+
+                                    // For new empty projects, add default scene elements
+                                    // For loaded projects with content, preserve exactly as saved
+                                    if is_empty_scene {
+                                        app.ensure_editor_scene_basics(&mut scene, gpu_ctx.renderer);
+                                    }
+
                                     if matches!(
                                         app.runtime_state().active_mode(),
                                         RuntimeMode::Editor
