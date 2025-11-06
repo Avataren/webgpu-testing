@@ -32,7 +32,7 @@ pub use core::{SceneAsset, InstantiatedSceneAsset};
 
 // Re-export from resources
 pub use resources::{
-    SceneAssetResources, SceneAssetResourcesBuilder, SceneAssetBundle,
+    ResourceRegistration, SceneAssetResources, SceneAssetResourcesBuilder, SceneAssetBundle,
 };
 
 // Re-export from prefabs
