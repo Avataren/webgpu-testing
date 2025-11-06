@@ -1,3 +1,4 @@
+mod action_handlers;
 mod asset_browser_system;
 mod system;
 pub(crate) use system::*;
@@ -639,6 +640,23 @@ impl EditorApplication {
         self.resolve_active_camera_entity(&mut ctx.scene);
         let mut transforms_changed = false;
 
+        // Route all actions through the dispatcher
+        use action_handlers::{dispatch_action, ActionContext};
+
+        for action in actions {
+            let mut action_ctx = ActionContext {
+                scene: &mut ctx.scene,
+                app: self,
+            };
+
+            let result = dispatch_action(&mut action_ctx, action);
+
+            if result.transforms_changed {
+                transforms_changed = true;
+            }
+        }
+
+        /* OLD IMPLEMENTATION REMOVED - kept for reference during transition
         for action in actions {
             match action {
                 InspectorAction::UpdateTransform { entity, transform } => {
@@ -1566,6 +1584,7 @@ impl EditorApplication {
                 }
             }
         }
+        */ // END OF OLD IMPLEMENTATION
 
         if transforms_changed {
             ctx.scene.propagate_transforms();
