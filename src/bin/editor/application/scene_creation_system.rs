@@ -38,6 +38,7 @@ impl SceneCreationSystem {
 
             for action in actions {
                 let created = match action {
+                    SceneCreationAction::Empty => app.create_empty_entity(gpu_ctx),
                     SceneCreationAction::Primitive(preset) => app.create_primitive(gpu_ctx, preset),
                     SceneCreationAction::ParticleSystem(preset) => {
                         app.create_particle_system(gpu_ctx, preset)

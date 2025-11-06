@@ -120,6 +120,31 @@ pub enum InspectorAction {
         entity: Entity,
         script_path: PathBuf,
     },
+    AddCamera {
+        entity: Entity,
+    },
+    AddMesh {
+        entity: Entity,
+    },
+    AddPointLight {
+        entity: Entity,
+    },
+    AddDirectionalLight {
+        entity: Entity,
+    },
+    AddSpotLight {
+        entity: Entity,
+    },
+    AddEnvironment {
+        entity: Entity,
+    },
+    AddParticleSystem {
+        entity: Entity,
+    },
+    RenameEntity {
+        entity: Entity,
+        new_name: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -134,7 +159,20 @@ pub fn show_entity_inspector(
     content_root: Option<&Path>,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
-    ui.label(format!("Name: {}", data.name));
+
+    // Editable name field
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        let mut name = data.name.clone();
+        let response = ui.text_edit_singleline(&mut name);
+        if response.lost_focus() && name != data.name {
+            actions.push(InspectorAction::RenameEntity {
+                entity: data.entity,
+                new_name: name,
+            });
+        }
+    });
+
     ui.label(format!("Entity: {:?}", data.entity));
     ui.add_space(8.0);
 
@@ -198,12 +236,75 @@ pub fn show_entity_inspector(
         if let Some(action) = show_script_section(ui, data.entity, &script) {
             actions.push(action);
         }
-    } else {
-        begin_section(ui, &mut first_section);
-        if let Some(action) = show_add_script_section(ui, data.entity) {
-            actions.push(action);
-        }
     }
+
+    // Add context menu for adding missing components
+    begin_section(ui, &mut first_section);
+    ui.add_space(4.0);
+    let response = ui.allocate_response(
+        egui::vec2(ui.available_width(), ui.spacing().interact_size.y * 3.0),
+        egui::Sense::click(),
+    );
+
+    response.context_menu(|ui| {
+        ui.label("Add Component");
+        ui.separator();
+
+        if data.components.camera.is_none() {
+            if ui.button("Camera").clicked() {
+                actions.push(InspectorAction::AddCamera { entity: data.entity });
+                ui.close();
+            }
+        }
+
+        if data.components.mesh.is_none() {
+            if ui.button("Mesh").clicked() {
+                actions.push(InspectorAction::AddMesh { entity: data.entity });
+                ui.close();
+            }
+        }
+
+        let has_light = data.components.point_light.is_some()
+            || data.components.directional_light.is_some()
+            || data.components.spot_light.is_some();
+        if !has_light {
+            ui.menu_button("Light", |ui| {
+                if ui.button("Point Light").clicked() {
+                    actions.push(InspectorAction::AddPointLight { entity: data.entity });
+                    ui.close();
+                }
+                if ui.button("Directional Light").clicked() {
+                    actions.push(InspectorAction::AddDirectionalLight { entity: data.entity });
+                    ui.close();
+                }
+                if ui.button("Spot Light").clicked() {
+                    actions.push(InspectorAction::AddSpotLight { entity: data.entity });
+                    ui.close();
+                }
+            });
+        }
+
+        if data.components.environment.is_none() {
+            if ui.button("Environment").clicked() {
+                actions.push(InspectorAction::AddEnvironment { entity: data.entity });
+                ui.close();
+            }
+        }
+
+        if data.components.particle_system.is_none() {
+            if ui.button("Particle System").clicked() {
+                actions.push(InspectorAction::AddParticleSystem { entity: data.entity });
+                ui.close();
+            }
+        }
+
+        if data.components.script.is_none() {
+            if ui.button("Script").clicked() {
+                actions.push(InspectorAction::AddScript { entity: data.entity });
+                ui.close();
+            }
+        }
+    });
 
     actions
 }

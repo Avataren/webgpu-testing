@@ -185,6 +185,10 @@ impl<'shared> EditorAppAccess<'shared> {
         self.shared.mark_scene_hierarchy_dirty(handle);
     }
 
+    pub fn create_empty_entity(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        EditorApplication::create_empty_entity(ctx)
+    }
+
     pub fn create_primitive(
         &mut self,
         ctx: &mut GpuUpdateContext<'_>,
