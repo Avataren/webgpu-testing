@@ -250,7 +250,9 @@ impl EditorApplication {
         }
 
         // Collect UI commands from scripts that implement on_ui()
-        self.shared.script_ui_commands = ctx.scene.process_script_ui();
+        // Pass editor_mode based on runtime state (dt == 0 in editor)
+        let editor_mode = ctx.dt == 0.0;
+        self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {

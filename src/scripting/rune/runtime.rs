@@ -37,11 +37,11 @@ impl RuneScriptingRuntime {
     pub(crate) fn compile(
         &mut self,
         source: &RuneScriptSource,
-    ) -> Result<(Arc<RuneScript>, bool), RuneScriptingError> {
+    ) -> Result<(Arc<RuneScript>, ScriptMode), RuneScriptingError> {
         let loaded = source.load(self.script_root.as_deref())?;
 
         // Parse metadata annotations from source
-        let is_editor_tool = parse_editor_tool_annotation(&loaded.contents);
+        let script_mode = parse_script_mode_annotation(&loaded.contents);
 
         let mut sources = Sources::new();
         let source = if let Some(path) = &loaded.path {
@@ -69,7 +69,7 @@ impl RuneScriptingRuntime {
             message: error.to_string(),
         })?;
 
-        Ok((RuneScript::new(loaded.name, unit), is_editor_tool))
+        Ok((RuneScript::new(loaded.name, unit), script_mode))
     }
 
     pub(crate) fn instantiate(&self, script: Arc<RuneScript>, source: RuneScriptSource) -> RuneScriptInstance {
@@ -77,15 +77,29 @@ impl RuneScriptingRuntime {
     }
 }
 
-/// Parse metadata annotations from script source to determine if it's an editor tool.
-/// Looks for `// @tool` or `// @editor_tool` comment annotations.
-fn parse_editor_tool_annotation(source: &str) -> bool {
+/// Script execution mode based on annotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptMode {
+    /// No annotation - runs only in play/runtime mode
+    RuntimeOnly,
+    /// @editor annotation - runs only in editor mode
+    EditorOnly,
+    /// @tool annotation - runs in both editor and play modes
+    Both,
+}
+
+/// Parse metadata annotations from script source to determine execution mode.
+/// Looks for `// @editor` or `// @tool` comment annotations.
+fn parse_script_mode_annotation(source: &str) -> ScriptMode {
     for line in source.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("//") {
             let comment = trimmed[2..].trim();
-            if comment == "@tool" || comment == "@editor_tool" {
-                return true;
+            if comment == "@tool" {
+                return ScriptMode::Both;
+            } else if comment == "@editor" || comment == "@editor_tool" {
+                // @editor_tool is legacy, map it to @editor
+                return ScriptMode::EditorOnly;
             }
         }
         // Stop at first non-comment, non-empty line (annotations should be at the top)
@@ -93,5 +107,10 @@ fn parse_editor_tool_annotation(source: &str) -> bool {
             break;
         }
     }
-    false
+    ScriptMode::RuntimeOnly
+}
+
+/// Legacy function for backwards compatibility - returns true if script should run in editor.
+fn parse_editor_tool_annotation(source: &str) -> bool {
+    matches!(parse_script_mode_annotation(source), ScriptMode::EditorOnly | ScriptMode::Both)
 }

@@ -162,9 +162,22 @@ impl ScriptingState {
                     continue;
                 }
 
-                // Skip non-editor-tool scripts in editor mode
-                if editor_mode && dt == 0.0 && !component.is_editor_tool() {
-                    continue;
+                // Filter scripts based on mode:
+                // - EditorOnly: skip in play mode (dt > 0)
+                // - RuntimeOnly: skip in editor mode (dt == 0 && editor_mode)
+                // - Both: run in both modes
+                use crate::scripting::rune::runtime::ScriptMode;
+                let script_mode = component.script_mode();
+                if dt == 0.0 && editor_mode {
+                    // In editor mode - skip RuntimeOnly scripts
+                    if script_mode == ScriptMode::RuntimeOnly {
+                        continue;
+                    }
+                } else if dt > 0.0 {
+                    // In play mode - skip EditorOnly scripts
+                    if script_mode == ScriptMode::EditorOnly {
+                        continue;
+                    }
                 }
 
                 let instance = self.ensure_instance(entity, component)?;
@@ -354,9 +367,10 @@ impl ScriptingState {
     /// Call on_ui() for all scripts and collect their UI commands.
     ///
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
-    pub fn process_ui(&mut self, world: &World) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+    pub fn process_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
         use super::commands::entity_bits;
+        use super::runtime::ScriptMode;
 
         let mut ui_commands = HashMap::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
@@ -369,6 +383,23 @@ impl ScriptingState {
         for (entity, component) in query.iter() {
             if !component.created_called() {
                 continue;
+            }
+
+            // Filter UI scripts based on mode:
+            // - EditorOnly (@editor): UI only in editor mode
+            // - RuntimeOnly (no annotation): UI only in play mode
+            // - Both (@tool): UI in both modes
+            let script_mode = component.script_mode();
+            if editor_mode {
+                // In editor mode - skip RuntimeOnly scripts
+                if script_mode == ScriptMode::RuntimeOnly {
+                    continue;
+                }
+            } else {
+                // In play mode - skip EditorOnly scripts
+                if script_mode == ScriptMode::EditorOnly {
+                    continue;
+                }
             }
 
             // Get the script instance
@@ -435,8 +466,8 @@ impl ScriptingState {
         );
 
         if needs_rebuild {
-            let (script, is_editor_tool) = self.runtime.compile(component.source())?;
-            component.set_editor_tool(is_editor_tool);
+            let (script, script_mode) = self.runtime.compile(component.source())?;
+            component.set_script_mode(script_mode);
             let source = component.source().clone();
             let instance = self.runtime.instantiate(script, source);
             self.instances.insert(entity, instance);

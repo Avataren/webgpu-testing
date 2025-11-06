@@ -88,8 +88,8 @@ impl SceneRuntime {
     }
 
     /// Process UI for all scripts and return their UI commands.
-    pub(crate) fn process_script_ui(&mut self, world: &World) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
-        self.scripting.process_ui(world)
+    pub(crate) fn process_script_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.scripting.process_ui(world, editor_mode)
     }
 
     /// Set UI responses from the previous frame to feed back to scripts.

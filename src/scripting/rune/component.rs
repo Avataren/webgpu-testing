@@ -10,6 +10,7 @@ use super::commands::ScriptCommands;
 use super::entity_registry::EntityHandleRegistry;
 use super::error::RuneScriptingError;
 use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, StateGuard};
+use super::runtime::ScriptMode;
 use super::types::{RuneScript, RuneScriptSource, ScriptEvent, ScriptStateMap};
 
 /// Component that attaches a Rune script to an entity.
@@ -17,15 +18,15 @@ use super::types::{RuneScript, RuneScriptSource, ScriptEvent, ScriptStateMap};
 pub struct RuneScriptComponent {
     source: RuneScriptSource,
     created_called: bool,
-    /// Whether this script should run in editor mode (marked with @tool or @editor_tool)
-    editor_tool: bool,
+    /// Script execution mode (@editor, @tool, or no annotation)
+    script_mode: ScriptMode,
 }
 
 impl fmt::Debug for RuneScriptComponent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RuneScriptComponent")
             .field("created_called", &self.created_called)
-            .field("editor_tool", &self.editor_tool)
+            .field("script_mode", &self.script_mode)
             .finish()
     }
 }
@@ -36,16 +37,26 @@ impl RuneScriptComponent {
         Self {
             source,
             created_called: false,
-            editor_tool: false,
+            script_mode: ScriptMode::RuntimeOnly,
         }
     }
 
-    /// Create a component with explicit editor_tool flag.
+    /// Create a component with explicit script mode.
+    pub fn with_script_mode(source: RuneScriptSource, script_mode: ScriptMode) -> Self {
+        Self {
+            source,
+            created_called: false,
+            script_mode,
+        }
+    }
+
+    /// Create a component with explicit editor_tool flag (legacy).
+    #[deprecated(note = "Use with_script_mode instead")]
     pub fn with_editor_tool(source: RuneScriptSource, editor_tool: bool) -> Self {
         Self {
             source,
             created_called: false,
-            editor_tool,
+            script_mode: if editor_tool { ScriptMode::EditorOnly } else { ScriptMode::RuntimeOnly },
         }
     }
 
@@ -70,14 +81,26 @@ impl RuneScriptComponent {
         self.created_called = called;
     }
 
-    /// Returns true if this script should run in editor mode.
-    pub fn is_editor_tool(&self) -> bool {
-        self.editor_tool
+    /// Returns the script execution mode.
+    pub fn script_mode(&self) -> ScriptMode {
+        self.script_mode
     }
 
-    /// Set whether this script should run in editor mode.
+    /// Set the script execution mode.
+    pub fn set_script_mode(&mut self, script_mode: ScriptMode) {
+        self.script_mode = script_mode;
+    }
+
+    /// Returns true if this script should run in editor mode (legacy).
+    #[deprecated(note = "Use script_mode() instead")]
+    pub fn is_editor_tool(&self) -> bool {
+        matches!(self.script_mode, ScriptMode::EditorOnly | ScriptMode::Both)
+    }
+
+    /// Set whether this script should run in editor mode (legacy).
+    #[deprecated(note = "Use set_script_mode() instead")]
     pub fn set_editor_tool(&mut self, editor_tool: bool) {
-        self.editor_tool = editor_tool;
+        self.script_mode = if editor_tool { ScriptMode::EditorOnly } else { ScriptMode::RuntimeOnly };
     }
 }
 
