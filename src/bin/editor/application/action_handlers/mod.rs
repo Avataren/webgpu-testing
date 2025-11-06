@@ -7,6 +7,7 @@
 
 pub mod transform;
 pub mod camera;
+pub mod lights;
 pub mod dispatch;
 
 pub use dispatch::dispatch_action;

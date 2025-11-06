@@ -7,6 +7,9 @@ use crate::inspector::InspectorAction;
 use super::{ActionContext, ActionResult};
 use super::transform::handle_update_transform;
 use super::camera::handle_update_camera;
+use super::lights::{
+    handle_update_point_light, handle_update_directional_light, handle_update_spot_light,
+};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -28,9 +31,19 @@ pub fn dispatch_action(
             handle_update_camera(ctx, entity, component)
         }
 
+        // Light actions
+        InspectorAction::UpdatePointLight { entity, light } => {
+            handle_update_point_light(ctx, entity, light)
+        }
+        InspectorAction::UpdateDirectionalLight { entity, light } => {
+            handle_update_directional_light(ctx, entity, light)
+        }
+        InspectorAction::UpdateSpotLight { entity, light } => {
+            handle_update_spot_light(ctx, entity, light)
+        }
+
         // TODO: Add remaining action handlers:
         // - UpdateMaterial
-        // - UpdatePointLight / UpdateDirectionalLight / UpdateSpotLight
         // - UpdateEnvironment
         // - UpdateParticleSystem / UpdateParticleEmitter / UpdateParticleBehavior
         // - SetBillboard
