@@ -93,14 +93,7 @@ pub(crate) fn get_string(key: String, default: String) -> VmResult<String> {
         with_active_state(move |map| {
             let entry_key = (handle, key);
             match map.get(&entry_key) {
-                Some(value) => {
-                    // Extract the RuneString from the Value, then convert to Rust String
-                    let rune_str = match RuneString::from_value(value.clone()) {
-                        Ok(s) => s,
-                        Err(e) => return try_result(Err(e)),
-                    };
-                    VmResult::Ok(rune_str.as_str().to_string())
-                }
+                Some(value) => try_result(String::from_value(value.clone())),
                 None => VmResult::Ok(default),
             }
         })
