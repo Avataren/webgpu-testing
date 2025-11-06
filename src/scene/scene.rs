@@ -1,23 +1,20 @@
 use super::animation::{AnimationClip, AnimationState, AnimationTarget};
 use super::assets::{
-    build_tree_asset_node, serialize_world, SceneAsset, ScenePrefabOverrides, ScenePrefabRef,
-    SceneTreeAsset, SceneTreeAssetNode, SerializedAnimationClip, SerializedTransform,
+    build_tree_asset_node, serialize_world, SceneAsset, SceneTreeAsset, SceneTreeAssetNode,
+    SerializedAnimationClip, SerializedTransform,
 };
-use super::graph::{
-    PrefabOriginMetadata, SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut,
-};
+use super::graph::{SceneInstance, SceneNode, SceneNodeId, SceneNodeLocalTransformMut};
 use super::internal::{gizmos, lights, rendering, transform_gizmos};
 use super::library::SceneLibrary;
 use super::loader::SceneImportDevice;
+use super::prefab_instantiator::PrefabInstantiator;
 use super::render_bridge::RenderBridge;
 use super::state::{GizmoState, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace};
 use super::{SceneCamera, SceneEnvironment, SceneImportsManager, SceneRuntimeController};
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
-use crate::scene::components::{
-    CameraComponent, SelectedInEditor, TransformComponent, Visible, WorldTransform,
-};
+use crate::scene::components::{CameraComponent, SelectedInEditor, TransformComponent, WorldTransform};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::ScriptingState;
@@ -46,74 +43,6 @@ pub struct ScenePrefabEntityMetadata {
     pub node_path: Vec<String>,
 }
 
-fn clone_prefab_asset_subtree(asset: &SceneAsset, root_index: usize) -> SceneAsset {
-    let mut indices = Vec::new();
-    collect_prefab_indices(asset, root_index, &mut indices);
-
-    let mut index_map = HashMap::new();
-    for (new_index, old_index) in indices.iter().enumerate() {
-        index_map.insert(*old_index, new_index);
-    }
-
-    let mut entities = Vec::with_capacity(indices.len());
-    for old_index in &indices {
-        let mut entity = asset.entities[*old_index].clone();
-        entity.parent = entity
-            .parent
-            .and_then(|parent| index_map.get(&parent).copied());
-        entity.children = entity
-            .children
-            .iter()
-            .filter_map(|child| index_map.get(child).copied())
-            .collect();
-        entities.push(entity);
-    }
-
-    if let Some(root) = entities.get_mut(0) {
-        root.parent = None;
-    }
-
-    let active_camera = asset
-        .active_camera
-        .and_then(|camera| index_map.get(&camera).copied());
-
-    SceneAsset {
-        name: format!("{}::prefab", asset.name),
-        root_transform: SerializedTransform::identity(),
-        entities,
-        animations: Vec::new(),
-        animation_states: Vec::new(),
-        mesh_data: asset.mesh_data.clone(),
-        active_camera,
-    }
-}
-
-fn collect_prefab_indices(asset: &SceneAsset, index: usize, output: &mut Vec<usize>) {
-    output.push(index);
-
-    for child in &asset.entities[index].children {
-        collect_prefab_indices(asset, *child, output);
-    }
-}
-
-fn asset_entity_accumulated_transform(asset: &SceneAsset, entity_index: usize) -> Transform {
-    let mut chain = Vec::new();
-    let mut current = Some(entity_index);
-
-    while let Some(index) = current {
-        chain.push(index);
-        current = asset.entities[index].parent;
-    }
-
-    let mut transform = Transform::IDENTITY;
-    for index in chain.iter().rev() {
-        let local = Transform::from(asset.entities[*index].transform.clone());
-        transform = transform.mul_transform(&local);
-    }
-
-    transform
-}
-
 impl Scene {
     pub fn new() -> Self {
         let mut nodes = SlotMap::with_key();
@@ -133,15 +62,15 @@ impl Scene {
         }
     }
 
-    fn node(&self, id: SceneNodeId) -> &SceneNode {
+    pub(super) fn node(&self, id: SceneNodeId) -> &SceneNode {
         self.nodes.get(id).expect("Invalid scene node")
     }
 
-    fn node_mut(&mut self, id: SceneNodeId) -> &mut SceneNode {
+    pub(super) fn node_mut(&mut self, id: SceneNodeId) -> &mut SceneNode {
         self.nodes.get_mut(id).expect("Invalid scene node")
     }
 
-    fn is_valid_node(&self, id: SceneNodeId) -> bool {
+    pub(super) fn is_valid_node(&self, id: SceneNodeId) -> bool {
         self.nodes.contains_key(id)
     }
 
@@ -153,7 +82,7 @@ impl Scene {
         self.nodes.values_mut()
     }
 
-    fn attach_node(&mut self, child: SceneNodeId, parent: SceneNodeId) {
+    pub(super) fn attach_node(&mut self, child: SceneNodeId, parent: SceneNodeId) {
         {
             let child_node = self.node_mut(child);
             child_node.set_parent(Some(parent));
@@ -721,7 +650,7 @@ impl Scene {
         Some(current)
     }
 
-    fn update_world_transforms(&mut self) {
+    pub(super) fn update_world_transforms(&mut self) {
         let root_transform = Transform::IDENTITY;
         self.update_world_transform_recursive(self.root, root_transform);
     }
@@ -827,45 +756,18 @@ impl Scene {
         renderer: &mut Option<&mut dyn SceneImportDevice>,
         document_id: Option<&str>,
         prefab_stack: &mut Vec<String>,
-        prefab_origin: Option<PrefabInstanceDescriptor>,
+        prefab_origin: Option<super::prefab_instantiator::PrefabInstanceDescriptor>,
     ) -> SceneNodeId {
-        let parent_id = parent.unwrap_or(self.root);
-        assert!(self.is_valid_node(parent_id), "Invalid parent node");
-        let (instance, renderer_restored) = match renderer.take() {
-            Some(device) => {
-                let instance = asset.instantiate(Some(device), &mut self.assets);
-                (instance, Some(device))
-            }
-            None => {
-                let instance = asset.instantiate(None, &mut self.assets);
-                (instance, None)
-            }
-        };
-        *renderer = renderer_restored;
-        let should_apply_camera = parent.is_none() && self.main_scene == self.root;
-        let active_camera_entity = if should_apply_camera {
-            instance.active_camera()
-        } else {
-            None
-        };
-        let id = self.allocate_node(name, instance);
-        let prefab_metadata = prefab_origin.map(|descriptor| {
-            let paths = prefab_entity_paths_for_asset(asset, &descriptor.node_path);
-            PrefabOriginMetadata::new(descriptor.document_id, paths)
-        });
-        {
-            let node = self.node_mut(id);
-            node.set_local_transform(Transform::from(asset.root_transform.clone()));
-            node.set_prefab_origin(prefab_metadata);
-        }
-        self.attach_node(id, parent_id);
-        self.update_world_transforms();
-        self.instantiate_prefab_children(library, id, asset, renderer, document_id, prefab_stack);
-        if should_apply_camera {
-            self.set_active_camera_entity(active_camera_entity);
-        }
-        self.refresh_environment_state();
-        id
+        let mut instantiator = PrefabInstantiator::new(self, library);
+        instantiator.instantiate_asset_internal(
+            asset,
+            name,
+            parent,
+            renderer,
+            document_id,
+            prefab_stack,
+            prefab_origin,
+        )
     }
 
     pub fn instantiate_asset_named(
@@ -994,8 +896,8 @@ impl Scene {
                 None,
             )
         } else if let Some(prefab) = &node_asset.scene_ref {
-            self.instantiate_prefab_reference(
-                library,
+            let mut instantiator = PrefabInstantiator::new(self, library);
+            instantiator.instantiate_prefab_reference(
                 prefab,
                 node_asset.name.clone(),
                 parent,
@@ -1024,178 +926,6 @@ impl Scene {
         node_id
     }
 
-    fn instantiate_prefab_children(
-        &mut self,
-        library: &mut SceneLibrary,
-        parent_node: SceneNodeId,
-        asset: &SceneAsset,
-        renderer: &mut Option<&mut dyn SceneImportDevice>,
-        document_id: Option<&str>,
-        prefab_stack: &mut Vec<String>,
-    ) {
-        let prefabs: Vec<(usize, ScenePrefabRef, Option<String>)> = asset
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(index, entity)| {
-                entity
-                    .scene_ref
-                    .clone()
-                    .map(|reference| (index, reference, entity.name.clone()))
-            })
-            .collect();
-
-        for (index, prefab, name_override) in prefabs {
-            let target_document = prefab.document.clone();
-
-            if let Some(source) = document_id {
-                if prefab_stack.iter().any(|entry| entry == &target_document)
-                    || library.prefab_dependency_would_cycle(source, &target_document)
-                {
-                    warn!(
-                        "Skipping prefab instantiation from {source} -> {target_document} due to detected cycle"
-                    );
-                    continue;
-                }
-            }
-
-            let resolved = match library.resolve_prefab_node(&target_document, &prefab.node_path) {
-                Some(resolved) => resolved,
-                None => {
-                    warn!(
-                        "Failed to resolve prefab node {:?} in document {}",
-                        prefab.node_path, target_document
-                    );
-                    continue;
-                }
-            };
-
-            let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
-            let base_transform = asset_entity_accumulated_transform(asset, index);
-            prefab_stack.push(target_document.clone());
-            let child_name = name_override
-                .or_else(|| resolved.entity.name.clone())
-                .unwrap_or_else(|| resolved.asset.name.clone());
-            let descriptor =
-                PrefabInstanceDescriptor::new(target_document.clone(), prefab.node_path.clone());
-            let child_id = self.instantiate_asset_internal(
-                library,
-                &child_asset,
-                child_name,
-                Some(parent_node),
-                renderer,
-                Some(&target_document),
-                prefab_stack,
-                Some(descriptor),
-            );
-            prefab_stack.pop();
-
-            self.apply_prefab_overrides(child_id, base_transform, &prefab.overrides, false);
-
-            if let Some(source) = document_id {
-                library.track_prefab_dependency(source.to_string(), target_document);
-            }
-
-            self.remove_placeholder_entity(parent_node, index);
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn instantiate_prefab_reference(
-        &mut self,
-        library: &mut SceneLibrary,
-        prefab: &ScenePrefabRef,
-        name: String,
-        parent: SceneNodeId,
-        renderer: &mut Option<&mut dyn SceneImportDevice>,
-        document_id: Option<&str>,
-        prefab_stack: &mut Vec<String>,
-    ) -> SceneNodeId {
-        let target_document = prefab.document.clone();
-
-        if let Some(source) = document_id {
-            if prefab_stack.iter().any(|entry| entry == &target_document)
-                || library.prefab_dependency_would_cycle(source, &target_document)
-            {
-                warn!(
-                    "Skipping prefab instantiation from {source} -> {target_document} due to detected cycle"
-                );
-                return self.create_node(name, Some(parent));
-            }
-        }
-
-        let resolved = match library.resolve_prefab_node(&target_document, &prefab.node_path) {
-            Some(resolved) => resolved,
-            None => {
-                warn!(
-                    "Failed to resolve prefab node {:?} in document {}",
-                    prefab.node_path, target_document
-                );
-                return self.create_node(name, Some(parent));
-            }
-        };
-
-        let child_asset = clone_prefab_asset_subtree(resolved.asset, resolved.entity_index);
-        let base_transform = Transform::IDENTITY;
-        prefab_stack.push(target_document.clone());
-        let descriptor =
-            PrefabInstanceDescriptor::new(target_document.clone(), prefab.node_path.clone());
-        let node_id = self.instantiate_asset_internal(
-            library,
-            &child_asset,
-            name,
-            Some(parent),
-            renderer,
-            Some(&target_document),
-            prefab_stack,
-            Some(descriptor),
-        );
-        prefab_stack.pop();
-
-        self.apply_prefab_overrides(node_id, base_transform, &prefab.overrides, true);
-
-        if let Some(source) = document_id {
-            library.track_prefab_dependency(source.to_string(), target_document);
-        }
-
-        node_id
-    }
-
-    fn apply_prefab_overrides(
-        &mut self,
-        node_id: SceneNodeId,
-        base_transform: Transform,
-        overrides: &ScenePrefabOverrides,
-        skip_transform_update: bool,
-    ) {
-        if !skip_transform_update {
-            self.node_mut(node_id).set_local_transform(base_transform);
-        }
-
-        if let Some(transform) = &overrides.transform {
-            let mut local = self.node_local_transform_mut(node_id);
-            *local = Transform::from(transform.clone());
-        }
-
-        if let Some(visible) = overrides.visible {
-            if let Some(entity) = self.node(node_id).instance().asset_entity(0) {
-                let _ = self.set_entity_component_override(node_id, entity, Visible(visible));
-            }
-        }
-    }
-
-    fn remove_placeholder_entity(&mut self, parent: SceneNodeId, asset_index: usize) {
-        let placeholder = {
-            let node_ref = self.node(parent);
-            node_ref.instance().asset_entity(asset_index)
-        };
-
-        if let Some(entity) = placeholder {
-            let instance = self.node_mut(parent).instance_mut();
-            let _ = instance.world_mut().despawn(entity);
-            instance.clear_asset_entity(asset_index);
-        }
-    }
 
     pub fn export_main_asset(&self, name: impl Into<String>) -> Option<SceneAsset> {
         self.export_node_asset_internal(self.main_scene, Some(name.into()), true)
@@ -1397,7 +1127,7 @@ impl Scene {
         })
     }
 
-    fn allocate_node(&mut self, name: String, instance: SceneInstance) -> SceneNodeId {
+    pub(super) fn allocate_node(&mut self, name: String, instance: SceneInstance) -> SceneNodeId {
         self.nodes.insert(SceneNode::new(name, instance))
     }
 }
@@ -1405,60 +1135,6 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[derive(Clone)]
-struct PrefabInstanceDescriptor {
-    document_id: String,
-    node_path: Vec<String>,
-}
-
-impl PrefabInstanceDescriptor {
-    fn new(document_id: String, node_path: Vec<String>) -> Self {
-        Self {
-            document_id,
-            node_path,
-        }
-    }
-}
-
-fn prefab_entity_paths_for_asset(
-    asset: &SceneAsset,
-    root_path: &[String],
-) -> Vec<Option<Vec<String>>> {
-    let mut paths = vec![None; asset.entities.len()];
-    if asset.entities.is_empty() {
-        return paths;
-    }
-
-    let root_index = asset
-        .entities
-        .iter()
-        .enumerate()
-        .find_map(|(index, entity)| entity.parent.is_none().then_some(index))
-        .unwrap_or(0);
-
-    assign_prefab_paths(asset, root_index, root_path.to_vec(), &mut paths);
-    paths
-}
-
-fn assign_prefab_paths(
-    asset: &SceneAsset,
-    index: usize,
-    current_path: Vec<String>,
-    output: &mut [Option<Vec<String>>],
-) {
-    output[index] = Some(current_path.clone());
-
-    for &child in &asset.entities[index].children {
-        let mut child_path = current_path.clone();
-        let name = asset.entities[child]
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("Entity{child}"));
-        child_path.push(name);
-        assign_prefab_paths(asset, child, child_path, output);
     }
 }
 

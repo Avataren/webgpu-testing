@@ -50,8 +50,7 @@ pub(crate) use tree::{serialize_world, build_tree_asset_node};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::serialization::SerializedBillboard;
-    use super::serialization::material::SerializedTextureSlot;
+    use super::serialization::{SerializedBillboard, SerializedTextureSlot};
     use crate::asset::Assets;
     use crate::project::{ProjectManifest, ProjectMetadata, CONTENT_DIR};
     use crate::renderer::material::MaterialFlags;
