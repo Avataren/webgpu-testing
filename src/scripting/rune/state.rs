@@ -110,7 +110,7 @@ impl ScriptingState {
                 for sub in result.event_subscriptions {
                     self.event_subscriptions
                         .entry(sub.event_name)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(EventSubscription {
                             entity_id: sub.entity,
                             callback_name: sub.callback_name,
@@ -172,7 +172,7 @@ impl ScriptingState {
             for sub in result.event_subscriptions {
                 self.event_subscriptions
                     .entry(sub.event_name)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(EventSubscription {
                         entity_id: sub.entity,
                         callback_name: sub.callback_name,
@@ -297,7 +297,7 @@ impl ScriptingState {
                             for sub in result.event_subscriptions {
                                 self.event_subscriptions
                                     .entry(sub.event_name)
-                                    .or_insert_with(Vec::new)
+                                    .or_default()
                                     .push(EventSubscription {
                                         entity_id: sub.entity,
                                         callback_name: sub.callback_name,
