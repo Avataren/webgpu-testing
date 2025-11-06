@@ -232,6 +232,14 @@ impl EditorApplication {
                 }
             }
         }
+
+        // Feed back responses from the previous frame before collecting new commands
+        if !self.shared.script_ui_responses.is_empty() {
+            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
+        }
+
+        // Collect UI commands from scripts that implement on_ui()
+        self.shared.script_ui_commands = ctx.scene.process_script_ui();
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
@@ -435,11 +443,56 @@ impl EditorApplication {
             .set_window_enabled(!show_fullscreen_game);
         self.shader_editor_system_mut()
             .set_window_enabled(!show_fullscreen_game);
+
+        // Render script UI
+        self.render_script_ui(ctx);
+
         self.run_system_ui(ctx, default_ui);
     }
 }
 
 impl EditorApplication {
+    /// Render UI from scripts that implement on_ui()
+    fn render_script_ui(&mut self, ctx: &egui::Context) {
+        use std::collections::HashMap;
+        use wgpu_cube::scripting::rune::api::ui::UiCommand;
+
+        let mut all_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+
+        // Render each script's UI in a separate window
+        for (entity, commands) in &self.shared.script_ui_commands {
+            let mut responses = HashMap::new();
+
+            egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                .resizable(true)
+                .default_size([300.0, 200.0])
+                .show(ctx, |ui| {
+                    for command in commands {
+                        if let Some(response) = command.render(ui) {
+                            // Extract the ID from the command and store the response
+                            let id = match command {
+                                UiCommand::Button { text } => format!("button_{}", text),
+                                UiCommand::TextEdit { id, .. } => id.clone(),
+                                UiCommand::Slider { id, .. } => id.clone(),
+                                UiCommand::DragValue { id, .. } => id.clone(),
+                                UiCommand::Checkbox { id, .. } => id.clone(),
+                                UiCommand::ColorEdit { id, .. } => id.clone(),
+                                _ => continue,
+                            };
+                            responses.insert(id, response);
+                        }
+                    }
+                });
+
+            if !responses.is_empty() {
+                all_responses.insert(*entity, responses);
+            }
+        }
+
+        // Store responses for the next frame
+        self.shared.script_ui_responses = all_responses;
+    }
+
     fn handle_scene_tab_action(&mut self, action: SceneTabAction) {
         match action {
             SceneTabAction::Activate(document_id) => {

@@ -21,6 +21,8 @@ pub struct ScriptingState {
     pending_gltf_imports: Vec<PendingGltfImport>,
     component_registry: ComponentRegistry,
     event_subscriptions: EventSubscriptions,
+    /// UI responses from the previous frame, keyed by entity
+    ui_responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
 }
 
 impl ScriptingState {
@@ -32,6 +34,7 @@ impl ScriptingState {
             pending_gltf_imports: Vec::new(),
             component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
+            ui_responses: HashMap::new(),
         })
     }
 
@@ -51,14 +54,23 @@ impl ScriptingState {
         self.instances.clear();
         self.pending_gltf_imports.clear();
         self.event_subscriptions.clear();
+        self.ui_responses.clear();
     }
 
     /// Run pending scripts for the current frame.
-    pub fn update_scripts(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
+    ///
+    /// * `world` - The entity world
+    /// * `dt` - Delta time in seconds. If 0, only editor tool scripts will run.
+    /// * `editor_mode` - If true, editor tool scripts will run even when dt is 0
+    pub fn update_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
         self.retain_instances(world);
         self.process_on_created(world)?;
-        if dt != 0.0 {
-            self.process_updates(world, dt)?;
+
+        // Run updates for:
+        // - All scripts in play mode (dt > 0)
+        // - Editor tool scripts in editor mode (dt == 0 && editor_mode)
+        if dt != 0.0 || editor_mode {
+            self.process_updates(world, dt, editor_mode)?;
         }
         self.process_on_created(world)?;
         Ok(())
@@ -135,7 +147,7 @@ impl ScriptingState {
         Ok(())
     }
 
-    fn process_updates(&mut self, world: &mut World, dt: f64) -> Result<(), RuneScriptingError> {
+    fn process_updates(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -147,6 +159,11 @@ impl ScriptingState {
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (entity, component) in query.iter() {
                 if !component.created_called() {
+                    continue;
+                }
+
+                // Skip non-editor-tool scripts in editor mode
+                if editor_mode && dt == 0.0 && !component.is_editor_tool() {
                     continue;
                 }
 
@@ -220,7 +237,7 @@ impl ScriptingState {
                 // Prepare the command buffer and call the event handler
                 let commands = {
                     // Get the script component in a scope to drop the borrow
-                    let component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
+                    let mut component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
                         Ok(comp) => comp,
                         Err(_) => continue,
                     };
@@ -230,7 +247,7 @@ impl ScriptingState {
                     }
 
                     // Get the script instance
-                    let instance = match self.ensure_instance(subscription.entity_id, &component) {
+                    let instance = match self.ensure_instance(subscription.entity_id, &mut *component) {
                         Ok(inst) => inst,
                         Err(e) => {
                             error!(target: "script", "Failed to get script instance for event dispatch: {}", e);
@@ -334,6 +351,69 @@ impl ScriptingState {
         std::mem::take(&mut self.pending_gltf_imports)
     }
 
+    /// Call on_ui() for all scripts and collect their UI commands.
+    ///
+    /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
+    pub fn process_ui(&mut self, world: &World) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+        use super::api::ui::UiContext;
+        use super::commands::entity_bits;
+
+        let mut ui_commands = HashMap::new();
+        let event_queue = Rc::new(RefCell::new(Vec::new()));
+
+        // Set up guards for World and ComponentRegistry access
+        let _world_guard = WorldGuard::enter(world);
+        let _registry_guard = RegistryGuard::enter(&self.component_registry);
+
+        let mut query = world.query::<&mut RuneScriptComponent>();
+        for (entity, component) in query.iter() {
+            if !component.created_called() {
+                continue;
+            }
+
+            // Get the script instance
+            let instance = match self.instances.get_mut(&entity) {
+                Some(inst) => inst,
+                None => continue,
+            };
+
+            // Create a UI context for this script
+            let ui_context = UiContext::new();
+
+            // Set responses from the previous frame
+            if let Some(responses) = self.ui_responses.get(&entity) {
+                ui_context.set_responses(responses.clone());
+            }
+
+            let commands = instance.command_buffer();
+
+            // Call the on_ui function (if it exists)
+            match instance.call_on_ui(entity_bits(entity), ui_context.clone(), commands, event_queue.clone()) {
+                Ok(FunctionCallOutcome::Executed) => {
+                    // Collect the UI commands from the context
+                    let cmds = ui_context.take_commands();
+                    if !cmds.is_empty() {
+                        ui_commands.insert(entity, cmds);
+                    }
+                }
+                Ok(FunctionCallOutcome::Missing) => {
+                    // Script doesn't have on_ui() - that's fine
+                }
+                Err(e) => {
+                    error!(target: "script", "Error calling on_ui for entity {:?}: {}", entity, e);
+                }
+            }
+        }
+
+        ui_commands
+    }
+
+    /// Set UI responses for scripts. This should be called after rendering UI
+    /// so that the next frame can access the responses.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>) {
+        self.ui_responses = responses;
+    }
+
     fn retain_instances(&mut self, world: &World) {
         self.instances.retain(|entity, _| {
             world
@@ -347,7 +427,7 @@ impl ScriptingState {
     fn ensure_instance(
         &mut self,
         entity: Entity,
-        component: &RuneScriptComponent,
+        component: &mut RuneScriptComponent,
     ) -> Result<&mut RuneScriptInstance, RuneScriptingError> {
         let needs_rebuild = !matches!(
             self.instances.get(&entity),
@@ -355,7 +435,8 @@ impl ScriptingState {
         );
 
         if needs_rebuild {
-            let script = self.runtime.compile(component.source())?;
+            let (script, is_editor_tool) = self.runtime.compile(component.source())?;
+            component.set_editor_tool(is_editor_tool);
             let source = component.source().clone();
             let instance = self.runtime.instantiate(script, source);
             self.instances.insert(entity, instance);

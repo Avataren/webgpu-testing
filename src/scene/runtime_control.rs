@@ -55,8 +55,16 @@ impl SceneRuntimeController {
         self.runtime.advance_time(dt)
     }
 
-    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64) {
-        self.runtime.run_scripts(world, dt);
+    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        self.runtime.run_scripts(world, dt, editor_mode);
+    }
+
+    pub(crate) fn process_script_ui(&mut self, world: &World) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.runtime.process_script_ui(world)
+    }
+
+    pub(crate) fn set_ui_responses(&mut self, responses: std::collections::HashMap<hecs::Entity, std::collections::HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
+        self.runtime.set_ui_responses(responses);
     }
 }
 
@@ -95,7 +103,7 @@ mod tests {
             ),
         ));
 
-        controller.run_scripts(&mut world, 0.0);
+        controller.run_scripts(&mut world, 0.0, false);
         {
             let transform = world.get::<&TransformComponent>(entity).unwrap();
             assert_eq!(transform.0.translation, Vec3::new(1.0, 2.0, 3.0));
@@ -104,7 +112,7 @@ mod tests {
         let absolute_time = controller.advance_time(0.5);
         assert!((absolute_time - 0.5).abs() < f64::EPSILON);
 
-        controller.run_scripts(&mut world, 0.5);
+        controller.run_scripts(&mut world, 0.5, false);
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert_eq!(transform.0.translation, Vec3::splat(0.5));
     }

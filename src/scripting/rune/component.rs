@@ -17,12 +17,15 @@ use super::types::{RuneScript, RuneScriptSource, ScriptEvent, ScriptStateMap};
 pub struct RuneScriptComponent {
     source: RuneScriptSource,
     created_called: bool,
+    /// Whether this script should run in editor mode (marked with @tool or @editor_tool)
+    editor_tool: bool,
 }
 
 impl fmt::Debug for RuneScriptComponent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RuneScriptComponent")
             .field("created_called", &self.created_called)
+            .field("editor_tool", &self.editor_tool)
             .finish()
     }
 }
@@ -33,6 +36,16 @@ impl RuneScriptComponent {
         Self {
             source,
             created_called: false,
+            editor_tool: false,
+        }
+    }
+
+    /// Create a component with explicit editor_tool flag.
+    pub fn with_editor_tool(source: RuneScriptSource, editor_tool: bool) -> Self {
+        Self {
+            source,
+            created_called: false,
+            editor_tool,
         }
     }
 
@@ -55,6 +68,16 @@ impl RuneScriptComponent {
 
     pub fn set_created_called(&mut self, called: bool) {
         self.created_called = called;
+    }
+
+    /// Returns true if this script should run in editor mode.
+    pub fn is_editor_tool(&self) -> bool {
+        self.editor_tool
+    }
+
+    /// Set whether this script should run in editor mode.
+    pub fn set_editor_tool(&mut self, editor_tool: bool) {
+        self.editor_tool = editor_tool;
     }
 }
 
@@ -127,6 +150,26 @@ impl RuneScriptInstance {
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _entity_guard = EntityGuard::enter(entity_bits);
         self.call_function(["update"], (entity_bits, dt))
+    }
+
+    pub fn call_on_ui(
+        &mut self,
+        entity_bits: i64,
+        ui_context: crate::scripting::rune::api::ui::UiContext,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<FunctionCallOutcome, RuneScriptingError> {
+        // Pre-register self_entity in the registry to prevent collision with allocated handles
+        if entity_bits != 0 {
+            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+        }
+
+        let _commands_guard = CommandGuard::enter(commands.clone());
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _entity_guard = EntityGuard::enter(entity_bits);
+        self.call_function(["on_ui"], (entity_bits, ui_context))
     }
 
     pub fn call_function(

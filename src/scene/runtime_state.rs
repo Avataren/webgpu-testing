@@ -1,7 +1,8 @@
 use crate::scripting::{RuneScriptComponent, RuneScriptSource, ScriptingState};
 use crate::time::Instant;
-use hecs::World;
+use hecs::{Entity, World};
 use log::error;
+use std::collections::HashMap;
 
 pub(crate) struct SceneRuntime {
     time: f64,
@@ -80,10 +81,20 @@ impl SceneRuntime {
         self.time
     }
 
-    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64) {
-        if let Err(err) = self.scripting.update_scripts(world, dt) {
+    pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        if let Err(err) = self.scripting.update_scripts(world, dt, editor_mode) {
             error!("Rune scripting error: {err}");
         }
+    }
+
+    /// Process UI for all scripts and return their UI commands.
+    pub(crate) fn process_script_ui(&mut self, world: &World) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.scripting.process_ui(world)
+    }
+
+    /// Set UI responses from the previous frame to feed back to scripts.
+    pub(crate) fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
+        self.scripting.set_ui_responses(responses);
     }
 }
 
@@ -124,7 +135,7 @@ mod tests {
             ),
         ));
 
-        runtime.run_scripts(&mut world, 0.0);
+        runtime.run_scripts(&mut world, 0.0, false);
         {
             let transform = world.get::<&TransformComponent>(entity).unwrap();
             assert_eq!(transform.0.translation, Vec3::new(1.0, 2.0, 3.0));
@@ -133,7 +144,7 @@ mod tests {
         let absolute_time = runtime.advance_time(0.5);
         assert!((absolute_time - 0.5).abs() < f64::EPSILON);
 
-        runtime.run_scripts(&mut world, 0.5);
+        runtime.run_scripts(&mut world, 0.5, false);
         let transform = world.get::<&TransformComponent>(entity).unwrap();
         assert_eq!(transform.0.translation, Vec3::splat(0.5));
     }

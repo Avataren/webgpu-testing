@@ -1,0 +1,59 @@
+// @tool
+// Comprehensive example of UI widgets in Rune scripts
+//
+// This script demonstrates all available UI widgets and runs in editor mode.
+
+pub fn on_created(self_entity) {
+    log_info("UI widgets example script created!");
+
+    // Initialize some state
+    set_f64("counter", 0.0);
+    set_state("text", "Hello from script!");
+}
+
+pub fn update(self_entity, dt) {
+    // This runs in both editor and play mode for @tool scripts
+    if dt > 0.0 {
+        // Only increment in play mode
+        let counter = get_f64("counter");
+        set_f64("counter", counter + dt);
+    }
+}
+
+pub fn on_ui(self_entity, ui) {
+    // Heading
+    ui.heading("UI Widgets Example");
+
+    ui.separator();
+
+    // Labels
+    ui.label("This is a label");
+    ui.label("Scripts can create egui UI!");
+
+    ui.separator();
+
+    // Counter display
+    let counter = get_f64("counter");
+    ui.label(`Counter: ${counter}`);
+
+    ui.separator();
+
+    // Buttons
+    if ui.button("Click me!") {
+        log_info("Button was clicked!");
+        let clicks = get_f64("button_clicks");
+        set_f64("button_clicks", clicks + 1.0);
+    }
+
+    let clicks = get_f64("button_clicks");
+    ui.label(`Button clicks: ${clicks}`);
+
+    ui.separator();
+
+    // Reset button
+    if ui.button("Reset Counter") {
+        set_f64("counter", 0.0);
+        set_f64("button_clicks", 0.0);
+        log_info("Counters reset!");
+    }
+}

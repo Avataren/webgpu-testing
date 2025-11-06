@@ -1,0 +1,116 @@
+// @tool
+// Character Editor Tool
+//
+// A practical example of an editor tool using various widgets
+// to configure character properties.
+
+pub fn on_created(self_entity) {
+    log_info("Character Editor Tool initialized");
+
+    // Character properties
+    set_state("char_name", "Hero");
+    set_f64("char_level", 1.0);
+    set_f64("char_str", 10.0);
+    set_f64("char_dex", 10.0);
+    set_f64("char_int", 10.0);
+    set_state("char_is_npc", false);
+    set_f64("char_color_r", 0.2);
+    set_f64("char_color_g", 0.6);
+    set_f64("char_color_b", 0.9);
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Character Editor");
+    ui.separator();
+
+    // Basic Info Section
+    ui.label("Basic Information");
+
+    let name = get_state("char_name");
+    let new_name = ui.text_edit("char_name", name);
+    if new_name != name {
+        set_state("char_name", new_name);
+    }
+
+    let level = get_f64("char_level");
+    let new_level = ui.slider("char_level", level, 1.0, 100.0);
+    if new_level != level {
+        set_f64("char_level", new_level);
+    }
+    ui.label(`Level: ${new_level}`);
+
+    let is_npc = try_get_state("char_is_npc");
+    let npc_val = if is_npc is () { false } else { is_npc };
+    let new_npc = ui.checkbox("char_is_npc", npc_val, "Is NPC");
+    if new_npc != npc_val {
+        set_state("char_is_npc", new_npc);
+    }
+
+    ui.separator();
+
+    // Stats Section
+    ui.label("Character Stats");
+
+    let str = get_f64("char_str");
+    let new_str = ui.slider("char_str", str, 1.0, 100.0);
+    if new_str != str {
+        set_f64("char_str", new_str);
+    }
+    ui.label(`Strength: ${new_str}`);
+
+    let dex = get_f64("char_dex");
+    let new_dex = ui.slider("char_dex", dex, 1.0, 100.0);
+    if new_dex != dex {
+        set_f64("char_dex", new_dex);
+    }
+    ui.label(`Dexterity: ${new_dex}`);
+
+    let int = get_f64("char_int");
+    let new_int = ui.slider("char_int", int, 1.0, 100.0);
+    if new_int != int {
+        set_f64("char_int", new_int);
+    }
+    ui.label(`Intelligence: ${new_int}`);
+
+    let total_stats = new_str + new_dex + new_int;
+    ui.label(`Total Stats: ${total_stats}`);
+
+    ui.separator();
+
+    // Visual Settings
+    ui.label("Visual Settings");
+
+    let r = get_f64("char_color_r");
+    let g = get_f64("char_color_g");
+    let b = get_f64("char_color_b");
+    let (new_r, new_g, new_b) = ui.color_edit("char_color", r, g, b);
+    if new_r != r || new_g != g || new_b != b {
+        set_f64("char_color_r", new_r);
+        set_f64("char_color_g", new_g);
+        set_f64("char_color_b", new_b);
+    }
+
+    ui.separator();
+
+    // Actions
+    if ui.button("Apply to Entity") {
+        log_info("Applying character configuration...");
+        log_info(`Name: ${get_state("char_name")}`);
+        log_info(`Level: ${get_f64("char_level")}`);
+        log_info(`Stats: STR=${get_f64("char_str")}, DEX=${get_f64("char_dex")}, INT=${get_f64("char_int")}`);
+        // In a real tool, this would modify the entity's components
+    }
+
+    if ui.button("Reset to Defaults") {
+        set_state("char_name", "Hero");
+        set_f64("char_level", 1.0);
+        set_f64("char_str", 10.0);
+        set_f64("char_dex", 10.0);
+        set_f64("char_int", 10.0);
+        set_state("char_is_npc", false);
+        set_f64("char_color_r", 0.2);
+        set_f64("char_color_g", 0.6);
+        set_f64("char_color_b", 0.9);
+        log_info("Reset to default values");
+    }
+}
