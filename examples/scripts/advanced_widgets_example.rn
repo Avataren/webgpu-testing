@@ -12,11 +12,11 @@ pub fn on_created(self_entity) {
     log_info("Advanced widgets example created!");
 
     // Initialize default values
-    set_state("player_name", "Player");
+    set_string("player_name", "Player");
     set_f64("health", 100.0);
     set_f64("speed", 5.0);
     set_f64("volume", 0.8);
-    // Note: god_mode not initialized so try_get_state returns () initially
+    // Note: god_mode not initialized so get_bool returns default
     set_f64("color_r", 1.0);
     set_f64("color_g", 0.5);
     set_f64("color_b", 0.0);
@@ -28,10 +28,10 @@ pub fn on_ui(self_entity, ui) {
 
     // Text Input
     ui.label("Text Input:");
-    let name = get_state("player_name");
+    let name = get_string("player_name", "Player");
     let new_name = ui.text_edit("player_name", name);
     if new_name != name {
-        set_state("player_name", new_name);
+        set_string("player_name", new_name);
         log_info(`Name changed to: ${new_name}`);
     }
 
@@ -93,11 +93,11 @@ pub fn on_ui(self_entity, ui) {
 
     // Action buttons
     if ui.button("Reset All") {
-        set_state("player_name", "Player");
+        set_string("player_name", "Player");
         set_f64("health", 100.0);
         set_f64("speed", 5.0);
         set_f64("volume", 0.8);
-        set_state("god_mode", false);
+        set_bool("god_mode", false);
         set_f64("color_r", 1.0);
         set_f64("color_g", 0.5);
         set_f64("color_b", 0.0);
@@ -106,11 +106,11 @@ pub fn on_ui(self_entity, ui) {
 
     if ui.button("Log Current Values") {
         log_info("=== Current Values ===");
-        log_info(`Name: ${get_state("player_name")}`);
+        log_info(`Name: ${get_string("player_name", "Player")}`);
         log_info(`Health: ${get_f64("health")}`);
         log_info(`Speed: ${get_f64("speed")}`);
         log_info(`Volume: ${get_f64("volume")}`);
-        log_info(`God Mode: ${try_get_state("god_mode")}`);
+        log_info(`God Mode: ${get_bool("god_mode", false)}`);
         log_info(`Color: RGB(${get_f64("color_r")}, ${get_f64("color_g")}, ${get_f64("color_b")})`);
     }
 }

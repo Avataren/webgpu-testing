@@ -8,8 +8,8 @@ pub fn on_created(self_entity) {
     log_info("Debug Console Plugin initialized");
 
     // Console state
-    set_state("command_input", "");
-    // Note: show_help and auto_clear not initialized so try_get_state returns () initially
+    set_string("command_input", "");
+    // Note: show_help and auto_clear not initialized so get_bool returns default
 
     // Performance monitoring
     set_f64("frame_time", 0.0);
@@ -53,10 +53,10 @@ pub fn on_ui(self_entity, ui) {
     // === Command Input ===
     ui.label("Command");
 
-    let cmd = get_state("command_input");
+    let cmd = get_string("command_input", "");
     let new_cmd = ui.text_edit("command_input", cmd);
     if new_cmd != cmd {
-        set_state("command_input", new_cmd);
+        set_string("command_input", new_cmd);
     }
 
     if ui.button("Execute") {
@@ -64,7 +64,7 @@ pub fn on_ui(self_entity, ui) {
 
         let should_clear = get_bool("auto_clear", true);
         if should_clear {
-            set_state("command_input", "");
+            set_string("command_input", "");
         }
     }
 
