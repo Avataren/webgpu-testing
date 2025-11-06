@@ -67,6 +67,7 @@ impl ScenePrimitivePreset {
 #[cfg(feature = "egui")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SceneCreationAction {
+    Empty,
     Primitive(ScenePrimitivePreset),
     ParticleSystem(ParticleBehaviorPreset),
     PointLight,
@@ -676,6 +677,12 @@ impl SceneHierarchyWindow {
             ui.add_space(8.0);
             let mut close_top_menu = false;
             ui.menu_button("Add", |ui| {
+                if ui.button("Empty Entity").clicked() {
+                    events.push(SceneHierarchyEvent::Create(SceneCreationAction::Empty));
+                    close_top_menu = true;
+                    ui.close();
+                }
+
                 ui.menu_button("Primitive", |ui| {
                     for preset in ScenePrimitivePreset::variants() {
                         if ui.button(preset.display_name()).clicked() {
