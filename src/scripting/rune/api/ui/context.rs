@@ -1,6 +1,7 @@
 use super::commands::{UiCommand, UiResponse};
 use rune::Any;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// UI context that scripts use to build their UI.
@@ -12,7 +13,7 @@ use std::rc::Rc;
 #[rune(item = ::ui)]
 pub struct UiContext {
     commands: Rc<RefCell<Vec<UiCommand>>>,
-    responses: Rc<RefCell<Vec<Option<UiResponse>>>>,
+    responses: Rc<RefCell<HashMap<String, UiResponse>>>,
 }
 
 impl UiContext {
@@ -20,7 +21,7 @@ impl UiContext {
     pub fn new() -> Self {
         Self {
             commands: Rc::new(RefCell::new(Vec::new())),
-            responses: Rc::new(RefCell::new(Vec::new())),
+            responses: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -30,47 +31,118 @@ impl UiContext {
     }
 
     /// Set responses from rendering.
-    pub fn set_responses(&self, responses: Vec<Option<UiResponse>>) {
+    pub fn set_responses(&self, responses: HashMap<String, UiResponse>) {
         *self.responses.borrow_mut() = responses;
+    }
+
+    /// Get a response for a specific widget ID.
+    fn get_response(&self, id: &str) -> Option<UiResponse> {
+        self.responses.borrow().get(id).cloned()
     }
 
     /// Display a text label.
     #[rune::function(instance)]
     pub fn label(&self, text: String) {
         self.commands.borrow_mut().push(UiCommand::Label { text });
-        self.responses.borrow_mut().push(None);
     }
 
     /// Display a button and return whether it was clicked.
     #[rune::function(instance)]
     pub fn button(&self, text: String) -> bool {
-        let index = self.commands.borrow().len();
+        let id = format!("button_{}", text);
         self.commands.borrow_mut().push(UiCommand::Button {
             text: text.clone(),
         });
-        self.responses.borrow_mut().push(None);
 
-        // Check if we have a response from the previous frame
-        let responses = self.responses.borrow();
-        if let Some(Some(response)) = responses.get(index) {
-            response.clicked
-        } else {
-            false
-        }
+        self.get_response(&id)
+            .map(|r| r.clicked)
+            .unwrap_or(false)
     }
 
     /// Display a heading.
     #[rune::function(instance)]
     pub fn heading(&self, text: String) {
         self.commands.borrow_mut().push(UiCommand::Heading { text });
-        self.responses.borrow_mut().push(None);
     }
 
     /// Display a separator line.
     #[rune::function(instance)]
     pub fn separator(&self) {
         self.commands.borrow_mut().push(UiCommand::Separator);
-        self.responses.borrow_mut().push(None);
+    }
+
+    /// Display a text input field and return the new value.
+    #[rune::function(instance)]
+    pub fn text_edit(&self, id: String, current_value: String) -> String {
+        self.commands.borrow_mut().push(UiCommand::TextEdit {
+            id: id.clone(),
+            current_value: current_value.clone(),
+        });
+
+        self.get_response(&id)
+            .and_then(|r| r.text_value)
+            .unwrap_or(current_value)
+    }
+
+    /// Display a slider and return the new value.
+    #[rune::function(instance)]
+    pub fn slider(&self, id: String, current_value: f64, min: f64, max: f64) -> f64 {
+        self.commands.borrow_mut().push(UiCommand::Slider {
+            id: id.clone(),
+            current_value,
+            min,
+            max,
+        });
+
+        self.get_response(&id)
+            .and_then(|r| r.float_value)
+            .unwrap_or(current_value)
+    }
+
+    /// Display a drag value widget and return the new value.
+    #[rune::function(instance)]
+    pub fn drag_value(&self, id: String, current_value: f64) -> f64 {
+        self.commands.borrow_mut().push(UiCommand::DragValue {
+            id: id.clone(),
+            current_value,
+        });
+
+        self.get_response(&id)
+            .and_then(|r| r.float_value)
+            .unwrap_or(current_value)
+    }
+
+    /// Display a checkbox and return the new value.
+    #[rune::function(instance)]
+    pub fn checkbox(&self, id: String, current_value: bool, label: String) -> bool {
+        self.commands.borrow_mut().push(UiCommand::Checkbox {
+            id: id.clone(),
+            current_value,
+            label,
+        });
+
+        self.get_response(&id)
+            .and_then(|r| r.bool_value)
+            .unwrap_or(current_value)
+    }
+
+    /// Display a color picker and return the new RGB values as a tuple.
+    #[rune::function(instance)]
+    pub fn color_edit(&self, id: String, r: f64, g: f64, b: f64) -> (f64, f64, f64) {
+        self.commands.borrow_mut().push(UiCommand::ColorEdit {
+            id: id.clone(),
+            r: r as f32,
+            g: g as f32,
+            b: b as f32,
+        });
+
+        if let Some(response) = self.get_response(&id) {
+            if let Some((new_r, new_g, new_b)) = response.color_value {
+                return (new_r as f64, new_g as f64, new_b as f64);
+            }
+        }
+
+        (r, g, b)
     }
 }
 

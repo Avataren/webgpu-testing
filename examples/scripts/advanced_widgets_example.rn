@@ -1,0 +1,117 @@
+// @tool
+// Advanced UI Widgets Example
+//
+// This script demonstrates the expanded widget API including:
+// - Text input fields
+// - Sliders
+// - Drag values
+// - Checkboxes
+// - Color pickers
+
+pub fn on_created(self_entity) {
+    log_info("Advanced widgets example created!");
+
+    // Initialize default values
+    set_state("player_name", "Player");
+    set_f64("health", 100.0);
+    set_f64("speed", 5.0);
+    set_f64("volume", 0.8);
+    set_state("god_mode", false);
+    set_f64("color_r", 1.0);
+    set_f64("color_g", 0.5);
+    set_f64("color_b", 0.0);
+}
+
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Advanced Widgets Demo");
+    ui.separator();
+
+    // Text Input
+    ui.label("Text Input:");
+    let name = get_state("player_name");
+    let new_name = ui.text_edit("player_name", name);
+    if new_name != name {
+        set_state("player_name", new_name);
+        log_info(`Name changed to: ${new_name}`);
+    }
+
+    ui.separator();
+
+    // Sliders
+    ui.label("Sliders:");
+    let health = get_f64("health");
+    let new_health = ui.slider("health", health, 0.0, 100.0);
+    if new_health != health {
+        set_f64("health", new_health);
+    }
+    ui.label(`Health: ${new_health}`);
+
+    let volume = get_f64("volume");
+    let new_volume = ui.slider("volume", volume, 0.0, 1.0);
+    if new_volume != volume {
+        set_f64("volume", new_volume);
+    }
+    ui.label(`Volume: ${new_volume}`);
+
+    ui.separator();
+
+    // Drag Value
+    ui.label("Drag Value:");
+    let speed = get_f64("speed");
+    let new_speed = ui.drag_value("speed", speed);
+    if new_speed != speed {
+        set_f64("speed", new_speed);
+    }
+    ui.label(`Speed: ${new_speed}`);
+
+    ui.separator();
+
+    // Checkbox
+    let god_mode = try_get_state("god_mode");
+    let is_god_mode = if god_mode is () { false } else { god_mode };
+    let new_god_mode = ui.checkbox("god_mode", is_god_mode, "Enable God Mode");
+    if new_god_mode != is_god_mode {
+        set_state("god_mode", new_god_mode);
+        log_info(`God mode: ${new_god_mode}`);
+    }
+
+    ui.separator();
+
+    // Color Picker
+    ui.label("Color Picker:");
+    let r = get_f64("color_r");
+    let g = get_f64("color_g");
+    let b = get_f64("color_b");
+    let (new_r, new_g, new_b) = ui.color_edit("color", r, g, b);
+    if new_r != r || new_g != g || new_b != b {
+        set_f64("color_r", new_r);
+        set_f64("color_g", new_g);
+        set_f64("color_b", new_b);
+        log_info(`Color changed to RGB(${new_r}, ${new_g}, ${new_b})`);
+    }
+
+    ui.separator();
+
+    // Action buttons
+    if ui.button("Reset All") {
+        set_state("player_name", "Player");
+        set_f64("health", 100.0);
+        set_f64("speed", 5.0);
+        set_f64("volume", 0.8);
+        set_state("god_mode", false);
+        set_f64("color_r", 1.0);
+        set_f64("color_g", 0.5);
+        set_f64("color_b", 0.0);
+        log_info("All values reset!");
+    }
+
+    if ui.button("Log Current Values") {
+        log_info("=== Current Values ===");
+        log_info(`Name: ${get_state("player_name")}`);
+        log_info(`Health: ${get_f64("health")}`);
+        log_info(`Speed: ${get_f64("speed")}`);
+        log_info(`Volume: ${get_f64("volume")}`);
+        log_info(`God Mode: ${try_get_state("god_mode")}`);
+        log_info(`Color: RGB(${get_f64("color_r")}, ${get_f64("color_g")}, ${get_f64("color_b")})`);
+    }
+}

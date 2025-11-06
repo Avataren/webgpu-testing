@@ -96,6 +96,11 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(ui::UiContext::button)?;
     module.function_meta(ui::UiContext::heading)?;
     module.function_meta(ui::UiContext::separator)?;
+    module.function_meta(ui::UiContext::text_edit)?;
+    module.function_meta(ui::UiContext::slider)?;
+    module.function_meta(ui::UiContext::drag_value)?;
+    module.function_meta(ui::UiContext::checkbox)?;
+    module.function_meta(ui::UiContext::color_edit)?;
 
     Ok(module)
 }

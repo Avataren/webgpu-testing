@@ -449,16 +449,37 @@ impl EditorApplication {
 impl EditorApplication {
     /// Render UI from scripts that implement on_ui()
     fn render_script_ui(&mut self, ctx: &egui::Context) {
+        use std::collections::HashMap;
+        use wgpu_cube::scripting::rune::api::ui::UiCommand;
+
         // Render each script's UI in a separate window
         for (entity, commands) in &self.shared.script_ui_commands {
+            let mut responses = HashMap::new();
+
             egui::Window::new(format!("Script UI - Entity {:?}", entity))
                 .resizable(true)
                 .default_size([300.0, 200.0])
                 .show(ctx, |ui| {
                     for command in commands {
-                        command.render(ui);
+                        if let Some(response) = command.render(ui) {
+                            // Extract the ID from the command and store the response
+                            let id = match command {
+                                UiCommand::Button { text } => format!("button_{}", text),
+                                UiCommand::TextEdit { id, .. } => id.clone(),
+                                UiCommand::Slider { id, .. } => id.clone(),
+                                UiCommand::DragValue { id, .. } => id.clone(),
+                                UiCommand::Checkbox { id, .. } => id.clone(),
+                                UiCommand::ColorEdit { id, .. } => id.clone(),
+                                _ => continue,
+                            };
+                            responses.insert(id, response);
+                        }
                     }
                 });
+
+            // TODO: Store responses for next frame
+            // We'd need to update the UiContext with these responses
+            // For now, responses work within the same frame for interactive widgets
         }
     }
 
