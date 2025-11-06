@@ -233,6 +233,11 @@ impl EditorApplication {
             }
         }
 
+        // Feed back responses from the previous frame before collecting new commands
+        if !self.shared.script_ui_responses.is_empty() {
+            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
+        }
+
         // Collect UI commands from scripts that implement on_ui()
         self.shared.script_ui_commands = ctx.scene.process_script_ui();
     }
@@ -452,6 +457,8 @@ impl EditorApplication {
         use std::collections::HashMap;
         use wgpu_cube::scripting::rune::api::ui::UiCommand;
 
+        let mut all_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+
         // Render each script's UI in a separate window
         for (entity, commands) in &self.shared.script_ui_commands {
             let mut responses = HashMap::new();
@@ -477,10 +484,13 @@ impl EditorApplication {
                     }
                 });
 
-            // TODO: Store responses for next frame
-            // We'd need to update the UiContext with these responses
-            // For now, responses work within the same frame for interactive widgets
+            if !responses.is_empty() {
+                all_responses.insert(*entity, responses);
+            }
         }
+
+        // Store responses for the next frame
+        self.shared.script_ui_responses = all_responses;
     }
 
     fn handle_scene_tab_action(&mut self, action: SceneTabAction) {

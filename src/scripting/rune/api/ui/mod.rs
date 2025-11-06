@@ -6,5 +6,5 @@
 mod commands;
 mod context;
 
-pub use commands::UiCommand;
+pub use commands::{UiCommand, UiResponse};
 pub use context::UiContext;

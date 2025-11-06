@@ -137,6 +137,10 @@ impl Scene {
         }
     }
 
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
+        self.runtime.set_ui_responses(responses);
+    }
+
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
         self.gizmos.mode()
     }

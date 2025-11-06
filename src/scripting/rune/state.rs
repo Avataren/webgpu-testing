@@ -21,6 +21,8 @@ pub struct ScriptingState {
     pending_gltf_imports: Vec<PendingGltfImport>,
     component_registry: ComponentRegistry,
     event_subscriptions: EventSubscriptions,
+    /// UI responses from the previous frame, keyed by entity
+    ui_responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
 }
 
 impl ScriptingState {
@@ -32,6 +34,7 @@ impl ScriptingState {
             pending_gltf_imports: Vec::new(),
             component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
+            ui_responses: HashMap::new(),
         })
     }
 
@@ -51,6 +54,7 @@ impl ScriptingState {
         self.instances.clear();
         self.pending_gltf_imports.clear();
         self.event_subscriptions.clear();
+        self.ui_responses.clear();
     }
 
     /// Run pending scripts for the current frame.
@@ -375,6 +379,12 @@ impl ScriptingState {
 
             // Create a UI context for this script
             let ui_context = UiContext::new();
+
+            // Set responses from the previous frame
+            if let Some(responses) = self.ui_responses.get(&entity) {
+                ui_context.set_responses(responses.clone());
+            }
+
             let commands = instance.command_buffer();
 
             // Call the on_ui function (if it exists)
@@ -396,6 +406,12 @@ impl ScriptingState {
         }
 
         ui_commands
+    }
+
+    /// Set UI responses for scripts. This should be called after rendering UI
+    /// so that the next frame can access the responses.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>) {
+        self.ui_responses = responses;
     }
 
     fn retain_instances(&mut self, world: &World) {

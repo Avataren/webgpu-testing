@@ -91,6 +91,11 @@ impl SceneRuntime {
     pub(crate) fn process_script_ui(&mut self, world: &World) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         self.scripting.process_ui(world)
     }
+
+    /// Set UI responses from the previous frame to feed back to scripts.
+    pub(crate) fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
+        self.scripting.set_ui_responses(responses);
+    }
 }
 
 impl Default for SceneRuntime {
