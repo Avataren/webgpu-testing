@@ -28,12 +28,14 @@ pub(crate) fn get_state(key: String) -> VmResult<Value> {
 }
 
 #[rune::function]
-pub(crate) fn try_get_state(key: String) -> VmResult<Option<Value>> {
+pub(crate) fn try_get_state(key: String) -> VmResult<Value> {
     with_active_entity(move |handle| {
         with_active_state(move |map| {
             let entry_key = (handle, key);
-            let value = map.get(&entry_key).cloned();
-            VmResult::Ok(value)
+            match map.get(&entry_key) {
+                Some(value) => VmResult::Ok(value.clone()),
+                None => VmResult::Ok(Value::from(())),
+            }
         })
     })
 }
@@ -82,11 +84,13 @@ pub(crate) fn get_state_for(handle: i64, key: String, default: Value) -> VmResul
 }
 
 #[rune::function(path = try_get_state)]
-pub(crate) fn try_get_state_for(handle: i64, key: String) -> VmResult<Option<Value>> {
+pub(crate) fn try_get_state_for(handle: i64, key: String) -> VmResult<Value> {
     with_active_state(move |map| {
         let entry_key = (handle, key);
-        let value = map.get(&entry_key).cloned();
-        VmResult::Ok(value)
+        match map.get(&entry_key) {
+            Some(value) => VmResult::Ok(value.clone()),
+            None => VmResult::Ok(Value::from(())),
+        }
     })
 }
 
