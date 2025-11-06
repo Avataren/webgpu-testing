@@ -10,6 +10,7 @@ use super::camera::handle_update_camera;
 use super::lights::{
     handle_update_point_light, handle_update_directional_light, handle_update_spot_light,
 };
+use super::misc::{handle_set_can_cast_shadow, handle_rename_entity};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -42,16 +43,21 @@ pub fn dispatch_action(
             handle_update_spot_light(ctx, entity, light)
         }
 
+        // Misc actions
+        InspectorAction::SetCanCastShadow { entity, casts_shadow } => {
+            handle_set_can_cast_shadow(ctx, entity, casts_shadow)
+        }
+        InspectorAction::RenameEntity { entity, new_name } => {
+            handle_rename_entity(ctx, entity, new_name)
+        }
+
         // TODO: Add remaining action handlers:
-        // - UpdateMaterial
+        // - UpdateMaterial, SetMaterialKind, CreateShaderMaterial, AssignShaderSource, CreateShaderSource
         // - UpdateEnvironment
-        // - UpdateParticleSystem / UpdateParticleEmitter / UpdateParticleBehavior
-        // - SetBillboard
-        // - EditScript / ChangeScriptSource / AddScript
-        // - EditShader / CreateShaderMaterial / SetMaterialKind / etc.
-        // - Add* actions (AddCamera, AddMesh, AddPointLight, etc.)
-        // - RenameEntity
-        // - SetCanCastShadow
+        // - UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
+        // - EditScript, ChangeScriptSource, AddScript
+        // - EditShader
+        // - Add* actions (AddCamera, AddMesh, AddPointLight, AddDirectionalLight, AddSpotLight, AddEnvironment, AddParticleSystem)
         //
         // For now, fall back to unhandled action (will be removed as handlers are added)
         _ => {
