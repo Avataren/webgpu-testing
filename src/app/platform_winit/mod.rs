@@ -132,10 +132,12 @@ impl<H: AsRef<Window> + Clone> Default for PlatformState<H> {
 
 pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
     core: AppCore,
-    platform: PlatformState<D::WindowHandle>,
-    driver: D,
+    // CRITICAL: editor must come before platform to ensure egui's GPU resources
+    // (in EditorState.egui_context.renderer) drop before the Renderer's Device
     #[cfg(feature = "egui")]
     editor: EditorState,
+    platform: PlatformState<D::WindowHandle>,
+    driver: D,
 }
 
 impl<D> WinitApp<D>
@@ -249,10 +251,10 @@ where
 
         Self {
             core,
-            platform: PlatformState::default(),
-            driver,
             #[cfg(feature = "egui")]
             editor,
+            platform: PlatformState::default(),
+            driver,
         }
     }
 
