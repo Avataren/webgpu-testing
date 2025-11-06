@@ -1,0 +1,167 @@
+// @editor
+// Script Editor Plugin
+// A full-featured script editor for editing RuneScript files
+
+struct EditorState {
+    scripts: Vec,  // List of all script infos
+    selected_index: i64,
+    current_content: String,
+    current_path: String,
+    status_message: String,
+    is_dirty: bool,
+}
+
+pub fn on_created(self_entity) {
+    log_info("Script Editor plugin created");
+
+    // Initialize state
+    let state = EditorState {
+        scripts: [],
+        selected_index: -1,
+        current_content: "",
+        current_path: "",
+        status_message: "Ready",
+        is_dirty: false,
+    };
+
+    set_state("editor", state);
+
+    // Load all scripts
+    refresh_script_list();
+}
+
+pub fn on_ui(self_entity, ui) {
+    let mut state = get_state("editor", EditorState {
+        scripts: [],
+        selected_index: -1,
+        current_content: "",
+        current_path: "",
+        status_message: "Ready",
+        is_dirty: false,
+    });
+
+    ui.heading("Script Editor");
+
+    // Toolbar
+    if ui.button("Refresh Scripts") {
+        refresh_script_list();
+        state = get_state("editor", state);
+    }
+
+    if ui.button("Save") {
+        if state.current_path != "" {
+            let error = write_file(state.current_path, state.current_content);
+            if error == "" {
+                state.status_message = `Saved ${state.current_path}`;
+                state.is_dirty = false;
+                set_state("editor", state);
+            } else {
+                state.status_message = error;
+                set_state("editor", state);
+            }
+        } else {
+            state.status_message = "No script selected";
+            set_state("editor", state);
+        }
+    }
+
+    if ui.button("Revert") {
+        if state.current_path != "" && !state.is_dirty {
+            state.status_message = "No changes to revert";
+            set_state("editor", state);
+        } else if state.current_path != "" {
+            // Reload the file
+            let content = read_file(state.current_path);
+            if !content.starts_with("ERROR") {
+                state.current_content = content;
+                state.is_dirty = false;
+                state.status_message = `Reverted ${state.current_path}`;
+                set_state("editor", state);
+            } else {
+                state.status_message = content;
+                set_state("editor", state);
+            }
+        }
+    }
+
+    ui.separator();
+
+    // Status bar
+    let status_text = if state.is_dirty {
+        `${state.status_message} [Modified]`
+    } else {
+        state.status_message
+    };
+    ui.label(status_text);
+
+    if state.current_path != "" {
+        ui.label(`Editing: ${state.current_path}`);
+    }
+
+    ui.separator();
+
+    // Script list
+    ui.label("Scripts in scene:");
+
+    if state.scripts.len() == 0 {
+        ui.label("  No scripts found");
+    } else {
+        for i in 0..state.scripts.len() {
+            let script = state.scripts[i];
+            let entity_name = get_entity_name(script.entity);
+            let label = `${entity_name} (${script.source_type}): ${script.source_path}`;
+
+            if ui.button(label) {
+                // Load this script
+                if script.source_type == "file" {
+                    let content = read_file(script.source_path);
+                    if content.starts_with("ERROR") {
+                        state.status_message = content;
+                        set_state("editor", state);
+                    } else {
+                        state.selected_index = i;
+                        state.current_path = script.source_path;
+                        state.current_content = content;
+                        state.is_dirty = false;
+                        state.status_message = `Loaded ${script.source_path}`;
+                        set_state("editor", state);
+                    }
+                } else {
+                    state.status_message = "Inline scripts cannot be edited in this editor. Edit them in their source.";
+                    set_state("editor", state);
+                }
+            }
+        }
+    }
+
+    ui.separator();
+
+    // Editor
+    if state.current_path != "" {
+        ui.label("Editor:");
+        let new_content = ui.text_edit_multiline("editor_content", state.current_content, None, Some(500.0));
+        if new_content != state.current_content {
+            state.current_content = new_content;
+            state.is_dirty = true;
+            set_state("editor", state);
+        }
+    } else {
+        ui.label("Select a script to edit");
+    }
+}
+
+fn refresh_script_list() {
+    let scripts = get_all_script_entities();
+    let mut state = get_state("editor", EditorState {
+        scripts: [],
+        selected_index: -1,
+        current_content: "",
+        current_path: "",
+        status_message: "Ready",
+        is_dirty: false,
+    });
+
+    state.scripts = scripts;
+    state.status_message = `Found ${scripts.len()} script(s)`;
+    set_state("editor", state);
+}
