@@ -63,6 +63,7 @@ impl ScriptingState {
     /// * `dt` - Delta time in seconds. If 0, only editor tool scripts will run.
     /// * `editor_mode` - If true, editor tool scripts will run even when dt is 0
     pub fn update_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
+        log::debug!(target: "script_update", "update_scripts called with dt={}, editor_mode={}", dt, editor_mode);
         self.retain_instances(world);
         self.process_on_created(world)?;
 
@@ -70,7 +71,10 @@ impl ScriptingState {
         // - All scripts in play mode (dt > 0)
         // - Editor tool scripts in editor mode (dt == 0 && editor_mode)
         if dt != 0.0 || editor_mode {
+            log::debug!(target: "script_update", "Calling process_updates");
             self.process_updates(world, dt, editor_mode)?;
+        } else {
+            log::debug!(target: "script_update", "Skipping process_updates (dt=0 and not editor_mode)");
         }
         self.process_on_created(world)?;
         Ok(())
@@ -372,6 +376,8 @@ impl ScriptingState {
         use super::commands::entity_bits;
         use super::runtime::ScriptMode;
 
+        log::debug!(target: "script_ui", "process_ui called with editor_mode={}", editor_mode);
+
         let mut ui_commands = HashMap::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -382,6 +388,7 @@ impl ScriptingState {
         let mut query = world.query::<&mut RuneScriptComponent>();
         for (entity, component) in query.iter() {
             if !component.created_called() {
+                log::debug!(target: "script_ui", "Skipping entity {:?} - created not called", entity);
                 continue;
             }
 
@@ -390,14 +397,19 @@ impl ScriptingState {
             // - RuntimeOnly (no annotation): UI only in play mode
             // - Both (@tool): UI in both modes
             let script_mode = component.script_mode();
+            log::debug!(target: "script_ui", "Entity {:?} script_mode={:?}, editor_mode={}",
+                entity, script_mode, editor_mode);
+
             if editor_mode {
                 // In editor mode - skip RuntimeOnly scripts
                 if script_mode == ScriptMode::RuntimeOnly {
+                    log::debug!(target: "script_ui", "Skipping RuntimeOnly script in editor mode");
                     continue;
                 }
             } else {
                 // In play mode - skip EditorOnly scripts
                 if script_mode == ScriptMode::EditorOnly {
+                    log::debug!(target: "script_ui", "Skipping EditorOnly script in play mode");
                     continue;
                 }
             }
@@ -405,7 +417,10 @@ impl ScriptingState {
             // Get the script instance
             let instance = match self.instances.get_mut(&entity) {
                 Some(inst) => inst,
-                None => continue,
+                None => {
+                    log::debug!(target: "script_ui", "No instance found for entity {:?}", entity);
+                    continue;
+                }
             };
 
             // Create a UI context for this script
