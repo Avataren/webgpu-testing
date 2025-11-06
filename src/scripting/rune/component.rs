@@ -95,14 +95,9 @@ impl RuneScriptInstance {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         // This ensures that if entity_bits happens to match an allocated handle value (e.g., -1, -2),
         // resolve_entity_bits will correctly return it as already resolved instead of panicking
-        {
-            use hecs::Entity;
-            use std::num::NonZeroU64;
-            if let Some(nz) = NonZeroU64::new(entity_bits as u64) {
-                if let Some(entity) = Entity::from_bits(nz.into()) {
-                    commands.borrow_mut().registry.borrow_mut().resolve(entity_bits, entity);
-                }
-            }
+        if entity_bits != 0 {
+            // Directly register the entity_bits mapping without needing to convert to Entity first
+            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
@@ -121,14 +116,9 @@ impl RuneScriptInstance {
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
-        {
-            use hecs::Entity;
-            use std::num::NonZeroU64;
-            if let Some(nz) = NonZeroU64::new(entity_bits as u64) {
-                if let Some(entity) = Entity::from_bits(nz.into()) {
-                    commands.borrow_mut().registry.borrow_mut().resolve(entity_bits, entity);
-                }
-            }
+        if entity_bits != 0 {
+            // Directly register the entity_bits mapping without needing to convert to Entity first
+            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
