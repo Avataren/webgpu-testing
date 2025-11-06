@@ -166,6 +166,14 @@ impl EditorApplication {
             if has_project {
                 Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
                 self.shared.ui_plugins_loaded = true;
+
+                // Initialize the newly loaded scripts by calling update(0.0) in editor mode
+                // This ensures on_created() is called and script instances are created
+                let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
+                if is_editor_mode {
+                    log::info!("Initializing UI plugin scripts in editor mode");
+                    ctx.scene.update(0.0);
+                }
             }
         }
 
