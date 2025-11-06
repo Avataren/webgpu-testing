@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::{cube_mesh, Material, Renderer};
 use wgpu_cube::scene::components::{MaterialComponent, MeshBounds, MeshComponent, Name, Visible};
-use wgpu_cube::scene::{Camera, EntityBuilder, Scene};
+use wgpu_cube::scene::{Camera, EntityBuilder, Scene, Transform};
 
 use super::core::EditorApplication;
 
@@ -31,8 +31,12 @@ impl EditorApplication {
 
                 scene.update(0.0);
             } else {
-                error!("Failed to load editor startup script");
-                return;
+                error!("Failed to load editor startup script - creating Editor Cube directly");
+                // Create Editor Cube directly if script fails
+                EntityBuilder::new(scene)
+                    .with_name("Editor Cube")
+                    .with_transform(Transform::from_translation(Vec3::new(0.0, 0.5, 0.0)))
+                    .spawn();
             }
         }
 
