@@ -18,6 +18,7 @@ pub(crate) mod internal;
 pub mod library;
 pub mod loader;
 pub mod picking;
+mod prefab_instantiator;
 mod render_bridge;
 mod runtime_control;
 mod runtime_state;
