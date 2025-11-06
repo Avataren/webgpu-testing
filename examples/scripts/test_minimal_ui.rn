@@ -5,7 +5,11 @@ pub fn on_created(self_entity) {
     log_info("Minimal UI test created");
 }
 
-pub fn on_ui(self_entity) {
-    heading("Test");
-    label("Hello World");
+pub fn on_ui(self_entity, ui) {
+    ui.heading("Test");
+    ui.label("Hello World");
+
+    if ui.button("Test Button") {
+        log_info("Button clicked!");
+    }
 }
