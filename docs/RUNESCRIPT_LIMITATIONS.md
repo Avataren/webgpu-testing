@@ -414,9 +414,68 @@ pub fn on_destroyed(self_entity) { }  // ❌ No cleanup callback
 
 ---
 
+### 18. No Component Queries During on_created()
+
+**Issue:** Cannot query for components (like `get_all_script_entities()`) inside `on_created()` callbacks.
+
+**Error:**
+```
+thread 'main' panicked at archetype.rs:124:13:
+RuneScriptComponent already borrowed uniquely
+```
+
+**Why It Happens:**
+When `on_created()` is called, the engine is iterating over all script components with a mutable borrow. Attempting to query components from within `on_created()` creates a borrow conflict.
+
+**Incorrect:**
+```rune
+pub fn on_created(self_entity) {
+    // ❌ This will panic!
+    let scripts = get_all_script_entities();  // Tries to borrow RuneScriptComponent
+    // Panic: already borrowed during on_created iteration
+}
+```
+
+**Correct:**
+```rune
+struct MyState {
+    needs_init,  // bool - whether initialization is needed
+    data,        // Vec - data to load
+}
+
+pub fn on_created(self_entity) {
+    // ✅ Defer component queries to on_ui()
+    set_state("my_state", MyState {
+        needs_init: true,
+        data: [],
+    });
+}
+
+pub fn on_ui(self_entity, ui) {
+    let state = get_state("my_state", MyState {
+        needs_init: true,
+        data: [],
+    });
+
+    if state.needs_init {
+        // ✅ Safe to query here - not during component iteration
+        let scripts = get_all_script_entities();
+        state.data = scripts;
+        state.needs_init = false;
+        set_state("my_state", state);
+    }
+
+    // Use state.data...
+}
+```
+
+**Rule of Thumb:** Never call component query functions from `on_created()`. Defer to `on_ui()` or `update()`.
+
+---
+
 ## State Management Limitations
 
-### 18. No Persistent Storage
+### 19. No Persistent Storage
 
 **Issue:** Script state is in-memory only, lost on editor restart.
 
@@ -442,7 +501,7 @@ pub fn on_created(self_entity) {
 
 ---
 
-### 19. State Scope Limited to Entity
+### 20. State Scope Limited to Entity
 
 **Issue:** State is per-entity, not global.
 
@@ -475,6 +534,7 @@ let val = get_state("shared", "default");  // Gets entity 2's state, not entity 
 | Binary file I/O | ❌ Not supported | ⚠️ Use asset system |
 | Multi-threading | ❌ Not supported | ⚠️ Batch processing |
 | Cleanup callback | ❌ Not supported | ⚠️ Automatic VM cleanup |
+| Component queries in on_created() | ❌ Not supported | ✅ Defer to on_ui() |
 | Persistent state | ❌ Not supported | ✅ Use file I/O |
 | Global state | ❌ Not supported | ✅ Use events/files |
 

@@ -9,12 +9,15 @@ struct EditorState {
     current_path,      // Path to current file (String)
     status_message,    // Status bar message (String)
     is_dirty,          // Whether content has been modified (bool)
+    needs_refresh,     // Whether scripts list needs refreshing (bool)
 }
 
 pub fn on_created(self_entity) {
     log_info("Script Editor plugin created");
 
     // Initialize state
+    // Note: We defer loading scripts to on_ui() to avoid borrow conflicts
+    // during initialization when iterating over RuneScriptComponents
     let state = EditorState {
         scripts: [],
         selected_index: -1,
@@ -22,12 +25,10 @@ pub fn on_created(self_entity) {
         current_path: "",
         status_message: "Ready",
         is_dirty: false,
+        needs_refresh: true,
     };
 
     set_state("editor", state);
-
-    // Load all scripts
-    refresh_script_list();
 }
 
 pub fn on_ui(self_entity, ui) {
@@ -38,7 +39,14 @@ pub fn on_ui(self_entity, ui) {
         current_path: "",
         status_message: "Ready",
         is_dirty: false,
+        needs_refresh: true,
     });
+
+    // Load scripts on first render or when requested
+    if state.needs_refresh {
+        refresh_script_list();
+        state = get_state("editor", state);
+    }
 
     ui.heading("Script Editor");
 
@@ -159,9 +167,11 @@ fn refresh_script_list() {
         current_path: "",
         status_message: "Ready",
         is_dirty: false,
+        needs_refresh: true,
     });
 
     state.scripts = scripts;
     state.status_message = `Found ${scripts.len()} script(s)`;
+    state.needs_refresh = false;
     set_state("editor", state);
 }
