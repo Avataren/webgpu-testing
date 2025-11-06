@@ -63,6 +63,29 @@ pub(crate) fn set_f64(key: String, value: f64) -> VmResult<()> {
     })
 }
 
+#[rune::function]
+pub(crate) fn get_bool(key: String, default: bool) -> VmResult<bool> {
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            let entry_key = (handle, key);
+            match map.get(&entry_key) {
+                Some(value) => try_result(bool::from_value(value.clone())),
+                None => VmResult::Ok(default),
+            }
+        })
+    })
+}
+
+#[rune::function]
+pub(crate) fn set_bool(key: String, value: bool) -> VmResult<()> {
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            map.insert((handle, key), Value::from(value));
+            VmResult::Ok(())
+        })
+    })
+}
+
 // Three-parameter versions for setting state on arbitrary entities
 // Use these when you need to set/get state on entities other than self
 #[rune::function]
