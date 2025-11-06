@@ -141,6 +141,10 @@ pub enum InspectorAction {
     AddParticleSystem {
         entity: Entity,
     },
+    RenameEntity {
+        entity: Entity,
+        new_name: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -155,7 +159,20 @@ pub fn show_entity_inspector(
     content_root: Option<&Path>,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
-    ui.label(format!("Name: {}", data.name));
+
+    // Editable name field
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        let mut name = data.name.clone();
+        let response = ui.text_edit_singleline(&mut name);
+        if response.lost_focus() && name != data.name {
+            actions.push(InspectorAction::RenameEntity {
+                entity: data.entity,
+                new_name: name,
+            });
+        }
+    });
+
     ui.label(format!("Entity: {:?}", data.entity));
     ui.add_space(8.0);
 

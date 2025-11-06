@@ -1423,6 +1423,16 @@ impl EditorApplication {
                         }
                     }
                 }
+                InspectorAction::RenameEntity { entity, new_name } => {
+                    let world = ctx.scene.main_world_mut();
+                    if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
+                        name.0 = new_name;
+                        log::info!("Renamed entity {:?}", entity);
+                        self.record_scene_change(&mut ctx.scene);
+                    } else {
+                        log::warn!("Entity {:?} does not have a Name component", entity);
+                    }
+                }
                 InspectorAction::EditScript { .. } => {
                     // Script edits are handled immediately in the UI stage.
                 }
