@@ -13,6 +13,8 @@ pub mod components;
 pub mod materials;
 pub mod scripts;
 pub mod particles;
+pub mod environment;
+pub mod shader;
 pub mod dispatch;
 
 pub use dispatch::dispatch_action;

@@ -26,6 +26,8 @@ use super::particles::{
     handle_update_particle_system, handle_update_particle_emitter,
     handle_update_particle_behavior, handle_set_billboard,
 };
+use super::environment::handle_update_environment;
+use super::shader::handle_edit_shader;
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -131,14 +133,14 @@ pub fn dispatch_action(
             handle_set_billboard(ctx, entity, billboard)
         }
 
-        // TODO: Add remaining action handlers:
-        // - Environment: UpdateEnvironment
-        // - Shader: EditShader
-        //
-        // For now, fall back to unhandled action (will be removed as handlers are added)
-        _ => {
-            log::warn!("Unhandled inspector action: {:?}", std::mem::discriminant(&action));
-            ActionResult::no_change()
+        // Environment actions
+        InspectorAction::UpdateEnvironment { entity, component } => {
+            handle_update_environment(ctx, entity, component)
+        }
+
+        // Shader actions
+        InspectorAction::EditShader { entity, handle, material_asset } => {
+            handle_edit_shader(ctx, entity, handle, material_asset)
         }
     }
 }
