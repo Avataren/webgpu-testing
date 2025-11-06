@@ -16,22 +16,29 @@ use crate::renderer::Depth;
 use crate::settings::RenderSettings;
 
 pub(crate) struct RenderContext {
-    // Drop order: bottom to top (fields declared earlier drop last)
-    // Keep instance alive for the lifetime of the surface and drop the surface before the window.
-    pub(crate) _instance: wgpu::Instance,
+    // CRITICAL: Fields drop in declaration order (top to bottom).
+    // GPU resources must drop before Device/Queue, which must drop before Surface, which must drop before Instance.
+
+    // Configuration and state (no Drop impl)
     pub(crate) size: PhysicalSize<u32>,
     pub(crate) config: wgpu::SurfaceConfiguration,
     pub(crate) scene_texture_format: wgpu::TextureFormat,
     pub(crate) supports_bindless_textures: bool,
     pub(crate) supports_wireframe: bool,
     pub(crate) sample_count: u32,
-    // GPU resources (drop before device/queue)
+
+    // GPU resources (must drop first)
     pub(crate) depth: Depth,
-    // Device and queue (drop before surface)
+
+    // Queue and Device (must drop before Surface)
     pub(crate) queue: wgpu::Queue,
     pub(crate) device: wgpu::Device,
-    // Surface dropped last
+
+    // Surface (must drop before Instance)
     pub(crate) surface: wgpu::Surface<'static>,
+
+    // Instance (must drop last - it created the Surface)
+    pub(crate) _instance: wgpu::Instance,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
