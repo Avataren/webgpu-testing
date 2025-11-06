@@ -22,9 +22,10 @@ struct ShadowViewUniform {
 }
 
 struct ShadowArray {
-    _texture: wgpu::Texture,
+    // CRITICAL: views must drop before texture
     array_view: wgpu::TextureView,
     layer_views: Vec<wgpu::TextureView>,
+    _texture: wgpu::Texture,
 }
 
 #[derive(Clone)]

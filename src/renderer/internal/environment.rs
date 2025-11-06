@@ -21,8 +21,9 @@ pub(crate) struct EnvironmentResources {
 }
 
 struct TextureResource {
-    _texture: wgpu::Texture,
+    // CRITICAL: view must drop before texture
     view: wgpu::TextureView,
+    _texture: wgpu::Texture,
     levels: u32,
 }
 

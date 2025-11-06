@@ -1,8 +1,9 @@
 use super::{PickAttachmentViews, BLOOM_FORMAT, GBUFFER_PICK_FORMAT};
 
 pub struct MsaaTarget {
-    _texture: wgpu::Texture,
+    // CRITICAL: view must drop before texture
     pub view: wgpu::TextureView,
+    _texture: wgpu::Texture,
 }
 
 impl MsaaTarget {
@@ -25,16 +26,17 @@ impl MsaaTarget {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
-            _texture: texture,
             view,
+            _texture: texture,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct TextureBundle {
-    texture: wgpu::Texture,
+    // CRITICAL: view must drop before texture
     pub view: wgpu::TextureView,
+    texture: wgpu::Texture,
 }
 
 impl TextureBundle {
@@ -59,7 +61,7 @@ impl TextureBundle {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view }
+        Self { view, texture }
     }
 
     pub fn depth(device: &wgpu::Device, size: &wgpu::Extent3d, label: &str) -> Self {
@@ -74,7 +76,7 @@ impl TextureBundle {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view }
+        Self { view, texture }
     }
 
     pub fn ssao(device: &wgpu::Device, size: &wgpu::Extent3d) -> Self {
@@ -89,7 +91,7 @@ impl TextureBundle {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view }
+        Self { view, texture }
     }
 
     pub fn pick(device: &wgpu::Device, size: &wgpu::Extent3d) -> Self {
@@ -106,13 +108,14 @@ impl TextureBundle {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { texture, view }
+        Self { view, texture }
     }
 }
 
 pub struct BloomMip {
-    texture: wgpu::Texture,
+    // CRITICAL: view must drop before texture
     pub view: wgpu::TextureView,
+    texture: wgpu::Texture,
     size: wgpu::Extent3d,
 }
 
@@ -133,8 +136,8 @@ impl BloomMip {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
-            texture,
             view,
+            texture,
             size,
         }
     }

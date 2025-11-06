@@ -162,6 +162,11 @@ struct FrameState {
 }
 
 pub struct Renderer {
+    // CRITICAL: context must be first so it drops LAST (after all GPU resources)
+    // The Device in context must outlive all buffers, textures, pipelines, etc.
+    context: RenderContext,
+
+    // GPU resources that depend on the Device (must drop before context)
     texture_binder: TextureBindingModel,
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
@@ -169,6 +174,9 @@ pub struct Renderer {
     environment: EnvironmentResources,
     shadows: ShadowResources,
     postprocess: PostProcess,
+    pipeline: RenderPipeline,
+
+    // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
     camera_target: Vec3,
     camera_up: Vec3,
@@ -181,8 +189,6 @@ pub struct Renderer {
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
     stats: RendererStats,
-    pipeline: RenderPipeline,
-    context: RenderContext,
     render_region: Option<RenderRegion>,
 }
 
