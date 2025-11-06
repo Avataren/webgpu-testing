@@ -131,11 +131,14 @@ impl<H: AsRef<Window> + Clone> Default for PlatformState<H> {
 }
 
 pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
-    core: AppCore,
-    // CRITICAL: editor must come before platform to ensure egui's GPU resources
-    // (in EditorState.egui_context.renderer) drop before the Renderer's Device
+    // CRITICAL: Drop order matters! GPU resources must drop before the Device.
+    // EditorState contains egui's GPU resources (egui_wgpu::Renderer)
+    // AppCore contains scene GPU resources (Mesh buffers, Textures in Assets)
+    // PlatformState contains the Renderer with the wgpu Device
+    // All GPU resources must drop before the Device to prevent core dump on exit.
     #[cfg(feature = "egui")]
     editor: EditorState,
+    core: AppCore,
     platform: PlatformState<D::WindowHandle>,
     driver: D,
 }
@@ -250,9 +253,9 @@ where
         let editor = EditorState::new(core.workspace());
 
         Self {
-            core,
             #[cfg(feature = "egui")]
             editor,
+            core,
             platform: PlatformState::default(),
             driver,
         }
