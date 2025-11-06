@@ -19,6 +19,9 @@ use super::materials::{
     handle_update_material, handle_set_material_kind, handle_assign_shader_source,
     handle_create_shader_source, handle_create_shader_material,
 };
+use super::scripts::{
+    handle_add_script, handle_change_script_source, handle_edit_script,
+};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -99,10 +102,20 @@ pub fn dispatch_action(
             handle_create_shader_material(ctx, entity, source)
         }
 
+        // Script actions
+        InspectorAction::AddScript { entity } => {
+            handle_add_script(ctx, entity)
+        }
+        InspectorAction::ChangeScriptSource { entity, script_path } => {
+            handle_change_script_source(ctx, entity, script_path)
+        }
+        InspectorAction::EditScript { entity, component } => {
+            handle_edit_script(ctx, entity, component)
+        }
+
         // TODO: Add remaining action handlers:
         // - Environment: UpdateEnvironment
         // - Particles: UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
-        // - Scripts: EditScript, ChangeScriptSource, AddScript
         // - Shader: EditShader
         //
         // For now, fall back to unhandled action (will be removed as handlers are added)
