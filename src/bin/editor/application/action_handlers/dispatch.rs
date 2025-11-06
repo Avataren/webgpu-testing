@@ -11,6 +11,10 @@ use super::lights::{
     handle_update_point_light, handle_update_directional_light, handle_update_spot_light,
 };
 use super::misc::{handle_set_can_cast_shadow, handle_rename_entity};
+use super::components::{
+    handle_add_camera, handle_add_mesh, handle_add_point_light, handle_add_directional_light,
+    handle_add_spot_light, handle_add_environment, handle_add_particle_system,
+};
 
 /// Dispatch a single InspectorAction to its handler
 ///
@@ -51,13 +55,35 @@ pub fn dispatch_action(
             handle_rename_entity(ctx, entity, new_name)
         }
 
+        // Add component actions
+        InspectorAction::AddCamera { entity } => {
+            handle_add_camera(ctx, entity)
+        }
+        InspectorAction::AddMesh { entity } => {
+            handle_add_mesh(ctx, entity)
+        }
+        InspectorAction::AddPointLight { entity } => {
+            handle_add_point_light(ctx, entity)
+        }
+        InspectorAction::AddDirectionalLight { entity } => {
+            handle_add_directional_light(ctx, entity)
+        }
+        InspectorAction::AddSpotLight { entity } => {
+            handle_add_spot_light(ctx, entity)
+        }
+        InspectorAction::AddEnvironment { entity } => {
+            handle_add_environment(ctx, entity)
+        }
+        InspectorAction::AddParticleSystem { entity } => {
+            handle_add_particle_system(ctx, entity)
+        }
+
         // TODO: Add remaining action handlers:
-        // - UpdateMaterial, SetMaterialKind, CreateShaderMaterial, AssignShaderSource, CreateShaderSource
-        // - UpdateEnvironment
-        // - UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
-        // - EditScript, ChangeScriptSource, AddScript
-        // - EditShader
-        // - Add* actions (AddCamera, AddMesh, AddPointLight, AddDirectionalLight, AddSpotLight, AddEnvironment, AddParticleSystem)
+        // - Materials: UpdateMaterial, SetMaterialKind, CreateShaderMaterial, AssignShaderSource, CreateShaderSource
+        // - Environment: UpdateEnvironment
+        // - Particles: UpdateParticleSystem, UpdateParticleEmitter, UpdateParticleBehavior, SetBillboard
+        // - Scripts: EditScript, ChangeScriptSource, AddScript
+        // - Shader: EditShader
         //
         // For now, fall back to unhandled action (will be removed as handlers are added)
         _ => {
