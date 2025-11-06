@@ -3,12 +3,12 @@
 // A full-featured script editor for editing RuneScript files
 
 struct EditorState {
-    scripts: Vec,  // List of all script infos
-    selected_index: i64,
-    current_content: String,
-    current_path: String,
-    status_message: String,
-    is_dirty: bool,
+    scripts,           // List of all script infos (Vec)
+    selected_index,    // Currently selected script index (i64)
+    current_content,   // Current editor content (String)
+    current_path,      // Path to current file (String)
+    status_message,    // Status bar message (String)
+    is_dirty,          // Whether content has been modified (bool)
 }
 
 pub fn on_created(self_entity) {
