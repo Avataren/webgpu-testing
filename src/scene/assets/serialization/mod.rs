@@ -21,7 +21,7 @@ pub use components::{
 };
 
 pub use material::{
-    SerializedMaterial, SerializedMaterialKind, SerializedTextureSlot,
+    SerializedMaterial, SerializedMaterialKind,
 };
 
 pub use transform::SerializedTransform;

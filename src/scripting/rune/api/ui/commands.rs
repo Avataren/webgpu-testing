@@ -41,7 +41,7 @@ impl UiCommand {
                 ui.separator();
                 None
             }
-            UiCommand::TextEdit { id, current_value } => {
+            UiCommand::TextEdit { id: _, current_value } => {
                 let mut text = current_value.clone();
                 let response = ui.text_edit_singleline(&mut text);
                 Some(UiResponse {
@@ -52,7 +52,7 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::Slider { id, current_value, min, max } => {
+            UiCommand::Slider { id: _, current_value, min, max } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::Slider::new(&mut value, *min..=*max));
                 Some(UiResponse {
@@ -63,7 +63,7 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::DragValue { id, current_value } => {
+            UiCommand::DragValue { id: _, current_value } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::DragValue::new(&mut value));
                 Some(UiResponse {
@@ -74,7 +74,7 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::Checkbox { id, current_value, label } => {
+            UiCommand::Checkbox { id: _, current_value, label } => {
                 let mut checked = *current_value;
                 let response = ui.checkbox(&mut checked, label);
                 Some(UiResponse {
@@ -85,7 +85,7 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::ColorEdit { id, r, g, b } => {
+            UiCommand::ColorEdit { id: _, r, g, b } => {
                 let mut color = [*r, *g, *b];
                 let response = ui.color_edit_button_rgb(&mut color);
                 Some(UiResponse {

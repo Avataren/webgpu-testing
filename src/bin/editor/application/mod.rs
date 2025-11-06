@@ -48,7 +48,7 @@ use wgpu_cube::scene::components::{
 use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
-    MaterialComponent, MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
+    MaterialComponent, MeshBounds, MeshComponent, ParticleBehaviorPreset, ParticleEmitterComponent,
     ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
     SceneTreeAsset, SceneTreeAssetNode, SpotLight, Transform, TransformComponent,
 };
@@ -1307,32 +1307,38 @@ impl EditorApplication {
                     }
                 }
                 InspectorAction::AddMesh { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&MeshComponent>(entity).is_ok() {
+                    // Check if entity already has a mesh component
+                    let has_mesh = {
+                        let world = ctx.scene.main_world_mut();
+                        world.get::<&MeshComponent>(entity).is_ok()
+                    };
+
+                    if has_mesh {
                         log::warn!("Entity {:?} already has a mesh component", entity);
                     } else {
-                        // Create a default cube mesh
+                        // Try to use existing cube mesh (created during setup or previous usage)
                         let descriptor = PrimitiveMeshDescriptor::from(ScenePrimitivePreset::Cube);
-                        let mesh_handle = ctx
-                            .scene
-                            .assets
-                            .ensure_primitive_mesh(ctx.renderer, descriptor);
-                        let material_handle = ctx
-                            .scene
-                            .assets
-                            .materials
-                            .insert(MaterialAsset::from_material(
-                                Material::pbr(),
-                                PathBuf::new(),
-                            ));
-                        match world.insert(entity, (MeshComponent(mesh_handle), MaterialComponent(material_handle))) {
-                            Ok(_) => {
-                                log::info!("Added mesh component to entity {:?}", entity);
-                                self.record_scene_change(&mut ctx.scene);
+                        if let Some(mesh_handle) = ctx.scene.assets.primitive_mesh_handle(descriptor) {
+                            let material_handle = ctx
+                                .scene
+                                .assets
+                                .materials
+                                .insert(MaterialAsset::from_material(
+                                    Material::pbr(),
+                                    PathBuf::new(),
+                                ));
+                            let world = ctx.scene.main_world_mut();
+                            match world.insert(entity, (MeshComponent(mesh_handle), MaterialComponent(material_handle))) {
+                                Ok(_) => {
+                                    log::info!("Added mesh component to entity {:?}", entity);
+                                    self.record_scene_change(&mut ctx.scene);
+                                }
+                                Err(err) => {
+                                    log::warn!("Failed to add mesh component to {:?}: {}", entity, err);
+                                }
                             }
-                            Err(err) => {
-                                log::warn!("Failed to add mesh component to {:?}: {}", entity, err);
-                            }
+                        } else {
+                            log::warn!("Cannot add mesh component: cube primitive not yet created. Try creating a cube primitive first.");
                         }
                     }
                 }
@@ -1388,21 +1394,30 @@ impl EditorApplication {
                     }
                 }
                 InspectorAction::AddEnvironment { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&EnvironmentComponent>(entity).is_ok() {
+                    // Check if entity already has an environment component
+                    let has_environment = {
+                        let world = ctx.scene.main_world_mut();
+                        world.get::<&EnvironmentComponent>(entity).is_ok()
+                    };
+
+                    if has_environment {
                         log::warn!("Entity {:?} already has an environment component", entity);
                     } else {
                         let component = EnvironmentComponent::from_environment(ctx.scene.environment());
-                        match world.insert(entity, (component.clone(),)) {
-                            Ok(_) => {
-                                log::info!("Added environment component to entity {:?}", entity);
-                                ctx.scene.set_environment(component.to_environment());
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to add environment component to {:?}: {}", entity, err);
+                        {
+                            let world = ctx.scene.main_world_mut();
+                            match world.insert(entity, (component.clone(),)) {
+                                Ok(_) => {
+                                    log::info!("Added environment component to entity {:?}", entity);
+                                }
+                                Err(err) => {
+                                    log::warn!("Failed to add environment component to {:?}: {}", entity, err);
+                                    return;
+                                }
                             }
                         }
+                        ctx.scene.set_environment(component.to_environment());
+                        self.record_scene_change(&mut ctx.scene);
                     }
                 }
                 InspectorAction::AddParticleSystem { entity } => {
@@ -1424,9 +1439,17 @@ impl EditorApplication {
                     }
                 }
                 InspectorAction::RenameEntity { entity, new_name } => {
-                    let world = ctx.scene.main_world_mut();
-                    if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
-                        name.0 = new_name;
+                    let renamed = {
+                        let world = ctx.scene.main_world_mut();
+                        if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
+                            name.0 = new_name;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+
+                    if renamed {
                         log::info!("Renamed entity {:?}", entity);
                         self.record_scene_change(&mut ctx.scene);
                     } else {

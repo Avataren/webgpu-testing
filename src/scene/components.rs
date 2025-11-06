@@ -1123,6 +1123,18 @@ impl ParticleSystemComponent {
     }
 }
 
+impl Default for ParticleSystemComponent {
+    fn default() -> Self {
+        let behavior = ParticleBehaviorPreset::default();
+        Self {
+            spawn_rate: 10.0,
+            behavior,
+            behavior_config: ParticleBehaviorConfig::from_preset(behavior),
+            render_mode: ParticleRenderBlendMode::default(),
+        }
+    }
+}
+
 // ============================================================================
 // Lighting Components
 // ============================================================================
@@ -1133,6 +1145,16 @@ pub struct PointLight {
     pub color: Vec3,
     pub intensity: f32,
     pub range: f32,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self {
+            color: Vec3::splat(1.0),
+            intensity: 120.0,
+            range: 12.0,
+        }
+    }
 }
 
 /// Directional light component
@@ -1161,6 +1183,16 @@ impl DirectionalLight {
     }
 }
 
+impl Default for DirectionalLight {
+    fn default() -> Self {
+        Self {
+            color: Vec3::new(0.9, 0.95, 1.0),
+            intensity: 3.0,
+            shadow_size: Self::DEFAULT_SHADOW_SIZE,
+        }
+    }
+}
+
 /// Spot light component
 #[derive(Debug, Clone, Copy)]
 pub struct SpotLight {
@@ -1169,6 +1201,18 @@ pub struct SpotLight {
     pub inner_angle: f32,
     pub outer_angle: f32,
     pub range: f32,
+}
+
+impl Default for SpotLight {
+    fn default() -> Self {
+        Self {
+            color: Vec3::new(1.0, 0.95, 0.9),
+            intensity: 15.0,
+            inner_angle: 0.35,
+            outer_angle: 0.6,
+            range: 18.0,
+        }
+    }
 }
 
 /// Marker/flag component indicating a light should cast shadows
