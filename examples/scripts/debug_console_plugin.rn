@@ -9,8 +9,7 @@ pub fn on_created(self_entity) {
 
     // Console state
     set_state("command_input", "");
-    set_state("show_help", false);
-    set_state("auto_clear", true);
+    // Note: show_help and auto_clear not initialized so try_get_state returns () initially
 
     // Performance monitoring
     set_f64("frame_time", 0.0);

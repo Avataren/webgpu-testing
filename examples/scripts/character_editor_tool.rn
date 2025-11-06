@@ -13,7 +13,7 @@ pub fn on_created(self_entity) {
     set_f64("char_str", 10.0);
     set_f64("char_dex", 10.0);
     set_f64("char_int", 10.0);
-    set_state("char_is_npc", false);
+    // Note: char_is_npc not initialized so try_get_state returns () initially
     set_f64("char_color_r", 0.2);
     set_f64("char_color_g", 0.6);
     set_f64("char_color_b", 0.9);

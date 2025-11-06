@@ -16,7 +16,7 @@ pub fn on_created(self_entity) {
     set_f64("health", 100.0);
     set_f64("speed", 5.0);
     set_f64("volume", 0.8);
-    set_state("god_mode", false);
+    // Note: god_mode not initialized so try_get_state returns () initially
     set_f64("color_r", 1.0);
     set_f64("color_g", 0.5);
     set_f64("color_b", 0.0);
