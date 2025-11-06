@@ -70,9 +70,6 @@ trait ComponentHandler: Send + Sync {
 
     /// Check if entity has this component.
     fn has(&self, world: &World, entity: Entity) -> bool;
-
-    /// Get the component type name.
-    fn type_name(&self) -> &str;
 }
 
 /// Concrete handler implementation for a specific component type.
@@ -111,10 +108,6 @@ where
 
     fn has(&self, world: &World, entity: Entity) -> bool {
         world.get::<&T>(entity).is_ok()
-    }
-
-    fn type_name(&self) -> &str {
-        &self.type_name
     }
 }
 

@@ -7,24 +7,21 @@ mod script;
 
 // Re-export all public types
 pub use serde_helpers::ImportedGltfMeta;
-pub(crate) use serde_helpers::{
-    flatten_gltf_material_key, material_key_map_serde, material_map_serde, path_serde,
-};
+pub(crate) use serde_helpers::path_serde;
 
 pub use animation::{
-    SerializedAnimationChannel, SerializedAnimationClip, SerializedAnimationOutput,
-    SerializedAnimationSampler, SerializedAnimationTarget,
+    SerializedAnimationClip,
 };
 
 pub use components::{
-    SerializedBillboard, SerializedBillboardOrientation, SerializedBillboardSpace,
+    SerializedBillboard,
     SerializedDirectionalLight, SerializedMeshBounds, SerializedParticleBehavior,
     SerializedParticleEmitter, SerializedParticleSystem, SerializedPointLight,
     SerializedSpotLight,
 };
 
 pub use material::{
-    SerializedMaterial, SerializedMaterialKind, SerializedTextureSlot,
+    SerializedMaterial, SerializedMaterialKind,
 };
 
 pub use transform::SerializedTransform;

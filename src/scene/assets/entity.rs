@@ -16,8 +16,8 @@ use super::serialization::{
 use crate::scene::transform::Transform;
 use crate::asset::{Assets, MaterialAsset, MaterialTextureSlot};
 use crate::renderer::Material;
-use crate::project::{normalize_absolute_path, relativize_path_to_project, CONTENT_DIR};
-use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+use crate::project::relativize_path_to_project;
+use crate::scripting::RuneScriptComponent;
 use hecs::{Entity, World};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};

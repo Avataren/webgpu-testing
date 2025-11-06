@@ -11,19 +11,13 @@ mod tree;
 pub use serialization::{
     ImportedGltfMeta,
     SerializedAnimationClip,
-    SerializedBillboard,
-    SerializedDirectionalLight,
     SerializedMaterial,
     SerializedMaterialKind,
-    SerializedMeshBounds,
     SerializedParticleBehavior,
     SerializedParticleEmitter,
     SerializedParticleSystem,
-    SerializedPointLight,
     SerializedRuneScript,
     SerializedRuneScriptSource,
-    SerializedSpotLight,
-    SerializedTextureSlot,
     SerializedTransform,
 };
 
@@ -32,7 +26,7 @@ pub use core::{SceneAsset, InstantiatedSceneAsset};
 
 // Re-export from resources
 pub use resources::{
-    ResourceRegistration, SceneAssetResources, SceneAssetResourcesBuilder, SceneAssetBundle,
+    SceneAssetResources, SceneAssetResourcesBuilder, SceneAssetBundle,
 };
 
 // Re-export from prefabs
@@ -51,12 +45,13 @@ pub use tree::{
 
 // Re-export pub(crate) functions for internal use
 pub(crate) use tree::{serialize_world, build_tree_asset_node};
-pub(crate) use serialization::flatten_gltf_material_key;
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::serialization::SerializedBillboard;
+    use super::serialization::material::SerializedTextureSlot;
     use crate::asset::Assets;
     use crate::project::{ProjectManifest, ProjectMetadata, CONTENT_DIR};
     use crate::renderer::material::MaterialFlags;
