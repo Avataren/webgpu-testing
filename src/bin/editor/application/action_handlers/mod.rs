@@ -7,8 +7,10 @@
 
 pub mod transform;
 pub mod camera;
+pub mod dispatch;
 
-use wgpu_cube::app::UpdateContext;
+pub use dispatch::dispatch_action;
+
 use wgpu_cube::scene::Scene;
 use crate::application::EditorApplication;
 

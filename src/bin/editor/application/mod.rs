@@ -1,3 +1,4 @@
+mod action_handlers;
 mod asset_browser_system;
 mod system;
 pub(crate) use system::*;
