@@ -128,10 +128,10 @@ impl Scene {
     ///
     /// This should be called during the UI phase to collect UI commands from scripts
     /// that implement on_ui().
-    pub fn process_script_ui(&mut self) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub fn process_script_ui(&mut self, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
-            self.runtime.process_script_ui(world)
+            self.runtime.process_script_ui(world, editor_mode)
         } else {
             HashMap::new()
         }

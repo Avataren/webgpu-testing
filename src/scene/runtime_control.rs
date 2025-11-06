@@ -59,8 +59,8 @@ impl SceneRuntimeController {
         self.runtime.run_scripts(world, dt, editor_mode);
     }
 
-    pub(crate) fn process_script_ui(&mut self, world: &World) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
-        self.runtime.process_script_ui(world)
+    pub(crate) fn process_script_ui(&mut self, world: &World, editor_mode: bool) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+        self.runtime.process_script_ui(world, editor_mode)
     }
 
     pub(crate) fn set_ui_responses(&mut self, responses: std::collections::HashMap<hecs::Entity, std::collections::HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
