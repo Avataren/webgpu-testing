@@ -118,9 +118,9 @@ fn add_next_recursion(parent, from_dir, recursion_count, is_root) {
         set_parent(child, Some(parent));
 
         // Store rotation state for this child
-        set_state(child, "rotation_axis", direction);
-        set_state(child, "rotation_speed", FRACTAL_SPEED * flip);
-        set_state(child, "angle", 0.0);
+        set_state_for(child, "rotation_axis", direction);
+        set_f64_for(child, "rotation_speed", FRACTAL_SPEED * flip);
+        set_f64_for(child, "angle", 0.0);
 
         // Attach rotation script to child
         attach_script(child, "scripts/fractal_cube_rotate.rn");
