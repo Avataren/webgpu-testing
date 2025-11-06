@@ -11,9 +11,11 @@ pub fn on_created(self_entity) {
     set_f64("refresh_interval", 0.5);
     set_f64("time_since_refresh", 0.0);
 
-    // Stats cache
+    // Stats cache - initialize all counters to prevent undefined values on first UI frame
     set_f64("entity_count", 0.0);
-    set_f64("active_entities", 0.0);
+    set_f64("mesh_count", 0.0);
+    set_f64("light_count", 0.0);
+    set_f64("script_count", 0.0);
     set_state("show_advanced", false);
 }
 
