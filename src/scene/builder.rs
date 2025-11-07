@@ -5,7 +5,7 @@ use super::components::*;
 use super::Scene;
 use crate::asset::{Handle, MaterialAsset, Mesh};
 use crate::scene::Transform;
-use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+use crate::scripting::{LuaScriptComponent, LuaScriptSource};
 use crate::{asset::Assets, renderer::Material};
 use glam::Vec3;
 use std::path::PathBuf;
@@ -144,8 +144,8 @@ impl<'w> EntityBuilder<'w> {
     }
 
     /// Attach a scripting component to the entity.
-    pub fn with_script(mut self, source: RuneScriptSource) -> Self {
-        self.builder.add(RuneScriptComponent::new(source));
+    pub fn with_script(mut self, source: LuaScriptSource) -> Self {
+        self.builder.add(LuaScriptComponent::new(source));
         self
     }
 
