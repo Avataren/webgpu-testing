@@ -70,7 +70,10 @@ pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
             let entry_key = (handle, key);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::Ok(default),
+                None => {
+                    // Clone the default to avoid double-move through nested closures
+                    VmResult::Ok(default.clone())
+                }
             }
         })
     })
