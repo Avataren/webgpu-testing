@@ -65,19 +65,21 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 
 #[rune::function]
 pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
-    // The issue: returning a captured parameter value creates Rune snapshots
-    // Solution: If key doesn't exist, SET it with default, then GET it back
-    // This way we always return a value from the map, never the captured parameter
+    // Clone parameters at the very start of inner closure to avoid snapshot issues
+    // Any use of captured parameters can create snapshots - clone immediately
     with_active_entity(move |handle| {
         with_active_state(move |map| {
-            let entry_key = (handle, key);
+            // Clone both captured parameters FIRST before any use
+            let key_clone = key.clone();
+            let default_clone = default.clone();
+
+            let entry_key = (handle, key_clone);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
                 None => {
-                    // Clone before insert - map.insert() takes ownership
-                    // Trying to move the captured parameter directly causes "Cannot take" error
-                    map.insert(entry_key.clone(), default.clone());
-                    // Now retrieve it from the map
+                    // Insert using the cloned default
+                    map.insert(entry_key.clone(), default_clone);
+                    // Retrieve from map
                     match map.get(&entry_key) {
                         Some(value) => VmResult::Ok(value.clone()),
                         None => VmResult::panic("State insertion failed"),
