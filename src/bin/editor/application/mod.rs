@@ -259,16 +259,16 @@ impl EditorApplication {
             }
         }
 
-        // Feed back responses from the previous frame before collecting new commands
-        if !self.shared.script_ui_responses.is_empty() {
-            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
-        }
-
         // Collect UI commands from scripts that implement on_ui()
         // Pass editor_mode based on actual runtime state
         let editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
         log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
             editor_mode, ctx.runtime);
+
+        // Feed back scene responses from the previous frame before collecting new commands
+        if !self.shared.script_ui_responses.is_empty() {
+            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
+        }
 
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
@@ -276,6 +276,11 @@ impl EditorApplication {
         // Run and process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+            // Feed back plugin responses before running plugin scripts
+            if !self.shared.plugin_ui_responses.is_empty() {
+                ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.plugin_ui_responses));
+            }
+
             // Run plugin scripts (on_update, etc.) - use dt=0 in editor mode like scene scripts
             let plugin_dt = match ctx.runtime {
                 RuntimeMode::Editor => 0.0,
@@ -508,7 +513,8 @@ impl EditorApplication {
         use std::collections::HashMap;
         use wgpu_cube::scripting::rune::api::ui::UiCommand;
 
-        let mut all_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+        let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+        let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
 
         // Render plugin manager window if we have plugins
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
@@ -578,7 +584,7 @@ impl EditorApplication {
                         });
 
                     if !responses.is_empty() {
-                        all_responses.insert(*entity, responses);
+                        plugin_responses.insert(*entity, responses);
                     }
                 }
             }
@@ -610,7 +616,7 @@ impl EditorApplication {
                     });
 
                 if !responses.is_empty() {
-                    all_responses.insert(*entity, responses);
+                    scene_responses.insert(*entity, responses);
                 }
             }
         } else {
@@ -640,13 +646,14 @@ impl EditorApplication {
                     });
 
                 if !responses.is_empty() {
-                    all_responses.insert(*entity, responses);
+                    scene_responses.insert(*entity, responses);
                 }
             }
         }
 
-        // Store responses for the next frame
-        self.shared.script_ui_responses = all_responses;
+        // Store responses for the next frame (kept separate to avoid Entity ID collisions)
+        self.shared.script_ui_responses = scene_responses;
+        self.shared.plugin_ui_responses = plugin_responses;
     }
 
     /// Render reload notifications as toasts in the bottom-right corner
