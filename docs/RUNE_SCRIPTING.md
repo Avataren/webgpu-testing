@@ -257,16 +257,12 @@ ui.separator();
 // Text input (single line)
 let text = get_state("input", "");
 let new_text = ui.text_edit("input_id", text);
-if new_text != text {
-    set_state("input", new_text);
-}
+set_state("input", new_text);  // Always update
 
 // Multiline text editor
 let content = get_state("content", "");
 let new_content = ui.text_edit_multiline("editor", content, None, Some(400.0));
-if new_content != content {
-    set_state("content", new_content);
-}
+set_state("content", new_content);  // Always update
 
 // Button
 if ui.button("Click Me") {
@@ -276,18 +272,16 @@ if ui.button("Click Me") {
 // Checkbox
 let enabled = get_state("enabled", false);
 let new_enabled = ui.checkbox("check", enabled, "Enable Feature");
-if new_enabled != enabled {
-    set_state("enabled", new_enabled);
-}
+set_state("enabled", new_enabled);  // Always update
 
-// Slider
+// Slider (f64 is Copy, so comparison is safe)
 let value = get_state("slider", 50.0);
 let new_value = ui.slider("slider_id", value, 0.0, 100.0);
 if new_value != value {
     set_state("slider", new_value);
 }
 
-// Drag value
+// Drag value (f64 is Copy, so comparison is safe)
 let amount = get_state("amount", 1.0);
 let new_amount = ui.drag_value("drag", amount);
 if new_amount != amount {
@@ -319,9 +313,7 @@ pub fn on_ui(ui) {
     // File path input
     let path = get_state("file_path", "notes.txt");
     let new_path = ui.text_edit("path", path);
-    if new_path != path {
-        set_state("file_path", new_path);
-    }
+    set_state("file_path", new_path);
 
     ui.separator();
 
@@ -353,9 +345,7 @@ pub fn on_ui(ui) {
     // Content editor
     let content = get_state("content", "");
     let new_content = ui.text_edit_multiline("content", content, None, Some(400.0));
-    if new_content != content {
-        set_state("content", new_content);
-    }
+    set_state("content", new_content);
 }
 ```
 
@@ -649,16 +639,29 @@ struct Container {
 
 ### Value Handling
 
-#### Cloning for Conversions
+#### Value Ownership in UI Functions
 
-When working with Values from `get_state()`, the engine internally clones them when passing to functions. This is handled automatically.
+**Important**: When you pass a Value to a UI function, Rune's ownership system marks it as moved/consumed. You cannot use the original value after passing it to a function.
 
 ```rune
-// This works correctly - no manual cloning needed
+// ✅ Correct - always update state without comparing
 let text = get_state("text", "");
-let new_text = ui.text_edit("id", text);  // Automatically handles Value
-if new_text != text {  // Comparison works
-    set_state("text", new_text);  // Update works
+let new_text = ui.text_edit("id", text);
+set_state("text", new_text);  // Always update
+
+// ❌ Wrong - cannot use 'text' after passing to ui.text_edit
+let text = get_state("text", "");
+let new_text = ui.text_edit("id", text);
+if new_text != text {  // ERROR: 'text' was moved!
+    set_state("text", new_text);
+}
+
+// ✅ Alternative - fetch from state again if you need to compare
+let text = get_state("text", "");
+let new_text = ui.text_edit("id", text);
+let current = get_state("text", "");
+if new_text != current {
+    set_state("text", new_text);
 }
 ```
 
@@ -828,9 +831,7 @@ pub fn on_ui(ui) {
 
     let name = get_state("entity_name", "SpawnedEntity");
     let new_name = ui.text_edit("name", name);
-    if new_name != name {
-        set_state("entity_name", new_name);
-    }
+    set_state("entity_name", new_name);
 
     ui.separator();
 

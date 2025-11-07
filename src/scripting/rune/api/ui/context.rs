@@ -106,10 +106,22 @@ impl UiContext {
             .unwrap_or(current_str);
 
         // Convert String to RuneString to Value
-        // Clone current_value in fallbacks to avoid returning snapshots
+        // Always create a fresh Value from result_str, never reuse current_value
+        // This avoids "Cannot read" errors from moved/taken Values
         match RuneString::try_from(result_str.as_str()) {
-            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or_else(|_| current_value.clone()),
-            Err(_) => current_value.clone(),
+            Ok(rune_str) => match rune::Value::try_from(rune_str) {
+                Ok(value) => value,
+                Err(_) => {
+                    // If conversion fails, return empty string
+                    rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
+                        .unwrap_or_else(|_| rune::Value::from(()))
+                }
+            },
+            Err(_) => {
+                // If RuneString allocation fails, return empty string
+                rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
+                    .unwrap_or_else(|_| rune::Value::from(()))
+            }
         }
     }
 
@@ -142,10 +154,22 @@ impl UiContext {
             .unwrap_or(current_str);
 
         // Convert String to RuneString to Value
-        // Clone current_value in fallbacks to avoid returning snapshots
+        // Always create a fresh Value from result_str, never reuse current_value
+        // This avoids "Cannot read" errors from moved/taken Values
         match RuneString::try_from(result_str.as_str()) {
-            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or_else(|_| current_value.clone()),
-            Err(_) => current_value.clone(),
+            Ok(rune_str) => match rune::Value::try_from(rune_str) {
+                Ok(value) => value,
+                Err(_) => {
+                    // If conversion fails, return empty string
+                    rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
+                        .unwrap_or_else(|_| rune::Value::from(()))
+                }
+            },
+            Err(_) => {
+                // If RuneString allocation fails, return empty string
+                rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
+                    .unwrap_or_else(|_| rune::Value::from(()))
+            }
         }
     }
 

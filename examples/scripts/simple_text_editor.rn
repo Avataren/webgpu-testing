@@ -21,9 +21,8 @@ pub fn on_ui(ui) {
     // File path input
     ui.label("File path:");
     let new_path = ui.text_edit("file_path", file_path);
-    if new_path != file_path {
-        set_state("file_path", new_path);
-    }
+    // Always update state - the Value was moved by text_edit call
+    set_state("file_path", new_path);
 
     // Buttons
     ui.separator();
@@ -60,7 +59,6 @@ pub fn on_ui(ui) {
     // Multiline text editor
     ui.label("Content:");
     let new_content = ui.text_edit_multiline("content", text_content, None, Some(400.0));
-    if new_content != text_content {
-        set_state("text_content", new_content);
-    }
+    // Always update state - the Value was moved by text_edit_multiline call
+    set_state("text_content", new_content);
 }
