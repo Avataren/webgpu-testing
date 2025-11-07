@@ -196,9 +196,10 @@ impl UiPluginManager {
         }
 
         // Create new component with the reloaded source
-        // Using inline source with the plugin name
-        let new_component =
-            wgpu_cube::scripting::RuneScriptComponent::new_inline(&plugin.metadata.name, source_code);
+        // Use File source so it stays editable
+        let new_component = wgpu_cube::scripting::RuneScriptComponent::new(
+            RuneScriptSource::File { path: path.to_path_buf() }
+        );
 
         // Replace the component
         world
@@ -231,10 +232,11 @@ pub fn create_plugin_script_source(
 ) -> Result<RuneScriptSource, String> {
     let script_path = manager.resolve_script_path(&metadata.script);
 
-    // Read script source
-    let source_code = std::fs::read_to_string(&script_path)
-        .map_err(|e| format!("Failed to read script {}: {}", script_path.display(), e))?;
+    // Verify the file exists
+    if !script_path.exists() {
+        return Err(format!("Script file not found: {}", script_path.display()));
+    }
 
-    // Create source - use inline source with the plugin name
-    Ok(RuneScriptSource::inline(&metadata.name, source_code))
+    // Create source - use File source so it can be edited by script editor
+    Ok(RuneScriptSource::File { path: script_path })
 }

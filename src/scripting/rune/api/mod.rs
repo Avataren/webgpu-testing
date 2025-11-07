@@ -117,6 +117,7 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
 
     // Script access functions
     module.ty::<script_access::ScriptInfo>()?;
+    module.function_meta(script_access::ScriptInfo::get_info)?;
     module.function_meta(script_access::get_all_script_entities)?;
     module.function_meta(script_access::get_script_info)?;
     module.function_meta(script_access::get_entity_name)?;

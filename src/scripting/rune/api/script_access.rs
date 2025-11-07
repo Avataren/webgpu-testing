@@ -10,18 +10,24 @@ use rune::runtime::VmResult;
 use rune::Any;
 
 /// Information about a script attached to an entity
-#[derive(Any, Clone)]
+#[derive(Any, Clone, Debug)]
 #[rune(item = ::script_info)]
 pub struct ScriptInfo {
     /// The entity that has the script
-    #[rune(get)]
     pub entity: u64,
     /// The script source type ("inline" or "file")
-    #[rune(get)]
     pub source_type: String,
     /// The script source identifier (file path or inline name)
-    #[rune(get)]
     pub source_path: String,
+}
+
+impl ScriptInfo {
+    /// Get entity, source_type, and source_path as a tuple
+    /// This avoids multiple method calls that cause ownership issues
+    #[rune::function(instance)]
+    pub fn get_info(&self) -> (u64, String, String) {
+        (self.entity, self.source_type.clone(), self.source_path.clone())
+    }
 }
 
 /// Get all entities that have script components.

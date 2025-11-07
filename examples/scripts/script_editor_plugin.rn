@@ -8,6 +8,7 @@ pub fn on_created(self_entity) {
     // Initialize state with individual keys (avoids Value ownership issues)
     set_f64("selected_index", -1.0);
     set_string("current_content", "");
+    set_string("original_content", "");  // Track original for dirty checking
     set_string("current_path", "");
     set_string("status_message", "Ready");
     set_bool("is_dirty", false);
@@ -58,6 +59,7 @@ pub fn on_ui(ui) {
             let content = read_file(current_path);
             if !content.starts_with("ERROR") {
                 set_string("current_content", content);
+                set_string("original_content", content);  // Update original too
                 set_bool("is_dirty", false);
                 let path_for_msg = get_string("current_path", "");
                 set_string("status_message", `Reverted ${path_for_msg}`);
@@ -95,24 +97,31 @@ pub fn on_ui(ui) {
     if scripts.len() == 0 {
         ui.label("  No scripts found");
     } else {
-        for i in 0..scripts.len() {
-            let script = scripts[i];
-            let entity_name = get_entity_name(script.entity);
-            let button_label = `${entity_name} (${script.source_type}): ${script.source_path}`;
+        for script in scripts {
+            // Get all info in one call to avoid ownership issues
+            let (entity_id, source_type, source_path) = script.get_info();
+
+            let entity_name = get_entity_name(entity_id);
+            let button_label = `${entity_name} (${source_type}): ${source_path}`;
 
             if ui.button(button_label) {
-                if script.source_type == "file" {
-                    let path = script.source_path;
-                    let content = read_file(path);
+                if source_type == "file" {
+                    // Store path before read_file consumes it
+                    set_string("current_path", source_path);
+
+                    // Read file from state
+                    let path_for_read = get_string("current_path", "");
+                    let content = read_file(path_for_read);
+
                     if content.starts_with("ERROR") {
                         set_string("status_message", content);
                     } else {
-                        set_f64("selected_index", i);
-                        set_string("current_path", script.source_path);
                         set_string("current_content", content);
+                        set_string("original_content", content);
                         set_bool("is_dirty", false);
-                        let path_for_msg = get_string("current_path", "");
-                        set_string("status_message", `Loaded ${path_for_msg}`);
+                        // Get path from state for status message
+                        let path_for_status = get_string("current_path", "");
+                        set_string("status_message", `Loaded ${path_for_status}`);
                     }
                 } else {
                     set_string("status_message", "Inline scripts cannot be edited in this editor.");
@@ -130,12 +139,16 @@ pub fn on_ui(ui) {
         ui.label("Editor:");
         let current_content = get_string("current_content", "");
         let new_content = ui.text_edit_multiline("editor_content", current_content, None, Some(500.0));
+
+        // Update the content
         set_string("current_content", new_content);
 
-        // Mark as dirty if changed
-        let stored_content = get_string("current_content", "");
-        if stored_content != current_content {
+        // Check if different from original (loaded) content
+        let original_content = get_string("original_content", "");
+        if new_content != original_content {
             set_bool("is_dirty", true);
+        } else {
+            set_bool("is_dirty", false);
         }
     } else {
         ui.label("Select a script to edit");
