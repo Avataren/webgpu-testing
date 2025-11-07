@@ -95,20 +95,22 @@ impl UiContext {
             rune::runtime::VmResult::Err(_) => String::new(),
         };
 
+        // Check if we have a response from the previous frame
+        // If so, use that value in the command to avoid lag
+        let command_value = self.get_response(&id)
+            .and_then(|r| r.text_value.clone())
+            .unwrap_or_else(|| current_str.clone());
+
         self.commands.borrow_mut().push(UiCommand::TextEdit {
             id: id.clone(),
-            current_value: current_str.clone(),
+            current_value: command_value.clone(),
         });
 
-        // Get the response and convert back to Value
-        let result_str = self.get_response(&id)
-            .and_then(|r| r.text_value)
-            .unwrap_or(current_str);
-
+        // Return the command value we just used
         // Convert String to RuneString to Value
-        // Always create a fresh Value from result_str, never reuse current_value
+        // Always create a fresh Value, never reuse current_value
         // This avoids "Cannot read" errors from moved/taken Values
-        match RuneString::try_from(result_str.as_str()) {
+        match RuneString::try_from(command_value.as_str()) {
             Ok(rune_str) => match rune::Value::try_from(rune_str) {
                 Ok(value) => value,
                 Err(_) => {
@@ -141,22 +143,24 @@ impl UiContext {
             rune::runtime::VmResult::Err(_) => String::new(),
         };
 
+        // Check if we have a response from the previous frame
+        // If so, use that value in the command to avoid lag
+        let command_value = self.get_response(&id)
+            .and_then(|r| r.text_value.clone())
+            .unwrap_or_else(|| current_str.clone());
+
         self.commands.borrow_mut().push(UiCommand::TextEditMultiline {
             id: id.clone(),
-            current_value: current_str.clone(),
+            current_value: command_value.clone(),
             width: width.map(|v| v as f32),
             height: height.map(|v| v as f32),
         });
 
-        // Get the response and convert back to Value
-        let result_str = self.get_response(&id)
-            .and_then(|r| r.text_value)
-            .unwrap_or(current_str);
-
+        // Return the command value we just used
         // Convert String to RuneString to Value
-        // Always create a fresh Value from result_str, never reuse current_value
+        // Always create a fresh Value, never reuse current_value
         // This avoids "Cannot read" errors from moved/taken Values
-        match RuneString::try_from(result_str.as_str()) {
+        match RuneString::try_from(command_value.as_str()) {
             Ok(rune_str) => match rune::Value::try_from(rune_str) {
                 Ok(value) => value,
                 Err(_) => {
