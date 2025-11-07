@@ -64,13 +64,13 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 }
 
 #[rune::function]
-pub(crate) fn get_state(key: String) -> VmResult<Value> {
+pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
     with_active_entity(move |handle| {
         with_active_state(move |map| {
             let entry_key = (handle, key);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::panic("State key not found"),
+                None => VmResult::Ok(default),
             }
         })
     })
