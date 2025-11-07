@@ -148,14 +148,13 @@ impl EditorApplication {
         }
 
         // After scene restoration, we may have orphaned UI plugin entities that weren't
-        // tracked by the manager. Find and remove any entities with names starting with "Plugin: "
+        // tracked by the manager. Find and remove any entities marked with EditorPlugin
         // to prevent duplication after play/stop cycles.
-        use wgpu_cube::scene::components::Name;
+        use wgpu_cube::scene::components::EditorPlugin;
         let orphaned_plugins: Vec<_> = scene
             .main_world()
-            .query::<&Name>()
+            .query::<&EditorPlugin>()
             .iter()
-            .filter(|(_, name)| name.0.starts_with("Plugin: "))
             .map(|(entity, _)| entity)
             .collect();
 
@@ -209,10 +208,11 @@ impl EditorApplication {
                 }
             };
 
-            // Create entity with script
+            // Create entity with script and mark as editor plugin
             let entity = EntityBuilder::new(scene)
                 .with_name(format!("Plugin: {}", plugin_meta.name))
                 .with_script(script_source)
+                .with_component(wgpu_cube::scene::components::EditorPlugin)
                 .spawn();
 
             // Register with manager
