@@ -892,7 +892,7 @@ impl EditorApplication {
             return;
         }
 
-        let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+        let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
             log::warn!("Cannot reload plugins: plugin manager not initialized");
             return;
         };
@@ -901,8 +901,7 @@ impl EditorApplication {
         let mut plugin_names = Vec::new();
 
         for (entity, path) in pending {
-            let world = ctx.scene.main_world_mut();
-            match manager.reload_plugin(entity, &path, world) {
+            match manager.reload_plugin(entity, &path) {
                 Ok(plugin_name) => {
                     log::info!("✅ Plugin '{}' reloaded successfully", plugin_name);
                     plugin_names.push(plugin_name);

@@ -267,7 +267,16 @@ impl EditorApplication {
         let editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
         log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
             editor_mode, ctx.runtime);
+
+        // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
+
+        // Process UI plugin scripts (from separate world)
+        if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+            let plugin_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
+            // Merge plugin commands with scene commands
+            self.shared.script_ui_commands.extend(plugin_commands);
+        }
     }
 
     fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
