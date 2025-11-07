@@ -2106,7 +2106,7 @@ fn list_available_scripts() -> Vec<PathBuf> {
                     if let Ok(file_type) = entry.file_type() {
                         if file_type.is_file() {
                             let path = entry.path();
-                            if path.extension().and_then(|s| s.to_str()) == Some("rn") {
+                            if path.extension().and_then(|s| s.to_str()) == Some("lua") {
                                 scripts.push(path);
                             }
                         }
