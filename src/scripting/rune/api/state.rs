@@ -65,14 +65,16 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 
 #[rune::function]
 pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
-    // Clone the default value BEFORE entering closures to prevent snapshot issues
-    // When nested closures try to capture the original parameter, Rune creates
-    // an immutable snapshot (M-000000) which causes "Cannot take" errors
+    // Clone ALL function parameters BEFORE entering closures to prevent snapshot issues
+    // Both key and default came through Rune's VM as parameters, so both need cloning
+    // When nested closures try to capture the original parameters, Rune creates
+    // immutable snapshots (M-000000) which cause "Cannot take" errors
+    let key_clone = key.clone();
     let default_clone = default.clone();
 
     with_active_entity(|handle| {
         with_active_state(move |map| {
-            let entry_key = (handle, key);
+            let entry_key = (handle, key_clone);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
                 None => VmResult::Ok(default_clone),
