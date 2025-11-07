@@ -138,34 +138,13 @@ impl EditorApplication {
     }
 
     /// Load UI plugins from manifest and create entities for them
-    pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, scene: &mut Scene) {
+    pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, _scene: &mut Scene) {
         info!("Loading UI plugins...");
 
         // Unload existing plugins first to avoid duplicates
         if let Some(existing_manager) = shared.ui_plugin_manager.as_mut() {
             info!("Unloading existing UI plugins before reload");
-            existing_manager.unload_all(scene.main_world_mut());
-        }
-
-        // After scene restoration, we may have orphaned UI plugin entities that weren't
-        // tracked by the manager. Find and remove any entities with names starting with "Plugin: "
-        // to prevent duplication after play/stop cycles.
-        use wgpu_cube::scene::components::Name;
-        let orphaned_plugins: Vec<_> = scene
-            .main_world()
-            .query::<&Name>()
-            .iter()
-            .filter(|(_, name)| name.0.starts_with("Plugin: "))
-            .map(|(entity, _)| entity)
-            .collect();
-
-        if !orphaned_plugins.is_empty() {
-            info!("Removing {} orphaned UI plugin entities from restored scene", orphaned_plugins.len());
-            for entity in orphaned_plugins {
-                if let Err(e) = scene.main_world_mut().despawn(entity) {
-                    log::warn!("Failed to despawn orphaned plugin entity {:?}: {}", entity, e);
-                }
-            }
+            existing_manager.unload_all();
         }
 
         // Try to find ui_plugins.toml in examples/scripts
@@ -209,11 +188,17 @@ impl EditorApplication {
                 }
             };
 
-            // Create entity with script
-            let entity = EntityBuilder::new(scene)
-                .with_name(format!("Plugin: {}", plugin_meta.name))
-                .with_script(script_source)
-                .spawn();
+            // Create entity with script in the plugin manager's world (not the scene)
+            let entity = {
+                use wgpu_cube::scene::components::Name;
+                use wgpu_cube::scripting::LuaScriptComponent;
+
+                let mut entity_builder = hecs::EntityBuilder::new();
+                entity_builder.add(Name::new(format!("Plugin: {}", plugin_meta.name)));
+                entity_builder.add(LuaScriptComponent::new(script_source));
+
+                manager.world_mut().spawn(entity_builder.build())
+            };
 
             // Register with manager
             manager.register_plugin(plugin_meta, entity);
