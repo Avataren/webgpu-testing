@@ -1,44 +1,71 @@
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, Component};
 
 use mlua::{Lua, Result as LuaResult};
 
 /// Allowed directories for file operations
 const ALLOWED_DIRS: &[&str] = &["examples/scripts", "scripts"];
 
+/// Normalize a path by resolving . and .. components without requiring the file to exist.
+/// This prevents path traversal attacks.
+fn normalize_path(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {
+                // Skip "." components
+            }
+            Component::ParentDir => {
+                // For "..", pop the last component if possible
+                // If we can't pop (we're at root), the path is trying to escape - reject it
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(part) => {
+                normalized.push(part);
+            }
+            Component::RootDir => {
+                // Absolute paths are not allowed in our sandboxed environment
+                return None;
+            }
+            Component::Prefix(_) => {
+                // Windows prefixes (C:\, \\server\, etc.) are not allowed
+                return None;
+            }
+        }
+    }
+
+    Some(normalized)
+}
+
 /// Check if a path is within allowed directories
 fn is_path_allowed(path: &Path) -> bool {
-    // Canonicalize the path to resolve any .. or . components
-    let canonical = match path.canonicalize() {
-        Ok(p) => p,
-        Err(_) => {
-            // If canonicalization fails, try to construct it manually
-            // This handles the case where the file doesn't exist yet
-            let Some(base) = std::env::current_dir().ok() else {
-                return false;
-            };
-            let full_path = base.join(path);
-            full_path
-        }
-    };
-
-    // Check if the canonical path starts with any allowed directory
+    // First, get the current directory
     let Some(base) = std::env::current_dir().ok() else {
         return false;
     };
 
+    // Normalize the input path to resolve . and .. without requiring file existence
+    let Some(normalized_relative) = normalize_path(path) else {
+        log::warn!("Rejected path with invalid traversal: {:?}", path);
+        return false;
+    };
+
+    // Construct the full path
+    let full_path = base.join(&normalized_relative);
+
+    // Now try to canonicalize (this will work if the file exists)
+    let canonical = full_path.canonicalize().unwrap_or(full_path);
+
+    // Check if the canonical path starts with any allowed directory
     for allowed in ALLOWED_DIRS {
         let allowed_path = base.join(allowed);
 
         // Try to canonicalize the allowed path
-        if let Ok(allowed_canonical) = allowed_path.canonicalize() {
-            if canonical.starts_with(&allowed_canonical) {
-                return true;
-            }
-        }
+        let allowed_canonical = allowed_path.canonicalize().unwrap_or(allowed_path);
 
-        // Also check if the path would be within the allowed directory
-        // (for files that don't exist yet)
-        if canonical.starts_with(&allowed_path) {
+        if canonical.starts_with(&allowed_canonical) {
             return true;
         }
     }
