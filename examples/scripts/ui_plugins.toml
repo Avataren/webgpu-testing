@@ -19,7 +19,7 @@ name = "Script Editor"
 script = "script_editor_plugin.rn"
 description = "Full-featured script editor for editing RuneScript files"
 category = "Development"
-enabled = false
+enabled = true
 default_visible = true
 
 # Simple Text Editor - General purpose text editor

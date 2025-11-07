@@ -2,6 +2,8 @@
 
 Complete guide to the Rune scripting system for extending the engine with custom gameplay logic and editor tools.
 
+official rune integration examples can be found at https://github.com/rune-rs/rune/tree/main/examples/examples
+
 ## Table of Contents
 
 - [Overview](#overview)

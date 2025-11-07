@@ -2,50 +2,24 @@
 // Script Editor Plugin
 // A full-featured script editor for editing RuneScript files
 
-struct EditorState {
-    scripts,           // List of all script infos (Vec)
-    selected_index,    // Currently selected script index (i64)
-    current_content,   // Current editor content (String)
-    current_path,      // Path to current file (String)
-    status_message,    // Status bar message (String)
-    is_dirty,          // Whether content has been modified (bool)
-    needs_refresh,     // Whether scripts list needs refreshing (bool)
-}
-
 pub fn on_created(self_entity) {
     log_info("Script Editor plugin created");
 
-    // Initialize state
-    // Note: We defer loading scripts to on_ui() to avoid borrow conflicts
-    // during initialization when iterating over RuneScriptComponents
-    let state = EditorState {
-        scripts: [],
-        selected_index: -1,
-        current_content: "",
-        current_path: "",
-        status_message: "Ready",
-        is_dirty: false,
-        needs_refresh: true,
-    };
-
-    set_state("editor", state);
+    // Initialize state with individual keys (avoids Value ownership issues)
+    set_f64("selected_index", -1.0);
+    set_string("current_content", "");
+    set_string("current_path", "");
+    set_string("status_message", "Ready");
+    set_bool("is_dirty", false);
+    set_bool("needs_refresh", true);
 }
 
 pub fn on_ui(ui) {
-    let state = get_state("editor", EditorState {
-        scripts: [],
-        selected_index: -1,
-        current_content: "",
-        current_path: "",
-        status_message: "Ready",
-        is_dirty: false,
-        needs_refresh: true,
-    });
-
     // Load scripts on first render or when requested
-    if state.needs_refresh {
+    let needs_refresh = get_bool("needs_refresh", true);
+    if needs_refresh {
         refresh_script_list();
-        state = get_state("editor", state);
+        return;
     }
 
     ui.heading("Script Editor");
@@ -53,57 +27,62 @@ pub fn on_ui(ui) {
     // Toolbar
     if ui.button("Refresh Scripts") {
         refresh_script_list();
-        state = get_state("editor", state);
+        return;
     }
 
     if ui.button("Save") {
-        if state.current_path != "" {
-            let error = write_file(state.current_path, state.current_content);
+        let current_path = get_string("current_path", "");
+        if current_path != "" {
+            let current_content = get_string("current_content", "");
+            let error = write_file(current_path, current_content);
             if error == "" {
-                state.status_message = `Saved ${state.current_path}`;
-                state.is_dirty = false;
-                set_state("editor", state);
+                let path_for_msg = get_string("current_path", "");
+                set_string("status_message", `Saved ${path_for_msg}`);
+                set_bool("is_dirty", false);
             } else {
-                state.status_message = error;
-                set_state("editor", state);
+                set_string("status_message", error);
             }
         } else {
-            state.status_message = "No script selected";
-            set_state("editor", state);
+            set_string("status_message", "No script selected");
         }
+        return;
     }
 
     if ui.button("Revert") {
-        if state.current_path != "" && !state.is_dirty {
-            state.status_message = "No changes to revert";
-            set_state("editor", state);
-        } else if state.current_path != "" {
-            // Reload the file
-            let content = read_file(state.current_path);
+        let current_path = get_string("current_path", "");
+        let is_dirty = get_bool("is_dirty", false);
+
+        if current_path != "" && !is_dirty {
+            set_string("status_message", "No changes to revert");
+        } else if current_path != "" {
+            let content = read_file(current_path);
             if !content.starts_with("ERROR") {
-                state.current_content = content;
-                state.is_dirty = false;
-                state.status_message = `Reverted ${state.current_path}`;
-                set_state("editor", state);
+                set_string("current_content", content);
+                set_bool("is_dirty", false);
+                let path_for_msg = get_string("current_path", "");
+                set_string("status_message", `Reverted ${path_for_msg}`);
             } else {
-                state.status_message = content;
-                set_state("editor", state);
+                set_string("status_message", content);
             }
         }
+        return;
     }
 
     ui.separator();
 
     // Status bar
-    let status_text = if state.is_dirty {
-        `${state.status_message} [Modified]`
+    let status_message = get_string("status_message", "Ready");
+    let is_dirty = get_bool("is_dirty", false);
+    let status_text = if is_dirty {
+        `${status_message} [Modified]`
     } else {
-        state.status_message
+        status_message
     };
     ui.label(status_text);
 
-    if state.current_path != "" {
-        ui.label(`Editing: ${state.current_path}`);
+    let current_path = get_string("current_path", "");
+    if current_path != "" {
+        ui.label(`Editing: ${current_path}`);
     }
 
     ui.separator();
@@ -111,33 +90,34 @@ pub fn on_ui(ui) {
     // Script list
     ui.label("Scripts in scene:");
 
-    if state.scripts.len() == 0 {
+    let scripts = get_all_script_entities();
+
+    if scripts.len() == 0 {
         ui.label("  No scripts found");
     } else {
-        for i in 0..state.scripts.len() {
-            let script = state.scripts[i];
+        for i in 0..scripts.len() {
+            let script = scripts[i];
             let entity_name = get_entity_name(script.entity);
-            let label = `${entity_name} (${script.source_type}): ${script.source_path}`;
+            let button_label = `${entity_name} (${script.source_type}): ${script.source_path}`;
 
-            if ui.button(label) {
-                // Load this script
+            if ui.button(button_label) {
                 if script.source_type == "file" {
-                    let content = read_file(script.source_path);
+                    let path = script.source_path;
+                    let content = read_file(path);
                     if content.starts_with("ERROR") {
-                        state.status_message = content;
-                        set_state("editor", state);
+                        set_string("status_message", content);
                     } else {
-                        state.selected_index = i;
-                        state.current_path = script.source_path;
-                        state.current_content = content;
-                        state.is_dirty = false;
-                        state.status_message = `Loaded ${script.source_path}`;
-                        set_state("editor", state);
+                        set_f64("selected_index", i);
+                        set_string("current_path", script.source_path);
+                        set_string("current_content", content);
+                        set_bool("is_dirty", false);
+                        let path_for_msg = get_string("current_path", "");
+                        set_string("status_message", `Loaded ${path_for_msg}`);
                     }
                 } else {
-                    state.status_message = "Inline scripts cannot be edited in this editor. Edit them in their source.";
-                    set_state("editor", state);
+                    set_string("status_message", "Inline scripts cannot be edited in this editor.");
                 }
+                return;
             }
         }
     }
@@ -145,13 +125,17 @@ pub fn on_ui(ui) {
     ui.separator();
 
     // Editor
-    if state.current_path != "" {
+    let editor_path = get_string("current_path", "");
+    if editor_path != "" {
         ui.label("Editor:");
-        let new_content = ui.text_edit_multiline("editor_content", state.current_content, None, Some(500.0));
-        if new_content != state.current_content {
-            state.current_content = new_content;
-            state.is_dirty = true;
-            set_state("editor", state);
+        let current_content = get_string("current_content", "");
+        let new_content = ui.text_edit_multiline("editor_content", current_content, None, Some(500.0));
+        set_string("current_content", new_content);
+
+        // Mark as dirty if changed
+        let stored_content = get_string("current_content", "");
+        if stored_content != current_content {
+            set_bool("is_dirty", true);
         }
     } else {
         ui.label("Select a script to edit");
@@ -160,18 +144,7 @@ pub fn on_ui(ui) {
 
 fn refresh_script_list() {
     let scripts = get_all_script_entities();
-    let state = get_state("editor", EditorState {
-        scripts: [],
-        selected_index: -1,
-        current_content: "",
-        current_path: "",
-        status_message: "Ready",
-        is_dirty: false,
-        needs_refresh: true,
-    });
-
-    state.scripts = scripts;
-    state.status_message = `Found ${scripts.len()} script(s)`;
-    state.needs_refresh = false;
-    set_state("editor", state);
+    let count = scripts.len();
+    set_string("status_message", `Found ${count} script(s)`);
+    set_bool("needs_refresh", false);
 }

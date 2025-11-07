@@ -14,10 +14,13 @@ use rune::Any;
 #[rune(item = ::script_info)]
 pub struct ScriptInfo {
     /// The entity that has the script
+    #[rune(get)]
     pub entity: u64,
     /// The script source type ("inline" or "file")
+    #[rune(get)]
     pub source_type: String,
     /// The script source identifier (file path or inline name)
+    #[rune(get)]
     pub source_path: String,
 }
 
