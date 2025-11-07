@@ -28,6 +28,8 @@ use super::shader_editor_system::ShaderEditorSystem;
 use super::selection_system::SelectionSystem;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shader_watcher::ShaderWatcher;
+#[cfg(not(target_arch = "wasm32"))]
+use super::script_watcher::ScriptWatcher;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent, EditorSystemsAccess};
 use wgpu_cube::DefaultUI;
@@ -41,10 +43,57 @@ use crate::project;
 use crate::windows::WindowToggles;
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_cube::project::normalize_absolute_path;
+use wgpu_cube::time::Instant;
 
 pub(super) struct RuntimeModeTransition {
     pub(super) from: RuntimeMode,
     pub(super) to: RuntimeMode,
+}
+
+/// A notification message shown as a toast in the UI
+#[derive(Clone, Debug)]
+pub struct ReloadNotification {
+    pub message: String,
+    pub severity: NotificationSeverity,
+    pub timestamp: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotificationSeverity {
+    Success,
+    Warning,
+    Error,
+}
+
+impl ReloadNotification {
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Success,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Error,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Warning,
+            timestamp: Instant::now(),
+        }
+    }
+
+    /// Returns true if notification should be dismissed (older than 5 seconds)
+    pub fn should_dismiss(&self) -> bool {
+        self.timestamp.elapsed().as_secs() > 5
+    }
 }
 
 pub struct EditorSharedState {
@@ -68,6 +117,8 @@ pub struct EditorSharedState {
     pub(super) next_untitled_scene_index: u32,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) script_watcher: Option<ScriptWatcher>,
     /// UI commands from scripts collected during gpu_update
     pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
@@ -76,6 +127,8 @@ pub struct EditorSharedState {
     pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
     /// Flag to track if UI plugins have been loaded (should only load after project is opened)
     pub(super) ui_plugins_loaded: bool,
+    /// Reload notifications shown as toasts
+    pub(super) reload_notifications: Vec<ReloadNotification>,
 }
 
 impl EditorSharedState {
@@ -315,10 +368,13 @@ impl EditorApplicationBuilder {
             next_untitled_scene_index: 1,
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            script_watcher: None,
             script_ui_commands: std::collections::HashMap::new(),
             script_ui_responses: std::collections::HashMap::new(),
             ui_plugin_manager: None,
             ui_plugins_loaded: false,
+            reload_notifications: Vec::new(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -327,6 +383,14 @@ impl EditorApplicationBuilder {
                 Ok(watcher) => Some(watcher),
                 Err(err) => {
                     log::warn!("Failed to initialize shader file watcher: {err}");
+                    None
+                }
+            };
+
+            shared.script_watcher = match ScriptWatcher::new() {
+                Ok(watcher) => Some(watcher),
+                Err(err) => {
+                    log::warn!("Failed to initialize script file watcher: {err}");
                     None
                 }
             };
@@ -650,6 +714,60 @@ impl EditorApplication {
         self.record_scene_change(&mut ctx.scene);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn process_script_file_changes(&mut self) {
+        // Get script directories to watch
+        let script_dirs = vec![
+            PathBuf::from("examples/scripts"),
+            PathBuf::from("scripts"),
+        ];
+
+        let Some(watcher) = self.shared.script_watcher.as_mut() else {
+            return;
+        };
+
+        // Watch the directories
+        if let Err(err) = watcher.watch_roots(&script_dirs) {
+            log::warn!("Failed to watch script directories: {}", err);
+            return;
+        }
+
+        // Poll for changed files
+        let changed_paths = watcher.poll();
+        if changed_paths.is_empty() {
+            return;
+        }
+
+        // Process each changed script file
+        for path in changed_paths {
+            log::info!("Script file changed: {:?}", path);
+
+            // Find the entity associated with this script path
+            let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+                continue;
+            };
+
+            if let Some((entity, metadata)) = manager.find_entity_by_path(&path) {
+                log::info!(
+                    "Queuing reload for plugin '{}' (entity {:?})",
+                    metadata.name,
+                    entity
+                );
+
+                // Queue reload command
+                self.shared.commands.push_back(EditorCommand::ReloadPlugin {
+                    entity,
+                    path: path.clone(),
+                });
+            } else {
+                log::debug!(
+                    "Changed script {:?} not associated with any loaded plugin",
+                    path
+                );
+            }
+        }
+    }
+
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         let indices = self.system_indices();
         let len = self.systems.len();
@@ -674,6 +792,7 @@ impl EditorApplication {
         let mut pending_imports = Vec::new();
         let mut pending_deletions = Vec::new();
         let mut pending_inspector = Vec::new();
+        let mut pending_plugin_reloads = Vec::new();
 
         while let Some(command) = queue.pop_front() {
             match command {
@@ -689,6 +808,7 @@ impl EditorApplication {
                 HistoryUndo => remaining.push_back(HistoryUndo),
                 HistoryRedo => remaining.push_back(HistoryRedo),
                 HistoryCommitTransforms => remaining.push_back(HistoryCommitTransforms),
+                ReloadPlugin { entity, path } => pending_plugin_reloads.push((entity, path)),
             }
         }
 
@@ -698,6 +818,10 @@ impl EditorApplication {
 
         if !pending_imports.is_empty() {
             self.process_pending_imports(ctx, pending_imports);
+        }
+
+        if !pending_plugin_reloads.is_empty() {
+            self.process_pending_plugin_reloads(ctx, pending_plugin_reloads);
         }
 
         if !pending_deletions.is_empty() {
@@ -757,6 +881,61 @@ impl EditorApplication {
             .downcast_mut::<ProjectSystem>()
             .expect("project system registered")
             .process_pending_imports(&mut editor_ctx, pending);
+    }
+
+    pub(super) fn process_pending_plugin_reloads(
+        &mut self,
+        ctx: &mut UpdateContext,
+        pending: Vec<(Entity, PathBuf)>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+            log::warn!("Cannot reload plugins: plugin manager not initialized");
+            return;
+        };
+
+        let mut reload_count = 0;
+        let mut plugin_names = Vec::new();
+
+        for (entity, path) in pending {
+            let world = ctx.scene.main_world_mut();
+            match manager.reload_plugin(entity, &path, world) {
+                Ok(plugin_name) => {
+                    log::info!("✅ Plugin '{}' reloaded successfully", plugin_name);
+                    plugin_names.push(plugin_name);
+                    reload_count += 1;
+                }
+                Err(err) => {
+                    log::error!("❌ Failed to reload plugin: {}", err);
+                    // Add error notification
+                    self.shared
+                        .reload_notifications
+                        .push(ReloadNotification::error(err));
+                }
+            }
+        }
+
+        if reload_count > 0 {
+            // Reset the script runtime to recompile and re-initialize all scripts
+            ctx.scene.reset_script_runtime();
+
+            // Mark scene as changed
+            self.record_scene_change(&mut ctx.scene);
+
+            // Add success notification
+            if reload_count == 1 {
+                self.shared.reload_notifications.push(ReloadNotification::success(
+                    format!("✅ Reloaded: {}", plugin_names[0]),
+                ));
+            } else {
+                self.shared.reload_notifications.push(ReloadNotification::success(
+                    format!("✅ Reloaded {} plugins", reload_count),
+                ));
+            }
+        }
     }
 
     pub(super) fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {

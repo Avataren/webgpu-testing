@@ -12,7 +12,7 @@ use super::component::{FunctionCallOutcome, RuneScriptComponent, RuneScriptInsta
 use super::error::RuneScriptingError;
 use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, RegistryGuard, StateGuard, WorldGuard};
 use super::runtime::RuneScriptingRuntime;
-use super::types::{EventSubscription, EventSubscriptions, ScriptEvent};
+use super::types::{EventSubscription, EventSubscriptions, ScriptEvent, ScriptStateMap};
 
 /// State that owns the Rune runtime for a scene.
 pub struct ScriptingState {
@@ -23,6 +23,8 @@ pub struct ScriptingState {
     event_subscriptions: EventSubscriptions,
     /// UI responses from the previous frame, keyed by entity
     ui_responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
+    /// Pending state restoration after script reload
+    pending_state_restoration: Option<HashMap<Entity, ScriptStateMap>>,
 }
 
 impl ScriptingState {
@@ -35,6 +37,7 @@ impl ScriptingState {
             component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
             ui_responses: HashMap::new(),
+            pending_state_restoration: None,
         })
     }
 
@@ -55,6 +58,63 @@ impl ScriptingState {
         self.pending_gltf_imports.clear();
         self.event_subscriptions.clear();
         self.ui_responses.clear();
+    }
+
+    /// Extract all script state before reset.
+    /// Returns a map of entity -> state map for later restoration.
+    pub fn extract_all_state(&self) -> HashMap<Entity, ScriptStateMap> {
+        let mut all_state = HashMap::new();
+
+        for (entity, instance) in &self.instances {
+            // Clone the state map
+            let state = instance.state_store.borrow().clone();
+            if !state.is_empty() {
+                all_state.insert(*entity, state);
+            }
+        }
+
+        log::debug!("Extracted state from {} script instances", all_state.len());
+        all_state
+    }
+
+    /// Restore state to script instances after they've been created.
+    /// Should be called after reset_runtime() and after instances are recreated.
+    pub fn restore_all_state(&mut self, saved_state: HashMap<Entity, ScriptStateMap>) {
+        let mut restored_count = 0;
+
+        for (entity, state) in saved_state {
+            if let Some(instance) = self.instances.get_mut(&entity) {
+                *instance.state_store.borrow_mut() = state;
+                restored_count += 1;
+            } else {
+                log::debug!(
+                    "Cannot restore state for entity {:?} - instance not found",
+                    entity
+                );
+            }
+        }
+
+        log::debug!(
+            "Restored state to {} / {} script instances",
+            restored_count,
+            self.instances.len()
+        );
+    }
+
+    /// Set pending state to be restored after instances are recreated.
+    pub fn set_pending_state_restoration(&mut self, saved_state: HashMap<Entity, ScriptStateMap>) {
+        log::debug!(
+            "Queued state restoration for {} entities",
+            saved_state.len()
+        );
+        self.pending_state_restoration = Some(saved_state);
+    }
+
+    /// Check if there's pending state restoration and apply it if instances are ready.
+    fn apply_pending_state_restoration(&mut self) {
+        if let Some(saved_state) = self.pending_state_restoration.take() {
+            self.restore_all_state(saved_state);
+        }
     }
 
     /// Run pending scripts for the current frame.
@@ -147,6 +207,9 @@ impl ScriptingState {
                 break;
             }
         }
+
+        // After all instances are created, restore any pending state
+        self.apply_pending_state_restoration();
 
         Ok(())
     }

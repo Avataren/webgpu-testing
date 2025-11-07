@@ -21,6 +21,8 @@ mod ui_plugin_manager;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod shader_watcher;
+#[cfg(not(target_arch = "wasm32"))]
+mod script_watcher;
 mod ui;
 use self::asset_browser_system::AssetBrowserSystem;
 #[allow(unused_imports)]
@@ -148,6 +150,9 @@ impl EditorApplication {
     fn run_gpu_update_impl(&mut self, ctx: &mut GpuUpdateContext) {
         #[cfg(not(target_arch = "wasm32"))]
         self.process_shader_file_changes(ctx);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.process_script_file_changes();
 
         let scene_changed = self.shared.active_scene_handle != Some(ctx.scene_handle);
 
@@ -470,6 +475,9 @@ impl EditorApplication {
         // Render script UI
         self.render_script_ui(ctx);
 
+        // Render reload notifications as toasts
+        self.render_reload_notifications(ctx);
+
         self.run_system_ui(ctx, default_ui);
     }
 }
@@ -617,6 +625,80 @@ impl EditorApplication {
 
         // Store responses for the next frame
         self.shared.script_ui_responses = all_responses;
+    }
+
+    /// Render reload notifications as toasts in the bottom-right corner
+    fn render_reload_notifications(&mut self, ctx: &egui::Context) {
+        use core::{NotificationSeverity, ReloadNotification};
+
+        // Remove expired notifications
+        self.shared
+            .reload_notifications
+            .retain(|notif| !notif.should_dismiss());
+
+        let screen_rect = ctx.viewport_rect();
+        let toast_width = 300.0;
+        let toast_height = 60.0;
+        let margin = 10.0;
+        let spacing = 5.0;
+
+        // Render toasts from bottom to top
+        for (index, notification) in self.shared.reload_notifications.iter().enumerate() {
+            let y_offset = margin + (toast_height + spacing) * index as f32;
+            let pos = egui::pos2(
+                screen_rect.max.x - toast_width - margin,
+                screen_rect.max.y - y_offset - toast_height,
+            );
+
+            let (bg_color, text_color) = match notification.severity {
+                NotificationSeverity::Success => (
+                    egui::Color32::from_rgb(40, 180, 40),
+                    egui::Color32::WHITE,
+                ),
+                NotificationSeverity::Warning => (
+                    egui::Color32::from_rgb(220, 180, 20),
+                    egui::Color32::BLACK,
+                ),
+                NotificationSeverity::Error => (
+                    egui::Color32::from_rgb(200, 40, 40),
+                    egui::Color32::WHITE,
+                ),
+            };
+
+            egui::Area::new(format!("reload_notification_{}", index).into())
+                .fixed_pos(pos)
+                .show(ctx, |ui| {
+                    egui::Frame::default()
+                        .fill(bg_color)
+                        .corner_radius(4.0)
+                        .inner_margin(8.0)
+                        .show(ui, |ui| {
+                            ui.set_width(toast_width - 16.0);
+                            ui.set_height(toast_height - 16.0);
+
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new(&notification.message)
+                                            .color(text_color)
+                                            .size(14.0),
+                                    );
+
+                                    // Show age of notification
+                                    let age_secs = notification.timestamp.elapsed().as_secs();
+                                    if age_secs > 0 {
+                                        ui.label(
+                                            egui::RichText::new(format!("{}s ago", age_secs))
+                                                .color(text_color.gamma_multiply(0.7))
+                                                .size(11.0),
+                                        );
+                                    }
+                                });
+                            });
+                        });
+                });
+        }
     }
 
     fn handle_scene_tab_action(&mut self, action: SceneTabAction) {

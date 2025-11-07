@@ -45,7 +45,7 @@ pub fn update(self_entity, dt) {
     }
 }
 
-pub fn on_ui(self_entity, ui) {
+pub fn on_ui(ui) {
     ui.heading("Scene Statistics");
     ui.separator();
 
