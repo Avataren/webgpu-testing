@@ -55,7 +55,7 @@ impl UiCommand {
             }
             UiCommand::TextEditMultiline { id: _, current_value, width, height } => {
                 let mut text = current_value.clone();
-                let mut text_edit = egui::TextEdit::multiline(&mut text)
+                let text_edit = egui::TextEdit::multiline(&mut text)
                     .code_editor();
 
                 // Calculate size based on provided dimensions or use available space
