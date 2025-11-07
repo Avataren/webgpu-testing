@@ -352,11 +352,16 @@ impl ScriptingState {
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
     pub fn process_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
+        use super::guards::{WorldGuard, RegistryGuard};
 
         log::debug!(target: "script_ui", "Lua process_ui called with editor_mode={}", editor_mode);
 
         let mut ui_commands = HashMap::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
+
+        // Set up guards for World and ComponentRegistry access
+        let _world_guard = WorldGuard::enter(world);
+        let _registry_guard = RegistryGuard::enter(&self.component_registry);
 
         let mut query = world.query::<&LuaScriptComponent>();
         for (entity, component) in query.iter() {
