@@ -22,6 +22,8 @@ pub struct ScriptingState {
     event_subscriptions: EventSubscriptions,
     /// Pending state restoration after script reload
     pending_state_restoration: Option<HashMap<Entity, ScriptStateMap>>,
+    /// UI responses from the previous frame
+    ui_responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
 }
 
 impl ScriptingState {
@@ -34,6 +36,7 @@ impl ScriptingState {
             component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
             pending_state_restoration: None,
+            ui_responses: HashMap::new(),
         })
     }
 
@@ -53,6 +56,7 @@ impl ScriptingState {
         self.instances.clear();
         self.pending_gltf_imports.clear();
         self.event_subscriptions.clear();
+        self.ui_responses.clear();
     }
 
     /// Extract all script state before reset.
@@ -342,6 +346,101 @@ impl ScriptingState {
     /// Mutably access the component registry.
     pub fn component_registry_mut(&mut self) -> &mut ComponentRegistry {
         &mut self.component_registry
+    }
+    /// Call on_ui() for all scripts and collect their UI commands.
+    ///
+    /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
+    pub fn process_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+        use super::api::ui::UiContext;
+
+        log::debug!(target: "script_ui", "Lua process_ui called with editor_mode={}", editor_mode);
+
+        let mut ui_commands = HashMap::new();
+        let event_queue = Rc::new(RefCell::new(Vec::new()));
+
+        let mut query = world.query::<&LuaScriptComponent>();
+        for (entity, component) in query.iter() {
+            if !component.created_called() {
+                log::debug!(target: "script_ui", "Skipping entity {:?} - created not called", entity);
+                continue;
+            }
+
+            // Filter UI scripts based on mode:
+            // - EditorOnly (@editor): UI only in editor mode
+            // - RuntimeOnly (no annotation): UI only in play mode
+            // - Both (@tool): UI in both modes
+            let script_mode = component.script_mode();
+            log::debug!(target: "script_ui", "Entity {:?} script_mode={:?}, editor_mode={}",
+                entity, script_mode, editor_mode);
+
+            if editor_mode {
+                // In editor mode - skip RuntimeOnly scripts
+                if script_mode == ScriptMode::RuntimeOnly {
+                    log::debug!(target: "script_ui", "Skipping RuntimeOnly script in editor mode");
+                    continue;
+                }
+            } else {
+                // In play mode - skip EditorOnly scripts
+                if script_mode == ScriptMode::EditorOnly {
+                    log::debug!(target: "script_ui", "Skipping EditorOnly script in play mode");
+                    continue;
+                }
+            }
+
+            // Get the script instance
+            let instance = match self.instances.get_mut(&entity) {
+                Some(inst) => inst,
+                None => {
+                    log::debug!(target: "script_ui", "No instance found for entity {:?}", entity);
+                    continue;
+                }
+            };
+
+            // Create a UI context for this script
+            let ui_context = UiContext::new();
+
+            // Set responses from the previous frame
+            if let Some(responses) = self.ui_responses.get(&entity) {
+                ui_context.set_responses(responses.clone());
+            }
+
+            let commands = instance.command_buffer();
+
+            // Call the on_ui function (if it exists)
+            let lua_context = mlua::Value::UserData(
+                self.runtime.lua().create_userdata(ui_context.clone()).expect("Failed to create UI context")
+            );
+
+            match instance.call_on_ui(
+                self.runtime.lua(),
+                entity_bits(entity),
+                lua_context,
+                commands,
+                event_queue.clone()
+            ) {
+                Ok(FunctionCallOutcome::Executed) => {
+                    // Collect the UI commands from the context
+                    let cmds = ui_context.take_commands();
+                    if !cmds.is_empty() {
+                        ui_commands.insert(entity, cmds);
+                    }
+                }
+                Ok(FunctionCallOutcome::Missing) => {
+                    // Script doesn't have on_ui() - that's fine
+                }
+                Err(e) => {
+                    error!(target: "script", "Error calling on_ui for entity {:?}: {}", entity, e);
+                }
+            }
+        }
+
+        ui_commands
+    }
+
+    /// Set UI responses for scripts. This should be called after rendering UI
+    /// so that the next frame can access the responses.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>) {
+        self.ui_responses = responses;
     }
 }
 

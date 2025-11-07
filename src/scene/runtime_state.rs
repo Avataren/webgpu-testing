@@ -125,14 +125,40 @@ impl SceneRuntime {
         }
     }
 
-    /// Process UI for all scripts and return their UI commands.
+    /// Process UI for all scripts (both Rune and Lua) and return their UI commands.
     pub(crate) fn process_script_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
-        self.scripting.process_ui(world, editor_mode)
+        // Collect Rune UI commands
+        let mut all_commands = self.scripting.process_ui(world, editor_mode);
+
+        // Collect Lua UI commands and convert them to Rune UiCommand type
+        let lua_commands = self.lua_scripting.process_ui(world, editor_mode);
+        for (entity, cmds) in lua_commands {
+            // Convert Lua UiCommands to Rune UiCommands
+            let converted_cmds: Vec<crate::scripting::rune::api::ui::UiCommand> =
+                cmds.into_iter().map(|cmd| cmd.into()).collect();
+            all_commands.entry(entity).or_insert_with(Vec::new).extend(converted_cmds);
+        }
+
+        all_commands
     }
 
     /// Set UI responses from the previous frame to feed back to scripts.
     pub(crate) fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
-        self.scripting.set_ui_responses(responses);
+        // Set responses for Rune scripts
+        self.scripting.set_ui_responses(responses.clone());
+
+        // Convert and set responses for Lua scripts
+        let lua_responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>> = responses
+            .into_iter()
+            .map(|(entity, widget_responses)| {
+                let converted: HashMap<String, crate::scripting::lua::api::ui::UiResponse> = widget_responses
+                    .into_iter()
+                    .map(|(id, resp)| (id, resp.into()))
+                    .collect();
+                (entity, converted)
+            })
+            .collect();
+        self.lua_scripting.set_ui_responses(lua_responses);
     }
 }
 
