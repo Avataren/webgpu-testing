@@ -7,7 +7,7 @@ use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 use hecs::Entity;
 
-use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
+use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 
 const KEYWORDS: &[&str] = &[
     "async", "await", "break", "const", "continue", "else", "enum", "extern", "fn", "for", "if",
@@ -42,7 +42,7 @@ pub struct ScriptEditorState {
 }
 
 impl ScriptEditorState {
-    pub fn new(entity: Entity, component: RuneScriptComponent) -> Self {
+    pub fn new(entity: Entity, component: LuaScriptComponent) -> Self {
         let (source, buffer, status) = Self::extract_source(&component);
         Self {
             entity,
@@ -196,7 +196,7 @@ impl ScriptEditorState {
         self.target_missing = false;
     }
 
-    pub fn sync_with_component(&mut self, component: &RuneScriptComponent) {
+    pub fn sync_with_component(&mut self, component: &LuaScriptComponent) {
         if self.save_in_progress || self.buffer != self.original_buffer {
             return;
         }
@@ -229,17 +229,17 @@ impl ScriptEditorState {
     }
 
     fn extract_source(
-        component: &RuneScriptComponent,
+        component: &LuaScriptComponent,
     ) -> (ScriptEditorSource, String, Option<StatusMessage>) {
         match component.source() {
-            RuneScriptSource::Inline { name, source } => (
+            LuaScriptSource::Inline { name, source } => (
                 ScriptEditorSource::Inline {
                     name: name.to_string(),
                 },
                 source.to_string(),
                 None,
             ),
-            RuneScriptSource::File { path } => match read_file_to_string(path) {
+            LuaScriptSource::File { path } => match read_file_to_string(path) {
                 Ok(contents) => (
                     ScriptEditorSource::File { path: path.clone() },
                     contents,

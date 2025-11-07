@@ -2,7 +2,7 @@ use crate::environment::{ColorGrading, Environment, HdrBackground};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
     Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspace,
-    SceneWorkspaceBuilder, SerializedRuneScript, SerializedRuneScriptSource,
+    SceneWorkspaceBuilder, SerializedLuaScript, SerializedLuaScriptSource,
 };
 use glam::Vec3;
 use log::warn;
@@ -361,13 +361,13 @@ impl ProjectManifest {
             .as_ref()
             .and_then(|root| std::fs::canonicalize(root).ok());
 
-        let script_references_gltf = |script: &SerializedRuneScript| -> bool {
+        let script_references_gltf = |script: &SerializedLuaScript| -> bool {
             match &script.source {
-                SerializedRuneScriptSource::Inline { source, .. } => source.contains("import_gltf"),
-                SerializedRuneScriptSource::File { path } => path
+                SerializedLuaScriptSource::Inline { source, .. } => source.contains("import_gltf"),
+                SerializedLuaScriptSource::File { path } => path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .map(|name| name == "editor_import_gltf.rn")
+                    .map(|name| name == "editor_import_gltf.lua")
                     .unwrap_or(false),
             }
         };

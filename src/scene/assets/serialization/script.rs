@@ -1,55 +1,62 @@
-use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+use crate::scripting::{LuaScriptComponent, LuaScriptSource};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SerializedRuneScriptSource {
+pub enum SerializedLuaScriptSource {
     Inline { name: String, source: String },
     File { path: PathBuf },
 }
 
-impl From<&RuneScriptSource> for SerializedRuneScriptSource {
-    fn from(source: &RuneScriptSource) -> Self {
+impl From<&LuaScriptSource> for SerializedLuaScriptSource {
+    fn from(source: &LuaScriptSource) -> Self {
         match source {
-            RuneScriptSource::Inline { name, source } => Self::Inline {
+            LuaScriptSource::Inline { name, source } => Self::Inline {
                 name: name.to_string(),
                 source: source.to_string(),
             },
-            RuneScriptSource::File { path } => Self::File { path: path.clone() },
+            LuaScriptSource::File { path } => Self::File { path: path.clone() },
         }
     }
 }
 
-impl From<SerializedRuneScriptSource> for RuneScriptSource {
-    fn from(serialized: SerializedRuneScriptSource) -> Self {
+impl From<SerializedLuaScriptSource> for LuaScriptSource {
+    fn from(serialized: SerializedLuaScriptSource) -> Self {
         match serialized {
-            SerializedRuneScriptSource::Inline { name, source } => {
-                RuneScriptSource::inline(name, source)
+            SerializedLuaScriptSource::Inline { name, source } => {
+                LuaScriptSource::inline(name, source)
             }
-            SerializedRuneScriptSource::File { path } => RuneScriptSource::file(path),
+            SerializedLuaScriptSource::File { path } => LuaScriptSource::file(path),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedRuneScript {
-    pub source: SerializedRuneScriptSource,
+pub struct SerializedLuaScript {
+    pub source: SerializedLuaScriptSource,
     pub created_called: bool,
 }
 
-impl From<&RuneScriptComponent> for SerializedRuneScript {
-    fn from(component: &RuneScriptComponent) -> Self {
+impl From<&LuaScriptComponent> for SerializedLuaScript {
+    fn from(component: &LuaScriptComponent) -> Self {
         Self {
-            source: SerializedRuneScriptSource::from(component.source()),
+            source: SerializedLuaScriptSource::from(component.source()),
             created_called: component.created_called(),
         }
     }
 }
 
-impl SerializedRuneScript {
-    pub(crate) fn into_component(self) -> RuneScriptComponent {
-        let mut component = RuneScriptComponent::new(self.source.into());
+impl SerializedLuaScript {
+    pub(crate) fn into_component(self) -> LuaScriptComponent {
+        let mut component = LuaScriptComponent::new(self.source.into());
         component.set_created_called(self.created_called);
         component
     }
 }
+
+// Legacy type aliases for backward compatibility with old save files
+#[deprecated(note = "Use SerializedLuaScriptSource instead")]
+pub type SerializedRuneScriptSource = SerializedLuaScriptSource;
+
+#[deprecated(note = "Use SerializedLuaScript instead")]
+pub type SerializedRuneScript = SerializedLuaScript;

@@ -27,7 +27,7 @@ use wgpu_cube::scene::{
     ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig, PointLight, SpotLight,
     StarfieldBehaviorConfig, Transform,
 };
-use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
+use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInspectorData};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,7 +37,7 @@ use rfd::FileDialog;
 pub enum InspectorAction {
     EditScript {
         entity: Entity,
-        component: RuneScriptComponent,
+        component: LuaScriptComponent,
     },
     EditShader {
         entity: Entity,
@@ -2009,13 +2009,13 @@ fn show_spot_light_section(
 fn show_script_section(
     ui: &mut egui::Ui,
     entity: Entity,
-    script: &RuneScriptComponent,
+    script: &LuaScriptComponent,
 ) -> Option<InspectorAction> {
     let mut action = None;
     ui.collapsing("Script", |ui| {
         let source_label = match script.source() {
-            RuneScriptSource::Inline { name, .. } => format!("Inline script: {}", name),
-            RuneScriptSource::File { path } => format!("File: {}", path.display()),
+            LuaScriptSource::Inline { name, .. } => format!("Inline script: {}", name),
+            LuaScriptSource::File { path } => format!("File: {}", path.display()),
         };
         ui.label(source_label);
 
@@ -2034,7 +2034,7 @@ fn show_script_section(
             ui.label("No script files found in scripts/");
         } else {
             let current_path = match script.source() {
-                RuneScriptSource::File { path } => Some(path.clone()),
+                LuaScriptSource::File { path } => Some(path.clone()),
                 _ => None,
             };
 

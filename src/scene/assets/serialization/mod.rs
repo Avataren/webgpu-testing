@@ -26,4 +26,8 @@ pub use material::{
 
 pub use transform::SerializedTransform;
 
-pub use script::{SerializedRuneScript, SerializedRuneScriptSource};
+pub use script::{
+    SerializedLuaScript, SerializedLuaScriptSource,
+    // Legacy aliases for backward compatibility
+    SerializedRuneScript, SerializedRuneScriptSource,
+};

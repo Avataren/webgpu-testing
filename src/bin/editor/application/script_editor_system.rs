@@ -7,7 +7,7 @@ use super::core::PendingScriptAction;
 use super::system::{EditorAppAccess, EditorCommand, EditorContext, EditorSystem};
 use crate::script_editor::{ScriptEditorEvent, ScriptEditorState};
 use wgpu_cube::scene::{Scene, SceneWorkspaceSceneMut};
-use wgpu_cube::scripting::RuneScriptComponent;
+use wgpu_cube::scripting::LuaScriptComponent;
 
 #[derive(Default)]
 pub(crate) struct ScriptEditorSystem {
@@ -16,7 +16,7 @@ pub(crate) struct ScriptEditorSystem {
 }
 
 impl ScriptEditorSystem {
-    pub(crate) fn open_script_editor(&mut self, entity: Entity, component: RuneScriptComponent) {
+    pub(crate) fn open_script_editor(&mut self, entity: Entity, component: LuaScriptComponent) {
         if let Some(editor) = self.editor.as_mut() {
             if editor.entity() == entity {
                 editor.sync_with_component(&component);
@@ -41,7 +41,7 @@ impl ScriptEditorSystem {
             return;
         }
 
-        match world.get::<&RuneScriptComponent>(editor.entity()) {
+        match world.get::<&LuaScriptComponent>(editor.entity()) {
             Ok(component) => {
                 editor.clear_target_missing();
                 editor.sync_with_component(&component);
@@ -109,9 +109,9 @@ impl ScriptEditorSystem {
 
                     {
                         let world = scene.main_world_mut();
-                        match world.get::<&mut RuneScriptComponent>(entity) {
+                        match world.get::<&mut LuaScriptComponent>(entity) {
                             Ok(mut component) => {
-                                *component = RuneScriptComponent::new_inline(name, contents);
+                                *component = LuaScriptComponent::new_inline(name, contents);
                                 updated = true;
                             }
                             Err(err) => {

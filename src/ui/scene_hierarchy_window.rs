@@ -16,7 +16,7 @@ use crate::scene::{
     ScenePrefabEntityMetadata, SceneWorkspace, SpotLight, Transform, TransformComponent,
 };
 #[cfg(feature = "egui")]
-use crate::scripting::RuneScriptComponent;
+use crate::scripting::LuaScriptComponent;
 #[cfg(feature = "egui")]
 use crate::ui::egui;
 #[cfg(feature = "egui")]
@@ -188,7 +188,7 @@ pub struct SceneEntityComponentsSummary {
     pub transform: Option<Transform>,
     pub mesh: Option<MeshComponent>,
     pub material: Option<InspectorMaterial>,
-    pub script: Option<RuneScriptComponent>,
+    pub script: Option<LuaScriptComponent>,
     pub point_light: Option<PointLight>,
     pub directional_light: Option<DirectionalLight>,
     pub spot_light: Option<SpotLight>,
@@ -258,7 +258,7 @@ impl SceneHierarchySnapshot {
                         })
                 });
             let script = entity_ref
-                .get::<&RuneScriptComponent>()
+                .get::<&LuaScriptComponent>()
                 .map(|component| (*component).clone());
             let point_light = entity_ref.get::<&PointLight>().map(|component| *component);
             let directional_light = entity_ref

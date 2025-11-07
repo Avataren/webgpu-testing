@@ -1,23 +1,23 @@
 # Engine UI Plugin Manifest
 # This file declares UI plugins that should be loaded by the editor.
 #
-# Each plugin is a Rune script with @tool annotation that provides
+# Each plugin is a Lua script with @editor annotation that provides
 # editor functionality through the UI scripting system.
 
 # Minimal test plugin for debugging
 [[plugin]]
 name = "Minimal Test"
-script = "test_minimal_ui.rn"
+script = "test_minimal_ui.lua"
 description = "Minimal UI test script for debugging"
 category = "Debug"
 enabled = true
 default_visible = true
 
-# Script Editor - Edit RuneScript files directly in the editor
+# Script Editor - Edit script files directly in the editor
 [[plugin]]
 name = "Script Editor"
-script = "script_editor_plugin.rn"
-description = "Full-featured script editor for editing RuneScript files"
+script = "script_editor_plugin.lua"
+description = "Basic script editor for editing Lua script files"
 category = "Development"
 enabled = true
 default_visible = true
@@ -25,7 +25,7 @@ default_visible = true
 # Simple Text Editor - General purpose text editor
 [[plugin]]
 name = "Text Editor"
-script = "simple_text_editor.rn"
+script = "simple_text_editor.lua"
 description = "Simple text editor with file I/O support"
 category = "Development"
 enabled = true

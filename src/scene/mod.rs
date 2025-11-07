@@ -39,8 +39,10 @@ pub use assets::{
     SceneAssetEntityBuilder, SceneAssetResources, SceneAssetResourcesBuilder, ScenePrefabOverrides,
     ScenePrefabRef, SceneTreeAsset, SceneTreeAssetNode, SceneTreeAssetNodeBuilder,
     SerializedMaterial, SerializedMaterialKind, SerializedParticleBehavior,
-    SerializedParticleEmitter, SerializedParticleSystem, SerializedRuneScript,
-    SerializedRuneScriptSource, SerializedTransform,
+    SerializedParticleEmitter, SerializedParticleSystem,
+    SerializedLuaScript, SerializedLuaScriptSource,
+    SerializedRuneScript, SerializedRuneScriptSource, // Legacy aliases
+    SerializedTransform,
 };
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};

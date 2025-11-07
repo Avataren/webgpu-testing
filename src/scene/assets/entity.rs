@@ -10,14 +10,14 @@ use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
     path_serde, SerializedBillboard, SerializedDirectionalLight, SerializedMaterial,
     SerializedMeshBounds, SerializedParticleBehavior, SerializedParticleEmitter,
-    SerializedParticleSystem, SerializedPointLight, SerializedRuneScript, SerializedSpotLight,
+    SerializedParticleSystem, SerializedPointLight, SerializedLuaScript, SerializedSpotLight,
     SerializedTransform,
 };
 use crate::scene::transform::Transform;
 use crate::asset::{Assets, MaterialAsset, MaterialTextureSlot};
 use crate::renderer::Material;
 use crate::project::relativize_path_to_project;
-use crate::scripting::RuneScriptComponent;
+use crate::scripting::LuaScriptComponent;
 use hecs::{Entity, World};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ pub struct SceneAssetEntity {
     #[serde(default)]
     pub gltf_primitive: Option<usize>,
     #[serde(default)]
-    pub script: Option<SerializedRuneScript>,
+    pub script: Option<SerializedLuaScript>,
     #[serde(default)]
     pub directional_light: Option<SerializedDirectionalLight>,
     #[serde(default)]
@@ -126,7 +126,7 @@ struct SceneAssetEntityData {
     #[serde(default)]
     gltf_primitive: Option<usize>,
     #[serde(default)]
-    script: Option<SerializedRuneScript>,
+    script: Option<SerializedLuaScript>,
     #[serde(default)]
     directional_light: Option<SerializedDirectionalLight>,
     #[serde(default)]
@@ -486,9 +486,9 @@ impl SceneAssetEntity {
             .ok()
             .map(|primitive| primitive.0);
         let script = world
-            .get::<&RuneScriptComponent>(entity)
+            .get::<&LuaScriptComponent>(entity)
             .ok()
-            .map(|component| SerializedRuneScript::from(&*component));
+            .map(|component| SerializedLuaScript::from(&*component));
 
         let directional_light = world
             .get::<&DirectionalLight>(entity)
