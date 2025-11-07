@@ -157,6 +157,91 @@ log_info(string.format("Position: %f, %f, %f", x, y, z))
 - `get_clipboard()` - Get clipboard text (always returns empty string for security)
 - `set_clipboard(text)` - Copy text to clipboard
 
+### UI API (Editor Only)
+
+The UI API provides egui widgets for creating editor interfaces. UI is only available in `on_ui(self_entity, ui)` hook.
+
+**Note**: All UI widgets are methods called on the `ui` parameter passed to `on_ui()`.
+
+#### Basic Widgets
+
+- `ui:label(text)` - Display static text label
+- `ui:heading(text)` - Display heading text (larger/bold)
+- `ui:separator()` - Display horizontal separator line
+
+#### Interactive Widgets
+
+- `ui:button(text)` → `boolean` - Display button, returns true if clicked
+- `ui:checkbox(id, current_value, label)` → `boolean` - Display checkbox, returns new value
+- `ui:text_edit(id, current_value)` → `string` - Single-line text input, returns new value
+- `ui:text_edit_multiline(id, current_value, width, height)` → `string` - Multi-line text editor, returns new value
+- `ui:slider(id, current_value, min, max)` → `number` - Horizontal slider, returns new value
+- `ui:drag_value(id, current_value)` → `number` - Draggable number widget, returns new value
+- `ui:color_edit(id, r, g, b)` → `table{r, g, b}` - Color picker, returns table with RGB values (0.0-1.0)
+
+#### Widget ID Requirements
+
+Most interactive widgets require a unique `id` parameter. This ID is used to:
+- Track widget state between frames
+- Store responses from user interactions
+- Prevent conflicts between widgets
+
+**Best Practice**: Use descriptive IDs that reflect the widget's purpose.
+
+```lua
+-- Good IDs
+local new_value = ui:slider("player_health", health, 0, 100)
+local new_text = ui:text_edit("player_name", name)
+
+-- Avoid generic IDs that might conflict
+local value1 = ui:slider("slider1", val1, 0, 100)  -- Could conflict!
+local value2 = ui:slider("slider2", val2, 0, 100)
+```
+
+#### UI Example
+
+```lua
+-- @editor
+function on_created(self_entity)
+    set_state("counter", 0)
+    set_state("text", "Hello!")
+    set_state("enabled", true)
+    set_state("slider_val", 0.5)
+end
+
+function on_ui(self_entity, ui)
+    ui:heading("My UI Panel")
+    ui:label("Control panel for entity")
+    ui:separator()
+
+    -- Button
+    local count = get_state("counter", 0)
+    if ui:button("Increment") then
+        count = count + 1
+        set_state("counter", count)
+    end
+    ui:label(string.format("Count: %d", count))
+
+    -- Checkbox
+    local enabled = get_state("enabled", true)
+    enabled = ui:checkbox("enable_id", enabled, "Enable feature")
+    set_state("enabled", enabled)
+
+    -- Text edit
+    local text = get_state("text", "")
+    text = ui:text_edit("text_id", text)
+    set_state("text", text)
+
+    -- Slider
+    local value = get_state("slider_val", 0.5)
+    value = ui:slider("slider_id", value, 0.0, 1.0)
+    set_state("slider_val", value)
+    ui:label(string.format("Value: %.2f", value))
+end
+```
+
+See `ui_example_simple.lua`, `ui_example_comprehensive.lua`, and `ui_transform_controller.lua` for more examples.
+
 ## Example Scripts
 
 ### Basic Cube Rotation
@@ -212,9 +297,7 @@ Scripts can declare their mode using annotations:
 
 1. **get_component()** is currently stubbed and returns `nil`. This will be implemented when rune::Value → serde_json::Value conversion is added to the ComponentRegistry.
 
-2. **UI API** is not yet implemented. The `on_ui()` hook exists but UI rendering functions are pending.
-
-3. **Script Access API** (metaprogramming) is not yet implemented.
+2. **Script Access API** (metaprogramming) is not yet implemented.
 
 ## Best Practices
 
@@ -235,6 +318,31 @@ To migrate existing Rune scripts to Lua:
 5. Adjust array indices from 0-based to 1-based
 6. Replace string interpolation with `string.format()`
 7. Update variable declarations from `let` to `local`
+8. Update UI widget calls: change `.method()` to `:method()` syntax
+
+### UI Migration
+
+Rune and Lua UI APIs are functionally identical but use different calling conventions:
+
+```lua
+-- Rune
+pub fn on_ui(self_entity, ui) {
+    ui.label("Hello");
+    if ui.button("Click") {
+        log_info("Clicked!");
+    }
+    let value = ui.slider("slider_id", 0.5, 0.0, 1.0);
+}
+
+-- Lua (use colon syntax for method calls)
+function on_ui(self_entity, ui)
+    ui:label("Hello")
+    if ui:button("Click") then
+        log_info("Clicked!")
+    end
+    local value = ui:slider("slider_id", 0.5, 0.0, 1.0)
+end
+```
 
 Example migration:
 
