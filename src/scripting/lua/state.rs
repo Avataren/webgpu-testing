@@ -89,13 +89,14 @@ impl ScriptingState {
         // Ensure all entities with LuaScriptComponent have instances
         self.ensure_instances(world)?;
 
-        // Restore any pending state
+        // Call on_created for new scripts
+        self.call_on_created(world, editor_mode)?;
+
+        // Restore any pending state AFTER on_created has run
+        // This ensures default values from on_created() are overwritten by restored state
         if let Some(state_map) = self.pending_state_restoration.take() {
             self.apply_state_restoration(state_map);
         }
-
-        // Call on_created for new scripts
-        self.call_on_created(world, editor_mode)?;
 
         // Call update for all scripts (if dt > 0 or editor_mode)
         if dt > 0.0 || editor_mode {
