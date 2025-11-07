@@ -5,50 +5,54 @@
 pub fn on_created(self_entity) {
     log_info("Simple Text Editor plugin created");
 
-    // Initialize state
-    set_state("text_content", "");
-    set_state("file_path", "examples/scripts/notes.txt");
-    set_state("status_message", "Ready");
+    // Initialize state using set_string to match get_string usage
+    set_string("text_content", "");
+    set_string("file_path", "examples/scripts/notes.txt");
+    set_string("status_message", "Ready");
 }
 
 pub fn on_ui(ui) {
     ui.heading("Simple Text Editor");
 
-    let file_path = get_state("file_path", "examples/scripts/notes.txt");
-    let text_content = get_state("text_content", "");
-    let status = get_state("status_message", "Ready");
+    // Get current state - all strings now
+    let file_path = get_string("file_path", "examples/scripts/notes.txt");
+    let status = get_string("status_message", "Ready");
 
     // File path input
     ui.label("File path:");
     let new_path = ui.text_edit("file_path", file_path);
-    // Always update state - the Value was moved by text_edit call
-    set_state("file_path", new_path);
+    set_string("file_path", new_path);
 
     // Buttons
     ui.separator();
 
     if ui.button("Load File") {
-        let content = read_file(new_path);
+        let path = get_string("file_path", "");
+        let content = read_file(path);
         if content.starts_with("ERROR") {
-            set_state("status_message", content);
+            set_string("status_message", content);
         } else {
-            set_state("text_content", content);
-            set_state("status_message", `Loaded from ${new_path}`);
+            set_string("text_content", content);
+            let path_for_msg = get_string("file_path", "");
+            set_string("status_message", `Loaded from ${path_for_msg}`);
         }
     }
 
     if ui.button("Save File") {
-        let error = write_file(new_path, text_content);
+        let path = get_string("file_path", "");
+        let content = get_string("text_content", "");
+        let error = write_file(path, content);
         if error == "" {
-            set_state("status_message", `Saved to ${new_path}`);
+            let path_for_msg = get_string("file_path", "");
+            set_string("status_message", `Saved to ${path_for_msg}`);
         } else {
-            set_state("status_message", error);
+            set_string("status_message", error);
         }
     }
 
     if ui.button("New File") {
-        set_state("text_content", "");
-        set_state("status_message", "New file");
+        set_string("text_content", "");
+        set_string("status_message", "New file");
     }
 
     // Status message
@@ -58,7 +62,7 @@ pub fn on_ui(ui) {
 
     // Multiline text editor
     ui.label("Content:");
-    let new_content = ui.text_edit_multiline("content", text_content, None, Some(400.0));
-    // Always update state - the Value was moved by text_edit_multiline call
-    set_state("text_content", new_content);
+    let content = get_string("text_content", "");
+    let new_content = ui.text_edit_multiline("content", content, None, Some(400.0));
+    set_string("text_content", new_content);
 }

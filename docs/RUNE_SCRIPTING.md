@@ -254,15 +254,15 @@ ui.separator();
 #### Input Widgets
 
 ```rune
-// Text input (single line)
-let text = get_state("input", "");
+// Text input (single line) - works with strings
+let text = get_string("input", "");
 let new_text = ui.text_edit("input_id", text);
-set_state("input", new_text);  // Always update
+set_string("input", new_text);
 
-// Multiline text editor
-let content = get_state("content", "");
+// Multiline text editor - works with strings
+let content = get_string("content", "");
 let new_content = ui.text_edit_multiline("editor", content, None, Some(400.0));
-set_state("content", new_content);  // Always update
+set_string("content", new_content);
 
 // Button
 if ui.button("Click Me") {
@@ -270,22 +270,22 @@ if ui.button("Click Me") {
 }
 
 // Checkbox
-let enabled = get_state("enabled", false);
+let enabled = get_bool("enabled", false);
 let new_enabled = ui.checkbox("check", enabled, "Enable Feature");
-set_state("enabled", new_enabled);  // Always update
+set_bool("enabled", new_enabled);
 
-// Slider (f64 is Copy, so comparison is safe)
-let value = get_state("slider", 50.0);
+// Slider
+let value = get_f64("slider");
 let new_value = ui.slider("slider_id", value, 0.0, 100.0);
 if new_value != value {
-    set_state("slider", new_value);
+    set_f64("slider", new_value);
 }
 
-// Drag value (f64 is Copy, so comparison is safe)
-let amount = get_state("amount", 1.0);
+// Drag value
+let amount = get_f64("amount");
 let new_amount = ui.drag_value("drag", amount);
 if new_amount != amount {
-    set_state("amount", new_amount);
+    set_f64("amount", new_amount);
 }
 
 // Color picker
@@ -302,50 +302,54 @@ let (new_r, new_g, new_b) = ui.color_edit("color", r, g, b);
 // Edit and save text files
 
 pub fn on_created(self_entity) {
-    set_state("file_path", "notes.txt");
-    set_state("content", "");
-    set_state("status", "Ready");
+    set_string("file_path", "notes.txt");
+    set_string("content", "");
+    set_string("status", "Ready");
 }
 
 pub fn on_ui(ui) {
     ui.heading("Text Editor");
 
     // File path input
-    let path = get_state("file_path", "notes.txt");
+    let path = get_string("file_path", "notes.txt");
     let new_path = ui.text_edit("path", path);
-    set_state("file_path", new_path);
+    set_string("file_path", new_path);
 
     ui.separator();
 
     // Load/Save buttons
     if ui.button("Load") {
-        let content = read_file(new_path);
-        set_state("content", content);
-        set_state("status", `Loaded ${new_path}`);
+        let path = get_string("file_path", "");
+        let content = read_file(path);
+        set_string("content", content);
+        let path_msg = get_string("file_path", "");
+        set_string("status", `Loaded ${path_msg}`);
     }
 
     if ui.button("Save") {
-        let content = get_state("content", "");
-        let error = write_file(new_path, content);
+        let path = get_string("file_path", "");
+        let content = get_string("content", "");
+        let error = write_file(path, content);
         if error == "" {
-            set_state("status", `Saved ${new_path}`);
+            let path_msg = get_string("file_path", "");
+            set_string("status", `Saved ${path_msg}`);
         } else {
-            set_state("status", error);
+            set_string("status", error);
         }
     }
 
     ui.separator();
 
     // Status
-    let status = get_state("status", "Ready");
+    let status = get_string("status", "Ready");
     ui.label(status);
 
     ui.separator();
 
     // Content editor
-    let content = get_state("content", "");
+    let content = get_string("content", "");
     let new_content = ui.text_edit_multiline("content", content, None, Some(400.0));
-    set_state("content", new_content);
+    set_string("content", new_content);
 }
 ```
 
@@ -639,31 +643,33 @@ struct Container {
 
 ### Value Handling
 
-#### Value Ownership in UI Functions
+#### Use Type-Specific State Functions
 
-**Important**: When you pass a Value to a UI function, Rune's ownership system marks it as moved/consumed. You cannot use the original value after passing it to a function.
+**Best Practice**: Use type-specific state functions (`get_string`, `get_f64`, `get_bool`) instead of generic `get_state` for better performance and simpler code.
 
 ```rune
-// ✅ Correct - always update state without comparing
-let text = get_state("text", "");
+// ✅ Correct - use type-specific functions
+let text = get_string("text", "");
 let new_text = ui.text_edit("id", text);
-set_state("text", new_text);  // Always update
+set_string("text", new_text);
 
-// ❌ Wrong - cannot use 'text' after passing to ui.text_edit
-let text = get_state("text", "");
-let new_text = ui.text_edit("id", text);
-if new_text != text {  // ERROR: 'text' was moved!
-    set_state("text", new_text);
-}
+// ✅ Correct - numeric state
+let speed = get_f64("speed");
+set_f64("speed", speed * 1.1);
 
-// ✅ Alternative - fetch from state again if you need to compare
-let text = get_state("text", "");
-let new_text = ui.text_edit("id", text);
-let current = get_state("text", "");
-if new_text != current {
-    set_state("text", new_text);
-}
+// ✅ Correct - boolean state
+let enabled = get_bool("enabled", false);
+set_bool("enabled", !enabled);
+
+// ⚠️ Avoid - generic Value can cause ownership issues
+let text = get_state("text", "");  // Returns Value type
+// Complex Value ownership semantics...
 ```
+
+**Important**: Always use matching get/set functions:
+- `set_string()` with `get_string()` for strings
+- `set_f64()` with `get_f64()` for numbers
+- `set_bool()` with `get_bool()` for booleans
 
 ### File I/O
 
@@ -829,9 +835,9 @@ pub fn on_created(self_entity) {
 pub fn on_ui(ui) {
     ui.heading("Entity Spawner");
 
-    let name = get_state("entity_name", "SpawnedEntity");
+    let name = get_string("entity_name", "SpawnedEntity");
     let new_name = ui.text_edit("name", name);
-    set_state("entity_name", new_name);
+    set_string("entity_name", new_name);
 
     ui.separator();
 

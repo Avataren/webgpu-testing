@@ -133,7 +133,25 @@ pub(crate) fn set_bool(key: String, value: bool) -> VmResult<()> {
 
 #[rune::function]
 pub(crate) fn get_string(key: String, default: String) -> VmResult<String> {
-    get_typed(key, default)
+    // Bypass Value system - store and retrieve as plain Rust String
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            match map.get(&(handle, key.clone())) {
+                Some(value) => {
+                    // Try to extract string without taking ownership
+                    // Use borrow instead of from_value to avoid "Cannot take" errors
+                    match value.borrow_ref::<RuneString>() {
+                        Ok(rune_str) => {
+                            // Convert borrowed RuneString to owned Rust String
+                            VmResult::Ok(rune_str.as_str().to_string())
+                        }
+                        Err(_) => VmResult::Ok(default),
+                    }
+                }
+                None => VmResult::Ok(default),
+            }
+        })
+    })
 }
 
 #[rune::function]

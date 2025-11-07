@@ -42,17 +42,8 @@ impl UiContext {
 
     /// Display a text label.
     #[rune::function(instance)]
-    pub fn label(&self, text: rune::Value) {
-        use rune::FromValue;
-        use rune::runtime::try_result;
-        // Convert Value to String inside the function to avoid snapshot issues
-        // Clone the Value before conversion to avoid "Cannot take" errors
-        // If conversion fails, use empty string as fallback
-        let text_str = match try_result(String::from_value(text.clone())) {
-            rune::runtime::VmResult::Ok(s) => s,
-            rune::runtime::VmResult::Err(_) => String::new(),
-        };
-        self.commands.borrow_mut().push(UiCommand::Label { text: text_str });
+    pub fn label(&self, text: String) {
+        self.commands.borrow_mut().push(UiCommand::Label { text });
     }
 
     /// Display a button and return whether it was clicked.
@@ -82,24 +73,12 @@ impl UiContext {
 
     /// Display a text input field and return the new value.
     #[rune::function(instance)]
-    pub fn text_edit(&self, id: String, current_value: rune::Value) -> rune::Value {
-        use rune::FromValue;
-        use rune::runtime::try_result;
-        use rune::alloc::String as RuneString;
-
-        // Convert Value to String inside the function to avoid snapshot issues
-        // Clone the Value before conversion to avoid "Cannot take" errors
-        // If conversion fails, use empty string as fallback
-        let current_str = match try_result(String::from_value(current_value.clone())) {
-            rune::runtime::VmResult::Ok(s) => s,
-            rune::runtime::VmResult::Err(_) => String::new(),
-        };
-
+    pub fn text_edit(&self, id: String, current_value: String) -> String {
         // Check if we have a response from the previous frame
-        // If so, use that value in the command to avoid lag
+        // If so, use that value to avoid lag/jumping
         let command_value = self.get_response(&id)
             .and_then(|r| r.text_value.clone())
-            .unwrap_or_else(|| current_str.clone());
+            .unwrap_or_else(|| current_value.clone());
 
         self.commands.borrow_mut().push(UiCommand::TextEdit {
             id: id.clone(),
@@ -107,47 +86,18 @@ impl UiContext {
         });
 
         // Return the command value we just used
-        // Convert String to RuneString to Value
-        // Always create a fresh Value, never reuse current_value
-        // This avoids "Cannot read" errors from moved/taken Values
-        match RuneString::try_from(command_value.as_str()) {
-            Ok(rune_str) => match rune::Value::try_from(rune_str) {
-                Ok(value) => value,
-                Err(_) => {
-                    // If conversion fails, return empty string
-                    rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
-                        .unwrap_or_else(|_| rune::Value::from(()))
-                }
-            },
-            Err(_) => {
-                // If RuneString allocation fails, return empty string
-                rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
-                    .unwrap_or_else(|_| rune::Value::from(()))
-            }
-        }
+        command_value
     }
 
     /// Display a multiline text editor and return the new value.
     /// If width and height are not provided, the editor will fill available space.
     #[rune::function(instance)]
-    pub fn text_edit_multiline(&self, id: String, current_value: rune::Value, width: Option<f64>, height: Option<f64>) -> rune::Value {
-        use rune::FromValue;
-        use rune::runtime::try_result;
-        use rune::alloc::String as RuneString;
-
-        // Convert Value to String inside the function to avoid snapshot issues
-        // Clone the Value before conversion to avoid "Cannot take" errors
-        // If conversion fails, use empty string as fallback
-        let current_str = match try_result(String::from_value(current_value.clone())) {
-            rune::runtime::VmResult::Ok(s) => s,
-            rune::runtime::VmResult::Err(_) => String::new(),
-        };
-
+    pub fn text_edit_multiline(&self, id: String, current_value: String, width: Option<f64>, height: Option<f64>) -> String {
         // Check if we have a response from the previous frame
-        // If so, use that value in the command to avoid lag
+        // If so, use that value to avoid lag/jumping
         let command_value = self.get_response(&id)
             .and_then(|r| r.text_value.clone())
-            .unwrap_or_else(|| current_str.clone());
+            .unwrap_or_else(|| current_value.clone());
 
         self.commands.borrow_mut().push(UiCommand::TextEditMultiline {
             id: id.clone(),
@@ -157,24 +107,7 @@ impl UiContext {
         });
 
         // Return the command value we just used
-        // Convert String to RuneString to Value
-        // Always create a fresh Value, never reuse current_value
-        // This avoids "Cannot read" errors from moved/taken Values
-        match RuneString::try_from(command_value.as_str()) {
-            Ok(rune_str) => match rune::Value::try_from(rune_str) {
-                Ok(value) => value,
-                Err(_) => {
-                    // If conversion fails, return empty string
-                    rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
-                        .unwrap_or_else(|_| rune::Value::from(()))
-                }
-            },
-            Err(_) => {
-                // If RuneString allocation fails, return empty string
-                rune::Value::try_from(RuneString::try_from("").unwrap_or_default())
-                    .unwrap_or_else(|_| rune::Value::from(()))
-            }
-        }
+        command_value
     }
 
     /// Display a slider and return the new value.
