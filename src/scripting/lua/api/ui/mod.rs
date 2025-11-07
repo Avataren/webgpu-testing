@@ -12,7 +12,7 @@ pub use context::UiContext;
 use mlua::{Lua, UserData, UserDataMethods};
 
 /// Register UI API with Lua.
-pub fn register_ui_api(lua: &Lua) -> mlua::Result<()> {
+pub fn register_ui_api(_lua: &Lua) -> mlua::Result<()> {
     // Register UiContext as a userdata type that Lua scripts can interact with
     // The actual context will be passed to on_ui() callback
 

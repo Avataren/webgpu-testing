@@ -41,7 +41,7 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
     // For Phase 2, we'll stub this out - it will be implemented in a future update
     globals.set(
         "get_component",
-        lua.create_function(|lua, (_entity_bits, component_name): (i64, String)| {
+        lua.create_function(|_lua, (_entity_bits, component_name): (i64, String)| {
             warn!(target: "script", "get_component not yet fully implemented for Lua (component: {})", component_name);
             // Return nil for now - this will be implemented when we add value conversion
             Ok(mlua::Value::Nil)

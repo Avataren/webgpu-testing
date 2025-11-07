@@ -85,11 +85,11 @@ impl LuaScriptComponent {
 ///
 /// Each instance has its own environment table that inherits from _G,
 /// preventing function name collisions between different scripts.
-pub struct LuaScriptInstance {
-    pub script: Arc<LuaScript>,
-    pub source: LuaScriptSource,
-    pub handles: Rc<RefCell<EntityHandleRegistry>>,
-    pub state_store: Rc<RefCell<ScriptStateMap>>,
+pub(crate) struct LuaScriptInstance {
+    pub(crate) script: Arc<LuaScript>,
+    pub(crate) source: LuaScriptSource,
+    pub(crate) handles: Rc<RefCell<EntityHandleRegistry>>,
+    pub(crate) state_store: Rc<RefCell<ScriptStateMap>>,
     /// Registry key for this instance's environment table
     env_registry_key: mlua::RegistryKey,
 }
@@ -104,7 +104,7 @@ impl fmt::Debug for LuaScriptInstance {
 }
 
 impl LuaScriptInstance {
-    pub fn new(
+    pub(crate) fn new(
         lua: &Lua,
         script: Arc<LuaScript>,
         source: LuaScriptSource,
@@ -131,11 +131,11 @@ impl LuaScriptInstance {
         })
     }
 
-    pub fn command_buffer(&self) -> Rc<RefCell<ScriptCommands>> {
+    pub(crate) fn command_buffer(&self) -> Rc<RefCell<ScriptCommands>> {
         Rc::new(RefCell::new(ScriptCommands::new(self.handles.clone())))
     }
 
-    pub fn call_on_created(
+    pub(crate) fn call_on_created(
         &mut self,
         lua: &Lua,
         entity_bits: i64,
@@ -156,7 +156,7 @@ impl LuaScriptInstance {
         self.call_function(lua, "on_created", entity_bits)
     }
 
-    pub fn call_update(
+    pub(crate) fn call_update(
         &mut self,
         lua: &Lua,
         entity_bits: i64,
@@ -178,7 +178,7 @@ impl LuaScriptInstance {
         self.call_function_with_args(lua, "update", (entity_bits, dt))
     }
 
-    pub fn call_on_ui(
+    pub(crate) fn call_on_ui(
         &mut self,
         lua: &Lua,
         entity_bits: i64,

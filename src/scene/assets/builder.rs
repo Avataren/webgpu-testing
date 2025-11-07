@@ -7,7 +7,7 @@ use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
     SerializedAnimationClip, SerializedBillboard, SerializedDirectionalLight, SerializedMaterial,
     SerializedMeshBounds, SerializedParticleBehavior, SerializedParticleEmitter,
-    SerializedParticleSystem, SerializedPointLight, SerializedRuneScript, SerializedSpotLight,
+    SerializedParticleSystem, SerializedPointLight, SerializedLuaScript, SerializedSpotLight,
     SerializedTransform,
 };
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ pub struct SceneAssetEntityBuilder {
     gltf_material: Option<usize>,
     gltf_source: Option<PathBuf>,
     gltf_primitive: Option<usize>,
-    script: Option<SerializedRuneScript>,
+    script: Option<SerializedLuaScript>,
     directional_light: Option<SerializedDirectionalLight>,
     point_light: Option<SerializedPointLight>,
     spot_light: Option<SerializedSpotLight>,
@@ -144,7 +144,7 @@ impl SceneAssetEntityBuilder {
         self
     }
 
-    pub fn with_script(mut self, script: SerializedRuneScript) -> Self {
+    pub fn with_script(mut self, script: SerializedLuaScript) -> Self {
         self.script = Some(script);
         self
     }

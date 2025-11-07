@@ -110,7 +110,3 @@ fn parse_script_mode_annotation(source: &str) -> ScriptMode {
     ScriptMode::RuntimeOnly
 }
 
-/// Legacy function for backwards compatibility - returns true if script should run in editor.
-fn parse_editor_tool_annotation(source: &str) -> bool {
-    matches!(parse_script_mode_annotation(source), ScriptMode::EditorOnly | ScriptMode::Both)
-}

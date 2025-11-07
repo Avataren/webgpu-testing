@@ -598,7 +598,7 @@ impl EditorApplication {
                     });
 
                 if !responses.is_empty() {
-                    all_responses.insert(*entity, responses);
+                    scene_responses.insert(*entity, responses);
                 }
             }
         } else {
@@ -640,7 +640,7 @@ impl EditorApplication {
 
     /// Render reload notifications as toasts in the bottom-right corner
     fn render_reload_notifications(&mut self, ctx: &egui::Context) {
-        use core::{NotificationSeverity, ReloadNotification};
+        use core::NotificationSeverity;
 
         // Remove expired notifications
         self.shared

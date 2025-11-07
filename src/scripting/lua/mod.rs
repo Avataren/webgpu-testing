@@ -26,7 +26,7 @@ pub mod state;
 pub mod types;
 
 // Public exports
-pub use component::{LuaScriptComponent, LuaScriptInstance, FunctionCallOutcome};
+pub use component::{LuaScriptComponent, FunctionCallOutcome};
 pub use error::LuaScriptingError;
 pub use plugin::LuaScriptingPlugin;
 pub use runtime::LuaScriptingRuntime;

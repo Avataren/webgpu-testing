@@ -18,8 +18,6 @@ pub use serialization::{
     SerializedParticleSystem,
     SerializedLuaScript,
     SerializedLuaScriptSource,
-    SerializedRuneScript,     // Legacy alias
-    SerializedRuneScriptSource, // Legacy alias
     SerializedTransform,
 };
 

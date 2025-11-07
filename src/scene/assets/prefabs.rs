@@ -4,7 +4,7 @@ use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
     SerializedBillboard, SerializedDirectionalLight, SerializedMaterial, SerializedMeshBounds,
     SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
-    SerializedPointLight, SerializedRuneScript, SerializedSpotLight, SerializedTransform,
+    SerializedPointLight, SerializedLuaScript, SerializedSpotLight, SerializedTransform,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ pub struct ScenePrefabOverrides {
     #[serde(skip)]
     pub material_data: Option<SerializedMaterial>,
     #[serde(default)]
-    pub script: Option<SerializedRuneScript>,
+    pub script: Option<SerializedLuaScript>,
     #[serde(default)]
     pub directional_light: Option<SerializedDirectionalLight>,
     #[serde(default)]
@@ -76,7 +76,7 @@ struct ScenePrefabOverridesData {
     #[serde(default)]
     material: Option<SceneMaterialField>,
     #[serde(default)]
-    script: Option<SerializedRuneScript>,
+    script: Option<SerializedLuaScript>,
     #[serde(default)]
     directional_light: Option<SerializedDirectionalLight>,
     #[serde(default)]

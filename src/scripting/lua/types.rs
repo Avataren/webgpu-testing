@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hecs::Entity;
-use mlua::{Chunk, Function, Lua, Value as LuaValue};
+use mlua::Lua;
 use serde::{Deserialize, Serialize};
 
 use super::error::LuaScriptingError;
@@ -113,6 +113,7 @@ pub(crate) fn parse_script_mode_annotation(source: &str) -> ScriptMode {
 #[derive(Clone)]
 pub(crate) struct LuaScript {
     pub name: Arc<str>,
+    #[allow(dead_code)]
     pub mode: ScriptMode,
     /// Compiled Lua chunk (stored as bytecode for reuse)
     pub chunk: Arc<Vec<u8>>,
@@ -128,6 +129,7 @@ impl LuaScript {
     }
 
     /// Load this script into a Lua context and return its global environment.
+    #[allow(dead_code)]
     pub fn load(&self, lua: &Lua) -> Result<mlua::Table, mlua::Error> {
         // Load the chunk from bytecode
         lua.load(&**self.chunk).exec()?;
@@ -156,6 +158,7 @@ pub struct ScriptEvent {
 #[derive(Debug, Clone)]
 pub(crate) struct EventSubscription {
     pub entity_id: Entity,
+    #[allow(dead_code)]
     pub callback_name: String,
 }
 

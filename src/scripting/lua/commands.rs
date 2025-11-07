@@ -278,11 +278,12 @@ impl ScriptCommands {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    pub fn apply(&mut self, world: &mut World, registry: &ComponentRegistry) -> Result<ScriptApplyResult, LuaScriptingError> {
+    pub fn apply(&mut self, world: &mut World, _registry: &ComponentRegistry) -> Result<ScriptApplyResult, LuaScriptingError> {
         use log::error;
 
         let mut result = ScriptApplyResult::default();
@@ -318,7 +319,7 @@ impl ScriptCommands {
             }
 
             // Add pending components to the entity
-            for (component_name, value) in pending.components {
+            for (component_name, _value) in pending.components {
                 // TODO: Convert serde_json::Value to the appropriate component type
                 // This will be implemented when we add the API functions
                 warn!(target: "script", "Component '{}' pending conversion from JSON", component_name);
@@ -430,7 +431,7 @@ impl ScriptCommands {
                 ExistingCommand::SetComponent {
                     entity_bits,
                     component_name,
-                    value,
+                    value: _,
                 } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
@@ -446,7 +447,7 @@ impl ScriptCommands {
                 ExistingCommand::AddComponent {
                     entity_bits,
                     component_name,
-                    value,
+                    value: _,
                 } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;

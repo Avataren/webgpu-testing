@@ -153,6 +153,13 @@ impl Scene {
         self.runtime.process_script_ui(world, editor_mode)
     }
 
+    /// Run scripts in a custom world (e.g., UI plugins).
+    ///
+    /// This executes update logic for scripts that are not part of the main scene.
+    pub fn run_scripts_for_world(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        self.runtime.run_scripts(world, dt, editor_mode);
+    }
+
     pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
         self.runtime.set_ui_responses(responses);
     }

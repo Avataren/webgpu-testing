@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use hecs::{Entity, World};
-use log::{error, warn};
+use log::error;
 
 use crate::scripting::component_registry::ComponentRegistry;
 

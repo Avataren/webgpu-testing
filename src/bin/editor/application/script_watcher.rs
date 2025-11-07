@@ -3,7 +3,7 @@ use notify::{recommended_watcher, EventKind, RecommendedWatcher, RecursiveMode, 
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashSet;
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 #[cfg(not(target_arch = "wasm32"))]

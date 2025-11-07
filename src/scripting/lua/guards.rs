@@ -129,9 +129,11 @@ impl Drop for RegistryGuard {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct InputStateGuard;
 
 impl InputStateGuard {
+    #[allow(dead_code)]
     pub fn enter(input_state: &InputState) -> Self {
         let ptr = input_state as *const InputState;
         ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = Some(ptr));

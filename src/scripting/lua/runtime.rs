@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mlua::{Lua, Chunk, LuaOptions, StdLib};
+use mlua::{Lua, LuaOptions, StdLib};
 
 use super::api;
 use super::error::LuaScriptingError;
@@ -57,7 +57,7 @@ impl LuaScriptingRuntime {
     ///
     /// This parses the script mode annotation and compiles the Lua code to bytecode
     /// for faster reloading and instantiation.
-    pub fn compile(
+    pub(crate) fn compile(
         &self,
         source: &LuaScriptSource,
     ) -> Result<(Arc<LuaScript>, ScriptMode), LuaScriptingError> {
@@ -88,7 +88,8 @@ impl LuaScriptingRuntime {
     ///
     /// This creates a new environment table for the script, inheriting from _G,
     /// and executes the script's bytecode in that environment.
-    pub fn load_script(&self, script: &LuaScript) -> Result<(), LuaScriptingError> {
+    #[allow(dead_code)]
+    pub(crate) fn load_script(&self, script: &LuaScript) -> Result<(), LuaScriptingError> {
         // Load bytecode and execute it
         // This will define the script's functions in the global environment
         self.lua.load(&**script.chunk).exec()?;

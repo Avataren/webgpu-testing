@@ -110,11 +110,13 @@ pub(crate) enum ExistingCommand {
     SetComponent {
         entity_bits: u64,
         component_name: String,
+        #[allow(dead_code)]
         value: serde_json::Value,
     },
     AddComponent {
         entity_bits: u64,
         component_name: String,
+        #[allow(dead_code)]
         value: serde_json::Value,
     },
     RemoveComponent {

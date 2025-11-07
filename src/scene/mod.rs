@@ -41,7 +41,6 @@ pub use assets::{
     SerializedMaterial, SerializedMaterialKind, SerializedParticleBehavior,
     SerializedParticleEmitter, SerializedParticleSystem,
     SerializedLuaScript, SerializedLuaScriptSource,
-    SerializedRuneScript, SerializedRuneScriptSource, // Legacy aliases
     SerializedTransform,
 };
 pub use builder::EntityBuilder;

@@ -21,7 +21,7 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
         "set_name",
         lua.create_function(|_, (entity, name): (i64, String)| {
             with_active_commands(|commands| {
-                commands.set_name(entity, name);
+                commands.set_name(entity, name)?;
                 Ok(())
             })
         })?,
@@ -52,7 +52,7 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
         "import_gltf",
         lua.create_function(|_, (entity, path, scale): (i64, String, f64)| {
             with_active_commands(|commands| {
-                commands.import_gltf(entity, path, scale as f32);
+                commands.import_gltf(entity, path, scale as f32)?;
                 Ok(())
             })
         })?,

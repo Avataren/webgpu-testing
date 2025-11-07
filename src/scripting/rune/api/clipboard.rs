@@ -16,10 +16,12 @@ pub struct ClipboardAccess {
 }
 
 /// Guard for setting up clipboard context
+#[allow(dead_code)]
 pub struct ClipboardGuard;
 
 impl ClipboardGuard {
     #[cfg(feature = "egui")]
+    #[allow(dead_code)]
     pub fn enter(ctx: &egui::Context) -> Self {
         CLIPBOARD_CONTEXT.with(|cell| {
             let ctx_clone = ctx.clone();
@@ -32,6 +34,7 @@ impl ClipboardGuard {
     }
 
     #[cfg(not(feature = "egui"))]
+    #[allow(dead_code)]
     pub fn enter() -> Self {
         Self
     }

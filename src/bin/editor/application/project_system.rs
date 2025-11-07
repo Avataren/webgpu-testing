@@ -652,7 +652,7 @@ mod native {
             PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture,
             PACKAGED_GLTF_VERSION,
         },
-        SceneImportDevice, SceneLoader, SerializedMaterial, SerializedRuneScriptSource,
+        SceneImportDevice, SceneLoader, SerializedMaterial, SerializedLuaScriptSource,
     };
 
     use crate::project::NewProjectRequest;
@@ -1658,7 +1658,7 @@ mod native {
 
             for entity in &asset.entities {
                 if let Some(script) = &entity.script {
-                    if let SerializedRuneScriptSource::File { path } = &script.source {
+                    if let SerializedLuaScriptSource::File { path } = &script.source {
                         scripts.insert(path.clone());
                     }
                 }
