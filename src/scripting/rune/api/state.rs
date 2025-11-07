@@ -63,23 +63,25 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
     })
 }
 
+/// Internal helper for get_state that only uses one closure level
+/// This avoids nested closure captures that cause Rune snapshot issues
+fn get_state_internal(handle: i64, key: String, default: Value) -> VmResult<Value> {
+    with_active_state(move |map| {
+        let entry_key = (handle, key);
+        match map.get(&entry_key) {
+            Some(value) => VmResult::Ok(value.clone()),
+            None => VmResult::Ok(default),
+        }
+    })
+}
+
 #[rune::function]
 pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
-    // Clone ALL function parameters BEFORE entering closures to prevent snapshot issues
-    // Both key and default came through Rune's VM as parameters, so both need cloning
-    // When nested closures try to capture the original parameters, Rune creates
-    // immutable snapshots (M-000000) which cause "Cannot take" errors
-    let key_clone = key.clone();
-    let default_clone = default.clone();
-
+    // Avoid nested closures by calling a helper function
+    // The first closure just gets the handle and calls the helper
+    // The helper has its own single closure - no nesting of captures
     with_active_entity(|handle| {
-        with_active_state(move |map| {
-            let entry_key = (handle, key_clone);
-            match map.get(&entry_key) {
-                Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::Ok(default_clone),
-            }
-        })
+        get_state_internal(handle, key, default)
     })
 }
 
