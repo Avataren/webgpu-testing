@@ -664,6 +664,60 @@ impl EditorApplication {
         self.record_scene_change(&mut ctx.scene);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn process_script_file_changes(&mut self) {
+        // Get script directories to watch
+        let script_dirs = vec![
+            PathBuf::from("examples/scripts"),
+            PathBuf::from("scripts"),
+        ];
+
+        let Some(watcher) = self.shared.script_watcher.as_mut() else {
+            return;
+        };
+
+        // Watch the directories
+        if let Err(err) = watcher.watch_roots(&script_dirs) {
+            log::warn!("Failed to watch script directories: {}", err);
+            return;
+        }
+
+        // Poll for changed files
+        let changed_paths = watcher.poll();
+        if changed_paths.is_empty() {
+            return;
+        }
+
+        // Process each changed script file
+        for path in changed_paths {
+            log::info!("Script file changed: {:?}", path);
+
+            // Find the entity associated with this script path
+            let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+                continue;
+            };
+
+            if let Some((entity, metadata)) = manager.find_entity_by_path(&path) {
+                log::info!(
+                    "Queuing reload for plugin '{}' (entity {:?})",
+                    metadata.name,
+                    entity
+                );
+
+                // Queue reload command
+                self.shared.commands.push_back(EditorCommand::ReloadPlugin {
+                    entity,
+                    path: path.clone(),
+                });
+            } else {
+                log::debug!(
+                    "Changed script {:?} not associated with any loaded plugin",
+                    path
+                );
+            }
+        }
+    }
+
     pub(super) fn run_system_ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
         let indices = self.system_indices();
         let len = self.systems.len();
@@ -688,6 +742,7 @@ impl EditorApplication {
         let mut pending_imports = Vec::new();
         let mut pending_deletions = Vec::new();
         let mut pending_inspector = Vec::new();
+        let mut pending_plugin_reloads = Vec::new();
 
         while let Some(command) = queue.pop_front() {
             match command {
@@ -703,6 +758,7 @@ impl EditorApplication {
                 HistoryUndo => remaining.push_back(HistoryUndo),
                 HistoryRedo => remaining.push_back(HistoryRedo),
                 HistoryCommitTransforms => remaining.push_back(HistoryCommitTransforms),
+                ReloadPlugin { entity, path } => pending_plugin_reloads.push((entity, path)),
             }
         }
 
@@ -712,6 +768,10 @@ impl EditorApplication {
 
         if !pending_imports.is_empty() {
             self.process_pending_imports(ctx, pending_imports);
+        }
+
+        if !pending_plugin_reloads.is_empty() {
+            self.process_pending_plugin_reloads(ctx, pending_plugin_reloads);
         }
 
         if !pending_deletions.is_empty() {
@@ -771,6 +831,43 @@ impl EditorApplication {
             .downcast_mut::<ProjectSystem>()
             .expect("project system registered")
             .process_pending_imports(&mut editor_ctx, pending);
+    }
+
+    pub(super) fn process_pending_plugin_reloads(
+        &mut self,
+        ctx: &mut UpdateContext,
+        pending: Vec<(Entity, PathBuf)>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+            log::warn!("Cannot reload plugins: plugin manager not initialized");
+            return;
+        };
+
+        let mut reload_count = 0;
+        for (entity, path) in pending {
+            let world = ctx.scene.main_world_mut();
+            match manager.reload_plugin(entity, &path, world) {
+                Ok(plugin_name) => {
+                    log::info!("✅ Plugin '{}' reloaded successfully", plugin_name);
+                    reload_count += 1;
+                }
+                Err(err) => {
+                    log::error!("❌ Failed to reload plugin: {}", err);
+                }
+            }
+        }
+
+        if reload_count > 0 {
+            // Reset the script runtime to recompile and re-initialize all scripts
+            ctx.scene.reset_script_runtime();
+
+            // Mark scene as changed
+            self.record_scene_change(&mut ctx.scene);
+        }
     }
 
     pub(super) fn find_pane_tile(&self, pane: EditorPane) -> Option<TileId> {

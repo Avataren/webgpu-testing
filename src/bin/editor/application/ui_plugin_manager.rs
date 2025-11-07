@@ -169,6 +169,45 @@ impl UiPluginManager {
         self.get_plugin(entity)
             .map(|plugin| self.resolve_script_path(&plugin.metadata.script))
     }
+
+    /// Reload a plugin's script from disk
+    /// Returns Ok(plugin_name) on success, Err(message) on failure
+    pub fn reload_plugin(
+        &self,
+        entity: Entity,
+        path: &std::path::Path,
+        world: &mut hecs::World,
+    ) -> Result<String, String> {
+        // Find the plugin
+        let plugin = self
+            .get_plugin(entity)
+            .ok_or_else(|| format!("Plugin not found for entity {:?}", entity))?;
+
+        // Read the new script source
+        let source_code = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read script {}: {}", path.display(), e))?;
+
+        // Check if entity has the component
+        {
+            let _old_component = world
+                .get::<&wgpu_cube::scripting::RuneScriptComponent>(entity)
+                .map_err(|_| format!("Entity {:?} has no RuneScriptComponent", entity))?;
+            // Drop the reference here
+        }
+
+        // Create new component with the reloaded source
+        // Using inline source with the plugin name
+        let new_component =
+            wgpu_cube::scripting::RuneScriptComponent::new_inline(&plugin.metadata.name, source_code);
+
+        // Replace the component
+        world
+            .insert_one(entity, new_component)
+            .map_err(|e| format!("Failed to update component: {}", e))?;
+
+        log::info!("Reloaded plugin '{}' from {:?}", plugin.metadata.name, path);
+        Ok(plugin.metadata.name.clone())
+    }
 }
 
 /// Helper to create RuneScriptSource from plugin metadata
