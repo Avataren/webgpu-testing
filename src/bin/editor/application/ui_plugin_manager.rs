@@ -45,6 +45,8 @@ pub struct UiPluginManager {
     entity_to_plugin: HashMap<Entity, usize>,
     /// Base path for resolving script paths
     base_path: PathBuf,
+    /// Separate world for plugin entities (independent of any scene)
+    world: hecs::World,
 }
 
 impl UiPluginManager {
@@ -54,6 +56,7 @@ impl UiPluginManager {
             plugins: Vec::new(),
             entity_to_plugin: HashMap::new(),
             base_path,
+            world: hecs::World::new(),
         }
     }
 
@@ -141,6 +144,16 @@ impl UiPluginManager {
             .and_then(|&index| self.plugins.get(index))
     }
 
+    /// Get the plugin world (read-only)
+    pub fn world(&self) -> &hecs::World {
+        &self.world
+    }
+
+    /// Get mutable access to the plugin world
+    pub fn world_mut(&mut self) -> &mut hecs::World {
+        &mut self.world
+    }
+
     /// Resolve script path relative to base path
     pub fn resolve_script_path(&self, script_path: &str) -> PathBuf {
         self.base_path.join(script_path)
@@ -173,23 +186,25 @@ impl UiPluginManager {
     /// Reload a plugin's script from disk
     /// Returns Ok(plugin_name) on success, Err(message) on failure
     pub fn reload_plugin(
-        &self,
+        &mut self,
         entity: Entity,
         path: &std::path::Path,
-        world: &mut hecs::World,
     ) -> Result<String, String> {
-        // Find the plugin
-        let plugin = self
+        // Find the plugin and clone the name to avoid borrow checker issues
+        let plugin_name = self
             .get_plugin(entity)
-            .ok_or_else(|| format!("Plugin not found for entity {:?}", entity))?;
+            .ok_or_else(|| format!("Plugin not found for entity {:?}", entity))?
+            .metadata
+            .name
+            .clone();
 
         // Read the new script source
-        let source_code = std::fs::read_to_string(path)
+        let _source_code = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read script {}: {}", path.display(), e))?;
 
         // Check if entity has the component
         {
-            let _old_component = world
+            let _old_component = self.world
                 .get::<&wgpu_cube::scripting::LuaScriptComponent>(entity)
                 .map_err(|_| format!("Entity {:?} has no LuaScriptComponent", entity))?;
             // Drop the reference here
@@ -202,19 +217,19 @@ impl UiPluginManager {
         );
 
         // Replace the component
-        world
+        self.world
             .insert_one(entity, new_component)
             .map_err(|e| format!("Failed to update component: {}", e))?;
 
-        log::info!("Reloaded Lua plugin '{}' from {:?}", plugin.metadata.name, path);
-        Ok(plugin.metadata.name.clone())
+        log::info!("Reloaded Lua plugin '{}' from {:?}", plugin_name, path);
+        Ok(plugin_name)
     }
 
     /// Unload all plugins by despawning their entities
-    pub fn unload_all(&mut self, world: &mut hecs::World) {
+    pub fn unload_all(&mut self) {
         log::info!("Unloading {} plugins", self.plugins.len());
         for plugin in &self.plugins {
-            if let Err(e) = world.despawn(plugin.entity) {
+            if let Err(e) = self.world.despawn(plugin.entity) {
                 log::warn!("Failed to despawn plugin entity {:?}: {}", plugin.entity, e);
             } else {
                 log::debug!("Despawned plugin '{}' entity {:?}", plugin.metadata.name, plugin.entity);

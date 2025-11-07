@@ -119,8 +119,10 @@ pub struct EditorSharedState {
     pub(super) shader_watcher: Option<ShaderWatcher>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) script_watcher: Option<ScriptWatcher>,
-    /// UI commands from scripts collected during gpu_update
+    /// UI commands from scene scripts collected during gpu_update
     pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
+    /// UI commands from plugin scripts collected during gpu_update
+    pub(super) plugin_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
     pub(super) script_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
     /// UI plugin manager for loading and managing editor plugins
@@ -371,6 +373,7 @@ impl EditorApplicationBuilder {
             #[cfg(not(target_arch = "wasm32"))]
             script_watcher: None,
             script_ui_commands: std::collections::HashMap::new(),
+            plugin_ui_commands: std::collections::HashMap::new(),
             script_ui_responses: std::collections::HashMap::new(),
             ui_plugin_manager: None,
             ui_plugins_loaded: false,
@@ -892,7 +895,7 @@ impl EditorApplication {
             return;
         }
 
-        let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
+        let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
             log::warn!("Cannot reload plugins: plugin manager not initialized");
             return;
         };
@@ -901,8 +904,7 @@ impl EditorApplication {
         let mut plugin_names = Vec::new();
 
         for (entity, path) in pending {
-            let world = ctx.scene.main_world_mut();
-            match manager.reload_plugin(entity, &path, world) {
+            match manager.reload_plugin(entity, &path) {
                 Ok(plugin_name) => {
                     log::info!("✅ Plugin '{}' reloaded successfully", plugin_name);
                     plugin_names.push(plugin_name);
