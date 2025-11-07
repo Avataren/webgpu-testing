@@ -25,12 +25,11 @@ impl Plugin for LuaScriptingPlugin {
     fn build(&self, app: &mut AppBuilder) {
         let script_root = self.script_root.clone();
         if let Some(root) = script_root {
-            app.add_startup_system(move |_ctx: &mut StartupContext<'_>| {
-                // TODO: Once we have lua_scripting_mut() on Scene, uncomment this:
-                // ctx.scene
-                //     .lua_scripting_mut()
-                //     .runtime_mut()
-                //     .set_script_root(root.clone());
+            app.add_startup_system(move |ctx: &mut StartupContext<'_>| {
+                ctx.scene
+                    .lua_scripting_mut()
+                    .runtime_mut()
+                    .set_script_root(root.clone());
                 log::info!("Lua scripting plugin initialized with root: {:?}", root);
             });
         }
