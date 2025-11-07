@@ -448,7 +448,7 @@ impl ScriptingState {
         let _world_guard = WorldGuard::enter(world);
         let _registry_guard = RegistryGuard::enter(&self.component_registry);
 
-        let mut query = world.query::<&mut RuneScriptComponent>();
+        let mut query = world.query::<&RuneScriptComponent>();
         for (entity, component) in query.iter() {
             if !component.created_called() {
                 log::debug!(target: "script_ui", "Skipping entity {:?} - created not called", entity);

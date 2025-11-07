@@ -64,27 +64,27 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 }
 
 #[rune::function]
-pub(crate) fn get_state(key: String) -> VmResult<Value> {
+pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
+    // Clone parameters at the very start of inner closure to avoid snapshot issues
+    // Any use of captured parameters can create snapshots - clone immediately
     with_active_entity(move |handle| {
         with_active_state(move |map| {
-            let entry_key = (handle, key);
-            match map.get(&entry_key) {
-                Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::panic("State key not found"),
-            }
-        })
-    })
-}
+            // Clone both captured parameters FIRST before any use
+            let key_clone = key.clone();
+            let default_clone = default.clone();
 
-/// Overloaded version of get_state that accepts a default value
-#[rune::function(path = get_state)]
-pub(crate) fn get_state_with_default(key: String, default: Value) -> VmResult<Value> {
-    with_active_entity(move |handle| {
-        with_active_state(move |map| {
-            let entry_key = (handle, key);
+            let entry_key = (handle, key_clone);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::Ok(default),
+                None => {
+                    // Insert using the cloned default
+                    map.insert(entry_key.clone(), default_clone);
+                    // Retrieve from map
+                    match map.get(&entry_key) {
+                        Some(value) => VmResult::Ok(value.clone()),
+                        None => VmResult::panic("State insertion failed"),
+                    }
+                }
             }
         })
     })

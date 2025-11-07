@@ -31,9 +31,8 @@ pub(crate) use query::{
     get_nearest_entity_with_component, query_entities_with_component,
 };
 pub(crate) use state::{
-    get_bool, get_f64, get_f64_for, get_state, get_state_for, get_state_with_default, get_string,
-    set_bool, set_f64, set_f64_for, set_state, set_state_for, set_string, try_get_state,
-    try_get_state_for,
+    get_bool, get_f64, get_f64_for, get_state, get_state_for, get_string, set_bool, set_f64,
+    set_f64_for, set_state, set_state_for, set_string, try_get_state, try_get_state_for,
 };
 pub(crate) use transform::{
     get_world_rotation, get_world_translation, look_at, rotate, set_scale, translate,
@@ -49,7 +48,6 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(set_state)?;
     module.function_meta(set_state_for)?;
     module.function_meta(get_state)?;
-    module.function_meta(get_state_with_default)?;
     module.function_meta(get_state_for)?;
     module.function_meta(try_get_state)?;
     module.function_meta(try_get_state_for)?;
