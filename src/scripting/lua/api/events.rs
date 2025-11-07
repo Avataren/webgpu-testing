@@ -1,61 +1,7 @@
-use mlua::{Lua, Result as LuaResult, Value as LuaValue};
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
 use crate::scripting::lua::guards::{get_active_entity, with_active_commands, with_active_event_queue};
 use crate::scripting::lua::types::ScriptEvent;
-
-/// Convert Lua value to serde_json::Value for event data.
-fn lua_to_json_for_event(lua: &Lua, value: LuaValue) -> LuaResult<serde_json::Value> {
-    match value {
-        LuaValue::Nil => Ok(serde_json::Value::Null),
-        LuaValue::Boolean(b) => Ok(serde_json::Value::Bool(b)),
-        LuaValue::Integer(i) => Ok(serde_json::Value::Number(i.into())),
-        LuaValue::Number(n) => {
-            if let Some(num) = serde_json::Number::from_f64(n) {
-                Ok(serde_json::Value::Number(num))
-            } else {
-                Err(mlua::Error::RuntimeError(
-                    "Number is not finite".to_string(),
-                ))
-            }
-        }
-        LuaValue::String(s) => Ok(serde_json::Value::String(s.to_str()?.to_string())),
-        LuaValue::Table(t) => {
-            // Check if it's an array or an object
-            let len = t.raw_len();
-            if len > 0 {
-                // Treat as array
-                let mut arr = Vec::new();
-                for i in 1..=len {
-                    let val: LuaValue = t.raw_get(i)?;
-                    arr.push(lua_to_json_for_event(lua, val)?);
-                }
-                Ok(serde_json::Value::Array(arr))
-            } else {
-                // Treat as object
-                let mut map = serde_json::Map::new();
-                for pair in t.pairs::<LuaValue, LuaValue>() {
-                    let (k, v) = pair?;
-                    let key = match k {
-                        LuaValue::String(s) => s.to_str()?.to_string(),
-                        LuaValue::Integer(i) => i.to_string(),
-                        LuaValue::Number(n) => n.to_string(),
-                        _ => {
-                            return Err(mlua::Error::RuntimeError(
-                                "Table keys must be strings or numbers".to_string(),
-                            ))
-                        }
-                    };
-                    map.insert(key, lua_to_json_for_event(lua, v)?);
-                }
-                Ok(serde_json::Value::Object(map))
-            }
-        }
-        _ => Err(mlua::Error::RuntimeError(format!(
-            "Unsupported value type: {}",
-            value.type_name()
-        ))),
-    }
-}
 
 /// Register events API functions with the Lua runtime.
 pub(crate) fn register_events_api(lua: &Lua) -> LuaResult<()> {
@@ -65,7 +11,8 @@ pub(crate) fn register_events_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "emit_event",
         lua.create_function(|lua, (event_name, data): (String, LuaValue)| {
-            let json_data = lua_to_json_for_event(lua, data)?;
+            // Use mlua's built-in serde integration
+            let json_data: serde_json::Value = lua.from_value(data)?;
             with_active_event_queue(|queue| {
                 queue.push(ScriptEvent {
                     name: event_name,
