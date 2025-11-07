@@ -65,15 +65,14 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 
 #[rune::function]
 pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
-    with_active_entity(move |handle| {
+    // Avoid nested move closures by getting handle first, then using single move closure
+    // This prevents the "Cannot take, value is M-000000" error with complex Values
+    with_active_entity(|handle| {
         with_active_state(move |map| {
             let entry_key = (handle, key);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
-                None => {
-                    // Clone the default to avoid double-move through nested closures
-                    VmResult::Ok(default.clone())
-                }
+                None => VmResult::Ok(default),
             }
         })
     })
