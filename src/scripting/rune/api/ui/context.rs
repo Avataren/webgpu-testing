@@ -106,9 +106,10 @@ impl UiContext {
             .unwrap_or(current_str);
 
         // Convert String to RuneString to Value
+        // Clone current_value in fallbacks to avoid returning snapshots
         match RuneString::try_from(result_str.as_str()) {
-            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or(current_value),
-            Err(_) => current_value,
+            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or_else(|_| current_value.clone()),
+            Err(_) => current_value.clone(),
         }
     }
 
@@ -141,9 +142,10 @@ impl UiContext {
             .unwrap_or(current_str);
 
         // Convert String to RuneString to Value
+        // Clone current_value in fallbacks to avoid returning snapshots
         match RuneString::try_from(result_str.as_str()) {
-            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or(current_value),
-            Err(_) => current_value,
+            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or_else(|_| current_value.clone()),
+            Err(_) => current_value.clone(),
         }
     }
 
