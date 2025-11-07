@@ -172,12 +172,14 @@ impl EditorApplication {
                 Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
                 self.shared.ui_plugins_loaded = true;
 
-                // Initialize the newly loaded scripts by calling update(0.0) in editor mode
+                // Initialize the newly loaded plugin scripts by running them in the plugin world
                 // This ensures on_created() is called and script instances are created
                 let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
                 if is_editor_mode {
                     log::info!("Initializing UI plugin scripts in editor mode");
-                    ctx.scene.update(0.0);
+                    if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+                        ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
+                    }
                 }
             }
         }
@@ -255,11 +257,6 @@ impl EditorApplication {
                     ctx.scene.update(0.0);
                 }
             }
-        }
-
-        // Feed back responses from the previous frame before collecting new commands
-        if !self.shared.script_ui_responses.is_empty() {
-            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
         }
 
         // Collect UI commands from scripts that implement on_ui()
@@ -498,7 +495,8 @@ impl EditorApplication {
         use std::collections::HashMap;
         use wgpu_cube::scripting::rune::api::ui::UiCommand;
 
-        let mut all_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+        let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+        let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
 
         // Render plugin manager window if we have plugins
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
@@ -568,7 +566,7 @@ impl EditorApplication {
                         });
 
                     if !responses.is_empty() {
-                        all_responses.insert(*entity, responses);
+                        plugin_responses.insert(*entity, responses);
                     }
                 }
             }
@@ -630,13 +628,14 @@ impl EditorApplication {
                     });
 
                 if !responses.is_empty() {
-                    all_responses.insert(*entity, responses);
+                    scene_responses.insert(*entity, responses);
                 }
             }
         }
 
-        // Store responses for the next frame
-        self.shared.script_ui_responses = all_responses;
+        // Store responses for the next frame (kept separate to avoid Entity ID collisions)
+        self.shared.script_ui_responses = scene_responses;
+        self.shared.plugin_ui_responses = plugin_responses;
     }
 
     /// Render reload notifications as toasts in the bottom-right corner

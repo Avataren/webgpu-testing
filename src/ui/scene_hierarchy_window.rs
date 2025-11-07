@@ -217,6 +217,12 @@ impl SceneHierarchySnapshot {
 
         for entity_ref in world.iter() {
             let entity = entity_ref.entity();
+
+            // Skip editor plugin entities - they should not appear in the scene hierarchy
+            if world.get::<&crate::scene::components::EditorPlugin>(entity).is_ok() {
+                continue;
+            }
+
             let name = world
                 .get::<&Name>(entity)
                 .map(|name| name.0.clone())

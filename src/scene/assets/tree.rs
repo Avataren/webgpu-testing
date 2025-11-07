@@ -117,6 +117,10 @@ pub(crate) fn serialize_world(
 ) -> (Vec<SceneAssetEntity>, HashMap<Entity, usize>) {
     let mut entities: Vec<Entity> = Vec::new();
     for (entity, _) in world.query::<()>().iter() {
+        // Skip editor plugin entities - they should not be serialized with the scene
+        if world.get::<&crate::scene::components::EditorPlugin>(entity).is_ok() {
+            continue;
+        }
         entities.push(entity);
     }
 

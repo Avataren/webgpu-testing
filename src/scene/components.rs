@@ -404,6 +404,11 @@ impl Default for Visible {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SelectedInEditor;
 
+/// Marker component that indicates an entity is an editor UI plugin.
+/// Entities with this component are excluded from the scene hierarchy and scene serialization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EditorPlugin;
+
 /// Persistent editor-scoped identifier used for undo/redo bookkeeping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EditorEntityId(pub u128);

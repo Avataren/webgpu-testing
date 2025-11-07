@@ -60,15 +60,14 @@ impl EditorApplication {
             snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
-        // Reload UI plugins after restoring the scene
-        // The snapshot doesn't include UI plugin entities (they're not part of the scene tree),
-        // so we need to recreate them
+        // NOTE: UI plugins are now in a separate world and persist across scene changes.
+        // No need to reload them after scene restore.
+        // Just re-initialize them to ensure they're in a good state.
         if self.shared.ui_plugins_loaded {
-            info!("Reloading UI plugins after scene restore");
-            Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
-
-            // Initialize the newly loaded scripts
-            ctx.scene.update(0.0);
+            if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+                info!("Re-initializing UI plugins after scene restore");
+                ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
+            }
         }
 
         // Reinitialize editor state
