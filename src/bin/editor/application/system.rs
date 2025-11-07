@@ -36,6 +36,10 @@ pub(super) enum EditorCommand {
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,
+    ReloadPlugin {
+        entity: Entity,
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug)]
