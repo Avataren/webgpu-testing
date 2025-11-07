@@ -53,6 +53,9 @@ impl SceneRuntime {
     }
 
     pub(crate) fn reset_script_runtime(&mut self, world: &mut World) {
+        // Extract all state before reset
+        let saved_state = self.scripting.extract_all_state();
+
         {
             let mut query = world.query::<&mut RuneScriptComponent>();
             for (_, component) in query.iter() {
@@ -74,6 +77,10 @@ impl SceneRuntime {
         }
 
         self.scripting.reset_runtime();
+
+        // Restore state will be called automatically after instances are recreated
+        // We store the state in the runtime for restoration after on_created()
+        self.scripting.set_pending_state_restoration(saved_state);
     }
 
     pub(crate) fn advance_time(&mut self, dt: f64) -> f64 {
