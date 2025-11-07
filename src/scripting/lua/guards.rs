@@ -80,6 +80,12 @@ impl Drop for StateGuard {
     }
 }
 
+pub(crate) fn with_active_commands<R>(f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+    ACTIVE_COMMANDS.with(|cell| {
+        cell.borrow_mut().with(f)
+    })
+}
+
 pub(crate) fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
     ACTIVE_STATE.with(|cell| {
         let opt = cell.borrow();

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use mlua::{Lua, Chunk, LuaOptions, StdLib};
 
+use super::api;
 use super::error::LuaScriptingError;
 use super::types::{LuaScript, LuaScriptSource, ScriptMode, parse_script_mode_annotation};
 
@@ -32,6 +33,9 @@ impl LuaScriptingRuntime {
         lua.globals().set("dofile", mlua::Nil)?;
         lua.globals().set("loadfile", mlua::Nil)?;
         lua.globals().set("require", mlua::Nil)?;  // We'll provide our own module system
+
+        // Register all API functions
+        api::register_all_apis(&lua)?;
 
         Ok(Self {
             lua,
