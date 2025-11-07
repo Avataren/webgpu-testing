@@ -28,6 +28,8 @@ use super::shader_editor_system::ShaderEditorSystem;
 use super::selection_system::SelectionSystem;
 #[cfg(not(target_arch = "wasm32"))]
 use super::shader_watcher::ShaderWatcher;
+#[cfg(not(target_arch = "wasm32"))]
+use super::script_watcher::ScriptWatcher;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent, EditorSystemsAccess};
 use wgpu_cube::DefaultUI;
@@ -68,6 +70,8 @@ pub struct EditorSharedState {
     pub(super) next_untitled_scene_index: u32,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) script_watcher: Option<ScriptWatcher>,
     /// UI commands from scripts collected during gpu_update
     pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
@@ -315,6 +319,8 @@ impl EditorApplicationBuilder {
             next_untitled_scene_index: 1,
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            script_watcher: None,
             script_ui_commands: std::collections::HashMap::new(),
             script_ui_responses: std::collections::HashMap::new(),
             ui_plugin_manager: None,
@@ -327,6 +333,14 @@ impl EditorApplicationBuilder {
                 Ok(watcher) => Some(watcher),
                 Err(err) => {
                     log::warn!("Failed to initialize shader file watcher: {err}");
+                    None
+                }
+            };
+
+            shared.script_watcher = match ScriptWatcher::new() {
+                Ok(watcher) => Some(watcher),
+                Err(err) => {
+                    log::warn!("Failed to initialize script file watcher: {err}");
                     None
                 }
             };

@@ -21,6 +21,8 @@ mod ui_plugin_manager;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod shader_watcher;
+#[cfg(not(target_arch = "wasm32"))]
+mod script_watcher;
 mod ui;
 use self::asset_browser_system::AssetBrowserSystem;
 #[allow(unused_imports)]
