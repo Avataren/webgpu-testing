@@ -394,13 +394,44 @@ if some_condition {
 
 ## Script Lifecycle Limitations
 
-### 17. No Cleanup Callback
+### 17. on_ui() Takes Only One Parameter
+
+**Issue:** The `on_ui()` lifecycle function only takes the `ui` parameter, not `self_entity`.
+
+**Correct Signature:**
+```rune
+pub fn on_ui(ui) {
+    // UI code here
+}
+```
+
+**Incorrect (Old API):**
+```rune
+pub fn on_ui(self_entity, ui) {  // ❌ Wrong - causes "Wrong number of arguments" error
+    // This will fail at runtime
+}
+```
+
+**Why:** The entity is now available through a context guard (similar to state and events), not as an explicit parameter. This simplifies the API and makes it consistent with how other context is accessed.
+
+**If You Need the Entity:** If you need to access the entity within `on_ui()`, there may be a context function available (check the API documentation).
+
+**Note:** The `on_created()` and `update()` lifecycle functions still receive `self_entity` as their first parameter:
+```rune
+pub fn on_created(self_entity) { }  // ✅ Takes self_entity
+pub fn update(self_entity, dt) { }  // ✅ Takes self_entity and dt
+pub fn on_ui(ui) { }                // ✅ Takes only ui (no self_entity)
+```
+
+---
+
+### 18. No Cleanup Callback
 
 **Available:**
 ```rune
 pub fn on_created(self_entity) { }  // ✅ Called once on init
 pub fn update(self_entity, dt) { }  // ✅ Called every frame (play mode)
-pub fn on_ui(self_entity, ui) { }   // ✅ Called every frame (for UI)
+pub fn on_ui(ui) { }                // ✅ Called every frame (for UI)
 ```
 
 **Not Available:**
@@ -414,7 +445,7 @@ pub fn on_destroyed(self_entity) { }  // ❌ No cleanup callback
 
 ---
 
-### 18. No Component Queries During on_created()
+### 19. No Component Queries During on_created()
 
 **Issue:** Cannot query for components (like `get_all_script_entities()`) inside `on_created()` callbacks.
 
@@ -451,7 +482,7 @@ pub fn on_created(self_entity) {
     });
 }
 
-pub fn on_ui(self_entity, ui) {
+pub fn on_ui(ui) {
     let state = get_state("my_state", MyState {
         needs_init: true,
         data: [],
@@ -475,7 +506,7 @@ pub fn on_ui(self_entity, ui) {
 
 ## State Management Limitations
 
-### 19. No Persistent Storage
+### 20. No Persistent Storage
 
 **Issue:** Script state is in-memory only, lost on editor restart.
 
@@ -501,7 +532,7 @@ pub fn on_created(self_entity) {
 
 ---
 
-### 20. State Scope Limited to Entity
+### 21. State Scope Limited to Entity
 
 **Issue:** State is per-entity, not global.
 

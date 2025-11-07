@@ -28,7 +28,7 @@ pub fn update(self_entity, dt) {
     set_f64("update_counter", counter);
 }
 
-pub fn on_ui(self_entity, ui) {
+pub fn on_ui(ui) {
     ui.heading("Debug Console");
     ui.separator();
 
@@ -60,7 +60,7 @@ pub fn on_ui(self_entity, ui) {
     }
 
     if ui.button("Execute") {
-        execute_command(self_entity, new_cmd);
+        execute_command(new_cmd);
 
         let should_clear = get_bool("auto_clear", true);
         if should_clear {
@@ -74,19 +74,19 @@ pub fn on_ui(self_entity, ui) {
     ui.label("Quick Commands");
 
     if ui.button("stats") {
-        execute_command(self_entity, "stats");
+        execute_command("stats");
     }
 
     if ui.button("clear") {
-        execute_command(self_entity, "clear");
+        execute_command("clear");
     }
 
     if ui.button("spawn test") {
-        execute_command(self_entity, "spawn test");
+        execute_command("spawn test");
     }
 
     if ui.button("list entities") {
-        execute_command(self_entity, "list");
+        execute_command("list");
     }
 
     ui.separator();
@@ -117,7 +117,7 @@ pub fn on_ui(self_entity, ui) {
     }
 }
 
-fn execute_command(self_entity, command) {
+fn execute_command(command) {
     log_info(`> ${command}`);
 
     if command == "stats" {

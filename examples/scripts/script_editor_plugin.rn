@@ -31,7 +31,7 @@ pub fn on_created(self_entity) {
     set_state("editor", state);
 }
 
-pub fn on_ui(self_entity, ui) {
+pub fn on_ui(ui) {
     let state = get_state("editor", EditorState {
         scripts: [],
         selected_index: -1,

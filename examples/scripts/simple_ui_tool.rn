@@ -8,7 +8,7 @@ pub fn on_created(self_entity) {
     log_info("Simple UI tool loaded");
 }
 
-pub fn on_ui(self_entity, ui) {
+pub fn on_ui(ui) {
     ui.heading("Simple Tool");
     ui.label("This tool runs in editor mode");
 
