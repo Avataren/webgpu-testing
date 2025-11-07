@@ -149,16 +149,8 @@ impl Scene {
     ///
     /// This allows processing scripts that are not part of the main scene,
     /// such as editor UI plugins managed separately.
-    pub fn process_script_ui_for_world(&mut self, world: &hecs::World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub fn process_script_ui_for_world(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         self.runtime.process_script_ui(world, editor_mode)
-    }
-
-    /// Run scripts in a custom world (e.g., UI plugins).
-    ///
-    /// This executes on_created(), on_update(), etc. for scripts in an external world.
-    /// Must be called each frame to keep scripts alive and functioning.
-    pub fn run_scripts_for_world(&mut self, world: &mut hecs::World, dt: f64, editor_mode: bool) {
-        self.runtime.run_scripts(world, dt, editor_mode);
     }
 
     pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {

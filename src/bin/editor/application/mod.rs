@@ -265,30 +265,12 @@ impl EditorApplication {
         log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
             editor_mode, ctx.runtime);
 
-        // Feed back scene responses from the previous frame before collecting new commands
-        if !self.shared.script_ui_responses.is_empty() {
-            ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
-        }
-
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
 
-        // Run and process UI plugin scripts (from separate world)
+        // Process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            // Feed back plugin responses before running plugin scripts
-            if !self.shared.plugin_ui_responses.is_empty() {
-                ctx.scene.set_ui_responses(std::mem::take(&mut self.shared.plugin_ui_responses));
-            }
-
-            // Run plugin scripts (on_update, etc.) - use dt=0 in editor mode like scene scripts
-            let plugin_dt = match ctx.runtime {
-                RuntimeMode::Editor => 0.0,
-                RuntimeMode::Playing => ctx.dt,
-            };
-            ctx.scene.run_scripts_for_world(manager.world_mut(), plugin_dt, editor_mode);
-
-            // Collect UI commands from plugins
             self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
         } else {
             self.shared.plugin_ui_commands.clear();
@@ -616,7 +598,7 @@ impl EditorApplication {
                     });
 
                 if !responses.is_empty() {
-                    scene_responses.insert(*entity, responses);
+                    all_responses.insert(*entity, responses);
                 }
             }
         } else {

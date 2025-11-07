@@ -45,7 +45,7 @@ pub struct UiPluginManager {
     entity_to_plugin: HashMap<Entity, usize>,
     /// Base path for resolving script paths
     base_path: PathBuf,
-    /// Separate world for plugin entities (independent of any scene)
+    /// Separate world for plugin entities (not part of the scene)
     world: hecs::World,
 }
 

@@ -138,7 +138,7 @@ impl EditorApplication {
     }
 
     /// Load UI plugins from manifest and create entities for them
-    pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, scene: &mut Scene) {
+    pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, _scene: &mut Scene) {
         info!("Loading UI plugins...");
 
         // Unload existing plugins first to avoid duplicates

@@ -123,7 +123,7 @@ pub struct EditorSharedState {
     pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI commands from plugin scripts collected during gpu_update
     pub(super) plugin_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
-    /// UI responses from scene scripts to be fed back to scripts in the next frame
+    /// UI responses to be fed back to scripts in the next frame
     pub(super) script_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
     /// UI responses from plugin scripts to be fed back to plugins in the next frame
     pub(super) plugin_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
