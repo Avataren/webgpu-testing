@@ -272,10 +272,11 @@ impl EditorApplication {
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
 
         // Process UI plugin scripts (from separate world)
+        // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            let plugin_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
-            // Merge plugin commands with scene commands
-            self.shared.script_ui_commands.extend(plugin_commands);
+            self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
+        } else {
+            self.shared.plugin_ui_commands.clear();
         }
     }
 
@@ -533,8 +534,8 @@ impl EditorApplication {
                 });
 
             // Render each plugin's UI in a separate window (only if visible)
-            for (entity, commands) in &self.shared.script_ui_commands {
-                // Check if this entity is a plugin and if it's visible
+            for (entity, commands) in &self.shared.plugin_ui_commands {
+                // Check if this plugin is visible
                 if let Some(plugin) = manager.get_plugin(*entity) {
                     if !plugin.visible {
                         continue;
@@ -569,35 +570,37 @@ impl EditorApplication {
                     if !responses.is_empty() {
                         all_responses.insert(*entity, responses);
                     }
-                } else {
-                    // Not a plugin, render with default title
-                    let mut responses = HashMap::new();
+                }
+            }
 
-                    egui::Window::new(format!("Script UI - Entity {:?}", entity))
-                        .resizable(true)
-                        .default_size([300.0, 200.0])
-                        .show(ctx, |ui| {
-                            for command in commands {
-                                if let Some(response) = command.render(ui) {
-                                    // Extract the ID from the command and store the response
-                                    let id = match command {
-                                        UiCommand::Button { text } => format!("button_{}", text),
-                                        UiCommand::TextEdit { id, .. } => id.clone(),
-                                        UiCommand::TextEditMultiline { id, .. } => id.clone(),
-                                        UiCommand::Slider { id, .. } => id.clone(),
-                                        UiCommand::DragValue { id, .. } => id.clone(),
-                                        UiCommand::Checkbox { id, .. } => id.clone(),
-                                        UiCommand::ColorEdit { id, .. } => id.clone(),
-                                        _ => continue,
-                                    };
-                                    responses.insert(id, response);
-                                }
+            // Render scene scripts (non-plugins) with default titles
+            for (entity, commands) in &self.shared.script_ui_commands {
+                let mut responses = HashMap::new();
+
+                egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                    .resizable(true)
+                    .default_size([300.0, 200.0])
+                    .show(ctx, |ui| {
+                        for command in commands {
+                            if let Some(response) = command.render(ui) {
+                                // Extract the ID from the command and store the response
+                                let id = match command {
+                                    UiCommand::Button { text } => format!("button_{}", text),
+                                    UiCommand::TextEdit { id, .. } => id.clone(),
+                                    UiCommand::TextEditMultiline { id, .. } => id.clone(),
+                                    UiCommand::Slider { id, .. } => id.clone(),
+                                    UiCommand::DragValue { id, .. } => id.clone(),
+                                    UiCommand::Checkbox { id, .. } => id.clone(),
+                                    UiCommand::ColorEdit { id, .. } => id.clone(),
+                                    _ => continue,
+                                };
+                                responses.insert(id, response);
                             }
-                        });
+                        }
+                    });
 
-                    if !responses.is_empty() {
-                        all_responses.insert(*entity, responses);
-                    }
+                if !responses.is_empty() {
+                    all_responses.insert(*entity, responses);
                 }
             }
         } else {
