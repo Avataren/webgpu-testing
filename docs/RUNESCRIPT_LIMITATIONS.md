@@ -414,13 +414,13 @@ pub fn on_ui(self_entity, ui) {  // ❌ Wrong - causes "Wrong number of argument
 
 **Why:** The entity is now available through a context guard (similar to state and events), not as an explicit parameter. This simplifies the API and makes it consistent with how other context is accessed.
 
+**Technical Note:** The `UiContext` is passed by reference from Rust (`(&ui_context,)`) to avoid the Rune VM unpacking the struct's fields as separate arguments.
+
 **If You Need the Entity:** If you need to access the entity within `on_ui()`, there may be a context function available (check the API documentation).
 
-**Troubleshooting:** If you get the error "Wrong number of arguments 2, expected 1" even though your script has the correct signature:
-1. Rebuild the editor with the correct command: `cargo build --release --features egui --bin editor`
-   - Note: The editor requires the `egui` feature to be enabled
-   - The release build without features only builds the `player` binary
-2. Check that all script files use the correct signature (only `ui` parameter)
+**Troubleshooting:** This issue has been fixed in src/scripting/rune/component.rs by passing UiContext by reference. If you still encounter argument mismatch errors:
+1. Ensure you've rebuilt the editor: `cargo build --release --features egui --bin editor`
+2. Verify all script files use the correct signature (only `ui` parameter)
 3. Restart the editor after rebuilding
 
 **Note:** The `on_created()` and `update()` lifecycle functions still receive `self_entity` as their first parameter:
