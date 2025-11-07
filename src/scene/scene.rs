@@ -124,6 +124,14 @@ impl Scene {
         self.runtime.scripting_mut()
     }
 
+    pub fn lua_scripting(&self) -> &crate::scripting::lua::state::ScriptingState {
+        self.runtime.lua_scripting()
+    }
+
+    pub fn lua_scripting_mut(&mut self) -> &mut crate::scripting::lua::state::ScriptingState {
+        self.runtime.lua_scripting_mut()
+    }
+
     /// Process UI for all scripts in the main scene and return their UI commands.
     ///
     /// This should be called during the UI phase to collect UI commands from scripts

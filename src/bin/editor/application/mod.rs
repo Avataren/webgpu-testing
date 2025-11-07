@@ -54,7 +54,7 @@ use wgpu_cube::scene::{
     ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
     SceneTreeAsset, SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
-use wgpu_cube::scripting::RuneScriptingPlugin;
+use wgpu_cube::scripting::{RuneScriptingPlugin, LuaScriptingPlugin};
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
     ScenePrimitivePreset,
@@ -75,6 +75,7 @@ impl RenderApplication for EditorApplication {
 
     fn configure(&self, builder: &mut AppBuilder) {
         builder.add_plugin(RuneScriptingPlugin::new());
+        builder.add_plugin(LuaScriptingPlugin::new());
         builder.disable_default_textures();
         builder.disable_default_lighting();
         builder.disable_escape_exit();

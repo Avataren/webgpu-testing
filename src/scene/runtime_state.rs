@@ -8,6 +8,7 @@ pub(crate) struct SceneRuntime {
     time: f64,
     last_frame: Option<Instant>,
     scripting: ScriptingState,
+    lua_scripting: crate::scripting::lua::state::ScriptingState,
 }
 
 impl SceneRuntime {
@@ -16,6 +17,8 @@ impl SceneRuntime {
             time: 0.0,
             last_frame: None,
             scripting: ScriptingState::default(),
+            lua_scripting: crate::scripting::lua::state::ScriptingState::new()
+                .expect("Failed to initialize Lua scripting runtime"),
         }
     }
 
@@ -52,8 +55,16 @@ impl SceneRuntime {
         &mut self.scripting
     }
 
+    pub(crate) fn lua_scripting(&self) -> &crate::scripting::lua::state::ScriptingState {
+        &self.lua_scripting
+    }
+
+    pub(crate) fn lua_scripting_mut(&mut self) -> &mut crate::scripting::lua::state::ScriptingState {
+        &mut self.lua_scripting
+    }
+
     pub(crate) fn reset_script_runtime(&mut self, world: &mut World) {
-        // Extract all state before reset
+        // Extract all state before reset for Rune scripts
         let saved_state = self.scripting.extract_all_state();
 
         {
@@ -81,6 +92,20 @@ impl SceneRuntime {
         // Restore state will be called automatically after instances are recreated
         // We store the state in the runtime for restoration after on_created()
         self.scripting.set_pending_state_restoration(saved_state);
+
+        // Reset Lua scripts
+        let lua_saved_state = self.lua_scripting.extract_all_state();
+
+        {
+            use crate::scripting::LuaScriptComponent;
+            let mut query = world.query::<&mut LuaScriptComponent>();
+            for (_, component) in query.iter() {
+                component.set_created_called(false);
+            }
+        }
+
+        self.lua_scripting.reset_runtime();
+        self.lua_scripting.restore_state(lua_saved_state);
     }
 
     pub(crate) fn advance_time(&mut self, dt: f64) -> f64 {
@@ -89,8 +114,14 @@ impl SceneRuntime {
     }
 
     pub(crate) fn run_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        // Run Rune scripts
         if let Err(err) = self.scripting.update_scripts(world, dt, editor_mode) {
             error!("Rune scripting error: {err}");
+        }
+
+        // Run Lua scripts
+        if let Err(err) = self.lua_scripting.process_scripts(world, dt, editor_mode) {
+            error!("Lua scripting error: {err}");
         }
     }
 
