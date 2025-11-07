@@ -22,7 +22,7 @@ impl EditorApplication {
         };
 
         if !has_editor_cube {
-            let startup_script = Self::load_script("editor_startup.rn");
+            let startup_script = Self::load_script("editor_startup.lua");
 
             if let Some(script) = startup_script {
                 EntityBuilder::new(scene)

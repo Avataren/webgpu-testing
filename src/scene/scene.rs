@@ -1181,7 +1181,7 @@ mod tests {
     };
     use super::*;
     use crate::scene::SceneSnapshot;
-    use crate::scripting::{RuneScriptComponent, RuneScriptSource};
+    use crate::scripting::{LuaScriptComponent, LuaScriptSource};
     use glam::{Quat, Vec3};
 
     #[test]
@@ -1390,21 +1390,19 @@ mod tests {
     fn reset_script_runtime_allows_rerun() {
         let mut scene = Scene::new();
 
-        let script = RuneScriptSource::inline(
+        let script = LuaScriptSource::inline(
             "scene_core_restart_test",
             r#"
-                struct CubeState { angle }
+                function on_created(self_entity)
+                    set_state(self_entity, "cube_state", {angle = 0.0})
+                end
 
-                pub fn on_created(self_entity) {
-                    set_state(self_entity, "cube_state", CubeState { angle: 0.0 });
-                }
-
-                pub fn update(self_entity, dt) {
-                    let state = get_state(self_entity, "cube_state", CubeState { angle: 0.0 });
-                    let angle = state.angle + dt * 1.5;
-                    set_rotation(self_entity, angle, 0.0, 0.0);
-                    set_state(self_entity, "cube_state", CubeState { angle });
-                }
+                function update(self_entity, dt)
+                    local state = get_state(self_entity, "cube_state", {angle = 0.0})
+                    local angle = state.angle + dt * 1.5
+                    set_rotation(self_entity, angle, 0.0, 0.0)
+                    set_state(self_entity, "cube_state", {angle = angle})
+                end
             "#,
         );
 
@@ -1443,7 +1441,7 @@ mod tests {
 
         {
             let world = scene.main_world();
-            let mut query = world.query::<&RuneScriptComponent>();
+            let mut query = world.query::<&LuaScriptComponent>();
             for (_, component) in query.iter() {
                 assert!(component.created_called(), "on_created was not re-run");
             }
