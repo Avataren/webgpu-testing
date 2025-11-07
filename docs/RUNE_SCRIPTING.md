@@ -1,0 +1,889 @@
+# Rune Scripting Reference
+
+Complete guide to the Rune scripting system for extending the engine with custom gameplay logic and editor tools.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+  - [Script Lifecycle](#script-lifecycle)
+  - [State Management](#state-management)
+  - [Entity Handles](#entity-handles)
+- [UI Plugins](#ui-plugins)
+- [Complete API Reference](#complete-api-reference)
+- [Advanced Topics](#advanced-topics)
+- [Known Limitations](#known-limitations)
+- [Best Practices](#best-practices)
+
+---
+
+## Overview
+
+The engine uses [Rune](https://rune-rs.github.io/), a dynamic scripting language with Rust-like syntax, to provide:
+
+- **Gameplay Scripts** - Entity behaviors, game logic, custom components
+- **Editor Tools** - Custom panels, inspectors, and workflows
+- **Hot Reload** - Changes apply instantly without recompiling
+- **Sandboxed Execution** - Script errors don't crash the engine
+
+### Key Features
+
+✅ Entity lifecycle hooks (`on_created`, `update`, `on_ui`)
+✅ Per-entity state management
+✅ Entity queries and spatial queries
+✅ Component read/write access
+✅ Input handling (keyboard, mouse)
+✅ Event system for inter-script communication
+✅ UI scripting for editor tools
+✅ File I/O operations
+✅ Transform and hierarchy manipulation
+
+---
+
+## Quick Start
+
+### Hello World Script
+
+Create `examples/scripts/hello_world.rn`:
+
+```rune
+// @tool
+// Hello World Plugin
+//
+// Your first Rune script
+
+pub fn on_created(self_entity) {
+    log_info("Hello from Rune!");
+    set_state("message", "Hello World");
+}
+
+pub fn on_ui(ui) {
+    ui.heading("Hello World");
+
+    let message = get_state("message", "Hello");
+    ui.label(message);
+
+    if ui.button("Say Hello") {
+        log_info("Button clicked!");
+    }
+}
+```
+
+### Load the Script
+
+1. Start the editor
+2. Add a `RuneScript` component to any entity
+3. Set the script path to your `.rn` file
+4. See your UI panel appear!
+
+---
+
+## Core Concepts
+
+### Script Lifecycle
+
+Scripts have several lifecycle hooks called by the engine:
+
+#### `on_created(self_entity)`
+
+Called once when the script is first loaded.
+
+```rune
+pub fn on_created(self_entity) {
+    log_info("Script initialized");
+
+    // Initialize state
+    set_state("health", 100.0);
+    set_state("name", "Player");
+
+    // Spawn child entities
+    let weapon = spawn_entity(Some("PlayerWeapon"));
+    set_parent(weapon, Some(self_entity));
+}
+```
+
+#### `update(self_entity, dt)`
+
+Called every frame with delta time in seconds.
+
+```rune
+pub fn update(self_entity, dt) {
+    // Rotate over time
+    let speed = 1.0;
+    rotate(self_entity, 0.0, 1.0, 0.0, speed * dt);
+
+    // Handle input
+    if is_key_pressed("W") {
+        translate(self_entity, 0.0, 0.0, -5.0 * dt);
+    }
+}
+```
+
+#### `on_ui(ui)`
+
+Called every frame to build UI (for plugins marked with `// @tool` or `// @editor`).
+
+```rune
+pub fn on_ui(ui) {
+    ui.heading("My Tool");
+
+    let value = get_state("value", "default");
+    let new_value = ui.text_edit("input", value);
+
+    if new_value != value {
+        set_state("value", new_value);
+    }
+}
+```
+
+#### `on_destroyed(self_entity)`
+
+Called when the script is removed or entity is destroyed.
+
+```rune
+pub fn on_destroyed(self_entity) {
+    log_info("Cleanup complete");
+}
+```
+
+### State Management
+
+Each script instance has its own persistent state storage.
+
+#### Basic State Functions
+
+```rune
+// Store any value (String, number, bool, etc.)
+set_state("key", value);
+
+// Get value with default (recommended)
+let value = get_state("key", "default");
+
+// Get value or panic if not found
+let value = get_state("key");
+
+// Try get value (returns unit () if not found)
+let value = try_get_state("key");
+```
+
+#### Type-Specific Functions
+
+For performance-critical numeric state:
+
+```rune
+// Float state
+set_f64("speed", 5.0);
+let speed = get_f64("speed"); // Panics if not found
+
+// Boolean state
+set_bool("is_active", true);
+let active = get_bool("is_active", false); // With default
+
+// String state
+set_string("name", "Player");
+let name = get_string("name", "Unknown"); // With default
+```
+
+#### State for Other Entities
+
+```rune
+// Set state on another entity
+set_state_for(other_entity, "key", value);
+
+// Get state from another entity
+let value = get_state_for(other_entity, "key", default);
+```
+
+**Important:** State values are `Value` type. UI functions and comparisons work with `Value` directly without conversion.
+
+### Entity Handles
+
+Entities are represented as `i64` handles. All entity functions accept these handles.
+
+```rune
+pub fn on_created(self_entity) {
+    // self_entity is your entity's handle
+
+    // Create new entities
+    let child = spawn_entity(Some("ChildEntity"));
+
+    // Find entities
+    let player = find_entity_by_name("Player");
+    if player.is_some() {
+        log_info(`Found player: ${player}`);
+    }
+
+    // Query entities by component
+    let all_cameras = query_entities_with_component("CameraComponent");
+
+    // Spatial queries
+    let nearby = get_entities_in_radius(0.0, 0.0, 0.0, 10.0);
+}
+```
+
+---
+
+## UI Plugins
+
+Scripts marked with `// @tool` or `// @editor` can create custom editor panels.
+
+### Plugin Annotations
+
+```rune
+// @tool - Editor tool (always visible)
+// @editor - Editor panel
+//
+// Tool Name
+//
+// Description of what this tool does
+```
+
+### UI API
+
+All UI functions work with `Value` type for consistency with state management.
+
+#### Layouts
+
+```rune
+ui.heading("Section Title");
+ui.label("Text label");
+ui.separator();
+```
+
+#### Input Widgets
+
+```rune
+// Text input (single line)
+let text = get_state("input", "");
+let new_text = ui.text_edit("input_id", text);
+if new_text != text {
+    set_state("input", new_text);
+}
+
+// Multiline text editor
+let content = get_state("content", "");
+let new_content = ui.text_edit_multiline("editor", content, None, Some(400.0));
+if new_content != content {
+    set_state("content", new_content);
+}
+
+// Button
+if ui.button("Click Me") {
+    log_info("Button clicked!");
+}
+
+// Checkbox
+let enabled = get_state("enabled", false);
+let new_enabled = ui.checkbox("check", enabled, "Enable Feature");
+if new_enabled != enabled {
+    set_state("enabled", new_enabled);
+}
+
+// Slider
+let value = get_state("slider", 50.0);
+let new_value = ui.slider("slider_id", value, 0.0, 100.0);
+if new_value != value {
+    set_state("slider", new_value);
+}
+
+// Drag value
+let amount = get_state("amount", 1.0);
+let new_amount = ui.drag_value("drag", amount);
+if new_amount != amount {
+    set_state("amount", new_amount);
+}
+
+// Color picker
+let (r, g, b) = (1.0, 0.5, 0.0);
+let (new_r, new_g, new_b) = ui.color_edit("color", r, g, b);
+```
+
+### Example: Text Editor Plugin
+
+```rune
+// @editor
+// Simple Text Editor
+//
+// Edit and save text files
+
+pub fn on_created(self_entity) {
+    set_state("file_path", "notes.txt");
+    set_state("content", "");
+    set_state("status", "Ready");
+}
+
+pub fn on_ui(ui) {
+    ui.heading("Text Editor");
+
+    // File path input
+    let path = get_state("file_path", "notes.txt");
+    let new_path = ui.text_edit("path", path);
+    if new_path != path {
+        set_state("file_path", new_path);
+    }
+
+    ui.separator();
+
+    // Load/Save buttons
+    if ui.button("Load") {
+        let content = read_file(new_path);
+        set_state("content", content);
+        set_state("status", `Loaded ${new_path}`);
+    }
+
+    if ui.button("Save") {
+        let content = get_state("content", "");
+        let error = write_file(new_path, content);
+        if error == "" {
+            set_state("status", `Saved ${new_path}`);
+        } else {
+            set_state("status", error);
+        }
+    }
+
+    ui.separator();
+
+    // Status
+    let status = get_state("status", "Ready");
+    ui.label(status);
+
+    ui.separator();
+
+    // Content editor
+    let content = get_state("content", "");
+    let new_content = ui.text_edit_multiline("content", content, None, Some(400.0));
+    if new_content != content {
+        set_state("content", new_content);
+    }
+}
+```
+
+---
+
+## Complete API Reference
+
+### Logging
+
+```rune
+log_debug(message: String)
+log_info(message: String)
+log_warn(message: String)
+log_error(message: String)
+```
+
+### Entity Management
+
+```rune
+// Create entities
+spawn_entity(name: Option<String>) -> i64
+set_name(handle: i64, name: String)
+
+// Find entities
+find_entity_by_name(name: String) -> Option<i64>
+
+// Entity hierarchy
+set_parent(entity: i64, parent: Option<i64>)
+get_parent(entity: i64) -> Option<i64>
+get_children(entity: i64) -> Option<Vec<i64>>
+
+// Attach scripts
+attach_inline_script(entity: i64, name: String, source: String)
+attach_script_file(entity: i64, path: String)
+
+// Import models
+import_gltf(entity: i64, path: String, scale: f64)
+```
+
+### Transform Operations
+
+```rune
+// Position
+translate(entity: i64, x: f64, y: f64, z: f64)
+set_translation(entity: i64, x: f64, y: f64, z: f64)
+get_world_translation(entity: i64) -> Option<Vec<f64>>
+
+// Rotation
+rotate(entity: i64, axis_x: f64, axis_y: f64, axis_z: f64, angle_radians: f64)
+set_rotation(entity: i64, yaw: f64, pitch: f64, roll: f64)
+get_world_rotation(entity: i64) -> Option<Vec<f64>>
+look_at(entity: i64, target_x: f64, target_y: f64, target_z: f64)
+
+// Scale
+set_scale(entity: i64, x: f64, y: f64, z: f64)
+```
+
+### Component System
+
+```rune
+// Check for components
+has_component(entity: i64, component_name: String) -> bool
+
+// Get component data
+get_component(entity: i64, component_name: String) -> Option<Value>
+
+// Modify components
+set_component(entity: i64, component_name: String, value: Value)
+add_component(entity: i64, component_name: String, value: Value)
+remove_component(entity: i64, component_name: String)
+```
+
+Available component names:
+- `CameraComponent`
+- `MeshComponent`
+- `MaterialComponent`
+- `PointLight`
+- `DirectionalLight`
+- `SpotLight`
+- `Visible`
+- `Billboard`
+- And more...
+
+### Entity Queries
+
+```rune
+// Query by component
+query_entities_with_component(component_name: String) -> Vec<i64>
+
+// Spatial queries
+get_entities_in_radius(x: f64, y: f64, z: f64, radius: f64) -> Vec<i64>
+get_entities_in_box(min_x: f64, min_y: f64, min_z: f64,
+                    max_x: f64, max_y: f64, max_z: f64) -> Vec<i64>
+
+get_nearest_entity(x: f64, y: f64, z: f64) -> Option<i64>
+get_nearest_entity_with_component(x: f64, y: f64, z: f64,
+                                   component_name: String) -> Option<i64>
+```
+
+### Input
+
+```rune
+// Keyboard
+is_key_pressed(key: String) -> bool
+is_key_just_pressed(key: String) -> bool
+is_key_just_released(key: String) -> bool
+
+// Key names: "W", "A", "S", "D", "Space", "Escape", "LeftShift", etc.
+
+// Mouse buttons (0=Left, 1=Right, 2=Middle)
+is_mouse_button_pressed(button: i64) -> bool
+is_mouse_button_just_pressed(button: i64) -> bool
+is_mouse_button_just_released(button: i64) -> bool
+
+// Mouse position and movement
+get_mouse_position() -> Vec<f64>  // [x, y] in screen coordinates
+get_mouse_delta() -> Vec<f64>      // [dx, dy] since last frame
+get_mouse_scroll_delta() -> Vec<f64>  // [dx, dy] scroll wheel
+```
+
+### Event System
+
+```rune
+// Emit an event
+emit_event(event_name: String, data: Value)
+
+// Subscribe to events
+subscribe_event(event_name: String, callback_name: String)
+
+// Unsubscribe
+unsubscribe_event(event_name: String)
+
+// Example callback
+pub fn on_player_scored(data) {
+    let score = data.score;
+    log_info(`Player scored ${score} points!`);
+}
+
+pub fn on_created(self_entity) {
+    subscribe_event("player_scored", "on_player_scored");
+}
+```
+
+### File I/O
+
+```rune
+// Read entire file as string
+read_file(path: String) -> String  // Returns error message if failed
+
+// Write string to file
+write_file(path: String, content: String) -> String  // Returns "" on success
+```
+
+### UI Functions
+
+See [UI Plugins](#ui-plugins) section for complete UI API reference.
+
+---
+
+## Advanced Topics
+
+### Component Manipulation Example
+
+```rune
+pub fn on_created(self_entity) {
+    // Add a point light
+    let light_data = #{
+        color: [1.0, 0.8, 0.6],
+        intensity: 5.0,
+        range: 10.0,
+    };
+    add_component(self_entity, "PointLight", light_data);
+
+    // Modify the light
+    if let Some(light) = get_component(self_entity, "PointLight") {
+        light.intensity = 10.0;
+        set_component(self_entity, "PointLight", light);
+    }
+}
+```
+
+### Inter-Script Communication
+
+```rune
+// Script A - Emitter
+pub fn update(self_entity, dt) {
+    if is_key_just_pressed("Space") {
+        emit_event("player_jumped", #{
+            entity: self_entity,
+            height: 2.0,
+        });
+    }
+}
+
+// Script B - Listener
+pub fn on_player_jumped(data) {
+    log_info(`Entity ${data.entity} jumped ${data.height} units!`);
+}
+
+pub fn on_created(self_entity) {
+    subscribe_event("player_jumped", "on_player_jumped");
+}
+```
+
+### Building a Character Controller
+
+```rune
+pub fn on_created(self_entity) {
+    set_f64("move_speed", 5.0);
+    set_f64("rotation_speed", 3.0);
+}
+
+pub fn update(self_entity, dt) {
+    let speed = get_f64("move_speed");
+    let rot_speed = get_f64("rotation_speed");
+
+    // Movement
+    if is_key_pressed("W") {
+        translate(self_entity, 0.0, 0.0, -speed * dt);
+    }
+    if is_key_pressed("S") {
+        translate(self_entity, 0.0, 0.0, speed * dt);
+    }
+    if is_key_pressed("A") {
+        translate(self_entity, -speed * dt, 0.0, 0.0);
+    }
+    if is_key_pressed("D") {
+        translate(self_entity, speed * dt, 0.0, 0.0);
+    }
+
+    // Rotation
+    if is_key_pressed("Q") {
+        rotate(self_entity, 0.0, 1.0, 0.0, rot_speed * dt);
+    }
+    if is_key_pressed("E") {
+        rotate(self_entity, 0.0, 1.0, 0.0, -rot_speed * dt);
+    }
+}
+```
+
+---
+
+## Known Limitations
+
+### Language Syntax
+
+#### No `mut` Keyword
+
+Rune does not support the `mut` keyword. All `let` bindings are mutable by default.
+
+```rune
+// ❌ Error
+let mut x = 5;
+
+// ✅ Correct
+let x = 5;
+x = 10;  // Works fine
+```
+
+#### No Type Annotations on Struct Fields
+
+```rune
+// ❌ Error
+struct Player {
+    health: i64,
+    name: String,
+}
+
+// ✅ Correct
+struct Player {
+    health,
+    name,
+}
+```
+
+#### No Generics
+
+Rune does not support generic type parameters.
+
+```rune
+// ❌ Not supported
+struct Container<T> {
+    value,
+}
+
+// ✅ Use dynamic typing instead
+struct Container {
+    value,  // Can hold any type
+}
+```
+
+### Value Handling
+
+#### Cloning for Conversions
+
+When working with Values from `get_state()`, the engine internally clones them when passing to functions. This is handled automatically.
+
+```rune
+// This works correctly - no manual cloning needed
+let text = get_state("text", "");
+let new_text = ui.text_edit("id", text);  // Automatically handles Value
+if new_text != text {  // Comparison works
+    set_state("text", new_text);  // Update works
+}
+```
+
+### File I/O
+
+File I/O functions return error messages as strings instead of Result types:
+
+```rune
+let content = read_file("file.txt");
+if content.starts_with("ERROR:") {
+    log_error(content);
+} else {
+    // Use content
+}
+
+let error = write_file("file.txt", "data");
+if error != "" {
+    log_error(error);
+}
+```
+
+---
+
+## Best Practices
+
+### 1. Initialize State in `on_created`
+
+```rune
+pub fn on_created(self_entity) {
+    // Set all default values
+    set_state("health", 100.0);
+    set_state("name", "Player");
+    set_state("is_active", true);
+}
+```
+
+### 2. Use Type-Specific State for Performance
+
+```rune
+// ✅ Fast - uses f64 directly
+set_f64("speed", 5.0);
+let speed = get_f64("speed");
+
+// ⚠️ Slower - uses Value wrapper
+set_state("speed", 5.0);
+let speed = get_state("speed", 5.0);
+```
+
+### 3. Cache Expensive Queries
+
+```rune
+pub fn on_created(self_entity) {
+    let cameras = query_entities_with_component("CameraComponent");
+    set_state("main_camera", cameras[0]);
+}
+
+pub fn update(self_entity, dt) {
+    // Use cached value instead of querying every frame
+    let camera = get_state("main_camera", 0);
+}
+```
+
+### 4. Clean Up in `on_destroyed`
+
+```rune
+pub fn on_destroyed(self_entity) {
+    // Unsubscribe from events
+    unsubscribe_event("player_scored");
+
+    // Clean up spawned entities if needed
+    let spawned_entities = get_state("spawned", []);
+    for entity in spawned_entities {
+        // Cleanup logic
+    }
+}
+```
+
+### 5. Use Events for Decoupled Communication
+
+Instead of direct script-to-script calls, use events:
+
+```rune
+// ✅ Good - decoupled
+emit_event("enemy_died", #{ entity: enemy_id });
+
+// ❌ Bad - tightly coupled
+// (No direct script method calls exist anyway)
+```
+
+### 6. Organize UI Code
+
+```rune
+pub fn on_ui(ui) {
+    show_header(ui);
+    ui.separator();
+    show_controls(ui);
+    ui.separator();
+    show_status(ui);
+}
+
+fn show_header(ui) {
+    ui.heading("My Tool");
+}
+
+fn show_controls(ui) {
+    if ui.button("Action") {
+        perform_action();
+    }
+}
+
+fn show_status(ui) {
+    let status = get_state("status", "Ready");
+    ui.label(status);
+}
+
+fn perform_action() {
+    set_state("status", "Action performed!");
+}
+```
+
+---
+
+## Example Scripts
+
+### Orbit Camera
+
+```rune
+pub fn on_created(self_entity) {
+    set_f64("orbit_speed", 1.0);
+    set_f64("orbit_radius", 5.0);
+    set_f64("angle", 0.0);
+}
+
+pub fn update(self_entity, dt) {
+    let speed = get_f64("orbit_speed");
+    let radius = get_f64("orbit_radius");
+    let angle = get_f64("angle");
+
+    // Update angle
+    let new_angle = angle + speed * dt;
+    set_f64("angle", new_angle);
+
+    // Calculate position
+    let x = radius * new_angle.cos();
+    let z = radius * new_angle.sin();
+
+    set_translation(self_entity, x, 2.0, z);
+    look_at(self_entity, 0.0, 0.0, 0.0);
+}
+```
+
+### Spawner Tool
+
+```rune
+// @tool
+// Entity Spawner
+//
+// Spawn entities at mouse position
+
+pub fn on_created(self_entity) {
+    set_state("entity_name", "SpawnedEntity");
+    set_state("spawn_count", 0.0);
+}
+
+pub fn on_ui(ui) {
+    ui.heading("Entity Spawner");
+
+    let name = get_state("entity_name", "SpawnedEntity");
+    let new_name = ui.text_edit("name", name);
+    if new_name != name {
+        set_state("entity_name", new_name);
+    }
+
+    ui.separator();
+
+    if ui.button("Spawn Entity") {
+        let entity = spawn_entity(Some(new_name));
+
+        let count = get_state("spawn_count", 0.0);
+        set_state("spawn_count", count + 1.0);
+
+        log_info(`Spawned ${new_name} (total: ${count + 1.0})`);
+    }
+
+    let count = get_state("spawn_count", 0.0);
+    ui.label(`Total spawned: ${count}`);
+}
+```
+
+---
+
+## Troubleshooting
+
+### "Cannot take, value is M-000000" Error
+
+This error occurred in older versions when trying to use Values in comparisons or pass them to functions that tried to take ownership. The current version handles this automatically by cloning Values internally.
+
+If you see this error, ensure you're using the latest version of the engine.
+
+### Script Not Loading
+
+1. Check the console for compilation errors
+2. Verify the script path is correct
+3. Ensure the file has a `.rn` extension
+4. Check for syntax errors
+
+### UI Not Showing
+
+1. Ensure script has `// @tool` or `// @editor` annotation
+2. Implement the `on_ui(ui)` function
+3. Check console for errors
+
+### State Not Persisting
+
+State is per-entity. If the entity is destroyed, state is lost. For persistent data, use file I/O.
+
+---
+
+## Additional Resources
+
+- [Rune Language Documentation](https://rune-rs.github.io/)
+- Example scripts in `examples/scripts/`
+- Engine source: `src/scripting/rune/`
+
+---
+
+**Last Updated:** 2025-11-07
+**Engine Version:** Compatible with latest main branch

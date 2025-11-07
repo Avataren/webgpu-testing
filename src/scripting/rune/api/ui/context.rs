@@ -81,9 +81,11 @@ impl UiContext {
 
     /// Display a text input field and return the new value.
     #[rune::function(instance)]
-    pub fn text_edit(&self, id: String, current_value: rune::Value) -> String {
+    pub fn text_edit(&self, id: String, current_value: rune::Value) -> rune::Value {
         use rune::FromValue;
         use rune::runtime::try_result;
+        use rune::alloc::String as RuneString;
+
         // Convert Value to String inside the function to avoid snapshot issues
         // If conversion fails, use empty string as fallback
         let current_str = match try_result(String::from_value(current_value)) {
@@ -96,17 +98,26 @@ impl UiContext {
             current_value: current_str.clone(),
         });
 
-        self.get_response(&id)
+        // Get the response and convert back to Value
+        let result_str = self.get_response(&id)
             .and_then(|r| r.text_value)
-            .unwrap_or(current_str)
+            .unwrap_or(current_str);
+
+        // Convert String to RuneString to Value
+        match RuneString::try_from(result_str.as_str()) {
+            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or(current_value),
+            Err(_) => current_value,
+        }
     }
 
     /// Display a multiline text editor and return the new value.
     /// If width and height are not provided, the editor will fill available space.
     #[rune::function(instance)]
-    pub fn text_edit_multiline(&self, id: String, current_value: rune::Value, width: Option<f64>, height: Option<f64>) -> String {
+    pub fn text_edit_multiline(&self, id: String, current_value: rune::Value, width: Option<f64>, height: Option<f64>) -> rune::Value {
         use rune::FromValue;
         use rune::runtime::try_result;
+        use rune::alloc::String as RuneString;
+
         // Convert Value to String inside the function to avoid snapshot issues
         // If conversion fails, use empty string as fallback
         let current_str = match try_result(String::from_value(current_value)) {
@@ -121,9 +132,16 @@ impl UiContext {
             height: height.map(|v| v as f32),
         });
 
-        self.get_response(&id)
+        // Get the response and convert back to Value
+        let result_str = self.get_response(&id)
             .and_then(|r| r.text_value)
-            .unwrap_or(current_str)
+            .unwrap_or(current_str);
+
+        // Convert String to RuneString to Value
+        match RuneString::try_from(result_str.as_str()) {
+            Ok(rune_str) => rune::Value::try_from(rune_str).unwrap_or(current_value),
+            Err(_) => current_value,
+        }
     }
 
     /// Display a slider and return the new value.
