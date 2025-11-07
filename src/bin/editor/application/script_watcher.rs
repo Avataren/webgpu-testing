@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 #[cfg(not(target_arch = "wasm32"))]
 use log::warn;
 
-/// Watches for RuneScript (.rn) file updates on native builds.
+/// Watches for Lua script (.lua) file updates on native builds.
 /// Supports debouncing to avoid triggering multiple reloads for rapid saves.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct ScriptWatcher {
@@ -90,7 +90,7 @@ impl ScriptWatcher {
         self.last_change_time.clear();
     }
 
-    /// Polls for file events and returns the set of .rn files that changed.
+    /// Polls for file events and returns the set of .lua files that changed.
     /// Applies debouncing to avoid rapid reload cycles.
     pub(super) fn poll(&mut self) -> Vec<PathBuf> {
         let mut changed = HashSet::new();
@@ -102,11 +102,11 @@ impl ScriptWatcher {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) => {
                             for path in event.paths {
-                                // Only process .rn files
+                                // Only process .lua files
                                 if path
                                     .extension()
                                     .and_then(|ext| ext.to_str())
-                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("rn"))
+                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"))
                                     && path.exists()
                                 {
                                     // Check debounce
