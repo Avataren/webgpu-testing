@@ -192,7 +192,7 @@ impl RuneScriptInstance {
         let _state_guard = StateGuard::enter(&state);
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _entity_guard = EntityGuard::enter(entity_bits);
-        self.call_function(["on_ui"], (&ui_context,))
+        self.call_function(["on_ui"], (ui_context,))
     }
 
     pub fn call_function(

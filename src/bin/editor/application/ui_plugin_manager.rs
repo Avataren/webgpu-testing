@@ -208,6 +208,20 @@ impl UiPluginManager {
         log::info!("Reloaded plugin '{}' from {:?}", plugin.metadata.name, path);
         Ok(plugin.metadata.name.clone())
     }
+
+    /// Unload all plugins by despawning their entities
+    pub fn unload_all(&mut self, world: &mut hecs::World) {
+        log::info!("Unloading {} plugins", self.plugins.len());
+        for plugin in &self.plugins {
+            if let Err(e) = world.despawn(plugin.entity) {
+                log::warn!("Failed to despawn plugin entity {:?}: {}", plugin.entity, e);
+            } else {
+                log::debug!("Despawned plugin '{}' entity {:?}", plugin.metadata.name, plugin.entity);
+            }
+        }
+        self.plugins.clear();
+        self.entity_to_plugin.clear();
+    }
 }
 
 /// Helper to create RuneScriptSource from plugin metadata

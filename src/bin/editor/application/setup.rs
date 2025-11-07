@@ -141,6 +141,12 @@ impl EditorApplication {
     pub(super) fn load_ui_plugins(shared: &mut EditorSharedState, scene: &mut Scene) {
         info!("Loading UI plugins...");
 
+        // Unload existing plugins first to avoid duplicates
+        if let Some(existing_manager) = shared.ui_plugin_manager.as_mut() {
+            info!("Unloading existing UI plugins before reload");
+            existing_manager.unload_all(scene.main_world_mut());
+        }
+
         // Try to find ui_plugins.toml in examples/scripts
         let manifest_path = PathBuf::from("examples/scripts/ui_plugins.toml");
 
