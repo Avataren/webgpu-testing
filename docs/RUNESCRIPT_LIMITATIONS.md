@@ -414,9 +414,13 @@ pub fn on_ui(self_entity, ui) {  // ❌ Wrong - causes "Wrong number of argument
 
 **Why:** The entity is now available through a context guard (similar to state and events), not as an explicit parameter. This simplifies the API and makes it consistent with how other context is accessed.
 
+**Technical Implementation:** The `UiContext` is passed by reference `(&ui_context,)` in the Rust code to ensure proper argument marshalling through the Rune VM. Passing by value was causing the argument count to be interpreted incorrectly.
+
 **If You Need the Entity:** If you need to access the entity within `on_ui()`, there may be a context function available (check the API documentation).
 
-**Historical Note:** Prior to the fix in commit 39f61d1, this function incorrectly received two parameters. If you see "Wrong number of arguments 2, expected 1" errors, this is caused by duplicate plugin entities created during mode switching. The fix (implemented in src/bin/editor/application/ui_plugin_manager.rs and setup.rs) ensures old plugin entities are properly cleaned up before reloading.
+**Fixes Applied:**
+1. **Argument passing** (src/scripting/rune/component.rs:195): UiContext passed by reference
+2. **Plugin lifecycle** (src/bin/editor/application/setup.rs): Old plugin entities cleaned up before reload to prevent duplicates during mode switching
 
 **Note:** The `on_created()` and `update()` lifecycle functions still receive `self_entity` as their first parameter:
 ```rune
