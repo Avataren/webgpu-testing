@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use log::{debug, error};
-use wgpu_cube::scripting::RuneScriptSource;
+use wgpu_cube::scripting::LuaScriptSource;
 
 use super::core::EditorApplication;
 
@@ -52,7 +52,7 @@ impl EditorApplication {
         paths
     }
 
-    pub(super) fn load_script(path: &str) -> Option<RuneScriptSource> {
-        Self::load_script_text(path).map(|src| RuneScriptSource::inline(path, src))
+    pub(super) fn load_script(path: &str) -> Option<LuaScriptSource> {
+        Self::load_script_text(path).map(|src| LuaScriptSource::inline(path, src))
     }
 }

@@ -2,7 +2,7 @@ use hecs::Entity;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use wgpu_cube::scripting::RuneScriptSource;
+use wgpu_cube::scripting::LuaScriptSource;
 
 /// Plugin metadata from ui_plugins.toml
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -190,15 +190,15 @@ impl UiPluginManager {
         // Check if entity has the component
         {
             let _old_component = world
-                .get::<&wgpu_cube::scripting::RuneScriptComponent>(entity)
-                .map_err(|_| format!("Entity {:?} has no RuneScriptComponent", entity))?;
+                .get::<&wgpu_cube::scripting::LuaScriptComponent>(entity)
+                .map_err(|_| format!("Entity {:?} has no LuaScriptComponent", entity))?;
             // Drop the reference here
         }
 
         // Create new component with the reloaded source
         // Use File source so it stays editable
-        let new_component = wgpu_cube::scripting::RuneScriptComponent::new(
-            RuneScriptSource::File { path: path.to_path_buf() }
+        let new_component = wgpu_cube::scripting::LuaScriptComponent::new(
+            LuaScriptSource::File { path: path.to_path_buf() }
         );
 
         // Replace the component
@@ -206,7 +206,7 @@ impl UiPluginManager {
             .insert_one(entity, new_component)
             .map_err(|e| format!("Failed to update component: {}", e))?;
 
-        log::info!("Reloaded plugin '{}' from {:?}", plugin.metadata.name, path);
+        log::info!("Reloaded Lua plugin '{}' from {:?}", plugin.metadata.name, path);
         Ok(plugin.metadata.name.clone())
     }
 
@@ -225,11 +225,11 @@ impl UiPluginManager {
     }
 }
 
-/// Helper to create RuneScriptSource from plugin metadata
+/// Helper to create LuaScriptSource from plugin metadata
 pub fn create_plugin_script_source(
     manager: &UiPluginManager,
     metadata: &PluginMetadata,
-) -> Result<RuneScriptSource, String> {
+) -> Result<LuaScriptSource, String> {
     let script_path = manager.resolve_script_path(&metadata.script);
 
     // Verify the file exists
@@ -238,5 +238,5 @@ pub fn create_plugin_script_source(
     }
 
     // Create source - use File source so it can be edited by script editor
-    Ok(RuneScriptSource::File { path: script_path })
+    Ok(LuaScriptSource::File { path: script_path })
 }

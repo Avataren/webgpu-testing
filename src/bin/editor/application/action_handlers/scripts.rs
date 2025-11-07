@@ -1,6 +1,6 @@
 use hecs::Entity;
 use std::path::PathBuf;
-use wgpu_cube::scripting::{RuneScriptComponent, RuneScriptSource};
+use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 
 use super::{ActionContext, ActionResult};
 
@@ -9,19 +9,19 @@ pub fn handle_add_script(ctx: &mut ActionContext, entity: Entity) -> ActionResul
     let world = ctx.scene.main_world_mut();
 
     // Check if entity already has a script component
-    if world.get::<&RuneScriptComponent>(entity).is_ok() {
+    if world.get::<&LuaScriptComponent>(entity).is_ok() {
         log::warn!("Entity {:?} already has a script component", entity);
         ActionResult::no_change()
     } else {
-        // Create a default inline script
-        let default_script = RuneScriptComponent::new(RuneScriptSource::inline(
+        // Create a default inline Lua script
+        let default_script = LuaScriptComponent::new(LuaScriptSource::inline(
             "new_script",
-            "// New script\n\npub fn on_update(dt) {\n    // Your code here\n}\n",
+            "-- New Lua script\n\nfunction on_created(self_entity)\n    -- Initialization code here\nend\n\nfunction update(self_entity, dt)\n    -- Update code here\nend\n",
         ));
 
         match world.insert(entity, (default_script,)) {
             Ok(_) => {
-                log::info!("Added script component to entity {:?}", entity);
+                log::info!("Added Lua script component to entity {:?}", entity);
                 ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
@@ -43,12 +43,12 @@ pub fn handle_change_script_source(
         let world = ctx.scene.main_world_mut();
 
         // Check if entity has a script component
-        if let Ok(mut script) = world.get::<&mut RuneScriptComponent>(entity) {
+        if let Ok(mut script) = world.get::<&mut LuaScriptComponent>(entity) {
             // Create new script source from file
-            let new_source = RuneScriptSource::File {
+            let new_source = LuaScriptSource::File {
                 path: script_path.clone(),
             };
-            *script = RuneScriptComponent::new(new_source);
+            *script = LuaScriptComponent::new(new_source);
             log::info!(
                 "Changed script source for entity {:?} to {:?}",
                 entity,
@@ -77,7 +77,7 @@ pub fn handle_change_script_source(
 pub fn handle_edit_script(
     _ctx: &mut ActionContext,
     _entity: Entity,
-    _component: RuneScriptComponent,
+    _component: LuaScriptComponent,
 ) -> ActionResult {
     // Script edits are handled immediately in the UI stage
     ActionResult::no_change()
