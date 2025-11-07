@@ -43,10 +43,57 @@ use crate::project;
 use crate::windows::WindowToggles;
 #[cfg(not(target_arch = "wasm32"))]
 use wgpu_cube::project::normalize_absolute_path;
+use wgpu_cube::time::Instant;
 
 pub(super) struct RuntimeModeTransition {
     pub(super) from: RuntimeMode,
     pub(super) to: RuntimeMode,
+}
+
+/// A notification message shown as a toast in the UI
+#[derive(Clone, Debug)]
+pub struct ReloadNotification {
+    pub message: String,
+    pub severity: NotificationSeverity,
+    pub timestamp: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotificationSeverity {
+    Success,
+    Warning,
+    Error,
+}
+
+impl ReloadNotification {
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Success,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Error,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            severity: NotificationSeverity::Warning,
+            timestamp: Instant::now(),
+        }
+    }
+
+    /// Returns true if notification should be dismissed (older than 5 seconds)
+    pub fn should_dismiss(&self) -> bool {
+        self.timestamp.elapsed().as_secs() > 5
+    }
 }
 
 pub struct EditorSharedState {
@@ -80,6 +127,8 @@ pub struct EditorSharedState {
     pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
     /// Flag to track if UI plugins have been loaded (should only load after project is opened)
     pub(super) ui_plugins_loaded: bool,
+    /// Reload notifications shown as toasts
+    pub(super) reload_notifications: Vec<ReloadNotification>,
 }
 
 impl EditorSharedState {
@@ -325,6 +374,7 @@ impl EditorApplicationBuilder {
             script_ui_responses: std::collections::HashMap::new(),
             ui_plugin_manager: None,
             ui_plugins_loaded: false,
+            reload_notifications: Vec::new(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -848,15 +898,22 @@ impl EditorApplication {
         };
 
         let mut reload_count = 0;
+        let mut plugin_names = Vec::new();
+
         for (entity, path) in pending {
             let world = ctx.scene.main_world_mut();
             match manager.reload_plugin(entity, &path, world) {
                 Ok(plugin_name) => {
                     log::info!("✅ Plugin '{}' reloaded successfully", plugin_name);
+                    plugin_names.push(plugin_name);
                     reload_count += 1;
                 }
                 Err(err) => {
                     log::error!("❌ Failed to reload plugin: {}", err);
+                    // Add error notification
+                    self.shared
+                        .reload_notifications
+                        .push(ReloadNotification::error(err));
                 }
             }
         }
@@ -867,6 +924,17 @@ impl EditorApplication {
 
             // Mark scene as changed
             self.record_scene_change(&mut ctx.scene);
+
+            // Add success notification
+            if reload_count == 1 {
+                self.shared.reload_notifications.push(ReloadNotification::success(
+                    format!("✅ Reloaded: {}", plugin_names[0]),
+                ));
+            } else {
+                self.shared.reload_notifications.push(ReloadNotification::success(
+                    format!("✅ Reloaded {} plugins", reload_count),
+                ));
+            }
         }
     }
 
