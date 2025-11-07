@@ -76,6 +76,20 @@ pub(crate) fn get_state(key: String) -> VmResult<Value> {
     })
 }
 
+/// Overloaded version of get_state that accepts a default value
+#[rune::function(path = get_state)]
+pub(crate) fn get_state_with_default(key: String, default: Value) -> VmResult<Value> {
+    with_active_entity(move |handle| {
+        with_active_state(move |map| {
+            let entry_key = (handle, key);
+            match map.get(&entry_key) {
+                Some(value) => VmResult::Ok(value.clone()),
+                None => VmResult::Ok(default),
+            }
+        })
+    })
+}
+
 #[rune::function]
 pub(crate) fn try_get_state(key: String) -> VmResult<Value> {
     with_active_entity(move |handle| {
