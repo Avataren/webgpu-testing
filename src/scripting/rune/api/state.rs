@@ -65,14 +65,17 @@ pub(crate) fn set_state(key: String, value: Value) -> VmResult<()> {
 
 #[rune::function]
 pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
-    // Avoid nested move closures by getting handle first, then using single move closure
-    // This prevents the "Cannot take, value is M-000000" error with complex Values
+    // Clone the default value BEFORE entering closures to prevent snapshot issues
+    // When nested closures try to capture the original parameter, Rune creates
+    // an immutable snapshot (M-000000) which causes "Cannot take" errors
+    let default_clone = default.clone();
+
     with_active_entity(|handle| {
         with_active_state(move |map| {
             let entry_key = (handle, key);
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
-                None => VmResult::Ok(default),
+                None => VmResult::Ok(default_clone),
             }
         })
     })
