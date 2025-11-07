@@ -74,9 +74,10 @@ pub(crate) fn get_state(key: String, default: Value) -> VmResult<Value> {
             match map.get(&entry_key) {
                 Some(value) => VmResult::Ok(value.clone()),
                 None => {
-                    // Insert the default into the map
-                    map.insert(entry_key.clone(), default);
-                    // Now retrieve it from the map - this is NOT a snapshot!
+                    // Clone before insert - map.insert() takes ownership
+                    // Trying to move the captured parameter directly causes "Cannot take" error
+                    map.insert(entry_key.clone(), default.clone());
+                    // Now retrieve it from the map
                     match map.get(&entry_key) {
                         Some(value) => VmResult::Ok(value.clone()),
                         None => VmResult::panic("State insertion failed"),
