@@ -11,7 +11,7 @@ use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
 use super::error::LuaScriptingError;
 use super::runtime::LuaScriptingRuntime;
-use super::types::{EventSubscription, EventSubscriptions, ScriptEvent, ScriptStateMap};
+use super::types::{EventSubscription, EventSubscriptions, ScriptEvent, ScriptMode, ScriptStateMap};
 
 /// State that owns the Lua runtime for a scene.
 pub struct ScriptingState {
@@ -95,11 +95,11 @@ impl ScriptingState {
         }
 
         // Call on_created for new scripts
-        self.call_on_created(world)?;
+        self.call_on_created(world, editor_mode)?;
 
         // Call update for all scripts (if dt > 0 or editor_mode)
         if dt > 0.0 || editor_mode {
-            self.call_update(world, dt)?;
+            self.call_update(world, dt, editor_mode)?;
         }
 
         // Remove instances for entities that no longer have scripts
@@ -123,19 +123,19 @@ impl ScriptingState {
         for (entity, source) in to_compile {
             match self.runtime.compile(&source) {
                 Ok((script, mode)) => {
-                    let instance = LuaScriptInstance::new(script.clone(), source.clone());
+                    // Create instance with its own environment
+                    match LuaScriptInstance::new(self.runtime.lua(), script.clone(), source.clone()) {
+                        Ok(instance) => {
+                            self.instances.insert(entity, instance);
 
-                    // Load the script into the Lua VM
-                    if let Err(e) = self.runtime.load_script(&script) {
-                        error!(target: "script", "Failed to load script for entity {:?}: {}", entity, e);
-                        continue;
-                    }
-
-                    self.instances.insert(entity, instance);
-
-                    // Update the component's script mode
-                    if let Ok(mut comp) = world.get::<&mut LuaScriptComponent>(entity) {
-                        comp.set_script_mode(mode);
+                            // Update the component's script mode
+                            if let Ok(mut comp) = world.get::<&mut LuaScriptComponent>(entity) {
+                                comp.set_script_mode(mode);
+                            }
+                        }
+                        Err(e) => {
+                            error!(target: "script", "Failed to create instance for entity {:?}: {}", entity, e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -158,14 +158,25 @@ impl ScriptingState {
     }
 
     /// Call on_created for scripts that haven't had it called yet.
-    fn call_on_created(&mut self, world: &mut World) -> Result<(), LuaScriptingError> {
+    fn call_on_created(&mut self, world: &mut World, editor_mode: bool) -> Result<(), LuaScriptingError> {
         let mut to_call = Vec::new();
 
-        // Find scripts that need on_created
+        // Find scripts that need on_created and should run in the current mode
         for (entity, script_comp) in world.query::<&mut LuaScriptComponent>().iter() {
             if !script_comp.created_called() {
-                to_call.push(entity);
-                script_comp.mark_created();
+                let script_mode = script_comp.script_mode();
+
+                // Check if this script should run in the current mode
+                let should_run = match script_mode {
+                    ScriptMode::RuntimeOnly => !editor_mode,
+                    ScriptMode::EditorOnly => editor_mode,
+                    ScriptMode::Both => true,
+                };
+
+                if should_run {
+                    to_call.push(entity);
+                    script_comp.mark_created();
+                }
             }
         }
 
@@ -205,15 +216,26 @@ impl ScriptingState {
     }
 
     /// Call update for all active scripts.
-    fn call_update(&mut self, world: &mut World, dt: f64) -> Result<(), LuaScriptingError> {
+    fn call_update(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), LuaScriptingError> {
         let entities: Vec<Entity> = self.instances.keys().copied().collect();
 
         for entity in entities {
             // Check if entity still exists and has the component
-            let _script_mode = match world.get::<&LuaScriptComponent>(entity) {
+            let script_mode = match world.get::<&LuaScriptComponent>(entity) {
                 Ok(comp) => comp.script_mode(),
                 Err(_) => continue,
             };
+
+            // Check if this script should run in the current mode
+            let should_run = match script_mode {
+                ScriptMode::RuntimeOnly => !editor_mode,
+                ScriptMode::EditorOnly => editor_mode,
+                ScriptMode::Both => true,
+            };
+
+            if !should_run {
+                continue;
+            }
 
             if let Some(instance) = self.instances.get_mut(&entity) {
                 let commands = instance.command_buffer();

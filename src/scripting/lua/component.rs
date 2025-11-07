@@ -83,13 +83,15 @@ impl LuaScriptComponent {
 
 /// A per-entity script instance that holds the Lua execution state.
 ///
-/// Unlike Rune which uses per-instance VMs, Lua scripts share a single Lua VM
-/// but maintain per-entity state through the state_store.
+/// Each instance has its own environment table that inherits from _G,
+/// preventing function name collisions between different scripts.
 pub struct LuaScriptInstance {
     pub script: Arc<LuaScript>,
     pub source: LuaScriptSource,
     pub handles: Rc<RefCell<EntityHandleRegistry>>,
     pub state_store: Rc<RefCell<ScriptStateMap>>,
+    /// Registry key for this instance's environment table
+    env_registry_key: mlua::RegistryKey,
 }
 
 impl fmt::Debug for LuaScriptInstance {
@@ -103,15 +105,30 @@ impl fmt::Debug for LuaScriptInstance {
 
 impl LuaScriptInstance {
     pub fn new(
+        lua: &Lua,
         script: Arc<LuaScript>,
         source: LuaScriptSource,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, LuaScriptingError> {
+        // Create a new environment table that inherits from _G
+        let env = lua.create_table()?;
+        let globals = lua.globals();
+        let metatable = lua.create_table()?;
+        metatable.set("__index", globals)?;
+        env.set_metatable(Some(metatable));
+
+        // Load the script's bytecode into this environment
+        lua.load(&**script.chunk).set_environment(env.clone()).exec()?;
+
+        // Store the environment in the registry to keep it alive
+        let env_registry_key = lua.create_registry_value(env)?;
+
+        Ok(Self {
             script,
             source,
             handles: Rc::new(RefCell::new(EntityHandleRegistry::default())),
             state_store: Rc::new(RefCell::new(HashMap::new())),
-        }
+            env_registry_key,
+        })
     }
 
     pub fn command_buffer(&self) -> Rc<RefCell<ScriptCommands>> {
@@ -215,15 +232,16 @@ impl LuaScriptInstance {
         name: &str,
         arg: i64,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        let globals = lua.globals();
+        // Get this instance's environment from the registry
+        let env: mlua::Table = lua.registry_value(&self.env_registry_key)?;
 
-        // Check if function exists
-        if !globals.contains_key(name)? {
+        // Check if function exists in this instance's environment
+        if !env.contains_key(name)? {
             return Ok(FunctionCallOutcome::Missing);
         }
 
-        // Try to get the function
-        let func: mlua::Function = match globals.get(name) {
+        // Try to get the function from the environment
+        let func: mlua::Function = match env.get(name) {
             Ok(f) => f,
             Err(_) => return Ok(FunctionCallOutcome::Missing),
         };
@@ -244,15 +262,16 @@ impl LuaScriptInstance {
     where
         A: mlua::IntoLuaMulti,
     {
-        let globals = lua.globals();
+        // Get this instance's environment from the registry
+        let env: mlua::Table = lua.registry_value(&self.env_registry_key)?;
 
-        // Check if function exists
-        if !globals.contains_key(name)? {
+        // Check if function exists in this instance's environment
+        if !env.contains_key(name)? {
             return Ok(FunctionCallOutcome::Missing);
         }
 
-        // Try to get the function
-        let func: mlua::Function = match globals.get(name) {
+        // Try to get the function from the environment
+        let func: mlua::Function = match env.get(name) {
             Ok(f) => f,
             Err(_) => return Ok(FunctionCallOutcome::Missing),
         };
