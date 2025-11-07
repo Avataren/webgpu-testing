@@ -416,6 +416,11 @@ pub fn on_ui(self_entity, ui) {  // ❌ Wrong - causes "Wrong number of argument
 
 **If You Need the Entity:** If you need to access the entity within `on_ui()`, there may be a context function available (check the API documentation).
 
+**Troubleshooting:** If you get the error "Wrong number of arguments 2, expected 1" even though your script has the correct signature:
+1. Ensure the application has been rebuilt with `cargo build --release`
+2. Check that all script files use the correct signature (only `ui` parameter)
+3. Clear any cached bytecode by restarting the editor
+
 **Note:** The `on_created()` and `update()` lifecycle functions still receive `self_entity` as their first parameter:
 ```rune
 pub fn on_created(self_entity) { }  // ✅ Takes self_entity
