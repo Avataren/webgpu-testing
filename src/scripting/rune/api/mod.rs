@@ -116,10 +116,10 @@ pub(crate) fn script_module() -> Result<Module, RuneScriptingError> {
     module.function_meta(file_io::list_files)?;
 
     // Script access functions
-    module.ty::<script_access::ScriptInfo>()?;
-    module.function_meta(script_access::ScriptInfo::get_info)?;
-    module.function_meta(script_access::get_all_script_entities)?;
-    module.function_meta(script_access::get_script_info)?;
+    module.function_meta(script_access::get_script_count)?;
+    module.function_meta(script_access::get_script_entity)?;
+    module.function_meta(script_access::get_script_source_type)?;
+    module.function_meta(script_access::get_script_source_path)?;
     module.function_meta(script_access::get_entity_name)?;
 
     // UI types and functions

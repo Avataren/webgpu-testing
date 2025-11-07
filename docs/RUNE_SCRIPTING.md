@@ -503,7 +503,59 @@ read_file(path: String) -> String  // Returns error message if failed
 
 // Write string to file
 write_file(path: String, content: String) -> String  // Returns "" on success
+
+// Check if file exists
+file_exists(path: String) -> bool
+
+// List files in directory
+list_files(path: String) -> Vec<String>  // Returns file names
 ```
+
+### Script Access (Metaprogramming)
+
+Query information about other scripts in the scene. Useful for building script editors and debugging tools.
+
+```rune
+// Get count of entities with scripts
+get_script_count() -> i64
+
+// Get entity ID for script at index (0-based)
+get_script_entity(index: i64) -> u64
+
+// Get source type: "file" or "inline"
+get_script_source_type(index: i64) -> String
+
+// Get source path (file path or inline name)
+get_script_source_path(index: i64) -> String
+
+// Get entity name for display
+get_entity_name(entity: u64) -> String
+```
+
+**Example: List all scripts in scene**
+```rune
+pub fn on_ui(ui) {
+    ui.heading("Script Inspector");
+
+    let count = get_script_count();
+    ui.label(`Found ${count} script(s)`);
+
+    ui.separator();
+
+    let i = 0;
+    while i < count {
+        let entity_id = get_script_entity(i);
+        let entity_name = get_entity_name(entity_id);
+        let source_type = get_script_source_type(i);
+        let source_path = get_script_source_path(i);
+
+        ui.label(`${entity_name}: ${source_type} - ${source_path}`);
+        i = i + 1;
+    }
+}
+```
+
+**Note**: Script data is cached when you call `get_script_count()`. All subsequent calls to `get_script_entity()`, `get_script_source_type()`, etc. use this cached data for the current frame.
 
 ### UI Functions
 
@@ -643,30 +695,150 @@ struct Container {
 }
 ```
 
-### Value Handling
+### Value Ownership Issues ⚠️
 
-#### Use Type-Specific State Functions
+**CRITICAL**: Rune has complex Value ownership semantics that cause "Cannot read, value is M-000000" errors in many common UI patterns. These issues are **fundamental to Rune's design** and cannot always be worked around.
 
-**Best Practice**: Use type-specific state functions (`get_string`, `get_f64`, `get_bool`) instead of generic `get_state` for better performance and simpler code.
+#### What Triggers Ownership Errors
+
+1. **Using a value in multiple places:**
+```rune
+// ❌ DANGER: Value gets "moved" by template string, then can't be used again
+let source_type = get_script_source_type(i);
+let label = `Type: ${source_type}`;  // source_type is "moved" here
+if source_type == "file" {  // ERROR: Cannot read, value is M-000000
+    // ...
+}
+```
+
+2. **Comparing values after passing to functions:**
+```rune
+// ❌ DANGER: Value moved by ui.text_edit(), comparison fails
+let old_text = get_string("text", "");
+let new_text = ui.text_edit("id", old_text);  // old_text moved
+if new_text != old_text {  // ERROR: Cannot read, value is M-000000
+    set_string("text", new_text);
+}
+```
+
+3. **Iterating over Vec of custom structs:**
+```rune
+// ❌ DOES NOT WORK: Vec iteration causes ownership issues
+let scripts = get_all_script_entities();  // Returns Vec<ScriptInfo>
+for script in scripts {
+    let entity = script.entity;  // ERROR: Cannot read, value is M-000000
+    // ...
+}
+```
+
+4. **Accessing struct fields multiple times:**
+```rune
+// ❌ DANGER: Even with getter methods, accessing fields in loops fails
+for script in scripts {
+    let type = script.source_type();
+    let path = script.source_path();  // ERROR: Cannot read, value is M-000000
+    // ...
+}
+```
+
+#### Workarounds That Work
+
+**1. Always use type-specific state functions**
+
+Use `get_string()`, `get_f64()`, `get_bool()` instead of generic `get_state()`:
 
 ```rune
-// ✅ Correct - use type-specific functions
+// ✅ SAFE - type-specific functions return Rust types, not Value
 let text = get_string("text", "");
 let new_text = ui.text_edit("id", text);
-set_string("text", new_text);
+set_string("text", new_text);  // Always update, don't compare
 
-// ✅ Correct - numeric state
+// ✅ SAFE - numeric state
 let speed = get_f64("speed");
 set_f64("speed", speed * 1.1);
 
-// ✅ Correct - boolean state
+// ✅ SAFE - boolean state
 let enabled = get_bool("enabled", false);
 set_bool("enabled", !enabled);
-
-// ⚠️ Avoid - generic Value can cause ownership issues
-let text = get_state("text", "");  // Returns Value type
-// Complex Value ownership semantics...
 ```
+
+**2. Refetch values instead of reusing them**
+
+```rune
+// ✅ SAFE - fetch fresh values each time
+let label = `Type: ${get_script_source_type(i)}`;
+if get_script_source_type(i) == "file" {  // Fetch again
+    // Use get_script_source_path(i) directly, don't store
+    set_string("current_path", get_script_source_path(i));
+}
+```
+
+**3. Use index-based access instead of iteration**
+
+```rune
+// ✅ SAFE - index-based access
+let count = get_script_count();
+let i = 0;
+while i < count {
+    // Call getter functions each time, don't store in variables
+    let label = `${get_entity_name(get_script_entity(i))}`;
+    if ui.button(label) {
+        // Fetch fresh values in handler
+        let path = get_script_source_path(i);
+        set_string("path", path);
+    }
+    i = i + 1;
+}
+
+// ❌ BROKEN - for loop over Vec
+for script in get_all_scripts() {  // This pattern doesn't work reliably
+    // ...
+}
+```
+
+**4. Avoid comparisons, always update**
+
+```rune
+// ✅ SAFE - no comparison, just update
+let text = get_string("text", "");
+let new_text = ui.text_edit("id", text);
+set_string("text", new_text);  // Always set, don't check if changed
+
+// ❌ BROKEN - comparison uses moved value
+if new_text != text {  // Error!
+    set_string("text", new_text);
+}
+```
+
+#### Patterns That Don't Work
+
+Despite multiple attempts and workarounds, these patterns are **not reliable** in Rune:
+
+1. ❌ Returning `Vec<CustomStruct>` from Rust to Rune
+2. ❌ Iterating over complex objects with `for` loops
+3. ❌ Accessing struct fields multiple times (even with `#[rune(get)]`)
+4. ❌ Comparing values after passing to functions
+5. ❌ Using values in template strings then using them again
+
+**Recommendation**: If your UI plugin needs complex data iteration (like a list of items with multiple fields), consider:
+- Using simpler data structures (separate arrays)
+- Using index-based access instead of iteration
+- Storing data in state and accessing by key
+- Or consider if Rune is the right tool for your use case
+
+### Value Handling Best Practices
+
+**ALWAYS:**
+- Use type-specific state functions (`get_string`, `get_f64`, `get_bool`)
+- Call getter functions multiple times instead of storing values
+- Update state unconditionally instead of comparing first
+- Use `while` loops with indices instead of `for` loops over complex data
+
+**NEVER:**
+- Store values in variables if you'll use them multiple times
+- Use values in template strings and then use them again
+- Compare values after passing to functions
+- Iterate over `Vec` of custom structs with `for` loops
 
 **Important**: Always use matching get/set functions:
 - `set_string()` with `get_string()` for strings
@@ -861,28 +1033,137 @@ pub fn on_ui(ui) {
 
 ## Troubleshooting
 
-### "Cannot take, value is M-000000" Error
+### "Cannot read, value is M-000000" Error
 
-This error occurred in older versions when trying to use Values in comparisons or pass them to functions that tried to take ownership. The current version handles this automatically by cloning Values internally.
+**This is the most common Rune error.** It means you're trying to use a Value that has been "moved" (ownership transferred).
 
-If you see this error, ensure you're using the latest version of the engine.
+**Common causes:**
+
+1. **Using a variable after passing it to a function:**
+```rune
+let text = get_string("text", "");
+let new_text = ui.text_edit("id", text);  // text is moved here
+if text != new_text {  // ❌ ERROR: text was moved
+    // ...
+}
+```
+
+**Fix:** Don't reuse variables. Fetch fresh values:
+```rune
+let text = get_string("text", "");
+let new_text = ui.text_edit("id", text);
+set_string("text", new_text);  // ✅ Just update, don't compare
+```
+
+2. **Using a variable in a template string then using it again:**
+```rune
+let name = get_string("name", "");
+let label = `Hello ${name}`;  // name is moved into template
+log_info(name);  // ❌ ERROR: name was moved
+```
+
+**Fix:** Fetch the value again or use it inline:
+```rune
+let label = `Hello ${get_string("name", "")}`;
+log_info(get_string("name", ""));  // ✅ Fetch again
+```
+
+3. **Iterating over complex data:**
+```rune
+for item in get_items() {  // ❌ BROKEN in many cases
+    let x = item.field;  // ERROR
+}
+```
+
+**Fix:** Use index-based access:
+```rune
+let count = get_item_count();
+let i = 0;
+while i < count {
+    let value = get_item_field(i);  // ✅ Call function directly
+    i = i + 1;
+}
+```
+
+**General solution:** See the [Value Ownership Issues](#value-ownership-issues-️) section above for comprehensive workarounds.
 
 ### Script Not Loading
 
-1. Check the console for compilation errors
-2. Verify the script path is correct
-3. Ensure the file has a `.rn` extension
-4. Check for syntax errors
+1. **Check the console** for compilation errors
+   - Look for syntax errors, undefined functions, type mismatches
+2. **Verify the script path** is correct relative to the working directory
+3. **Ensure the file has a `.rn` extension**
+4. **Check for Rune syntax issues:**
+   - No `mut` keyword (use `let` only)
+   - No type annotations on struct fields
+   - Functions need `pub fn` for lifecycle hooks
 
 ### UI Not Showing
 
-1. Ensure script has `// @tool` or `// @editor` annotation
-2. Implement the `on_ui(ui)` function
-3. Check console for errors
+1. **Ensure script has `// @tool` or `// @editor` annotation** at the top
+2. **Implement the `on_ui(ui)` function**
+3. **Check console for errors** - UI errors are logged as warnings
+4. **Verify the plugin is registered** in `ui_plugins.toml` (for file-based plugins)
+5. **Check plugin is enabled** in the manifest (`enabled = true`)
 
 ### State Not Persisting
 
-State is per-entity. If the entity is destroyed, state is lost. For persistent data, use file I/O.
+State is per-entity instance. State is lost when:
+- The entity is destroyed
+- The script component is removed
+- The application is restarted
+
+For persistent data across sessions, use file I/O:
+```rune
+// Save state to file
+let data = get_string("important_data", "");
+write_file("save_data.txt", data);
+
+// Load state from file
+let data = read_file("save_data.txt");
+if !data.starts_with("ERROR") {
+    set_string("important_data", data);
+}
+```
+
+### Performance Issues
+
+If your script causes lag:
+
+1. **Cache expensive queries:**
+```rune
+// ❌ BAD - queries every frame
+pub fn update(self_entity, dt) {
+    let cameras = query_entities_with_component("CameraComponent");
+}
+
+// ✅ GOOD - query once
+pub fn on_created(self_entity) {
+    let cameras = query_entities_with_component("CameraComponent");
+    set_state("camera", cameras[0]);
+}
+```
+
+2. **Use type-specific state functions** (`get_f64`, `get_string`, `get_bool`) instead of generic `get_state()`
+3. **Avoid complex calculations in `on_ui()`** - UI is called every frame
+4. **Consider moving heavy work to `update()` and caching results**
+
+### Debugging Tips
+
+1. **Use logging liberally:**
+```rune
+log_info(`Value of x: ${x}`);
+log_debug(`Entering function with entity: ${self_entity}`);
+```
+
+2. **Check types with template strings:**
+```rune
+let value = get_state("key", 0);
+log_info(`Type check: ${value}`);  // See what you actually got
+```
+
+3. **Test incrementally** - add features one at a time
+4. **Consult official examples** at https://github.com/rune-rs/rune/tree/main/examples/examples
 
 ---
 
@@ -894,5 +1175,14 @@ State is per-entity. If the entity is destroyed, state is lost. For persistent d
 
 ---
 
-**Last Updated:** 2025-11-07
+**Last Updated:** 2025-11-07 (Updated with critical Value ownership information)
 **Engine Version:** Compatible with latest main branch
+
+**⚠️ Important Note on Rune Limitations:**
+
+This documentation reflects both the capabilities and significant limitations discovered through extensive testing. The Value ownership issues described in the "Known Limitations" section are fundamental to Rune's design and may make it unsuitable for certain types of UI scripting, particularly those involving:
+- Complex data iteration and display
+- Lists of items with multiple fields
+- Scenarios requiring value reuse across multiple operations
+
+Consider these limitations when deciding whether Rune is appropriate for your scripting needs. For simple scripts (entity behaviors, basic UI panels, straightforward tools), Rune works well. For complex UI editors with dynamic data, you may encounter fundamental limitations.

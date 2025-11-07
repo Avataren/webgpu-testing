@@ -92,22 +92,26 @@ pub fn on_ui(ui) {
     // Script list
     ui.label("Scripts in scene:");
 
-    let scripts = get_all_script_entities();
+    let script_count = get_script_count();
 
-    if scripts.len() == 0 {
+    if script_count == 0 {
         ui.label("  No scripts found");
     } else {
-        for script in scripts {
-            // Get all info in one call to avoid ownership issues
-            let (entity_id, source_type, source_path) = script.get_info();
-
+        let i = 0;
+        while i < script_count {
+            // Get values for display only
+            let entity_id = get_script_entity(i);
             let entity_name = get_entity_name(entity_id);
-            let button_label = `${entity_name} (${source_type}): ${source_path}`;
+            let button_label = `${entity_name} (${get_script_source_type(i)}): ${get_script_source_path(i)}`;
 
             if ui.button(button_label) {
-                if source_type == "file" {
-                    // Store path before read_file consumes it
-                    set_string("current_path", source_path);
+                // Get fresh values for use in handler
+                let source_type_in_handler = get_script_source_type(i);
+                let source_path_in_handler = get_script_source_path(i);
+
+                if source_type_in_handler == "file" {
+                    // Store path
+                    set_string("current_path", source_path_in_handler);
 
                     // Read file from state
                     let path_for_read = get_string("current_path", "");
@@ -128,6 +132,8 @@ pub fn on_ui(ui) {
                 }
                 return;
             }
+
+            i = i + 1;
         }
     }
 
@@ -156,8 +162,7 @@ pub fn on_ui(ui) {
 }
 
 fn refresh_script_list() {
-    let scripts = get_all_script_entities();
-    let count = scripts.len();
+    let count = get_script_count();
     set_string("status_message", `Found ${count} script(s)`);
     set_bool("needs_refresh", false);
 }
