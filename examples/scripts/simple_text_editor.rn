@@ -18,12 +18,12 @@ pub fn on_ui(ui) {
     let text_content = get_state("text_content", "");
     let status = get_state("status_message", "Ready");
 
-    // // File path input
+    // File path input
     ui.label("File path:");
-    //let new_path = ui.text_edit("file_path", file_path); //triggers cannot take
-    // if new_path != file_path {
-    //     set_state("file_path", new_path);
-    // }
+    let new_path = ui.text_edit("file_path", file_path);
+    if new_path != file_path {
+        set_state("file_path", new_path);
+    }
 
     // // Buttons
     ui.separator();
@@ -54,7 +54,7 @@ pub fn on_ui(ui) {
 
     // Status message
     ui.separator();
-    //ui.label(status); //triggers "Cannot take"
+    ui.label(status);
     ui.separator();
 
     // Multiline text editor

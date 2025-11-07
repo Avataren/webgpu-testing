@@ -46,8 +46,9 @@ impl UiContext {
         use rune::FromValue;
         use rune::runtime::try_result;
         // Convert Value to String inside the function to avoid snapshot issues
+        // Clone the Value before conversion to avoid "Cannot take" errors
         // If conversion fails, use empty string as fallback
-        let text_str = match try_result(String::from_value(text)) {
+        let text_str = match try_result(String::from_value(text.clone())) {
             rune::runtime::VmResult::Ok(s) => s,
             rune::runtime::VmResult::Err(_) => String::new(),
         };
@@ -85,8 +86,9 @@ impl UiContext {
         use rune::FromValue;
         use rune::runtime::try_result;
         // Convert Value to String inside the function to avoid snapshot issues
+        // Clone the Value before conversion to avoid "Cannot take" errors
         // If conversion fails, use empty string as fallback
-        let current_str = match try_result(String::from_value(current_value)) {
+        let current_str = match try_result(String::from_value(current_value.clone())) {
             rune::runtime::VmResult::Ok(s) => s,
             rune::runtime::VmResult::Err(_) => String::new(),
         };
@@ -108,8 +110,9 @@ impl UiContext {
         use rune::FromValue;
         use rune::runtime::try_result;
         // Convert Value to String inside the function to avoid snapshot issues
+        // Clone the Value before conversion to avoid "Cannot take" errors
         // If conversion fails, use empty string as fallback
-        let current_str = match try_result(String::from_value(current_value)) {
+        let current_str = match try_result(String::from_value(current_value.clone())) {
             rune::runtime::VmResult::Ok(s) => s,
             rune::runtime::VmResult::Err(_) => String::new(),
         };
