@@ -42,8 +42,16 @@ impl UiContext {
 
     /// Display a text label.
     #[rune::function(instance)]
-    pub fn label(&self, text: String) {
-        self.commands.borrow_mut().push(UiCommand::Label { text });
+    pub fn label(&self, text: rune::Value) {
+        use rune::FromValue;
+        use rune::runtime::try_result;
+        // Convert Value to String inside the function to avoid snapshot issues
+        // If conversion fails, use empty string as fallback
+        let text_str = match try_result(String::from_value(text)) {
+            rune::runtime::VmResult::Ok(s) => s,
+            rune::runtime::VmResult::Err(_) => String::new(),
+        };
+        self.commands.borrow_mut().push(UiCommand::Label { text: text_str });
     }
 
     /// Display a button and return whether it was clicked.
@@ -73,31 +81,49 @@ impl UiContext {
 
     /// Display a text input field and return the new value.
     #[rune::function(instance)]
-    pub fn text_edit(&self, id: String, current_value: String) -> String {
+    pub fn text_edit(&self, id: String, current_value: rune::Value) -> String {
+        use rune::FromValue;
+        use rune::runtime::try_result;
+        // Convert Value to String inside the function to avoid snapshot issues
+        // If conversion fails, use empty string as fallback
+        let current_str = match try_result(String::from_value(current_value)) {
+            rune::runtime::VmResult::Ok(s) => s,
+            rune::runtime::VmResult::Err(_) => String::new(),
+        };
+
         self.commands.borrow_mut().push(UiCommand::TextEdit {
             id: id.clone(),
-            current_value: current_value.clone(),
+            current_value: current_str.clone(),
         });
 
         self.get_response(&id)
             .and_then(|r| r.text_value)
-            .unwrap_or(current_value)
+            .unwrap_or(current_str)
     }
 
     /// Display a multiline text editor and return the new value.
     /// If width and height are not provided, the editor will fill available space.
     #[rune::function(instance)]
-    pub fn text_edit_multiline(&self, id: String, current_value: String, width: Option<f64>, height: Option<f64>) -> String {
+    pub fn text_edit_multiline(&self, id: String, current_value: rune::Value, width: Option<f64>, height: Option<f64>) -> String {
+        use rune::FromValue;
+        use rune::runtime::try_result;
+        // Convert Value to String inside the function to avoid snapshot issues
+        // If conversion fails, use empty string as fallback
+        let current_str = match try_result(String::from_value(current_value)) {
+            rune::runtime::VmResult::Ok(s) => s,
+            rune::runtime::VmResult::Err(_) => String::new(),
+        };
+
         self.commands.borrow_mut().push(UiCommand::TextEditMultiline {
             id: id.clone(),
-            current_value: current_value.clone(),
+            current_value: current_str.clone(),
             width: width.map(|v| v as f32),
             height: height.map(|v| v as f32),
         });
 
         self.get_response(&id)
             .and_then(|r| r.text_value)
-            .unwrap_or(current_value)
+            .unwrap_or(current_str)
     }
 
     /// Display a slider and return the new value.
