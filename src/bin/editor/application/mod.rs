@@ -172,12 +172,14 @@ impl EditorApplication {
                 Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
                 self.shared.ui_plugins_loaded = true;
 
-                // Initialize the newly loaded scripts by calling update(0.0) in editor mode
+                // Initialize the newly loaded plugin scripts by running them in the plugin world
                 // This ensures on_created() is called and script instances are created
                 let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
                 if is_editor_mode {
                     log::info!("Initializing UI plugin scripts in editor mode");
-                    ctx.scene.update(0.0);
+                    if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+                        ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
+                    }
                 }
             }
         }
@@ -271,9 +273,17 @@ impl EditorApplication {
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
 
-        // Process UI plugin scripts (from separate world)
+        // Run and process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+            // Run plugin scripts (on_update, etc.) - use dt=0 in editor mode like scene scripts
+            let plugin_dt = match ctx.runtime {
+                RuntimeMode::Editor => 0.0,
+                RuntimeMode::Playing => ctx.dt,
+            };
+            ctx.scene.run_scripts_for_world(manager.world_mut(), plugin_dt, editor_mode);
+
+            // Collect UI commands from plugins
             self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
         } else {
             self.shared.plugin_ui_commands.clear();
