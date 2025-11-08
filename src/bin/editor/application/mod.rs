@@ -632,6 +632,34 @@ impl EditorApplication {
                     }
                 });
 
+            // Check if Welcome Screen is visible (for modality)
+            // Check both that plugin is visible AND that it has UI commands (it may hide itself via Lua)
+            let welcome_screen_visible = self.shared.plugin_ui_commands.iter().any(|(entity, commands)| {
+                !commands.is_empty() &&
+                manager
+                    .get_plugin(*entity)
+                    .map(|p| p.visible && p.metadata.name == "Welcome Screen")
+                    .unwrap_or(false)
+            });
+
+            // Render modal overlay if Welcome Screen is visible
+            if welcome_screen_visible {
+                egui::Area::new("welcome_modal_overlay".into())
+                    .fixed_pos(egui::pos2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        let screen_rect = ctx.viewport_rect();
+                        ui.allocate_space(screen_rect.size());
+
+                        let painter = ui.painter();
+                        painter.rect_filled(
+                            screen_rect,
+                            0.0,
+                            egui::Color32::from_black_alpha(180),
+                        );
+                    });
+                ctx.set_cursor_icon(egui::CursorIcon::Default);
+            }
+
             // Render each plugin's UI in a separate window (only if visible)
             for (entity, commands) in &self.shared.plugin_ui_commands {
                 // Check if this plugin is visible
@@ -642,16 +670,28 @@ impl EditorApplication {
 
                     let mut responses = HashMap::new();
                     let window_title = plugin.metadata.name.clone();
+                    let is_welcome_screen = plugin.metadata.name == "Welcome Screen";
 
-                    egui::Window::new(window_title)
+                    let mut window = egui::Window::new(window_title)
                         .resizable(true)
                         .default_size([500.0, 400.0])
-                        .collapsible(true)
-                        .show(ctx, |ui| {
-                            for command in commands {
-                                command.render_and_collect(ui, &mut responses);
-                            }
-                        });
+                        .collapsible(true);
+
+                    // Configure Welcome Screen as modal
+                    if is_welcome_screen {
+                        window = window
+                            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                            .collapsible(false)
+                            .resizable(false)
+                            .title_bar(false)
+                            .default_size([600.0, 500.0]);
+                    }
+
+                    window.show(ctx, |ui| {
+                        for command in commands {
+                            command.render_and_collect(ui, &mut responses);
+                        }
+                    });
 
                     if !responses.is_empty() {
                         plugin_responses.insert(*entity, responses);
