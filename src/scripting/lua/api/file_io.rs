@@ -1,8 +1,37 @@
+//! # File I/O API
+//!
+//! This module provides sandboxed file system access for Lua scripts.
+//!
+//! ## Security & Sandboxing
+//!
+//! For security, scripts can only access files within allowed directories:
+//! - `scripts/`
+//! - `examples/scripts/`
+//!
+//! Path traversal attacks (using `..`) are automatically blocked.
+//! Absolute paths selected via file dialogs are allowed.
+//!
+//! ## Features
+//!
+//! - **Read/Write** - Access text files in allowed directories
+//! - **File queries** - Check existence, list files
+//! - **Path utilities** - Extract directory/filename from paths
+//! - **File dialogs** - Native OS file pickers (not on WASM)
+//!
+//! ## Platform Support
+//!
+//! - **Native** - Full support for file operations and dialogs
+//! - **WASM** - File I/O operations return errors (not supported)
+
 use std::path::{Component, Path, PathBuf};
 
 use mlua::{Lua, Result as LuaResult};
 
-/// Allowed directories for file operations
+/// Allowed directories for file operations.
+///
+/// Scripts can only read/write files within these directories relative
+/// to the current working directory. This prevents unauthorized access
+/// to system files.
 const ALLOWED_DIRS: &[&str] = &["examples/scripts", "scripts"];
 
 /// Normalize a path by resolving . and .. components without requiring the file to exist.
@@ -78,7 +107,59 @@ fn is_path_allowed(path: &Path) -> bool {
     false
 }
 
-/// Register file I/O API functions with the Lua runtime.
+/// Registers file I/O API functions with the Lua runtime.
+///
+/// This function exposes sandboxed file system access to Lua scripts.
+///
+/// ## Available Functions
+///
+/// ### File Operations
+/// - `read_file(path)` - Read text file, returns contents or error string
+/// - `write_file(path, contents)` - Write text file, creates directories if needed
+/// - `file_exists(path)` - Returns true if file exists in allowed directory
+/// - `list_files(dir_path)` - Returns 1-indexed table of filenames
+///
+/// ### Path Utilities
+/// - `get_file_directory(path)` - Extract directory portion of path
+/// - `get_filename(path)` - Extract filename portion of path
+///
+/// ### File Dialogs (Native only)
+/// - `open_file_dialog(extensions, start_dir)` - Pick file to open
+/// - `save_file_dialog(extensions, default_name, start_dir)` - Pick save location
+/// - `open_folder_dialog(start_dir)` - Pick folder
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- Read a script file
+/// local code = read_file("scripts/my_script.lua")
+/// if not code:match("^ERROR:") then
+///     log_info("Loaded " .. #code .. " bytes")
+/// end
+///
+/// -- Write configuration
+/// write_file("scripts/config.txt", "speed=10\njump_height=5")
+///
+/// -- List all scripts
+/// local files = list_files("scripts")
+/// for i = 1, #files do
+///     log_info("Found: " .. files[i])
+/// end
+///
+/// -- File dialog (editor scripts)
+/// local path = open_file_dialog({"lua", "txt"}, "scripts")
+/// if path then
+///     log_info("User selected: " .. path)
+/// end
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 

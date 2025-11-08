@@ -1,8 +1,73 @@
+//! # State Management API
+//!
+//! This module provides persistent state storage for Lua scripts.
+//! State is stored per-entity and persists across script reloads.
+//!
+//! ## Features
+//!
+//! - **Generic state storage** - Store any Lua value (tables, numbers, strings, booleans)
+//! - **Typed accessors** - Optimized functions for specific types (f64, bool, string)
+//! - **Per-entity state** - Operate on the current entity or any arbitrary entity
+//! - **Default values** - Graceful fallback when keys don't exist
+//!
+//! ## Performance
+//!
+//! For simple types, use the typed functions (`set_f64`, `get_f64`, etc.) as they
+//! are more efficient than the generic `set_state`/`get_state`.
+
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
 use crate::scripting::lua::guards::{with_active_entity, with_active_state};
 
-/// Register state management API functions with the Lua runtime.
+/// Registers state management API functions with the Lua runtime.
+///
+/// This function exposes state storage and retrieval functions to Lua scripts.
+/// State is stored as JSON values and persists across script reloads.
+///
+/// ## Current Entity Functions
+///
+/// - `set_state(key, value)` - Store any value for current entity
+/// - `get_state(key, default)` - Retrieve with default fallback
+/// - `try_get_state(key)` - Return nil if not found
+/// - `set_f64(key, number)` - Optimized number storage
+/// - `get_f64(key)` - Retrieve number (panics if missing)
+/// - `set_bool(key, boolean)` - Store boolean
+/// - `get_bool(key, default)` - Retrieve boolean with default
+/// - `set_string(key, string)` - Store string
+/// - `get_string(key, default)` - Retrieve string with default
+///
+/// ## Arbitrary Entity Functions
+///
+/// - `set_state_for(entity, key, value)`
+/// - `get_state_for(entity, key, default)`
+/// - `try_get_state_for(entity, key)`
+/// - `set_f64_for(entity, key, number)`
+/// - `get_f64_for(entity, key, default)`
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- Store various types
+/// set_f64("speed", 5.0)
+/// set_bool("active", true)
+/// set_state("config", {x = 10, y = 20})
+///
+/// -- Retrieve with defaults
+/// local speed = get_f64("speed")
+/// local enabled = get_bool("enabled", false)
+/// local config = get_state("config", {x = 0, y = 0})
+///
+/// -- Operate on other entities
+/// set_state_for(other_entity, "color", {r = 1.0, g = 0.0, b = 0.0})
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_state_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 

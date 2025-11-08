@@ -1,3 +1,15 @@
+//! # Lua Scripting Type Definitions
+//!
+//! This module defines the core types used by the Lua scripting system.
+//!
+//! ## Key Types
+//!
+//! - [`LuaScriptSource`] - Represents where script code comes from (inline or file)
+//! - [`ScriptMode`] - Execution mode based on annotations (@editor, @tool, etc.)
+//! - [`LuaScript`] - Compiled Lua bytecode ready for execution
+//! - [`ScriptEvent`] - Event data for inter-script communication
+//! - [`ScriptStateMap`] - Persistent state storage for scripts
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -8,7 +20,24 @@ use serde::{Deserialize, Serialize};
 
 use super::error::LuaScriptingError;
 
-/// Host-facing representation of a script source.
+/// Represents the source of a Lua script.
+///
+/// Scripts can either be embedded inline (useful for small scripts or code generation)
+/// or loaded from external files (better for larger scripts and development).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Inline script
+/// let inline = LuaScriptSource::inline("rotator", "
+///     function update(self_entity, dt)
+///         rotate(self_entity, 0, 1, 0, dt)
+///     end
+/// ");
+///
+/// // File-based script
+/// let file = LuaScriptSource::file("scripts/player_controller.lua");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LuaScriptSource {
     /// Inline source code bundled with an entity.
@@ -72,14 +101,35 @@ pub(crate) struct LoadedScript {
     pub path: Option<PathBuf>,
 }
 
-/// Script execution mode based on annotations.
+/// Script execution mode determined by annotations.
+///
+/// Scripts can declare their intended execution context using comment annotations
+/// at the top of the file:
+///
+/// - No annotation → `RuntimeOnly` (default, for gameplay scripts)
+/// - `-- @editor` → `EditorOnly` (for editor tools and utilities)
+/// - `-- @tool` → `Both` (for tools that work in editor and runtime)
+///
+/// # Example
+///
+/// ```lua
+/// -- @editor
+/// -- This script only runs in editor mode
+///
+/// function on_ui(self_entity, ui)
+///     ui:heading("Editor Tool")
+///     if ui:button("Do Something") then
+///         log_info("Button clicked in editor")
+///     end
+/// end
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScriptMode {
     /// No annotation - runs only in play/runtime mode
     RuntimeOnly,
-    /// @editor annotation - runs only in editor mode
+    /// `@editor` annotation - runs only in editor mode
     EditorOnly,
-    /// @tool annotation - runs in both editor and play modes
+    /// `@tool` annotation - runs in both editor and play modes
     Both,
 }
 
