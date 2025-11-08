@@ -2,7 +2,7 @@ use glam::{EulerRot, Quat, Vec3};
 use hecs::Entity;
 use mlua::{Lua, Result as LuaResult};
 
-use crate::scene::TransformComponent;
+use crate::scene::{TransformComponent, WorldTransform};
 use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 
 /// Register transform API functions with the Lua runtime.
@@ -89,17 +89,20 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
                     None => return Ok(None),
                 };
 
-                // Get local transform for now
-                if let Ok(transform) = world.get::<&TransformComponent>(entity) {
-                    let translation = transform.0.translation;
-                    let table = lua.create_table()?;
-                    table.set("x", translation.x as f64)?;
-                    table.set("y", translation.y as f64)?;
-                    table.set("z", translation.z as f64)?;
-                    return Ok(Some(table));
-                }
+                // Try to get world transform first, fall back to local if not available
+                let translation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity) {
+                    world_transform.0.translation
+                } else if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+                    transform.0.translation
+                } else {
+                    return Ok(None);
+                };
 
-                Ok(None)
+                let table = lua.create_table()?;
+                table.set("x", translation.x as f64)?;
+                table.set("y", translation.y as f64)?;
+                table.set("z", translation.z as f64)?;
+                Ok(Some(table))
             })
         })?,
     )?;
@@ -114,17 +117,21 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
                     None => return Ok(None),
                 };
 
-                // Get local transform for now
-                if let Ok(transform) = world.get::<&TransformComponent>(entity) {
-                    let (yaw, pitch, roll) = transform.0.rotation.to_euler(EulerRot::YXZ);
-                    let table = lua.create_table()?;
-                    table.set("yaw", yaw as f64)?;
-                    table.set("pitch", pitch as f64)?;
-                    table.set("roll", roll as f64)?;
-                    return Ok(Some(table));
-                }
+                // Try to get world transform first, fall back to local if not available
+                let rotation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity) {
+                    world_transform.0.rotation
+                } else if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+                    transform.0.rotation
+                } else {
+                    return Ok(None);
+                };
 
-                Ok(None)
+                let (yaw, pitch, roll) = rotation.to_euler(EulerRot::YXZ);
+                let table = lua.create_table()?;
+                table.set("yaw", yaw as f64)?;
+                table.set("pitch", pitch as f64)?;
+                table.set("roll", roll as f64)?;
+                Ok(Some(table))
             })
         })?,
     )?;
