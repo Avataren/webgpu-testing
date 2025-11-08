@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use hecs::{Entity, World};
 use log::error;
+use mlua::LuaSerdeExt;
 
 use crate::scene;
 use crate::scripting::component_registry::ComponentRegistry;
@@ -387,22 +388,13 @@ impl ScriptingState {
             subscribers.len()
         );
 
-        // Convert event data to Lua value
-        let event_data_lua = match serde_json::to_string(&event.data) {
-            Ok(json) => json,
-            Err(e) => {
-                log::error!(target: "script", "Failed to serialize event data for '{}': {}", event.name, e);
-                return;
-            }
-        };
-
         // Dispatch to each subscriber
         for subscriber in subscribers {
             if let Err(e) = self.call_event_callback(
                 subscriber.entity_id,
                 &subscriber.callback_name,
                 &event.name,
-                &event_data_lua,
+                &event.data,
             ) {
                 log::error!(
                     target: "script",
@@ -421,7 +413,7 @@ impl ScriptingState {
         entity: Entity,
         callback_name: &str,
         event_name: &str,
-        event_data_json: &str,
+        event_data: &serde_json::Value,
     ) -> Result<(), String> {
         // Find the instance for this entity across all worlds
         let mut instance = None;
@@ -442,12 +434,11 @@ impl ScriptingState {
             )
         })?;
 
-        // Parse the JSON data into a Lua value
+        // Convert event data to Lua value using mlua's serde integration
         let lua = self.runtime.lua();
-        let event_data: mlua::Value = lua
-            .load(format!("return {}", event_data_json))
-            .eval()
-            .map_err(|e| format!("Failed to parse event data: {}", e))?;
+        let event_data_lua: mlua::Value = lua
+            .to_value(event_data)
+            .map_err(|e| format!("Failed to convert event data to Lua: {}", e))?;
 
         // Get the environment table from the registry
         let env: mlua::Table = lua
@@ -469,7 +460,7 @@ impl ScriptingState {
 
         // Call the callback with event_name and event_data
         callback
-            .call::<()>((event_name.to_string(), event_data))
+            .call::<()>((event_name.to_string(), event_data_lua))
             .map_err(|e| format!("Callback execution failed: {}", e))?;
 
         log::debug!(
