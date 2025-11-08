@@ -684,19 +684,32 @@ impl EditorApplication {
 
                     // Configure Welcome Screen as modal
                     if is_welcome_screen {
+                        // Make the window take up 80% of the screen for a spacious layout
+                        let screen_rect = ctx.screen_rect();
+                        let window_width = screen_rect.width() * 0.8;
+                        let window_height = screen_rect.height() * 0.8;
+
                         window = window
                             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                             .collapsible(false)
                             .resizable(false)
                             .title_bar(false)
-                            .default_size([600.0, 500.0]);
+                            .default_size([window_width, window_height])
+                            .interactable(true);  // Ensure it always accepts input
                     }
 
-                    window.show(ctx, |ui| {
+                    let window_response = window.show(ctx, |ui| {
                         for command in commands {
                             command.render_and_collect(ui, &mut responses);
                         }
                     });
+
+                    // For Welcome Screen, always request focus to prevent locking
+                    if is_welcome_screen {
+                        if let Some(response) = window_response {
+                            response.response.request_focus();
+                        }
+                    }
 
                     if !responses.is_empty() {
                         plugin_responses.insert(*entity, responses);
