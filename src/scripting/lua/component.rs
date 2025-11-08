@@ -11,7 +11,9 @@ use super::commands::ScriptCommands;
 use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
 use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, StateGuard};
-use super::types::{CoroutineMap, LuaScript, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap};
+use super::types::{
+    CoroutineMap, LuaScript, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap,
+};
 
 /// Component that attaches a Lua script to an entity.
 #[derive(Clone)]

@@ -171,9 +171,7 @@ impl WorldGuard {
             "WorldGuard: attempted to create guard while another is active"
         );
 
-        ACTIVE_WORLD.with(|cell| {
-            *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation))
-        });
+        ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
 
         Self {
             _marker: PhantomData,
@@ -227,9 +225,8 @@ impl RegistryGuard {
             "RegistryGuard: attempted to create guard while another is active"
         );
 
-        ACTIVE_REGISTRY.with(|cell| {
-            *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation))
-        });
+        ACTIVE_REGISTRY
+            .with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
 
         Self {
             _marker: PhantomData,
@@ -285,9 +282,8 @@ impl InputStateGuard {
             "InputStateGuard: attempted to create guard while another is active"
         );
 
-        ACTIVE_INPUT_STATE.with(|cell| {
-            *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation))
-        });
+        ACTIVE_INPUT_STATE
+            .with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
 
         Self {
             _marker: PhantomData,
@@ -676,7 +672,10 @@ mod tests {
             let result = std::panic::catch_unwind(|| {
                 let _guard2 = WorldGuard::enter(&world);
             });
-            assert!(result.is_err(), "Expected panic when creating nested WorldGuard");
+            assert!(
+                result.is_err(),
+                "Expected panic when creating nested WorldGuard"
+            );
         }
     }
 

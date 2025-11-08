@@ -523,6 +523,11 @@ impl EditorApplication {
     fn render_script_ui(&mut self, ctx: &egui::Context) {
         use std::collections::HashMap;
 
+        let project_loaded = self.project_system().controller().current_dir().is_some();
+
+        self.apply_welcome_screen_visibility(project_loaded);
+        let mut welcome_override = self.shared.welcome_plugin_override;
+
         let mut plugin_responses: HashMap<
             hecs::Entity,
             HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
@@ -576,6 +581,15 @@ impl EditorApplication {
                                         was_visible,
                                         plugin.visible
                                     );
+
+                                    if plugin.metadata.name == "Welcome Screen" {
+                                        let default_visible = !project_loaded;
+                                        if plugin.visible == default_visible {
+                                            welcome_override = None;
+                                        } else {
+                                            welcome_override = Some(plugin.visible);
+                                        }
+                                    }
                                 }
                                 ui.label(egui::RichText::new(&plugin.metadata.category).weak());
                             });
@@ -619,6 +633,15 @@ impl EditorApplication {
                                         was_visible,
                                         plugin.visible
                                     );
+
+                                    if plugin.metadata.name == "Welcome Screen" {
+                                        let default_visible = !project_loaded;
+                                        if plugin.visible == default_visible {
+                                            welcome_override = None;
+                                        } else {
+                                            welcome_override = Some(plugin.visible);
+                                        }
+                                    }
                                 }
                                 ui.label(egui::RichText::new(&plugin.metadata.category).weak());
                             });
@@ -634,27 +657,27 @@ impl EditorApplication {
 
             // Check if Welcome Screen is visible (for modality)
             // Check both that plugin is visible AND that it has UI commands (it may hide itself via Lua)
-            let welcome_screen_visible = self.shared.plugin_ui_commands.iter().any(|(entity, commands)| {
-                !commands.is_empty() &&
-                manager
-                    .get_plugin(*entity)
-                    .map(|p| p.visible && p.metadata.name == "Welcome Screen")
-                    .unwrap_or(false)
-            });
+            let welcome_screen_visible =
+                self.shared
+                    .plugin_ui_commands
+                    .iter()
+                    .any(|(entity, commands)| {
+                        !commands.is_empty()
+                            && manager
+                                .get_plugin(*entity)
+                                .map(|p| p.visible && p.metadata.name == "Welcome Screen")
+                                .unwrap_or(false)
+                    });
 
             // Render modal overlay if Welcome Screen is visible
             if welcome_screen_visible {
                 egui::Area::new("welcome_modal_overlay".into())
                     .fixed_pos(egui::pos2(0.0, 0.0))
-                    .interactable(false)  // Don't capture input events
+                    .interactable(false) // Don't capture input events
                     .show(ctx, |ui| {
                         let screen_rect = ctx.viewport_rect();
                         let painter = ui.painter();
-                        painter.rect_filled(
-                            screen_rect,
-                            0.0,
-                            egui::Color32::from_black_alpha(180),
-                        );
+                        painter.rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
                     });
                 ctx.set_cursor_icon(egui::CursorIcon::Default);
             }
@@ -693,8 +716,8 @@ impl EditorApplication {
                             .collapsible(false)
                             .resizable(false)
                             .title_bar(false)
-                            .fixed_size([window_width, window_height])  // Force size every frame
-                            .interactable(true);  // Ensure it always accepts input
+                            .fixed_size([window_width, window_height]) // Force size every frame
+                            .interactable(true); // Ensure it always accepts input
                     }
 
                     let window_response = window.show(ctx, |ui| {
@@ -780,9 +803,31 @@ impl EditorApplication {
             }
         }
 
+        self.shared.welcome_plugin_override = welcome_override;
+
         // Store responses for the next frame (kept separate to avoid Entity ID collisions)
         self.shared.script_ui_responses = scene_responses;
         self.shared.plugin_ui_responses = plugin_responses;
+    }
+
+    fn apply_welcome_screen_visibility(&mut self, project_loaded: bool) {
+        let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
+            return;
+        };
+
+        let target_visible = self
+            .shared
+            .welcome_plugin_override
+            .unwrap_or(!project_loaded);
+
+        for plugin in manager.plugins_mut() {
+            if plugin.metadata.name == "Welcome Screen" {
+                if plugin.visible != target_visible {
+                    plugin.visible = target_visible;
+                }
+                break;
+            }
+        }
     }
 
     /// Render reload notifications as toasts in the bottom-right corner

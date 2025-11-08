@@ -2,11 +2,11 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::scripting::lua::component::LuaScriptComponent;
     use crate::scripting::lua::error::LuaScriptingError;
     use crate::scripting::lua::runtime::LuaScriptingRuntime;
     use crate::scripting::lua::state::ScriptingState;
     use crate::scripting::lua::types::LuaScriptSource;
-    use crate::scripting::lua::component::LuaScriptComponent;
     use hecs::World;
 
     /// Test creating a new scripting state.
@@ -129,9 +129,8 @@ mod tests {
     fn test_world_with_scripts() {
         let mut world = World::new();
 
-        let script = LuaScriptComponent::new(
-            LuaScriptSource::inline("test", "function on_create() end")
-        );
+        let script =
+            LuaScriptComponent::new(LuaScriptSource::inline("test", "function on_create() end"));
 
         // Spawn entities with scripts
         let e1 = world.spawn((script.clone(),));
@@ -163,9 +162,7 @@ mod tests {
         let mut world = World::new();
 
         // Add a simple script
-        let script = LuaScriptComponent::new(
-            LuaScriptSource::inline("empty", "-- empty script")
-        );
+        let script = LuaScriptComponent::new(LuaScriptSource::inline("empty", "-- empty script"));
         world.spawn((script,));
 
         // Process scripts should not panic

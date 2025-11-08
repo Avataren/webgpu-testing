@@ -182,7 +182,8 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
                 };
 
                 // Try to get world transform first, fall back to local if not available
-                let translation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity) {
+                let translation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity)
+                {
                     world_transform.0.translation
                 } else if let Ok(transform) = world.get::<&TransformComponent>(entity) {
                     transform.0.translation

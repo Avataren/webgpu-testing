@@ -139,6 +139,8 @@ pub struct EditorSharedState {
     pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
     /// Flag to track if UI plugins have been loaded (should only load after project is opened)
     pub(super) ui_plugins_loaded: bool,
+    /// Tracks manual user overrides for the welcome screen visibility
+    pub(super) welcome_plugin_override: Option<bool>,
     /// Reload notifications shown as toasts
     pub(super) reload_notifications: Vec<ReloadNotification>,
 }
@@ -388,6 +390,7 @@ impl EditorApplicationBuilder {
             plugin_ui_responses: std::collections::HashMap::new(),
             ui_plugin_manager: None,
             ui_plugins_loaded: false,
+            welcome_plugin_override: None,
             reload_notifications: Vec::new(),
         };
 

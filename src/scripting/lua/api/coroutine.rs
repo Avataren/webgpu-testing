@@ -32,7 +32,9 @@ use mlua::{Lua, Result as LuaResult};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::scripting::lua::types::{CoroutineId, CoroutineMap, CoroutineState, CoroutineStatus, WaitState};
+use crate::scripting::lua::types::{
+    CoroutineId, CoroutineMap, CoroutineState, CoroutineStatus, WaitState,
+};
 
 thread_local! {
     /// Active coroutine map for the currently executing script instance
@@ -73,7 +75,9 @@ fn with_active_coroutines<R>(
     ACTIVE_COROUTINES.with(|cell| {
         let opt = cell.borrow();
         let Some(rc) = opt.as_ref() else {
-            return Err(mlua::Error::RuntimeError("coroutine context missing".into()));
+            return Err(mlua::Error::RuntimeError(
+                "coroutine context missing".into(),
+            ));
         };
         let mut borrow = rc.borrow_mut();
         f(&mut borrow)
@@ -213,7 +217,9 @@ pub(crate) fn register_coroutine_api(lua: &Lua) -> LuaResult<()> {
 
             // Get current coroutine ID
             let coro_id = get_current_coroutine_id().ok_or_else(|| {
-                mlua::Error::RuntimeError("wait() can only be called from within a coroutine".into())
+                mlua::Error::RuntimeError(
+                    "wait() can only be called from within a coroutine".into(),
+                )
             })?;
 
             // Set wait state in the coroutine
@@ -239,7 +245,9 @@ pub(crate) fn register_coroutine_api(lua: &Lua) -> LuaResult<()> {
         lua.create_function(|lua, frames: u32| {
             // Get current coroutine ID
             let coro_id = get_current_coroutine_id().ok_or_else(|| {
-                mlua::Error::RuntimeError("wait_frames() can only be called from within a coroutine".into())
+                mlua::Error::RuntimeError(
+                    "wait_frames() can only be called from within a coroutine".into(),
+                )
             })?;
 
             // Set wait state in the coroutine

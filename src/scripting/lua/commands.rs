@@ -357,7 +357,8 @@ impl ScriptCommands {
 
             // Add pending components to the entity
             for (component_name, value) in pending.components {
-                if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                if let Err(e) =
+                    Self::add_component_from_json(world, entity, &component_name, &value)
                 {
                     warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
                 }
@@ -482,7 +483,8 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                    if let Err(e) =
+                        Self::add_component_from_json(world, entity, &component_name, &value)
                     {
                         warn!(target: "script", "Failed to set component '{}': {}", component_name, e);
                     }
@@ -500,7 +502,8 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                    if let Err(e) =
+                        Self::add_component_from_json(world, entity, &component_name, &value)
                     {
                         warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
                     }
@@ -798,7 +801,10 @@ impl ScriptCommands {
                     .map_err(|e| e.to_string())?;
             }
             _ => {
-                return Err(format!("Unknown or unsupported component type: {}", component_name));
+                return Err(format!(
+                    "Unknown or unsupported component type: {}",
+                    component_name
+                ));
             }
         }
 
@@ -815,10 +821,14 @@ impl ScriptCommands {
 
         match component_name {
             "Name" => {
-                world.remove_one::<Name>(entity).map_err(|e| e.to_string())?;
+                world
+                    .remove_one::<Name>(entity)
+                    .map_err(|e| e.to_string())?;
             }
             "Visible" => {
-                world.remove_one::<Visible>(entity).map_err(|e| e.to_string())?;
+                world
+                    .remove_one::<Visible>(entity)
+                    .map_err(|e| e.to_string())?;
             }
             "CanCastShadow" => {
                 world
@@ -881,7 +891,10 @@ impl ScriptCommands {
                     .map_err(|e| e.to_string())?;
             }
             _ => {
-                return Err(format!("Unknown or unsupported component type: {}", component_name));
+                return Err(format!(
+                    "Unknown or unsupported component type: {}",
+                    component_name
+                ));
             }
         }
 
