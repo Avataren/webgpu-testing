@@ -672,6 +672,11 @@ impl EditorApplication {
                     let window_title = plugin.metadata.name.clone();
                     let is_welcome_screen = plugin.metadata.name == "Welcome Screen";
 
+                    // Skip non-welcome windows when welcome modal is active
+                    if welcome_screen_visible && !is_welcome_screen {
+                        continue;
+                    }
+
                     let mut window = egui::Window::new(window_title)
                         .resizable(true)
                         .default_size([500.0, 400.0])
@@ -700,20 +705,23 @@ impl EditorApplication {
             }
 
             // Render scene scripts (non-plugins) with default titles
-            for (entity, commands) in &self.shared.script_ui_commands {
-                let mut responses = HashMap::new();
+            // Skip when welcome modal is active
+            if !welcome_screen_visible {
+                for (entity, commands) in &self.shared.script_ui_commands {
+                    let mut responses = HashMap::new();
 
-                egui::Window::new(format!("Script UI - Entity {:?}", entity))
-                    .resizable(true)
-                    .default_size([300.0, 200.0])
-                    .show(ctx, |ui| {
-                        for command in commands {
-                            command.render_and_collect(ui, &mut responses);
-                        }
-                    });
+                    egui::Window::new(format!("Script UI - Entity {:?}", entity))
+                        .resizable(true)
+                        .default_size([300.0, 200.0])
+                        .show(ctx, |ui| {
+                            for command in commands {
+                                command.render_and_collect(ui, &mut responses);
+                            }
+                        });
 
-                if !responses.is_empty() {
-                    scene_responses.insert(*entity, responses);
+                    if !responses.is_empty() {
+                        scene_responses.insert(*entity, responses);
+                    }
                 }
             }
         } else {
