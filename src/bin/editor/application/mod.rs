@@ -718,17 +718,19 @@ impl EditorApplication {
                     // For Welcome Screen, refocus on clicks outside to prevent UI lock
                     if is_welcome_screen {
                         if let Some(response) = window_response {
-                            // Only refocus when clicking outside the window
-                            // This prevents UI from locking when clicking the overlay
-                            // but allows text fields to maintain focus during normal use
-                            if ctx.input(|i| i.pointer.any_click()) {
-                                let click_pos = ctx.input(|i| i.pointer.interact_pos());
-
-                                if let Some(pos) = click_pos {
-                                    if !response.response.rect.contains(pos) {
-                                        response.response.request_focus();
+                            let clicked_outside = ctx.input(|input| {
+                                if input.pointer.any_click() {
+                                    if let Some(pos) = input.pointer.interact_pos() {
+                                        return !response.response.rect.contains(pos);
                                     }
                                 }
+                                false
+                            });
+                            let nothing_focused = ctx.memory(|mem| mem.focused().is_none());
+
+                            if clicked_outside || nothing_focused {
+                                response.response.request_focus();
+                            }
                             }
                         }
                     }
