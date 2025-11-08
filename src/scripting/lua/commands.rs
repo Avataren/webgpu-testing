@@ -356,10 +356,11 @@ impl ScriptCommands {
             }
 
             // Add pending components to the entity
-            for (component_name, _value) in pending.components {
-                // TODO: Convert serde_json::Value to the appropriate component type
-                // This will be implemented when we add the API functions
-                warn!(target: "script", "Component '{}' pending conversion from JSON", component_name);
+            for (component_name, value) in pending.components {
+                if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                {
+                    warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
+                }
             }
 
             // Defer parent setting until all entities are spawned
@@ -471,7 +472,7 @@ impl ScriptCommands {
                 ExistingCommand::SetComponent {
                     entity_bits,
                     component_name,
-                    value: _,
+                    value,
                 } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
@@ -481,13 +482,15 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    // TODO: Use the registry to set the component after value conversion
-                    warn!(target: "script", "SetComponent for '{}' needs value conversion", component_name);
+                    if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                    {
+                        warn!(target: "script", "Failed to set component '{}': {}", component_name, e);
+                    }
                 }
                 ExistingCommand::AddComponent {
                     entity_bits,
                     component_name,
-                    value: _,
+                    value,
                 } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
@@ -497,8 +500,10 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    // TODO: Use the registry to add the component after value conversion
-                    warn!(target: "script", "AddComponent for '{}' needs value conversion", component_name);
+                    if let Err(e) = Self::add_component_from_json(world, entity, &component_name, &value)
+                    {
+                        warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
+                    }
                 }
                 ExistingCommand::RemoveComponent {
                     entity_bits,
@@ -512,9 +517,9 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    // We need a remove_component method in the registry
-                    // For now, log a warning
-                    warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
+                    if let Err(e) = Self::remove_component_by_name(world, entity, &component_name) {
+                        warn!(target: "script", "Failed to remove component '{}': {}", component_name, e);
+                    }
                 }
                 ExistingCommand::Translate { entity_bits, delta } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
@@ -680,6 +685,206 @@ impl ScriptCommands {
         let mut transform = Transform::default();
         apply(&mut transform);
         world.insert_one(entity, TransformComponent(transform))?;
+        Ok(())
+    }
+
+    /// Add or set a component from a serde_json::Value
+    fn add_component_from_json(
+        world: &mut World,
+        entity: Entity,
+        component_name: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), String> {
+        use crate::scene::components::*;
+
+        match component_name {
+            "Name" => {
+                let name = value
+                    .as_str()
+                    .ok_or_else(|| "Name must be a string".to_string())?;
+                world
+                    .insert_one(entity, Name(name.to_string()))
+                    .map_err(|e| e.to_string())?;
+            }
+            "Visible" => {
+                let visible = value
+                    .as_bool()
+                    .ok_or_else(|| "Visible must be a boolean".to_string())?;
+                world
+                    .insert_one(entity, Visible(visible))
+                    .map_err(|e| e.to_string())?;
+            }
+            "CanCastShadow" => {
+                let can_cast = value
+                    .as_bool()
+                    .ok_or_else(|| "CanCastShadow must be a boolean".to_string())?;
+                world
+                    .insert_one(entity, CanCastShadow(can_cast))
+                    .map_err(|e| e.to_string())?;
+            }
+            "RotateAnimation" => {
+                // Expect {axis: [x, y, z], speed: number}
+                let obj = value
+                    .as_object()
+                    .ok_or_else(|| "RotateAnimation must be an object".to_string())?;
+                let axis = obj
+                    .get("axis")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| "RotateAnimation.axis must be an array".to_string())?;
+                let speed = obj
+                    .get("speed")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| "RotateAnimation.speed must be a number".to_string())?;
+
+                if axis.len() != 3 {
+                    return Err("RotateAnimation.axis must have 3 elements".to_string());
+                }
+
+                let axis_vec = Vec3::new(
+                    axis[0].as_f64().ok_or("Invalid axis value")? as f32,
+                    axis[1].as_f64().ok_or("Invalid axis value")? as f32,
+                    axis[2].as_f64().ok_or("Invalid axis value")? as f32,
+                );
+
+                world
+                    .insert_one(
+                        entity,
+                        RotateAnimation {
+                            axis: axis_vec,
+                            speed: speed as f32,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            "OrbitAnimation" => {
+                // Expect {center: [x, y, z], radius: number, speed: number, offset: number}
+                let obj = value
+                    .as_object()
+                    .ok_or_else(|| "OrbitAnimation must be an object".to_string())?;
+                let center = obj
+                    .get("center")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| "OrbitAnimation.center must be an array".to_string())?;
+                let radius = obj
+                    .get("radius")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| "OrbitAnimation.radius must be a number".to_string())?;
+                let speed = obj
+                    .get("speed")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| "OrbitAnimation.speed must be a number".to_string())?;
+                let offset = obj.get("offset").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                if center.len() != 3 {
+                    return Err("OrbitAnimation.center must have 3 elements".to_string());
+                }
+
+                let center_vec = Vec3::new(
+                    center[0].as_f64().ok_or("Invalid center value")? as f32,
+                    center[1].as_f64().ok_or("Invalid center value")? as f32,
+                    center[2].as_f64().ok_or("Invalid center value")? as f32,
+                );
+
+                world
+                    .insert_one(
+                        entity,
+                        OrbitAnimation {
+                            center: center_vec,
+                            radius: radius as f32,
+                            speed: speed as f32,
+                            offset: offset as f32,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+            _ => {
+                return Err(format!("Unknown or unsupported component type: {}", component_name));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove a component by name
+    fn remove_component_by_name(
+        world: &mut World,
+        entity: Entity,
+        component_name: &str,
+    ) -> Result<(), String> {
+        use crate::scene::components::*;
+
+        match component_name {
+            "Name" => {
+                world.remove_one::<Name>(entity).map_err(|e| e.to_string())?;
+            }
+            "Visible" => {
+                world.remove_one::<Visible>(entity).map_err(|e| e.to_string())?;
+            }
+            "CanCastShadow" => {
+                world
+                    .remove_one::<CanCastShadow>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "RotateAnimation" => {
+                world
+                    .remove_one::<RotateAnimation>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "OrbitAnimation" => {
+                world
+                    .remove_one::<OrbitAnimation>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "TransformComponent" | "Transform" => {
+                world
+                    .remove_one::<TransformComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "CameraComponent" | "Camera" => {
+                world
+                    .remove_one::<CameraComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "PointLight" => {
+                world
+                    .remove_one::<PointLight>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "DirectionalLight" => {
+                world
+                    .remove_one::<DirectionalLight>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "SpotLight" => {
+                world
+                    .remove_one::<SpotLight>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "MeshComponent" | "Mesh" => {
+                world
+                    .remove_one::<MeshComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "MaterialComponent" | "Material" => {
+                world
+                    .remove_one::<MaterialComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "PrimitiveMeshComponent" => {
+                world
+                    .remove_one::<PrimitiveMeshComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            "ParticleEmitterComponent" => {
+                world
+                    .remove_one::<ParticleEmitterComponent>(entity)
+                    .map_err(|e| e.to_string())?;
+            }
+            _ => {
+                return Err(format!("Unknown or unsupported component type: {}", component_name));
+            }
+        }
+
         Ok(())
     }
 }

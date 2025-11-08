@@ -91,7 +91,7 @@ pub(crate) struct LuaScriptInstance {
     pub(crate) handles: Rc<RefCell<EntityHandleRegistry>>,
     pub(crate) state_store: Rc<RefCell<ScriptStateMap>>,
     /// Registry key for this instance's environment table
-    env_registry_key: mlua::RegistryKey,
+    pub(crate) env_registry_key: mlua::RegistryKey,
 }
 
 impl fmt::Debug for LuaScriptInstance {

@@ -365,11 +365,123 @@ impl ScriptingState {
 
     /// Queue events for later dispatch.
     fn queue_events(&mut self, events: Vec<ScriptEvent>) {
-        // TODO: Implement event dispatching
-        // For now, just log them
         for event in events {
-            log::debug!(target: "script", "Event emitted: {}", event.name);
+            self.dispatch_event(event);
         }
+    }
+
+    /// Dispatch a single event to all subscribers.
+    fn dispatch_event(&mut self, event: ScriptEvent) {
+        let subscribers = match self.event_subscriptions.get(&event.name) {
+            Some(subs) if !subs.is_empty() => subs.clone(),
+            _ => {
+                log::debug!(target: "script", "Event '{}' emitted but has no subscribers", event.name);
+                return;
+            }
+        };
+
+        log::debug!(
+            target: "script",
+            "Dispatching event '{}' to {} subscriber(s)",
+            event.name,
+            subscribers.len()
+        );
+
+        // Convert event data to Lua value
+        let event_data_lua = match serde_json::to_string(&event.data) {
+            Ok(json) => json,
+            Err(e) => {
+                log::error!(target: "script", "Failed to serialize event data for '{}': {}", event.name, e);
+                return;
+            }
+        };
+
+        // Dispatch to each subscriber
+        for subscriber in subscribers {
+            if let Err(e) = self.call_event_callback(
+                subscriber.entity_id,
+                &subscriber.callback_name,
+                &event.name,
+                &event_data_lua,
+            ) {
+                log::error!(
+                    target: "script",
+                    "Error calling event callback '{}' on entity {:?}: {}",
+                    subscriber.callback_name,
+                    subscriber.entity_id,
+                    e
+                );
+            }
+        }
+    }
+
+    /// Call an event callback on a specific entity's script instance.
+    fn call_event_callback(
+        &mut self,
+        entity: Entity,
+        callback_name: &str,
+        event_name: &str,
+        event_data_json: &str,
+    ) -> Result<(), String> {
+        // Find the instance for this entity across all worlds
+        let mut instance = None;
+        let mut world_id = 0;
+
+        for (wid, instances) in &mut self.instances {
+            if let Some(inst) = instances.get_mut(&entity) {
+                instance = Some(inst);
+                world_id = *wid;
+                break;
+            }
+        }
+
+        let instance = instance.ok_or_else(|| {
+            format!(
+                "No script instance found for entity {:?} when dispatching event '{}'",
+                entity, event_name
+            )
+        })?;
+
+        // Parse the JSON data into a Lua value
+        let lua = self.runtime.lua();
+        let event_data: mlua::Value = lua
+            .load(format!("return {}", event_data_json))
+            .eval()
+            .map_err(|e| format!("Failed to parse event data: {}", e))?;
+
+        // Get the environment table from the registry
+        let env: mlua::Table = lua
+            .registry_value(&instance.env_registry_key)
+            .map_err(|e| format!("Failed to get environment table: {}", e))?;
+
+        // Check if callback exists in this instance's environment
+        if !env.contains_key(callback_name).unwrap_or(false) {
+            return Err(format!(
+                "Callback function '{}' not found in script for entity {:?}",
+                callback_name, entity
+            ));
+        }
+
+        // Get the callback function from the environment
+        let callback: mlua::Function = env
+            .get(callback_name)
+            .map_err(|e| format!("Failed to get callback '{}': {}", callback_name, e))?;
+
+        // Call the callback with event_name and event_data
+        callback
+            .call::<()>((event_name.to_string(), event_data))
+            .map_err(|e| format!("Callback execution failed: {}", e))?;
+
+        log::debug!(
+            target: "script",
+            "Successfully called callback '{}' on entity {:?} (world {:?}) for event '{}'",
+            callback_name,
+            entity,
+            world_id,
+            event_name
+        );
+
+        Ok(())
     }
 
     /// Remove instances for entities that no longer have scripts.
