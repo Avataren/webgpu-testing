@@ -74,6 +74,119 @@ log_info(string.format("Position: %f, %f, %f", x, y, z))
 - **Rune**: Uses `//` for single-line comments
 - **Lua**: Uses `--` for single-line comments
 
+## Important Conventions
+
+### Rotation Order (Euler Angles)
+
+The `set_rotation(entity, yaw, pitch, roll)` function uses **YXZ** Euler rotation order:
+
+1. **Yaw** - Rotation around Y axis (turning left/right)
+2. **Pitch** - Rotation around X axis (looking up/down)
+3. **Roll** - Rotation around Z axis (tilting/rolling)
+
+**All angles must be in radians:**
+- 90 degrees = π/2 ≈ 1.5708 radians
+- 180 degrees = π ≈ 3.1416 radians
+- 360 degrees = 2π ≈ 6.2832 radians
+
+```lua
+-- Rotate 90 degrees around Y axis (yaw)
+set_rotation(entity, 1.5708, 0, 0)
+
+-- Rotate 45 degrees pitch
+set_rotation(entity, 0, 0.7854, 0)
+
+-- Helper function to convert degrees to radians
+function deg_to_rad(degrees)
+    return degrees * (3.14159265359 / 180)
+end
+
+set_rotation(entity, deg_to_rad(90), 0, 0)
+```
+
+### Coordinate System
+
+The engine uses a **right-handed 3D coordinate system**:
+
+- **X axis**: Right (positive = right, negative = left)
+- **Y axis**: Up (positive = up, negative = down)
+- **Z axis**: Back (positive = toward camera, negative = away from camera)
+
+```lua
+-- Move entity to the right
+translate(entity, 5, 0, 0)
+
+-- Move entity up
+translate(entity, 0, 3, 0)
+
+-- Move entity forward (away from camera)
+translate(entity, 0, 0, -10)
+```
+
+### Array Indexing
+
+**Lua uses 1-based indexing** - the first element of a table is at index 1, not 0.
+
+All API functions that return arrays use this convention:
+
+```lua
+-- Get children of an entity
+local children = get_children(parent_entity)
+if children then
+    log_info("Child count: " .. #children)
+
+    -- Iterate using 1-based indices
+    for i = 1, #children do
+        local child = children[i]
+        log_info("Child " .. i .. ": " .. child)
+    end
+end
+
+-- Query entities
+local enemies = query_entities_with_component("Enemy")
+for i = 1, #enemies do
+    local enemy = enemies[i]
+    -- Do something with enemy
+end
+```
+
+### Entity Handles
+
+Entities are represented as **64-bit integers (i64)** in Lua. You can:
+- Store them in variables
+- Pass them to functions
+- Store them in tables or state
+- Compare them with `==`
+
+```lua
+-- Store entity reference
+local player = spawn_entity("Player")
+set_state("player_ref", player)
+
+-- Retrieve and use it later
+local player = get_state("player_ref", 0)
+if player ~= 0 then
+    set_translation(player, 0, 10, 0)
+end
+```
+
+### World vs Local Transforms
+
+- **Getter functions** (`get_world_translation`, `get_world_rotation`) return transforms in **world space** (accounting for parent hierarchy)
+- **Setter functions** (`set_translation`, `set_rotation`, `set_scale`) set **local transforms** relative to the parent
+
+```lua
+-- Set local position (relative to parent)
+set_translation(child, 5, 0, 0)
+
+-- Get world position (absolute in scene)
+local world_pos = get_world_translation(child)
+if world_pos then
+    log_info(string.format("World position: %.2f, %.2f, %.2f",
+        world_pos.x, world_pos.y, world_pos.z))
+end
+```
+
 ## Available API Functions
 
 ### Logging
