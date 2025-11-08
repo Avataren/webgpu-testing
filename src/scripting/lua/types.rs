@@ -216,3 +216,98 @@ pub(crate) struct EventSubscription {
 
 /// Map of event names to their subscribers.
 pub(crate) type EventSubscriptions = HashMap<String, Vec<EventSubscription>>;
+
+// ============================================================================
+// COROUTINE SYSTEM DATA STRUCTURES
+// ============================================================================
+
+/// Unique identifier for a coroutine.
+pub(crate) type CoroutineId = i64;
+
+/// Status of a coroutine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoroutineStatus {
+    /// Coroutine is currently executing
+    Running,
+    /// Coroutine is suspended and can be resumed
+    Suspended,
+    /// Coroutine has completed execution
+    Dead,
+}
+
+impl CoroutineStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Suspended => "suspended",
+            Self::Dead => "dead",
+        }
+    }
+}
+
+/// Represents a wait state for time-based delays.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WaitState {
+    /// No wait - coroutine can resume immediately
+    None,
+    /// Wait for a specified duration in seconds
+    Seconds(f64),
+    /// Wait for a specified number of frames
+    Frames(u32),
+}
+
+/// State for a single coroutine.
+pub(crate) struct CoroutineState {
+    /// The Lua thread (coroutine)
+    pub thread: mlua::Thread,
+    /// Current status of the coroutine
+    pub status: CoroutineStatus,
+    /// Wait state for time-based delays
+    pub wait_state: WaitState,
+    /// Accumulated time for Seconds wait
+    pub accumulated_time: f64,
+}
+
+impl CoroutineState {
+    pub fn new(thread: mlua::Thread) -> Self {
+        Self {
+            thread,
+            status: CoroutineStatus::Suspended,
+            wait_state: WaitState::None,
+            accumulated_time: 0.0,
+        }
+    }
+
+    /// Check if this coroutine is ready to resume based on its wait state.
+    pub fn is_ready(&self, _dt: f64) -> bool {
+        match self.wait_state {
+            WaitState::None => true,
+            WaitState::Seconds(duration) => self.accumulated_time >= duration,
+            WaitState::Frames(count) => count == 0,
+        }
+    }
+
+    /// Update the wait state with the delta time.
+    pub fn update(&mut self, dt: f64) {
+        match self.wait_state {
+            WaitState::Seconds(_) => {
+                self.accumulated_time += dt;
+            }
+            WaitState::Frames(ref mut count) => {
+                if *count > 0 {
+                    *count -= 1;
+                }
+            }
+            WaitState::None => {}
+        }
+    }
+
+    /// Reset the wait state after resuming.
+    pub fn reset_wait(&mut self) {
+        self.wait_state = WaitState::None;
+        self.accumulated_time = 0.0;
+    }
+}
+
+/// Map of coroutine IDs to their states.
+pub(crate) type CoroutineMap = HashMap<CoroutineId, CoroutineState>;
