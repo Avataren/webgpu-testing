@@ -36,7 +36,13 @@ impl UiContext {
 
     /// Get a response for a specific widget ID.
     fn get_response(&self, id: &str) -> Option<UiResponse> {
-        self.responses.lock().unwrap().get(id).cloned()
+        let responses = self.responses.lock().unwrap();
+        let response = responses.get(id).cloned();
+        if id.starts_with("file_") && !responses.is_empty() {
+            println!("[LUA CONTEXT] get_response('{}') - available responses: {:?}, found: {:?}",
+                id, responses.keys().collect::<Vec<_>>(), response.is_some());
+        }
+        response
     }
 
     /// Display a text label.
@@ -158,6 +164,61 @@ impl UiContext {
         }
 
         (r, g, b)
+    }
+
+    /// Display a menu bar. The callback function will be called to add menu items.
+    pub fn menu_bar(&self, callback: mlua::Function) -> mlua::Result<()> {
+        // Collect all commands from the callback
+        let temp_context = UiContext::new();
+
+        // Copy responses from parent context so menu items can check them!
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+
+        callback.call::<()>(temp_context.clone())?;
+        let menu_items = temp_context.take_commands();
+
+        self.commands.lock().unwrap().push(UiCommand::MenuBar {
+            items: menu_items,
+        });
+
+        Ok(())
+    }
+
+    /// Display a menu with a title. The callback function will be called to add menu items.
+    pub fn menu(&self, text: String, callback: mlua::Function) -> mlua::Result<()> {
+        // Collect all commands from the callback
+        let temp_context = UiContext::new();
+
+        // Copy responses from parent context so menu items can check them!
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+
+        callback.call::<()>(temp_context.clone())?;
+        let menu_items = temp_context.take_commands();
+
+        self.commands.lock().unwrap().push(UiCommand::Menu {
+            text,
+            items: menu_items,
+        });
+
+        Ok(())
+    }
+
+    /// Display a menu item (like a button in a menu).
+    pub fn menu_item(&self, id: String, text: String) -> bool {
+        self.commands.lock().unwrap().push(UiCommand::MenuItem {
+            id: id.clone(),
+            text,
+        });
+
+        let clicked = self.get_response(&id)
+            .map(|r| r.clicked)
+            .unwrap_or(false);
+
+        if clicked {
+            println!("[LUA] Menu item '{}' CLICKED!", id);
+        }
+
+        clicked
     }
 }
 

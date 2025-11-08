@@ -15,9 +15,73 @@ pub enum UiCommand {
     DragValue { id: String, current_value: f64 },
     Checkbox { id: String, current_value: bool, label: String },
     ColorEdit { id: String, r: f32, g: f32, b: f32 },
+    MenuBar { items: Vec<UiCommand> },
+    Menu { text: String, items: Vec<UiCommand> },
+    MenuItem { id: String, text: String },
 }
 
 impl UiCommand {
+    /// Render this command using a real egui::Ui context and collect responses.
+    #[cfg(feature = "egui")]
+    pub fn render_and_collect(&self, ui: &mut egui::Ui, responses: &mut std::collections::HashMap<String, UiResponse>) {
+        // Special handling for MenuBar and Menu to avoid double rendering
+        match self {
+            UiCommand::MenuBar { items } => {
+                println!("Rendering MenuBar with {} items", items.len());
+                egui::menu::bar(ui, |ui| {
+                    for item in items {
+                        item.render_and_collect(ui, responses);
+                    }
+                });
+            }
+            UiCommand::Menu { text, items } => {
+                println!("Rendering Menu '{}' with {} items", text, items.len());
+                ui.menu_button(text, |ui| {
+                    for item in items {
+                        item.render_and_collect(ui, responses);
+                    }
+                });
+            }
+            UiCommand::MenuItem { id, .. } => {
+                // For all other commands, use render_with_id
+                if let Some((id, response)) = self.render_with_id(ui) {
+                    if response.clicked {
+                        println!("[LUA CMD] MenuItem '{}' CLICKED!", id);
+                    }
+                    responses.insert(id, response);
+                }
+            }
+            _ => {
+                // For all other commands, use render_with_id
+                if let Some((id, response)) = self.render_with_id(ui) {
+                    responses.insert(id, response);
+                }
+            }
+        }
+    }
+
+    /// Render this command and return (id, response) if applicable.
+    #[cfg(feature = "egui")]
+    fn render_with_id(&self, ui: &mut egui::Ui) -> Option<(String, UiResponse)> {
+        match self {
+            UiCommand::MenuItem { id, .. } => {
+                self.render(ui).map(|response| (id.clone(), response))
+            }
+            UiCommand::Button { text } => {
+                self.render(ui).map(|response| (format!("button_{}", text), response))
+            }
+            UiCommand::TextEdit { id, .. } |
+            UiCommand::TextEditMultiline { id, .. } |
+            UiCommand::Slider { id, .. } |
+            UiCommand::DragValue { id, .. } |
+            UiCommand::Checkbox { id, .. } |
+            UiCommand::ColorEdit { id, .. } => {
+                self.render(ui).map(|response| (id.clone(), response))
+            }
+            _ => None
+        }
+    }
+
     /// Render this command using a real egui::Ui context.
     #[cfg(feature = "egui")]
     pub fn render(&self, ui: &mut egui::Ui) -> Option<UiResponse> {
@@ -119,6 +183,33 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
+            UiCommand::MenuBar { items } => {
+                egui::menu::bar(ui, |ui| {
+                    for item in items {
+                        item.render(ui);
+                    }
+                });
+                None
+            }
+            UiCommand::Menu { text, items } => {
+                ui.menu_button(text, |ui| {
+                    for item in items {
+                        item.render(ui);
+                    }
+                });
+                None
+            }
+            UiCommand::MenuItem { id: _, text } => {
+                let clicked = ui.button(text).clicked();
+                if clicked {
+                    Some(UiResponse {
+                        clicked: true,
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -161,6 +252,20 @@ impl From<UiCommand> for crate::scripting::rune::api::ui::UiCommand {
             }
             UiCommand::ColorEdit { id, r, g, b } => {
                 crate::scripting::rune::api::ui::UiCommand::ColorEdit { id, r, g, b }
+            }
+            UiCommand::MenuBar { items } => {
+                crate::scripting::rune::api::ui::UiCommand::MenuBar {
+                    items: items.into_iter().map(|cmd| cmd.into()).collect()
+                }
+            }
+            UiCommand::Menu { text, items } => {
+                crate::scripting::rune::api::ui::UiCommand::Menu {
+                    text,
+                    items: items.into_iter().map(|cmd| cmd.into()).collect()
+                }
+            }
+            UiCommand::MenuItem { id, text } => {
+                crate::scripting::rune::api::ui::UiCommand::MenuItem { id, text }
             }
         }
     }

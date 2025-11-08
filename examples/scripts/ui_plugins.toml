@@ -19,7 +19,7 @@ name = "Script Editor"
 script = "script_editor_plugin.lua"
 description = "Basic script editor for editing Lua script files"
 category = "Development"
-enabled = true
+enabled = false
 default_visible = true
 
 # Simple Text Editor - General purpose text editor
@@ -29,7 +29,7 @@ script = "simple_text_editor.lua"
 description = "Simple text editor with file I/O support"
 category = "Development"
 enabled = true
-default_visible = false
+default_visible = true
 
 # Disabled plugins for now while we fix the scripting issues
 [[plugin]]

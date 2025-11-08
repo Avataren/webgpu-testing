@@ -265,6 +265,12 @@ impl EditorApplication {
         log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
             editor_mode, ctx.runtime);
 
+        // Merge scene and plugin UI responses from the previous frame
+        // This is critical for widgets like text inputs to work properly
+        let mut all_responses = self.shared.script_ui_responses.clone();
+        all_responses.extend(self.shared.plugin_ui_responses.clone());
+        ctx.scene.set_ui_responses(all_responses);
+
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
 
@@ -493,7 +499,6 @@ impl EditorApplication {
     /// Render UI from scripts that implement on_ui()
     fn render_script_ui(&mut self, ctx: &egui::Context) {
         use std::collections::HashMap;
-        use wgpu_cube::scripting::rune::api::ui::UiCommand;
 
         let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
         let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
@@ -548,20 +553,7 @@ impl EditorApplication {
                         .collapsible(true)
                         .show(ctx, |ui| {
                             for command in commands {
-                                if let Some(response) = command.render(ui) {
-                                    // Extract the ID from the command and store the response
-                                    let id = match command {
-                                        UiCommand::Button { text } => format!("button_{}", text),
-                                        UiCommand::TextEdit { id, .. } => id.clone(),
-                                        UiCommand::TextEditMultiline { id, .. } => id.clone(),
-                                        UiCommand::Slider { id, .. } => id.clone(),
-                                        UiCommand::DragValue { id, .. } => id.clone(),
-                                        UiCommand::Checkbox { id, .. } => id.clone(),
-                                        UiCommand::ColorEdit { id, .. } => id.clone(),
-                                        _ => continue,
-                                    };
-                                    responses.insert(id, response);
-                                }
+                                command.render_and_collect(ui, &mut responses);
                             }
                         });
 
@@ -580,20 +572,7 @@ impl EditorApplication {
                     .default_size([300.0, 200.0])
                     .show(ctx, |ui| {
                         for command in commands {
-                            if let Some(response) = command.render(ui) {
-                                // Extract the ID from the command and store the response
-                                let id = match command {
-                                    UiCommand::Button { text } => format!("button_{}", text),
-                                    UiCommand::TextEdit { id, .. } => id.clone(),
-                                    UiCommand::TextEditMultiline { id, .. } => id.clone(),
-                                    UiCommand::Slider { id, .. } => id.clone(),
-                                    UiCommand::DragValue { id, .. } => id.clone(),
-                                    UiCommand::Checkbox { id, .. } => id.clone(),
-                                    UiCommand::ColorEdit { id, .. } => id.clone(),
-                                    _ => continue,
-                                };
-                                responses.insert(id, response);
-                            }
+                            command.render_and_collect(ui, &mut responses);
                         }
                     });
 
@@ -611,19 +590,7 @@ impl EditorApplication {
                     .default_size([300.0, 200.0])
                     .show(ctx, |ui| {
                         for command in commands {
-                            if let Some(response) = command.render(ui) {
-                                // Extract the ID from the command and store the response
-                                let id = match command {
-                                    UiCommand::Button { text } => format!("button_{}", text),
-                                    UiCommand::TextEdit { id, .. } => id.clone(),
-                                    UiCommand::Slider { id, .. } => id.clone(),
-                                    UiCommand::DragValue { id, .. } => id.clone(),
-                                    UiCommand::Checkbox { id, .. } => id.clone(),
-                                    UiCommand::ColorEdit { id, .. } => id.clone(),
-                                    _ => continue,
-                                };
-                                responses.insert(id, response);
-                            }
+                            command.render_and_collect(ui, &mut responses);
                         }
                     });
 
@@ -634,6 +601,14 @@ impl EditorApplication {
         }
 
         // Store responses for the next frame (kept separate to avoid Entity ID collisions)
+        // Debug: only log when we have clicks
+        for (entity, responses) in &plugin_responses {
+            for (id, response) in responses {
+                if response.clicked {
+                    println!("[EDITOR] Plugin entity {:?} response '{}' clicked", entity, id);
+                }
+            }
+        }
         self.shared.script_ui_responses = scene_responses;
         self.shared.plugin_ui_responses = plugin_responses;
     }

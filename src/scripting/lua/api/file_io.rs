@@ -41,6 +41,11 @@ fn normalize_path(path: &Path) -> Option<PathBuf> {
 
 /// Check if a path is within allowed directories
 fn is_path_allowed(path: &Path) -> bool {
+    // If the path is absolute, allow it (user selected it via file dialog)
+    if path.is_absolute() {
+        return true;
+    }
+
     // First, get the current directory
     let Some(base) = std::env::current_dir().ok() else {
         return false;
@@ -162,6 +167,34 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
+    // get_file_directory(path: string) -> string
+    // Returns the directory portion of a file path
+    globals.set(
+        "get_file_directory",
+        lua.create_function(|_, path: String| {
+            let path_buf = PathBuf::from(&path);
+            if let Some(parent) = path_buf.parent() {
+                Ok(parent.to_string_lossy().to_string())
+            } else {
+                Ok(String::new())
+            }
+        })?,
+    )?;
+
+    // get_filename(path: string) -> string
+    // Returns just the filename portion of a file path
+    globals.set(
+        "get_filename",
+        lua.create_function(|_, path: String| {
+            let path_buf = PathBuf::from(&path);
+            if let Some(filename) = path_buf.file_name() {
+                Ok(filename.to_string_lossy().to_string())
+            } else {
+                Ok(String::new())
+            }
+        })?,
+    )?;
+
     // list_files(dir_path: string) -> table
     globals.set(
         "list_files",
@@ -208,6 +241,104 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
             #[cfg(target_arch = "wasm32")]
             {
                 Ok(lua.create_table()?)
+            }
+        })?,
+    )?;
+
+    // open_file_dialog(extensions: table, start_dir: string) -> string | nil
+    // Opens a native file picker dialog and returns the selected file path
+    // extensions should be a table of extension strings like {"lua", "wgsl"}
+    // start_dir is optional - the directory to start in
+    globals.set(
+        "open_file_dialog",
+        lua.create_function(|_, (extensions, start_dir): (Option<mlua::Table>, Option<String>)| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut dialog = rfd::FileDialog::new();
+
+                // Set starting directory if provided
+                if let Some(dir) = start_dir {
+                    let path = PathBuf::from(&dir);
+                    if path.exists() && path.is_dir() {
+                        dialog = dialog.set_directory(&path);
+                    }
+                }
+
+                // Add file filters if provided
+                if let Some(exts) = extensions {
+                    let mut ext_vec = Vec::new();
+                    for pair in exts.pairs::<mlua::Value, String>() {
+                        if let Ok((_, ext)) = pair {
+                            ext_vec.push(ext);
+                        }
+                    }
+                    if !ext_vec.is_empty() {
+                        dialog = dialog.add_filter("Files", &ext_vec);
+                    }
+                }
+
+                match dialog.pick_file() {
+                    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                    None => Ok(None),
+                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                log::error!("File dialogs not supported on WASM");
+                Ok(None)
+            }
+        })?,
+    )?;
+
+    // save_file_dialog(extensions: table, default_name: string, start_dir: string) -> string | nil
+    // Opens a native save file dialog and returns the selected file path
+    // extensions should be a table of extension strings like {"lua", "wgsl"}
+    // default_name is the suggested filename
+    // start_dir is optional - the directory to start in
+    globals.set(
+        "save_file_dialog",
+        lua.create_function(|_, (extensions, default_name, start_dir): (Option<mlua::Table>, Option<String>, Option<String>)| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut dialog = rfd::FileDialog::new();
+
+                // Set starting directory if provided
+                if let Some(dir) = start_dir {
+                    let path = PathBuf::from(&dir);
+                    if path.exists() && path.is_dir() {
+                        dialog = dialog.set_directory(&path);
+                    }
+                }
+
+                // Set default filename if provided
+                if let Some(name) = default_name {
+                    dialog = dialog.set_file_name(name);
+                }
+
+                // Add file filters if provided
+                if let Some(exts) = extensions {
+                    let mut ext_vec = Vec::new();
+                    for pair in exts.pairs::<mlua::Value, String>() {
+                        if let Ok((_, ext)) = pair {
+                            ext_vec.push(ext);
+                        }
+                    }
+                    if !ext_vec.is_empty() {
+                        dialog = dialog.add_filter("Files", &ext_vec);
+                    }
+                }
+
+                match dialog.save_file() {
+                    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                    None => Ok(None),
+                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                log::error!("File dialogs not supported on WASM");
+                Ok(None)
             }
         })?,
     )?;

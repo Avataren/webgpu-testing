@@ -406,6 +406,12 @@ impl ScriptingState {
 
             // Set responses from the previous frame
             if let Some(responses) = self.ui_responses.get(&entity) {
+                // Debug: only log clicked responses
+                for (id, resp) in responses {
+                    if resp.clicked {
+                        println!("[LUA STATE] Entity {:?} received CLICKED response for '{}'", entity, id);
+                    }
+                }
                 ui_context.set_responses(responses.clone());
             }
 

@@ -83,5 +83,20 @@ impl UserData for UiContext {
             table.set("b", new_b)?;
             Ok(table)
         });
+
+        // Display a menu bar with menus
+        methods.add_method("menu_bar", |_, this, callback: mlua::Function| {
+            this.menu_bar(callback)
+        });
+
+        // Display a menu with a title
+        methods.add_method("menu", |_, this, (text, callback): (String, mlua::Function)| {
+            this.menu(text, callback)
+        });
+
+        // Display a menu item (like a button in a menu)
+        methods.add_method("menu_item", |_, this, (id, text): (String, String)| {
+            Ok(this.menu_item(id, text))
+        });
     }
 }
