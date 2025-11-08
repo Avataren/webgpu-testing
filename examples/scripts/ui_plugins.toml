@@ -4,12 +4,23 @@
 # Each plugin is a Lua script with @editor annotation that provides
 # editor functionality through the UI scripting system.
 
+# Welcome Screen - VSCode-style project launcher
+[[plugin]]
+name = "Welcome Screen"
+script = "welcome_screen.lua"
+description = "Welcome screen with quick actions for opening/creating projects"
+category = "Core"
+plugin_type = "editor"
+enabled = true
+default_visible = true
+
 # Minimal test plugin for debugging
 [[plugin]]
 name = "Minimal Test"
 script = "test_minimal_ui.lua"
 description = "Minimal UI test script for debugging"
 category = "Debug"
+plugin_type = "user"
 enabled = true
 default_visible = true
 
@@ -19,6 +30,7 @@ name = "Script Editor"
 script = "script_editor_plugin.lua"
 description = "Basic script editor for editing Lua script files"
 category = "Development"
+plugin_type = "editor"
 enabled = false
 default_visible = true
 
@@ -28,6 +40,7 @@ name = "Text Editor"
 script = "simple_text_editor.lua"
 description = "Simple text editor with file I/O support"
 category = "Development"
+plugin_type = "editor"
 enabled = true
 default_visible = true
 
@@ -37,6 +50,7 @@ name = "Scene Statistics"
 script = "scene_stats_panel.rn"
 description = "Real-time scene statistics panel showing entity counts and component usage"
 category = "Debug"
+plugin_type = "editor"
 enabled = false
 default_visible = true
 
@@ -45,6 +59,7 @@ name = "Quick Actions"
 script = "quick_actions_panel.rn"
 description = "Quick access panel for common editor operations like spawning entities and creating lights"
 category = "Workflow"
+plugin_type = "editor"
 enabled = false
 default_visible = true
 
@@ -53,6 +68,7 @@ name = "Debug Console"
 script = "debug_console_plugin.rn"
 description = "Interactive debug console with command execution and performance monitoring"
 category = "Debug"
+plugin_type = "editor"
 enabled = false
 default_visible = false
 
@@ -61,6 +77,7 @@ name = "Character Editor"
 script = "character_editor_tool.rn"
 description = "Example tool for editing character properties with various widgets"
 category = "Examples"
+plugin_type = "user"
 enabled = false
 default_visible = false
 
@@ -69,6 +86,7 @@ name = "Advanced Widgets Demo"
 script = "advanced_widgets_example.rn"
 description = "Demonstration of all available UI widget types"
 category = "Examples"
+plugin_type = "user"
 enabled = false
 default_visible = false
 

@@ -142,6 +142,9 @@ impl EditorApplication {
 
         self.sync_active_scene_state(ctx);
 
+        // Process Lua editor commands from plugins
+        self.process_lua_editor_commands();
+
         // Regular editor updates
         self.drain_update_commands(ctx);
         self.run_system_updates(ctx);
@@ -165,21 +168,18 @@ impl EditorApplication {
             self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         }
 
-        // Load UI plugins if a project is open and plugins haven't been loaded yet
+        // Load UI plugins on first update (no project required - welcome screen needs this)
         if !self.shared.ui_plugins_loaded {
-            let has_project = self.project_system().controller().current_dir().is_some();
-            if has_project {
-                Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
-                self.shared.ui_plugins_loaded = true;
+            Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
+            self.shared.ui_plugins_loaded = true;
 
-                // Initialize the newly loaded plugin scripts by running them in the plugin world
-                // This ensures on_created() is called and script instances are created
-                let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
-                if is_editor_mode {
-                    log::info!("Initializing UI plugin scripts in editor mode");
-                    if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-                        ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
-                    }
+            // Initialize the newly loaded plugin scripts by running them in the plugin world
+            // This ensures on_created() is called and script instances are created
+            let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
+            if is_editor_mode {
+                log::info!("Initializing UI plugin scripts in editor mode");
+                if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+                    ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
                 }
             }
         }
@@ -503,36 +503,82 @@ impl EditorApplication {
         let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
         let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
 
-        // Render plugin manager window if we have plugins
+        // Render plugin manager window if we have plugins and it's open
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            egui::Window::new("UI Plugins")
+            egui::Window::new("Plugin Manager")
+                .open(&mut self.shared.windows.plugin_manager)
                 .resizable(true)
-                .default_size([300.0, 400.0])
+                .default_size([350.0, 500.0])
                 .show(ctx, |ui| {
-                    ui.heading("Installed Plugins");
+                    use ui_plugin_manager::PluginType;
+
+                    // Separate plugins by type
+                    let plugins = manager.plugins_mut();
+                    let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) =
+                        plugins.iter_mut().partition(|p| p.metadata.plugin_type == PluginType::Editor);
+
+                    // Show Editor Plugins section
+                    ui.heading("Editor Plugins");
+                    ui.label(egui::RichText::new("Built-in editor functionality").small().italics());
                     ui.separator();
 
-                    let plugins = manager.plugins_mut();
-                    for plugin in plugins {
-                        if !plugin.metadata.enabled {
-                            continue;
-                        }
-
-                        ui.horizontal(|ui| {
-                            let was_visible = plugin.visible;
-                            if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
-                                log::info!(
-                                    "Plugin '{}' visibility changed: {} -> {}",
-                                    plugin.metadata.name,
-                                    was_visible,
-                                    plugin.visible
-                                );
+                    if editor_plugins.is_empty() {
+                        ui.label(egui::RichText::new("No editor plugins installed").weak());
+                    } else {
+                        for plugin in &mut editor_plugins {
+                            if !plugin.metadata.enabled {
+                                continue;
                             }
-                            ui.label(&plugin.metadata.category);
-                        });
 
-                        ui.label(format!("  {}", plugin.metadata.description));
-                        ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let was_visible = plugin.visible;
+                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                    log::info!(
+                                        "Plugin '{}' visibility changed: {} -> {}",
+                                        plugin.metadata.name,
+                                        was_visible,
+                                        plugin.visible
+                                    );
+                                }
+                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
+                            });
+
+                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.add_space(4.0);
+                        }
+                    }
+
+                    ui.add_space(8.0);
+
+                    // Show User Plugins section
+                    ui.heading("User Plugins");
+                    ui.label(egui::RichText::new("Custom user-created plugins").small().italics());
+                    ui.separator();
+
+                    if user_plugins.is_empty() {
+                        ui.label(egui::RichText::new("No user plugins installed").weak());
+                    } else {
+                        for plugin in &mut user_plugins {
+                            if !plugin.metadata.enabled {
+                                continue;
+                            }
+
+                            ui.horizontal(|ui| {
+                                let was_visible = plugin.visible;
+                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                    log::info!(
+                                        "Plugin '{}' visibility changed: {} -> {}",
+                                        plugin.metadata.name,
+                                        was_visible,
+                                        plugin.visible
+                                    );
+                                }
+                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
+                            });
+
+                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.add_space(4.0);
+                        }
                     }
                 });
 

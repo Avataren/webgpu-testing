@@ -4,6 +4,22 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use wgpu_cube::scripting::LuaScriptSource;
 
+/// Type of plugin - distinguishes between editor-provided and user-created plugins
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginType {
+    /// Built-in editor plugin
+    Editor,
+    /// User-created plugin
+    User,
+}
+
+impl Default for PluginType {
+    fn default() -> Self {
+        PluginType::User
+    }
+}
+
 /// Plugin metadata from ui_plugins.toml
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PluginMetadata {
@@ -11,6 +27,8 @@ pub struct PluginMetadata {
     pub script: String,
     pub description: String,
     pub category: String,
+    #[serde(default)]
+    pub plugin_type: PluginType,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_true")]

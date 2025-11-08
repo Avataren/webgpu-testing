@@ -4,6 +4,7 @@
 
 mod clipboard;
 mod component;
+mod editor_commands;
 mod entity;
 mod events;
 mod file_io;
@@ -18,6 +19,7 @@ pub mod ui;
 use mlua::{Lua, Result as LuaResult};
 
 pub use clipboard::{ClipboardAccess, ClipboardGuard};
+pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
 pub use ui::{UiCommand, UiContext, UiResponse};
 
 /// Register all Lua API functions with the runtime.
@@ -34,6 +36,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     file_io::register_file_io_api(lua)?;
     clipboard::register_clipboard_api(lua)?;
     ui::register_ui_api(lua)?;
+    editor_commands::register_editor_command_api(lua)?;
 
     Ok(())
 }
