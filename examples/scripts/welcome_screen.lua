@@ -78,13 +78,23 @@ function on_ui(self_entity, ui)
     local status = get_string("status_message", "")
     local new_project_path = get_string("new_project_path", "")
 
-    -- Header section
+    -- Add top padding
+    ui:label("")
+    ui:label("")
+
+    -- Header section with larger text
     ui:heading("Welcome to WebGPU Editor")
+    ui:label("")
     ui:label("Get started by opening an existing project or creating a new one")
+    ui:label("")
+    ui:label("")
     ui:separator()
+    ui:label("")
+    ui:label("")
 
     -- Quick Actions Section
     ui:heading("Start")
+    ui:label("")
 
     if ui:button("📂  Open Project Folder...") then
         local path = open_folder_dialog()
@@ -102,6 +112,8 @@ function on_ui(self_entity, ui)
         end
     end
 
+    ui:label("")
+
     if ui:button("✨  Create New Project") then
         local new_show_create = not show_create
         set_bool("show_create_form", new_show_create)
@@ -110,14 +122,20 @@ function on_ui(self_entity, ui)
         end
     end
 
+    ui:label("")
+    ui:label("")
     ui:separator()
+    ui:label("")
 
     -- Create Project Form (shown when "Create New Project" is clicked)
     if show_create then
+        ui:label("")
         ui:heading("Create New Project")
+        ui:label("")
         ui:label("")
 
         ui:label("Project Name:")
+        ui:label("")
         local project_name = get_string("new_project_name", "MyProject")
         local new_name = ui:text_edit("project_name_input", project_name)
         if new_name ~= project_name then
@@ -125,12 +143,16 @@ function on_ui(self_entity, ui)
         end
 
         ui:label("")
+        ui:label("")
         ui:label("Location:")
+        ui:label("")
         if new_project_path == "" then
             ui:label("(no folder selected)")
         else
             ui:label(new_project_path)
         end
+
+        ui:label("")
 
         if ui:button("Choose Folder...") then
             local path = open_folder_dialog()
@@ -140,6 +162,7 @@ function on_ui(self_entity, ui)
             end
         end
 
+        ui:label("")
         ui:label("")
 
         -- Only allow creating if both name and path are set
@@ -170,18 +193,24 @@ function on_ui(self_entity, ui)
             end
         end
 
+        ui:label("")
+        ui:label("")
         ui:separator()
+        ui:label("")
     end
 
     -- Recent Projects Section
     ui:heading("Recent Projects")
+    ui:label("")
 
     local recent_projects = load_recent_projects()
     if #recent_projects == 0 then
+        ui:label("")
         ui:label("No recent projects")
         ui:label("")
         ui:label("Recent projects will appear here once you")
         ui:label("open or create your first project.")
+        ui:label("")
     else
         for i, project_path in ipairs(recent_projects) do
             -- Extract just the folder name for display
@@ -209,17 +238,27 @@ function on_ui(self_entity, ui)
         end
     end
 
+    ui:label("")
+    ui:label("")
     ui:separator()
+    ui:label("")
+    ui:label("")
 
     -- Getting Started Tips
     ui:heading("Getting Started")
+    ui:label("")
     ui:label("💡 Projects contain all your scenes, assets, and scripts")
+    ui:label("")
     ui:label("📁 Projects are stored as folders on your disk")
+    ui:label("")
     ui:label("🎮 Each project can have multiple scenes")
 
     -- Status message
     if status ~= "" then
+        ui:label("")
+        ui:label("")
         ui:separator()
+        ui:label("")
         ui:label(status)
     end
 end
