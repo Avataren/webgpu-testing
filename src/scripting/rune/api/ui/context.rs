@@ -50,13 +50,11 @@ impl UiContext {
     #[rune::function(instance)]
     pub fn button(&self, text: String) -> bool {
         let id = format!("button_{}", text);
-        self.commands.borrow_mut().push(UiCommand::Button {
-            text: text.clone(),
-        });
+        self.commands
+            .borrow_mut()
+            .push(UiCommand::Button { text: text.clone() });
 
-        self.get_response(&id)
-            .map(|r| r.clicked)
-            .unwrap_or(false)
+        self.get_response(&id).map(|r| r.clicked).unwrap_or(false)
     }
 
     /// Display a heading.
@@ -76,7 +74,8 @@ impl UiContext {
     pub fn text_edit(&self, id: String, current_value: String) -> String {
         // Check if we have a response from the previous frame
         // If so, use that value to avoid lag/jumping
-        let command_value = self.get_response(&id)
+        let command_value = self
+            .get_response(&id)
             .and_then(|r| r.text_value.clone())
             .unwrap_or_else(|| current_value.clone());
 
@@ -92,19 +91,28 @@ impl UiContext {
     /// Display a multiline text editor and return the new value.
     /// If width and height are not provided, the editor will fill available space.
     #[rune::function(instance)]
-    pub fn text_edit_multiline(&self, id: String, current_value: String, width: Option<f64>, height: Option<f64>) -> String {
+    pub fn text_edit_multiline(
+        &self,
+        id: String,
+        current_value: String,
+        width: Option<f64>,
+        height: Option<f64>,
+    ) -> String {
         // Check if we have a response from the previous frame
         // If so, use that value to avoid lag/jumping
-        let command_value = self.get_response(&id)
+        let command_value = self
+            .get_response(&id)
             .and_then(|r| r.text_value.clone())
             .unwrap_or_else(|| current_value.clone());
 
-        self.commands.borrow_mut().push(UiCommand::TextEditMultiline {
-            id: id.clone(),
-            current_value: command_value.clone(),
-            width: width.map(|v| v as f32),
-            height: height.map(|v| v as f32),
-        });
+        self.commands
+            .borrow_mut()
+            .push(UiCommand::TextEditMultiline {
+                id: id.clone(),
+                current_value: command_value.clone(),
+                width: width.map(|v| v as f32),
+                height: height.map(|v| v as f32),
+            });
 
         // Return the command value we just used
         command_value

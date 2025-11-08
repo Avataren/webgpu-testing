@@ -30,7 +30,13 @@ pub(crate) fn translate(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()
 /// rotate(entity, 0.0, 1.0, 0.0, 0.785);
 /// ```
 #[rune::function]
-pub(crate) fn rotate(entity_bits: i64, axis_x: f64, axis_y: f64, axis_z: f64, angle: f64) -> VmResult<()> {
+pub(crate) fn rotate(
+    entity_bits: i64,
+    axis_x: f64,
+    axis_y: f64,
+    axis_z: f64,
+    angle: f64,
+) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut().with(|commands| {
             commands.rotate(
@@ -64,7 +70,12 @@ pub(crate) fn set_scale(entity_bits: i64, x: f64, y: f64, z: f64) -> VmResult<()
 /// look_at(entity, 0.0, 0.0, 10.0);  // Look at point in front
 /// ```
 #[rune::function]
-pub(crate) fn look_at(entity_bits: i64, target_x: f64, target_y: f64, target_z: f64) -> VmResult<()> {
+pub(crate) fn look_at(
+    entity_bits: i64,
+    target_x: f64,
+    target_y: f64,
+    target_z: f64,
+) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut().with(|commands| {
             commands.look_at(

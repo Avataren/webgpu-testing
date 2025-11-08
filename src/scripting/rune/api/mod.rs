@@ -16,8 +16,13 @@ mod state;
 mod transform;
 pub mod ui;
 
-pub(crate) use component::{add_component, get_component, has_component, remove_component, set_component};
-pub(crate) use entity::{attach_inline_script, attach_script_file, find_entity_by_name, import_gltf, set_name, set_rotation, set_translation, spawn_entity};
+pub(crate) use component::{
+    add_component, get_component, has_component, remove_component, set_component,
+};
+pub(crate) use entity::{
+    attach_inline_script, attach_script_file, find_entity_by_name, import_gltf, set_name,
+    set_rotation, set_translation, spawn_entity,
+};
 pub(crate) use event::{emit_event, subscribe_event, unsubscribe_event};
 pub(crate) use hierarchy::{get_children, get_parent, set_parent};
 pub(crate) use input::{

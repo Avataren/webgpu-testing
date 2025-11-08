@@ -147,16 +147,22 @@ impl EditorApplication {
             existing_manager.unload_all();
         }
 
-        // Try to find ui_plugins.toml in examples/scripts
-        let manifest_path = PathBuf::from("examples/scripts/ui_plugins.toml");
+        // Try to locate the manifest under common roots (cwd, exe dir, repo root)
+        let (manifest_path, scripts_root) = match Self::find_ui_plugin_manifest() {
+            Some(paths) => paths,
+            None => {
+                info!(
+                    "No UI plugin manifest found. Searched under current dir, executable dir, and {}",
+                    env!("CARGO_MANIFEST_DIR")
+                );
+                return;
+            }
+        };
 
-        if !manifest_path.exists() {
-            info!("No UI plugin manifest found at {}", manifest_path.display());
-            return;
-        }
+        info!("Using UI plugin manifest at {}", manifest_path.display());
 
-        // Create plugin manager with base path for scripts
-        let mut manager = UiPluginManager::new(PathBuf::from("examples/scripts"));
+        // Create plugin manager with resolved base path for scripts
+        let mut manager = UiPluginManager::new(scripts_root.clone());
 
         // Load manifest
         let manifest = match manager.load_manifest(&manifest_path) {
@@ -177,13 +183,19 @@ impl EditorApplication {
                 continue;
             }
 
-            info!("Loading plugin: {} ({})", plugin_meta.name, plugin_meta.script);
+            info!(
+                "Loading plugin: {} ({})",
+                plugin_meta.name, plugin_meta.script
+            );
 
             // Create script source
             let script_source = match create_plugin_script_source(&manager, &plugin_meta) {
                 Ok(source) => source,
                 Err(err) => {
-                    error!("Failed to create script source for {}: {}", plugin_meta.name, err);
+                    error!(
+                        "Failed to create script source for {}: {}",
+                        plugin_meta.name, err
+                    );
                     continue;
                 }
             };
@@ -201,7 +213,11 @@ impl EditorApplication {
             };
 
             // Register with manager
-            manager.register_plugin(plugin_meta, entity);
+            manager.register_plugin(plugin_meta.clone(), entity);
+            info!(
+                "Registered plugin '{}' with entity {:?}, default_visible: {}",
+                plugin_meta.name, entity, plugin_meta.default_visible
+            );
             loaded_count += 1;
         }
 
@@ -209,5 +225,32 @@ impl EditorApplication {
 
         // Store manager in shared state
         shared.ui_plugin_manager = Some(manager);
+    }
+}
+
+impl EditorApplication {
+    fn find_ui_plugin_manifest() -> Option<(PathBuf, PathBuf)> {
+        let mut candidate_roots = Vec::new();
+        candidate_roots.push(PathBuf::from("examples/scripts"));
+
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                candidate_roots.push(exe_dir.join("examples/scripts"));
+                if let Some(parent) = exe_dir.parent() {
+                    candidate_roots.push(parent.join("examples/scripts"));
+                }
+            }
+        }
+
+        candidate_roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/scripts"));
+
+        for scripts_root in candidate_roots {
+            let manifest_path = scripts_root.join("ui_plugins.toml");
+            if manifest_path.exists() {
+                return Some((manifest_path, scripts_root));
+            }
+        }
+
+        None
     }
 }

@@ -22,10 +22,17 @@ impl ActiveCommands {
         self.0 = None;
     }
 
-    pub fn with<R>(&mut self, f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+    pub fn with<R>(
+        &mut self,
+        f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>,
+    ) -> Result<R, mlua::Error> {
         let rc = match &self.0 {
             Some(rc) => rc.clone(),
-            None => return Err(mlua::Error::RuntimeError("script command context missing".into())),
+            None => {
+                return Err(mlua::Error::RuntimeError(
+                    "script command context missing".into(),
+                ))
+            }
         };
         let mut guard = rc.borrow_mut();
         f(&mut guard)
@@ -80,13 +87,15 @@ impl Drop for StateGuard {
     }
 }
 
-pub(crate) fn with_active_commands<R>(f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
-    ACTIVE_COMMANDS.with(|cell| {
-        cell.borrow_mut().with(f)
-    })
+pub(crate) fn with_active_commands<R>(
+    f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
+    ACTIVE_COMMANDS.with(|cell| cell.borrow_mut().with(f))
 }
 
-pub(crate) fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_state<R>(
+    f: impl FnOnce(&mut ScriptStateMap) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_STATE.with(|cell| {
         let opt = cell.borrow();
         let Some(rc) = opt.as_ref() else {
@@ -182,7 +191,9 @@ impl Drop for EntityGuard {
     }
 }
 
-pub(crate) fn with_active_world<R>(f: impl FnOnce(&World) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_world<R>(
+    f: impl FnOnce(&World) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_WORLD.with(|cell| {
         let opt = cell.borrow();
         let Some(ptr) = *opt else {
@@ -195,7 +206,9 @@ pub(crate) fn with_active_world<R>(f: impl FnOnce(&World) -> Result<R, mlua::Err
     })
 }
 
-pub(crate) fn with_active_entity<R>(f: impl FnOnce(i64) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_entity<R>(
+    f: impl FnOnce(i64) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_ENTITY.with(|cell| {
         let opt = cell.borrow();
         let Some(entity_bits) = *opt else {
@@ -205,11 +218,15 @@ pub(crate) fn with_active_entity<R>(f: impl FnOnce(i64) -> Result<R, mlua::Error
     })
 }
 
-pub(crate) fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_registry<R>(
+    f: impl FnOnce(&ComponentRegistry) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_REGISTRY.with(|cell| {
         let opt = cell.borrow();
         let Some(ptr) = *opt else {
-            return Err(mlua::Error::RuntimeError("component registry not available".into()));
+            return Err(mlua::Error::RuntimeError(
+                "component registry not available".into(),
+            ));
         };
         // SAFETY: The ComponentRegistry pointer is only set during script execution and cleared after.
         // We control script execution to be single-threaded and non-reentrant.
@@ -218,11 +235,15 @@ pub(crate) fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> Resu
     })
 }
 
-pub(crate) fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_input_state<R>(
+    f: impl FnOnce(&InputState) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_INPUT_STATE.with(|cell| {
         let opt = cell.borrow();
         let Some(ptr) = *opt else {
-            return Err(mlua::Error::RuntimeError("input state not available".into()));
+            return Err(mlua::Error::RuntimeError(
+                "input state not available".into(),
+            ));
         };
         // SAFETY: The InputState pointer is only set during script execution and cleared after.
         // We control script execution to be single-threaded and non-reentrant.
@@ -231,11 +252,15 @@ pub(crate) fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> Result<R
     })
 }
 
-pub(crate) fn with_active_event_queue<R>(f: impl FnOnce(&mut Vec<ScriptEvent>) -> Result<R, mlua::Error>) -> Result<R, mlua::Error> {
+pub(crate) fn with_active_event_queue<R>(
+    f: impl FnOnce(&mut Vec<ScriptEvent>) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
     ACTIVE_EVENT_QUEUE.with(|cell| {
         let opt = cell.borrow();
         let Some(rc) = opt.as_ref() else {
-            return Err(mlua::Error::RuntimeError("event queue not available".into()));
+            return Err(mlua::Error::RuntimeError(
+                "event queue not available".into(),
+            ));
         };
         let mut borrow = rc.borrow_mut();
         f(&mut borrow)
@@ -247,7 +272,9 @@ pub(crate) fn get_active_entity() -> Result<i64, mlua::Error> {
         let opt = cell.borrow();
         match *opt {
             Some(entity_bits) => Ok(entity_bits),
-            None => Err(mlua::Error::RuntimeError("active entity not available".into())),
+            None => Err(mlua::Error::RuntimeError(
+                "active entity not available".into(),
+            )),
         }
     })
 }

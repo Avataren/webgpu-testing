@@ -1,29 +1,34 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use hecs::{Entity, World};
 use log::error;
 
+use crate::scene;
 use crate::scripting::component_registry::ComponentRegistry;
+
+type WorldId = usize;
 
 use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
 use super::error::LuaScriptingError;
 use super::runtime::LuaScriptingRuntime;
-use super::types::{EventSubscription, EventSubscriptions, ScriptEvent, ScriptMode, ScriptStateMap};
+use super::types::{
+    EventSubscription, EventSubscriptions, ScriptEvent, ScriptMode, ScriptStateMap,
+};
 
 /// State that owns the Lua runtime for a scene.
 pub struct ScriptingState {
     runtime: LuaScriptingRuntime,
-    instances: HashMap<Entity, LuaScriptInstance>,
+    instances: HashMap<WorldId, HashMap<Entity, LuaScriptInstance>>,
     pending_gltf_imports: Vec<PendingGltfImport>,
     component_registry: ComponentRegistry,
     event_subscriptions: EventSubscriptions,
-    /// Pending state restoration after script reload
-    pending_state_restoration: Option<HashMap<Entity, ScriptStateMap>>,
-    /// UI responses from the previous frame
-    ui_responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
+    /// Pending state restoration per world after script reload
+    pending_state_restoration: HashMap<WorldId, HashMap<Entity, ScriptStateMap>>,
+    /// UI responses from the previous frame (per world)
+    ui_responses: HashMap<WorldId, HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>>,
 }
 
 impl ScriptingState {
@@ -35,7 +40,7 @@ impl ScriptingState {
             pending_gltf_imports: Vec::new(),
             component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
-            pending_state_restoration: None,
+            pending_state_restoration: HashMap::new(),
             ui_responses: HashMap::new(),
         })
     }
@@ -56,29 +61,40 @@ impl ScriptingState {
         self.instances.clear();
         self.pending_gltf_imports.clear();
         self.event_subscriptions.clear();
+        self.pending_state_restoration.clear();
         self.ui_responses.clear();
     }
 
-    /// Extract all script state before reset.
-    /// Returns a map of entity -> state map for later restoration.
-    pub fn extract_all_state(&self) -> HashMap<Entity, ScriptStateMap> {
+    /// Extract script state for a specific world before reset.
+    pub fn extract_state_for_world(&self, world: &World) -> HashMap<Entity, ScriptStateMap> {
+        let world_id = scene::world_id(world);
         let mut all_state = HashMap::new();
 
-        for (entity, instance) in &self.instances {
-            // Clone the state map
-            let state = instance.state_store.borrow().clone();
-            if !state.is_empty() {
-                all_state.insert(*entity, state);
+        if let Some(instances) = self.instances.get(&world_id) {
+            for (entity, instance) in instances {
+                let state = instance.state_store.borrow().clone();
+                if !state.is_empty() {
+                    all_state.insert(*entity, state);
+                }
             }
         }
 
-        log::debug!("Extracted state from {} script instances", all_state.len());
+        log::debug!(
+            "Extracted state from {} script instances for world {:?}",
+            all_state.len(),
+            world_id
+        );
         all_state
     }
 
     /// Restore state to script instances after they've been created.
-    pub fn restore_state(&mut self, state: HashMap<Entity, ScriptStateMap>) {
-        self.pending_state_restoration = Some(state);
+    pub fn restore_state(&mut self, world: &World, state: HashMap<Entity, ScriptStateMap>) {
+        if state.is_empty() {
+            return;
+        }
+
+        let world_id = scene::world_id(world);
+        self.pending_state_restoration.insert(world_id, state);
     }
 
     /// Process a single frame of script execution.
@@ -90,50 +106,54 @@ impl ScriptingState {
         dt: f64,
         editor_mode: bool,
     ) -> Result<(), LuaScriptingError> {
+        let world_id = scene::world_id(world);
+
         // Ensure all entities with LuaScriptComponent have instances
-        self.ensure_instances(world)?;
+        self.ensure_instances(world_id, world)?;
 
         // Call on_created for new scripts
-        self.call_on_created(world, editor_mode)?;
+        self.call_on_created(world_id, world, editor_mode)?;
 
         // Restore any pending state AFTER on_created has run
         // This ensures default values from on_created() are overwritten by restored state
-        if let Some(state_map) = self.pending_state_restoration.take() {
-            self.apply_state_restoration(state_map);
+        if let Some(state_map) = self.pending_state_restoration.remove(&world_id) {
+            self.apply_state_restoration(world_id, state_map);
         }
 
         // Call update for all scripts (if dt > 0 or editor_mode)
         if dt > 0.0 || editor_mode {
-            self.call_update(world, dt, editor_mode)?;
+            self.call_update(world_id, world, dt, editor_mode)?;
         }
 
         // Remove instances for entities that no longer have scripts
-        self.cleanup_removed_scripts(world);
+        self.cleanup_removed_scripts(world_id, world);
 
         Ok(())
     }
 
     /// Ensure all entities with LuaScriptComponent have compiled instances.
-    fn ensure_instances(&mut self, world: &World) -> Result<(), LuaScriptingError> {
+    fn ensure_instances(
+        &mut self,
+        world_id: WorldId,
+        world: &World,
+    ) -> Result<(), LuaScriptingError> {
         let mut to_compile = Vec::new();
+        let instances = self.instances.entry(world_id).or_insert_with(HashMap::new);
 
-        // Find entities that need compilation
         for (entity, script_comp) in world.query::<&LuaScriptComponent>().iter() {
-            if !self.instances.contains_key(&entity) {
+            if !instances.contains_key(&entity) {
                 to_compile.push((entity, script_comp.source().clone()));
             }
         }
 
-        // Compile and create instances
         for (entity, source) in to_compile {
             match self.runtime.compile(&source) {
                 Ok((script, mode)) => {
-                    // Create instance with its own environment
-                    match LuaScriptInstance::new(self.runtime.lua(), script.clone(), source.clone()) {
+                    match LuaScriptInstance::new(self.runtime.lua(), script.clone(), source.clone())
+                    {
                         Ok(instance) => {
-                            self.instances.insert(entity, instance);
+                            instances.insert(entity, instance);
 
-                            // Update the component's script mode
                             if let Ok(mut comp) = world.get::<&mut LuaScriptComponent>(entity) {
                                 comp.set_script_mode(mode);
                             }
@@ -153,17 +173,32 @@ impl ScriptingState {
     }
 
     /// Apply restored state to script instances.
-    fn apply_state_restoration(&mut self, state_map: HashMap<Entity, ScriptStateMap>) {
-        for (entity, state) in state_map {
-            if let Some(instance) = self.instances.get_mut(&entity) {
-                *instance.state_store.borrow_mut() = state;
-                log::debug!("Restored state for entity {:?}", entity);
+    fn apply_state_restoration(
+        &mut self,
+        world_id: WorldId,
+        state_map: HashMap<Entity, ScriptStateMap>,
+    ) {
+        if let Some(instances) = self.instances.get_mut(&world_id) {
+            for (entity, state) in state_map {
+                if let Some(instance) = instances.get_mut(&entity) {
+                    *instance.state_store.borrow_mut() = state;
+                    log::debug!(
+                        "Restored state for entity {:?} (world {:?})",
+                        entity,
+                        world_id
+                    );
+                }
             }
         }
     }
 
     /// Call on_created for scripts that haven't had it called yet.
-    fn call_on_created(&mut self, world: &mut World, editor_mode: bool) -> Result<(), LuaScriptingError> {
+    fn call_on_created(
+        &mut self,
+        world_id: WorldId,
+        world: &mut World,
+        editor_mode: bool,
+    ) -> Result<(), LuaScriptingError> {
         let mut to_call = Vec::new();
 
         // Find scripts that need on_created and should run in the current mode
@@ -187,7 +222,11 @@ impl ScriptingState {
 
         // Call on_created for each
         for entity in to_call {
-            if let Some(instance) = self.instances.get_mut(&entity) {
+            if let Some(instance) = self
+                .instances
+                .get_mut(&world_id)
+                .and_then(|instances| instances.get_mut(&entity))
+            {
                 let commands = instance.command_buffer();
                 let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -221,8 +260,18 @@ impl ScriptingState {
     }
 
     /// Call update for all active scripts.
-    fn call_update(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), LuaScriptingError> {
-        let entities: Vec<Entity> = self.instances.keys().copied().collect();
+    fn call_update(
+        &mut self,
+        world_id: WorldId,
+        world: &mut World,
+        dt: f64,
+        editor_mode: bool,
+    ) -> Result<(), LuaScriptingError> {
+        let entities: Vec<Entity> = self
+            .instances
+            .get(&world_id)
+            .map(|map| map.keys().copied().collect())
+            .unwrap_or_default();
 
         for entity in entities {
             // Check if entity still exists and has the component
@@ -242,7 +291,11 @@ impl ScriptingState {
                 continue;
             }
 
-            if let Some(instance) = self.instances.get_mut(&entity) {
+            if let Some(instance) = self
+                .instances
+                .get_mut(&world_id)
+                .and_then(|map| map.get_mut(&entity))
+            {
                 let commands = instance.command_buffer();
                 let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -282,7 +335,9 @@ impl ScriptingState {
         world: &mut World,
         commands: Rc<RefCell<ScriptCommands>>,
     ) -> Result<(), LuaScriptingError> {
-        let result = commands.borrow_mut().apply(world, &self.component_registry)?;
+        let result = commands
+            .borrow_mut()
+            .apply(world, &self.component_registry)?;
 
         // Store pending glTF imports
         self.pending_gltf_imports.extend(result.gltf_imports);
@@ -318,18 +373,31 @@ impl ScriptingState {
     }
 
     /// Remove instances for entities that no longer have scripts.
-    fn cleanup_removed_scripts(&mut self, world: &World) {
+    fn cleanup_removed_scripts(&mut self, world_id: WorldId, world: &World) {
+        let Some(instances) = self.instances.get_mut(&world_id) else {
+            return;
+        };
+
         let mut to_remove = Vec::new();
 
-        for entity in self.instances.keys() {
+        for entity in instances.keys() {
             if world.get::<&LuaScriptComponent>(*entity).is_err() {
                 to_remove.push(*entity);
             }
         }
 
         for entity in to_remove {
-            self.instances.remove(&entity);
-            log::debug!(target: "script", "Removed script instance for entity {:?}", entity);
+            instances.remove(&entity);
+            log::debug!(
+                target: "script",
+                "Removed script instance for entity {:?} (world {:?})",
+                entity,
+                world_id
+            );
+        }
+
+        if instances.is_empty() {
+            self.instances.remove(&world_id);
         }
     }
 
@@ -350,11 +418,17 @@ impl ScriptingState {
     /// Call on_ui() for all scripts and collect their UI commands.
     ///
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
-    pub fn process_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+    pub fn process_ui(
+        &mut self,
+        world: &World,
+        editor_mode: bool,
+    ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
-        use super::guards::{WorldGuard, RegistryGuard};
+        use super::guards::{RegistryGuard, WorldGuard};
 
         log::debug!(target: "script_ui", "Lua process_ui called with editor_mode={}", editor_mode);
+
+        let world_id = scene::world_id(world);
 
         let mut ui_commands = HashMap::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
@@ -393,7 +467,11 @@ impl ScriptingState {
             }
 
             // Get the script instance
-            let instance = match self.instances.get_mut(&entity) {
+            let instance = match self
+                .instances
+                .get_mut(&world_id)
+                .and_then(|map| map.get_mut(&entity))
+            {
                 Some(inst) => inst,
                 None => {
                     log::debug!(target: "script_ui", "No instance found for entity {:?}", entity);
@@ -405,7 +483,11 @@ impl ScriptingState {
             let ui_context = UiContext::new();
 
             // Set responses from the previous frame
-            if let Some(responses) = self.ui_responses.get(&entity) {
+            if let Some(responses) = self
+                .ui_responses
+                .get(&world_id)
+                .and_then(|map| map.get(&entity))
+            {
                 ui_context.set_responses(responses.clone());
             }
 
@@ -413,7 +495,10 @@ impl ScriptingState {
 
             // Call the on_ui function (if it exists)
             let lua_context = mlua::Value::UserData(
-                self.runtime.lua().create_userdata(ui_context.clone()).expect("Failed to create UI context")
+                self.runtime
+                    .lua()
+                    .create_userdata(ui_context.clone())
+                    .expect("Failed to create UI context"),
             );
 
             match instance.call_on_ui(
@@ -421,7 +506,7 @@ impl ScriptingState {
                 entity_bits(entity),
                 lua_context,
                 commands,
-                event_queue.clone()
+                event_queue.clone(),
             ) {
                 Ok(FunctionCallOutcome::Executed) => {
                     // Collect the UI commands from the context
@@ -444,8 +529,16 @@ impl ScriptingState {
 
     /// Set UI responses for scripts. This should be called after rendering UI
     /// so that the next frame can access the responses.
-    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>) {
-        self.ui_responses = responses;
+    pub fn set_ui_responses(
+        &mut self,
+        world_id: WorldId,
+        responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
+    ) {
+        if responses.is_empty() {
+            self.ui_responses.remove(&world_id);
+        } else {
+            self.ui_responses.insert(world_id, responses);
+        }
     }
 }
 

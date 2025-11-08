@@ -1,10 +1,13 @@
 use super::core::SceneAsset;
-use super::entity::{SceneMaterialHandle, load_material_asset_from_file};
-use crate::scene::loader::SceneImportDevice;
+use super::entity::{load_material_asset_from_file, SceneMaterialHandle};
 use super::serialization::SerializedMaterial;
-use crate::asset::{Assets, Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot, Mesh};
+use crate::asset::{
+    Assets, Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+    Mesh,
+};
 use crate::project::resolve_project_path;
 use crate::renderer::{Material, Texture};
+use crate::scene::loader::SceneImportDevice;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::{Path, PathBuf};

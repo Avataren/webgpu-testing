@@ -39,7 +39,11 @@ pub fn handle_set_can_cast_shadow(
                 updated = true;
             }
             Err(insert_err) => {
-                log::warn!("Failed to add CanCastShadow to {:?}: {}", entity, insert_err);
+                log::warn!(
+                    "Failed to add CanCastShadow to {:?}: {}",
+                    entity,
+                    insert_err
+                );
             }
         }
     }

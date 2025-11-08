@@ -19,9 +19,7 @@ use crate::scripting::rune::guards::with_active_input_state;
 /// ```
 #[rune::function]
 pub(crate) fn is_key_pressed(key: String) -> VmResult<bool> {
-    with_active_input_state(|input_state| {
-        VmResult::Ok(input_state.is_key_pressed(&key))
-    })
+    with_active_input_state(|input_state| VmResult::Ok(input_state.is_key_pressed(&key)))
 }
 
 /// Check if a keyboard key was just pressed this frame.
@@ -41,9 +39,7 @@ pub(crate) fn is_key_pressed(key: String) -> VmResult<bool> {
 /// ```
 #[rune::function]
 pub(crate) fn is_key_just_pressed(key: String) -> VmResult<bool> {
-    with_active_input_state(|input_state| {
-        VmResult::Ok(input_state.is_key_just_pressed(&key))
-    })
+    with_active_input_state(|input_state| VmResult::Ok(input_state.is_key_just_pressed(&key)))
 }
 
 /// Check if a keyboard key was just released this frame.
@@ -63,9 +59,7 @@ pub(crate) fn is_key_just_pressed(key: String) -> VmResult<bool> {
 /// ```
 #[rune::function]
 pub(crate) fn is_key_just_released(key: String) -> VmResult<bool> {
-    with_active_input_state(|input_state| {
-        VmResult::Ok(input_state.is_key_just_released(&key))
-    })
+    with_active_input_state(|input_state| VmResult::Ok(input_state.is_key_just_released(&key)))
 }
 
 /// Check if a mouse button is currently pressed (down).

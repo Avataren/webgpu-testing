@@ -150,7 +150,10 @@ impl ShaderEditorSystem {
                             }
                         } else {
                             error_message = Some("Material is not a shader material.".to_string());
-                            warn!("Attempted to save shader for non-shader material {:?}", handle);
+                            warn!(
+                                "Attempted to save shader for non-shader material {:?}",
+                                handle
+                            );
                         }
                     } else {
                         error_message = Some("Material asset not found.".to_string());

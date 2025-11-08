@@ -11,43 +11,124 @@ use wgpu_cube::asset::{Handle, MaterialAsset, ShaderMaterialMetadata};
 
 // WGSL keywords - comprehensive list from the WGSL spec
 const KEYWORDS: &[&str] = &[
-    "alias", "break", "case", "const", "const_assert", "continue", "continuing", "default",
-    "diagnostic", "discard", "else", "enable", "false", "fn", "for", "if", "let", "loop",
-    "override", "requires", "return", "struct", "switch", "true", "var", "while",
+    "alias",
+    "break",
+    "case",
+    "const",
+    "const_assert",
+    "continue",
+    "continuing",
+    "default",
+    "diagnostic",
+    "discard",
+    "else",
+    "enable",
+    "false",
+    "fn",
+    "for",
+    "if",
+    "let",
+    "loop",
+    "override",
+    "requires",
+    "return",
+    "struct",
+    "switch",
+    "true",
+    "var",
+    "while",
     // Storage classes
-    "private", "workgroup", "uniform", "storage",
+    "private",
+    "workgroup",
+    "uniform",
+    "storage",
     // Access modes
-    "read", "write", "read_write",
+    "read",
+    "write",
+    "read_write",
 ];
 
 // WGSL built-in types
 const TYPES: &[&str] = &[
-    "bool", "i32", "u32", "f32", "f16",
-    "vec2", "vec3", "vec4",
-    "vec2i", "vec2u", "vec2f", "vec2h",
-    "vec3i", "vec3u", "vec3f", "vec3h",
-    "vec4i", "vec4u", "vec4f", "vec4h",
-    "mat2x2", "mat2x3", "mat2x4",
-    "mat3x2", "mat3x3", "mat3x4",
-    "mat4x2", "mat4x3", "mat4x4",
-    "mat2x2f", "mat2x3f", "mat2x4f",
-    "mat3x2f", "mat3x3f", "mat3x4f",
-    "mat4x2f", "mat4x3f", "mat4x4f",
-    "atomic", "array", "ptr",
-    "texture_1d", "texture_2d", "texture_2d_array", "texture_3d",
-    "texture_cube", "texture_cube_array",
+    "bool",
+    "i32",
+    "u32",
+    "f32",
+    "f16",
+    "vec2",
+    "vec3",
+    "vec4",
+    "vec2i",
+    "vec2u",
+    "vec2f",
+    "vec2h",
+    "vec3i",
+    "vec3u",
+    "vec3f",
+    "vec3h",
+    "vec4i",
+    "vec4u",
+    "vec4f",
+    "vec4h",
+    "mat2x2",
+    "mat2x3",
+    "mat2x4",
+    "mat3x2",
+    "mat3x3",
+    "mat3x4",
+    "mat4x2",
+    "mat4x3",
+    "mat4x4",
+    "mat2x2f",
+    "mat2x3f",
+    "mat2x4f",
+    "mat3x2f",
+    "mat3x3f",
+    "mat3x4f",
+    "mat4x2f",
+    "mat4x3f",
+    "mat4x4f",
+    "atomic",
+    "array",
+    "ptr",
+    "texture_1d",
+    "texture_2d",
+    "texture_2d_array",
+    "texture_3d",
+    "texture_cube",
+    "texture_cube_array",
     "texture_multisampled_2d",
-    "texture_storage_1d", "texture_storage_2d", "texture_storage_2d_array", "texture_storage_3d",
-    "texture_depth_2d", "texture_depth_2d_array", "texture_depth_cube", "texture_depth_cube_array",
+    "texture_storage_1d",
+    "texture_storage_2d",
+    "texture_storage_2d_array",
+    "texture_storage_3d",
+    "texture_depth_2d",
+    "texture_depth_2d_array",
+    "texture_depth_cube",
+    "texture_depth_cube_array",
     "texture_depth_multisampled_2d",
-    "sampler", "sampler_comparison",
+    "sampler",
+    "sampler_comparison",
 ];
 
 // WGSL attributes
 const ATTRIBUTES: &[&str] = &[
-    "@binding", "@builtin", "@compute", "@const", "@fragment", "@group", "@id",
-    "@interpolate", "@invariant", "@location", "@must_use", "@size", "@align",
-    "@stride", "@vertex", "@workgroup_size",
+    "@binding",
+    "@builtin",
+    "@compute",
+    "@const",
+    "@fragment",
+    "@group",
+    "@id",
+    "@interpolate",
+    "@invariant",
+    "@location",
+    "@must_use",
+    "@size",
+    "@align",
+    "@stride",
+    "@vertex",
+    "@workgroup_size",
 ];
 
 pub enum ShaderEditorEvent {
@@ -108,7 +189,7 @@ impl ShaderEditorState {
         let mut open = self.open;
         let window_title = format!("Shader Editor - {}", self.window_label());
         egui::Window::new(window_title)
-            .id(egui::Id::new("shader_editor_window")) 
+            .id(egui::Id::new("shader_editor_window"))
             .open(&mut open)
             .resizable(true)
             .default_size(egui::vec2(720.0, 520.0))
@@ -157,7 +238,10 @@ impl ShaderEditorState {
                     let can_save = dirty && !self.save_in_progress && !self.target_missing;
 
                     ui.horizontal(|ui| {
-                        if ui.add_enabled(can_save, egui::Button::new("Save")).clicked() {
+                        if ui
+                            .add_enabled(can_save, egui::Button::new("Save"))
+                            .clicked()
+                        {
                             // Validate shader before saving
                             match validate_shader(&self.buffer) {
                                 Ok(()) => {
@@ -165,7 +249,10 @@ impl ShaderEditorState {
                                     self.save_in_progress = true;
                                     self.set_status_info("Saving shader...");
                                     let message = if let Some(path) = &self.path {
-                                        format!("Shader '{}' saved and hot-reloaded.", path.display())
+                                        format!(
+                                            "Shader '{}' saved and hot-reloaded.",
+                                            path.display()
+                                        )
                                     } else {
                                         "Shader saved and hot-reloaded.".to_string()
                                     };
@@ -178,7 +265,9 @@ impl ShaderEditorState {
                                 }
                                 Err(error) => {
                                     self.validation_error = Some(error.clone());
-                                    self.set_status_error("Shader validation failed. See error above.");
+                                    self.set_status_error(
+                                        "Shader validation failed. See error above.",
+                                    );
                                 }
                             }
                         }
@@ -405,7 +494,10 @@ fn highlight_line(job: &mut LayoutJob, line: &str, font_id: &FontId, palette: &H
         }
         // Block comments
         else if line[index..].starts_with("/*") {
-            let end = line[index..].find("*/").map(|pos| index + pos + 2).unwrap_or(line.len());
+            let end = line[index..]
+                .find("*/")
+                .map(|pos| index + pos + 2)
+                .unwrap_or(line.len());
             append(job, &line[index..end], palette.comment, font_id);
             index = end;
         }

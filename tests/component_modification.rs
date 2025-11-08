@@ -1,6 +1,6 @@
 use glam::Vec3;
 use wgpu_cube::scene::components::{
-    Name, TransformComponent, Visible, PointLight, RotateAnimation,
+    Name, PointLight, RotateAnimation, TransformComponent, Visible,
 };
 use wgpu_cube::scene::Scene;
 use wgpu_cube::scene::Transform;
@@ -32,7 +32,10 @@ fn test_set_component_visible() {
     // Verify component was modified
     let world = scene.main_world();
     let visible = world.get::<&Visible>(test_entity).unwrap();
-    assert!(!visible.0, "Visible should be false after script modification");
+    assert!(
+        !visible.0,
+        "Visible should be false after script modification"
+    );
 }
 
 #[test]

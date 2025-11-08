@@ -5,22 +5,22 @@
 //
 // Each handler takes a context and returns a result indicating what changed.
 
-pub mod transform;
 pub mod camera;
-pub mod lights;
-pub mod misc;
 pub mod components;
-pub mod materials;
-pub mod scripts;
-pub mod particles;
-pub mod environment;
-pub mod shader;
 pub mod dispatch;
+pub mod environment;
+pub mod lights;
+pub mod materials;
+pub mod misc;
+pub mod particles;
+pub mod scripts;
+pub mod shader;
+pub mod transform;
 
 pub use dispatch::dispatch_action;
 
-use wgpu_cube::scene::SceneWorkspaceSceneMut;
 use crate::application::EditorApplication;
+use wgpu_cube::scene::SceneWorkspaceSceneMut;
 
 /// Context passed to action handlers
 pub struct ActionContext<'scene, 'app> {

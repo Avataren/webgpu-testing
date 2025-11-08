@@ -1,60 +1,50 @@
 // Submodules
-pub mod serialization;
-mod core;
-mod resources;
-mod prefabs;
-mod entity;
 mod builder;
+mod core;
+mod entity;
+mod prefabs;
+mod resources;
+pub mod serialization;
 mod tree;
 
 // Re-export main types from serialization (only public ones)
 pub use serialization::{
-    ImportedGltfMeta,
-    SerializedAnimationClip,
-    SerializedMaterial,
-    SerializedMaterialKind,
-    SerializedParticleBehavior,
-    SerializedParticleEmitter,
-    SerializedParticleSystem,
-    SerializedLuaScript,
-    SerializedLuaScriptSource,
-    SerializedTransform,
+    ImportedGltfMeta, SerializedAnimationClip, SerializedLuaScript, SerializedLuaScriptSource,
+    SerializedMaterial, SerializedMaterialKind, SerializedParticleBehavior,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedTransform,
 };
 
 // Re-export from core
-pub use core::{SceneAsset, InstantiatedSceneAsset};
+pub use core::{InstantiatedSceneAsset, SceneAsset};
 
 // Re-export from resources
-pub use resources::{
-    SceneAssetResources, SceneAssetResourcesBuilder, SceneAssetBundle,
-};
+pub use resources::{SceneAssetBundle, SceneAssetResources, SceneAssetResourcesBuilder};
 
 // Re-export from prefabs
-pub use prefabs::{ScenePrefabRef, ScenePrefabOverrides};
+pub use prefabs::{ScenePrefabOverrides, ScenePrefabRef};
 
 // Re-export from entity
 pub use entity::{SceneAssetEntity, SceneMaterialHandle};
 
 // Re-export from builder
-pub use builder::{SceneAssetEntityBuilder, SceneAssetBuilder};
+pub use builder::{SceneAssetBuilder, SceneAssetEntityBuilder};
 
 // Re-export from tree
-pub use tree::{
-    SceneTreeAsset, SceneTreeAssetNode, SceneTreeAssetNodeBuilder,
-};
+pub use tree::{SceneTreeAsset, SceneTreeAssetNode, SceneTreeAssetNodeBuilder};
 
 // Re-export pub(crate) functions for internal use
-pub(crate) use tree::{serialize_world, build_tree_asset_node};
-
+pub(crate) use tree::{build_tree_asset_node, serialize_world};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::serialization::{SerializedBillboard, SerializedTextureSlot};
+    use super::*;
     use crate::asset::Assets;
     use crate::project::{ProjectManifest, ProjectMetadata, CONTENT_DIR};
     use crate::renderer::material::MaterialFlags;
-    use crate::scene::components::{Billboard, BillboardOrientation, BillboardSpace, TransformComponent, Visible};
+    use crate::scene::components::{
+        Billboard, BillboardOrientation, BillboardSpace, TransformComponent, Visible,
+    };
     use crate::scene::transform::Transform;
     use crate::scene::{Scene, SceneLibrary};
     use glam::Vec3;

@@ -105,47 +105,45 @@ pub(crate) fn register_query_api(lua: &Lua) -> LuaResult<()> {
     // get_nearest_entity_with_component(x: number, y: number, z: number, component_name: string) -> number | nil
     globals.set(
         "get_nearest_entity_with_component",
-        lua.create_function(
-            |_, (x, y, z, component_name): (f64, f64, f64, String)| {
-                with_active_world(|world| {
-                    with_active_registry(|registry| {
-                        let pos = Vec3::new(x as f32, y as f32, z as f32);
-                        let mut nearest: Option<(Entity, f32)> = None;
+        lua.create_function(|_, (x, y, z, component_name): (f64, f64, f64, String)| {
+            with_active_world(|world| {
+                with_active_registry(|registry| {
+                    let pos = Vec3::new(x as f32, y as f32, z as f32);
+                    let mut nearest: Option<(Entity, f32)> = None;
 
-                        // Check if component exists in registry
-                        if !registry.is_registered(&component_name) {
-                            return Ok(None);
-                        }
+                    // Check if component exists in registry
+                    if !registry.is_registered(&component_name) {
+                        return Ok(None);
+                    }
 
-                        // Query all entities with TransformComponent
-                        for (entity, transform) in world.query::<&TransformComponent>().iter() {
-                            // Check if entity has the required component
-                            match registry.has_component(world, entity, &component_name) {
-                                Ok(true) => {
-                                    let entity_pos = transform.0.translation;
-                                    let dist_sq = pos.distance_squared(entity_pos);
+                    // Query all entities with TransformComponent
+                    for (entity, transform) in world.query::<&TransformComponent>().iter() {
+                        // Check if entity has the required component
+                        match registry.has_component(world, entity, &component_name) {
+                            Ok(true) => {
+                                let entity_pos = transform.0.translation;
+                                let dist_sq = pos.distance_squared(entity_pos);
 
-                                    match nearest {
-                                        None => nearest = Some((entity, dist_sq)),
-                                        Some((_, best_dist_sq)) => {
-                                            if dist_sq < best_dist_sq {
-                                                nearest = Some((entity, dist_sq));
-                                            }
+                                match nearest {
+                                    None => nearest = Some((entity, dist_sq)),
+                                    Some((_, best_dist_sq)) => {
+                                        if dist_sq < best_dist_sq {
+                                            nearest = Some((entity, dist_sq));
                                         }
                                     }
                                 }
-                                _ => continue,
                             }
+                            _ => continue,
                         }
+                    }
 
-                        match nearest {
-                            Some((entity, _)) => Ok(Some(entity_bits(entity))),
-                            None => Ok(None),
-                        }
-                    })
+                    match nearest {
+                        Some((entity, _)) => Ok(Some(entity_bits(entity))),
+                        None => Ok(None),
+                    }
                 })
-            },
-        )?,
+            })
+        })?,
     )?;
 
     // get_entities_in_box(min: table, max: table) -> table

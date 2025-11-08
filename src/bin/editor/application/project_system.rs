@@ -652,7 +652,7 @@ mod native {
             PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture,
             PACKAGED_GLTF_VERSION,
         },
-        SceneImportDevice, SceneLoader, SerializedMaterial, SerializedLuaScriptSource,
+        SceneImportDevice, SceneLoader, SerializedLuaScriptSource, SerializedMaterial,
     };
 
     use crate::project::NewProjectRequest;

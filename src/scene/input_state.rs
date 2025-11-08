@@ -1,5 +1,5 @@
-use std::collections::HashSet;
 use glam::Vec2;
+use std::collections::HashSet;
 
 /// Represents the state of a key or button
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +155,8 @@ impl InputState {
 
     /// Check if a mouse button is currently pressed
     pub fn is_mouse_button_pressed(&self, button: u32) -> bool {
-        self.mouse_buttons_down.contains(&button) || self.mouse_buttons_just_pressed.contains(&button)
+        self.mouse_buttons_down.contains(&button)
+            || self.mouse_buttons_just_pressed.contains(&button)
     }
 
     /// Check if a mouse button was just pressed this frame

@@ -3,7 +3,6 @@
 /// Provides functions to copy text to the system clipboard.
 /// Note: Reading from clipboard is not supported by egui for security reasons.
 /// Users must paste text using Ctrl+V into text fields.
-
 use std::cell::RefCell;
 
 thread_local! {

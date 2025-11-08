@@ -74,7 +74,11 @@ pub fn handle_update_particle_emitter(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to update particle emitter for {:?}: {}", entity, err);
+                log::warn!(
+                    "Failed to update particle emitter for {:?}: {}",
+                    entity,
+                    err
+                );
                 false
             }
         }
@@ -108,7 +112,11 @@ pub fn handle_update_particle_behavior(
                 }
             }
             Err(err) => {
-                log::warn!("Failed to update particle behavior for {:?}: {}", entity, err);
+                log::warn!(
+                    "Failed to update particle behavior for {:?}: {}",
+                    entity,
+                    err
+                );
             }
         }
     }
@@ -160,7 +168,11 @@ pub fn handle_set_billboard(
                 updated = true;
             }
             Err(err) => {
-                log::debug!("Billboard missing for {:?} while disabling: {}", entity, err);
+                log::debug!(
+                    "Billboard missing for {:?} while disabling: {}",
+                    entity,
+                    err
+                );
             }
         },
     }

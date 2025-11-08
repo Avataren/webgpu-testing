@@ -1,5 +1,11 @@
-use crate::asset::{MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot, ShaderMaterialMetadata};
-use crate::project::{active_project_root, normalize_absolute_path, relativize_path_to_project, resolve_project_path};
+use crate::asset::Assets;
+use crate::asset::{
+    MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+    ShaderMaterialMetadata,
+};
+use crate::project::{
+    active_project_root, normalize_absolute_path, relativize_path_to_project, resolve_project_path,
+};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::texture::{
     DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX, DEFAULT_NORMAL_TEXTURE_INDEX,
@@ -7,7 +13,6 @@ use crate::renderer::texture::{
 };
 use crate::renderer::Material;
 use crate::scene::loader::SceneImportDevice;
-use crate::asset::Assets;
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
@@ -295,7 +300,10 @@ impl SerializedMaterial {
         }
     }
 
-    pub(crate) fn texture_slot_mut(&mut self, slot: MaterialTextureSlot) -> &mut SerializedTextureSlot {
+    pub(crate) fn texture_slot_mut(
+        &mut self,
+        slot: MaterialTextureSlot,
+    ) -> &mut SerializedTextureSlot {
         match slot {
             MaterialTextureSlot::BaseColor => &mut self.base_color_texture,
             MaterialTextureSlot::MetallicRoughness => &mut self.metallic_roughness_texture,

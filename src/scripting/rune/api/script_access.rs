@@ -2,7 +2,6 @@
 ///
 /// Provides functions to query script components on entities.
 /// This allows scripts to build tools like script editors.
-
 use crate::scripting::rune::component::RuneScriptComponent;
 use crate::scripting::rune::guards::with_active_world;
 use hecs::Entity;
@@ -50,7 +49,8 @@ pub fn get_script_count() -> VmResult<i64> {
 #[rune::function]
 pub fn get_script_entity(index: i64) -> VmResult<u64> {
     VmResult::Ok(SCRIPT_CACHE.with(|cache| {
-        cache.borrow()
+        cache
+            .borrow()
             .get(&(index as usize))
             .map(|(entity, _, _)| *entity)
             .unwrap_or(0)
@@ -61,7 +61,8 @@ pub fn get_script_entity(index: i64) -> VmResult<u64> {
 #[rune::function]
 pub fn get_script_source_type(index: i64) -> VmResult<String> {
     VmResult::Ok(SCRIPT_CACHE.with(|cache| {
-        cache.borrow()
+        cache
+            .borrow()
             .get(&(index as usize))
             .map(|(_, source_type, _)| source_type.clone())
             .unwrap_or_else(|| String::new())
@@ -72,7 +73,8 @@ pub fn get_script_source_type(index: i64) -> VmResult<String> {
 #[rune::function]
 pub fn get_script_source_path(index: i64) -> VmResult<String> {
     VmResult::Ok(SCRIPT_CACHE.with(|cache| {
-        cache.borrow()
+        cache
+            .borrow()
             .get(&(index as usize))
             .map(|(_, _, source_path)| source_path.clone())
             .unwrap_or_else(|| String::new())

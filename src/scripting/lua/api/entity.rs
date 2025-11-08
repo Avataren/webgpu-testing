@@ -31,9 +31,7 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "attach_inline_script",
         lua.create_function(|_, (entity, name, source): (i64, String, String)| {
-            with_active_commands(|commands| {
-                commands.attach_inline_script(entity, name, source)
-            })
+            with_active_commands(|commands| commands.attach_inline_script(entity, name, source))
         })?,
     )?;
 
@@ -41,9 +39,7 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "attach_script",
         lua.create_function(|_, (entity, path): (i64, String)| {
-            with_active_commands(|commands| {
-                commands.attach_file_script(entity, path)
-            })
+            with_active_commands(|commands| commands.attach_file_script(entity, path))
         })?,
     )?;
 

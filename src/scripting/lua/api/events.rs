@@ -1,6 +1,8 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
-use crate::scripting::lua::guards::{get_active_entity, with_active_commands, with_active_event_queue};
+use crate::scripting::lua::guards::{
+    get_active_entity, with_active_commands, with_active_event_queue,
+};
 use crate::scripting::lua::types::ScriptEvent;
 
 /// Register events API functions with the Lua runtime.

@@ -1,22 +1,22 @@
 use super::builder::SceneAssetEntityBuilder;
 use super::prefabs::ScenePrefabRef;
-use crate::scene::components::{
-    Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId, EnvironmentComponent,
-    GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds,
-    MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent, PointLight,
-    PrimitiveMeshComponent, SpotLight, TransformComponent, Visible, CameraComponent,
-};
-use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
-    path_serde, SerializedBillboard, SerializedDirectionalLight, SerializedMaterial,
-    SerializedMeshBounds, SerializedParticleBehavior, SerializedParticleEmitter,
-    SerializedParticleSystem, SerializedPointLight, SerializedLuaScript, SerializedSpotLight,
+    path_serde, SerializedBillboard, SerializedDirectionalLight, SerializedLuaScript,
+    SerializedMaterial, SerializedMeshBounds, SerializedParticleBehavior,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedPointLight, SerializedSpotLight,
     SerializedTransform,
 };
-use crate::scene::transform::Transform;
 use crate::asset::{Assets, MaterialAsset, MaterialTextureSlot};
-use crate::renderer::Material;
 use crate::project::relativize_path_to_project;
+use crate::renderer::primitives::PrimitiveMeshDescriptor;
+use crate::renderer::Material;
+use crate::scene::components::{
+    Billboard, CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
+    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
+    MeshBounds, MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
+    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
+};
+use crate::scene::transform::Transform;
 use crate::scripting::LuaScriptComponent;
 use hecs::{Entity, World};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
@@ -394,8 +394,6 @@ pub(crate) fn generate_material_asset_path(
     }
 }
 
-
-
 impl SceneAssetEntity {
     pub fn builder(transform: SerializedTransform) -> SceneAssetEntityBuilder {
         SceneAssetEntityBuilder::new(transform)
@@ -552,4 +550,3 @@ impl SceneAssetEntity {
         }
     }
 }
-

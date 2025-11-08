@@ -5,25 +5,68 @@
 
 #[derive(Debug, Clone)]
 pub enum UiCommand {
-    Label { text: String },
-    Button { text: String },
-    Heading { text: String },
+    Label {
+        text: String,
+    },
+    Button {
+        text: String,
+    },
+    Heading {
+        text: String,
+    },
     Separator,
-    TextEdit { id: String, current_value: String },
-    TextEditMultiline { id: String, current_value: String, width: Option<f32>, height: Option<f32> },
-    Slider { id: String, current_value: f64, min: f64, max: f64 },
-    DragValue { id: String, current_value: f64 },
-    Checkbox { id: String, current_value: bool, label: String },
-    ColorEdit { id: String, r: f32, g: f32, b: f32 },
-    MenuBar { items: Vec<UiCommand> },
-    Menu { text: String, items: Vec<UiCommand> },
-    MenuItem { id: String, text: String },
+    TextEdit {
+        id: String,
+        current_value: String,
+    },
+    TextEditMultiline {
+        id: String,
+        current_value: String,
+        width: Option<f32>,
+        height: Option<f32>,
+    },
+    Slider {
+        id: String,
+        current_value: f64,
+        min: f64,
+        max: f64,
+    },
+    DragValue {
+        id: String,
+        current_value: f64,
+    },
+    Checkbox {
+        id: String,
+        current_value: bool,
+        label: String,
+    },
+    ColorEdit {
+        id: String,
+        r: f32,
+        g: f32,
+        b: f32,
+    },
+    MenuBar {
+        items: Vec<UiCommand>,
+    },
+    Menu {
+        text: String,
+        items: Vec<UiCommand>,
+    },
+    MenuItem {
+        id: String,
+        text: String,
+    },
 }
 
 impl UiCommand {
     /// Render this command using a real egui::Ui context and collect responses.
     #[cfg(feature = "egui")]
-    pub fn render_and_collect(&self, ui: &mut egui::Ui, responses: &mut std::collections::HashMap<String, UiResponse>) {
+    pub fn render_and_collect(
+        &self,
+        ui: &mut egui::Ui,
+        responses: &mut std::collections::HashMap<String, UiResponse>,
+    ) {
         // Special handling for MenuBar and Menu to avoid double rendering
         match self {
             UiCommand::MenuBar { items } => {
@@ -64,18 +107,18 @@ impl UiCommand {
             UiCommand::MenuItem { id, .. } => {
                 self.render(ui).map(|response| (id.clone(), response))
             }
-            UiCommand::Button { text } => {
-                self.render(ui).map(|response| (format!("button_{}", text), response))
-            }
-            UiCommand::TextEdit { id, .. } |
-            UiCommand::TextEditMultiline { id, .. } |
-            UiCommand::Slider { id, .. } |
-            UiCommand::DragValue { id, .. } |
-            UiCommand::Checkbox { id, .. } |
-            UiCommand::ColorEdit { id, .. } => {
+            UiCommand::Button { text } => self
+                .render(ui)
+                .map(|response| (format!("button_{}", text), response)),
+            UiCommand::TextEdit { id, .. }
+            | UiCommand::TextEditMultiline { id, .. }
+            | UiCommand::Slider { id, .. }
+            | UiCommand::DragValue { id, .. }
+            | UiCommand::Checkbox { id, .. }
+            | UiCommand::ColorEdit { id, .. } => {
                 self.render(ui).map(|response| (id.clone(), response))
             }
-            _ => None
+            _ => None,
         }
     }
 
@@ -103,7 +146,10 @@ impl UiCommand {
                 ui.separator();
                 None
             }
-            UiCommand::TextEdit { id: _, current_value } => {
+            UiCommand::TextEdit {
+                id: _,
+                current_value,
+            } => {
                 let mut text = current_value.clone();
                 let response = ui.text_edit_singleline(&mut text);
                 Some(UiResponse {
@@ -114,10 +160,14 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::TextEditMultiline { id: _, current_value, width, height } => {
+            UiCommand::TextEditMultiline {
+                id: _,
+                current_value,
+                width,
+                height,
+            } => {
                 let mut text = current_value.clone();
-                let text_edit = egui::TextEdit::multiline(&mut text)
-                    .code_editor();
+                let text_edit = egui::TextEdit::multiline(&mut text).code_editor();
 
                 // Calculate size based on provided dimensions or use available space
                 let size = match (width, height) {
@@ -136,7 +186,12 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::Slider { id: _, current_value, min, max } => {
+            UiCommand::Slider {
+                id: _,
+                current_value,
+                min,
+                max,
+            } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::Slider::new(&mut value, *min..=*max));
                 Some(UiResponse {
@@ -147,7 +202,10 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::DragValue { id: _, current_value } => {
+            UiCommand::DragValue {
+                id: _,
+                current_value,
+            } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::DragValue::new(&mut value));
                 Some(UiResponse {
@@ -158,7 +216,11 @@ impl UiCommand {
                     ..Default::default()
                 })
             }
-            UiCommand::Checkbox { id: _, current_value, label } => {
+            UiCommand::Checkbox {
+                id: _,
+                current_value,
+                label,
+            } => {
                 let mut checked = *current_value;
                 let response = ui.checkbox(&mut checked, label);
                 Some(UiResponse {
@@ -229,38 +291,60 @@ impl From<UiCommand> for crate::scripting::rune::api::ui::UiCommand {
     fn from(cmd: UiCommand) -> Self {
         match cmd {
             UiCommand::Label { text } => crate::scripting::rune::api::ui::UiCommand::Label { text },
-            UiCommand::Button { text } => crate::scripting::rune::api::ui::UiCommand::Button { text },
-            UiCommand::Heading { text } => crate::scripting::rune::api::ui::UiCommand::Heading { text },
+            UiCommand::Button { text } => {
+                crate::scripting::rune::api::ui::UiCommand::Button { text }
+            }
+            UiCommand::Heading { text } => {
+                crate::scripting::rune::api::ui::UiCommand::Heading { text }
+            }
             UiCommand::Separator => crate::scripting::rune::api::ui::UiCommand::Separator,
             UiCommand::TextEdit { id, current_value } => {
                 crate::scripting::rune::api::ui::UiCommand::TextEdit { id, current_value }
             }
-            UiCommand::TextEditMultiline { id, current_value, width, height } => {
-                crate::scripting::rune::api::ui::UiCommand::TextEditMultiline { id, current_value, width, height }
-            }
-            UiCommand::Slider { id, current_value, min, max } => {
-                crate::scripting::rune::api::ui::UiCommand::Slider { id, current_value, min, max }
-            }
+            UiCommand::TextEditMultiline {
+                id,
+                current_value,
+                width,
+                height,
+            } => crate::scripting::rune::api::ui::UiCommand::TextEditMultiline {
+                id,
+                current_value,
+                width,
+                height,
+            },
+            UiCommand::Slider {
+                id,
+                current_value,
+                min,
+                max,
+            } => crate::scripting::rune::api::ui::UiCommand::Slider {
+                id,
+                current_value,
+                min,
+                max,
+            },
             UiCommand::DragValue { id, current_value } => {
                 crate::scripting::rune::api::ui::UiCommand::DragValue { id, current_value }
             }
-            UiCommand::Checkbox { id, current_value, label } => {
-                crate::scripting::rune::api::ui::UiCommand::Checkbox { id, current_value, label }
-            }
+            UiCommand::Checkbox {
+                id,
+                current_value,
+                label,
+            } => crate::scripting::rune::api::ui::UiCommand::Checkbox {
+                id,
+                current_value,
+                label,
+            },
             UiCommand::ColorEdit { id, r, g, b } => {
                 crate::scripting::rune::api::ui::UiCommand::ColorEdit { id, r, g, b }
             }
-            UiCommand::MenuBar { items } => {
-                crate::scripting::rune::api::ui::UiCommand::MenuBar {
-                    items: items.into_iter().map(|cmd| cmd.into()).collect()
-                }
-            }
-            UiCommand::Menu { text, items } => {
-                crate::scripting::rune::api::ui::UiCommand::Menu {
-                    text,
-                    items: items.into_iter().map(|cmd| cmd.into()).collect()
-                }
-            }
+            UiCommand::MenuBar { items } => crate::scripting::rune::api::ui::UiCommand::MenuBar {
+                items: items.into_iter().map(|cmd| cmd.into()).collect(),
+            },
+            UiCommand::Menu { text, items } => crate::scripting::rune::api::ui::UiCommand::Menu {
+                text,
+                items: items.into_iter().map(|cmd| cmd.into()).collect(),
+            },
             UiCommand::MenuItem { id, text } => {
                 crate::scripting::rune::api::ui::UiCommand::MenuItem { id, text }
             }

@@ -67,14 +67,16 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
     // look_at(entity: number, target_x: number, target_y: number, target_z: number)
     globals.set(
         "look_at",
-        lua.create_function(|_, (entity, target_x, target_y, target_z): (i64, f64, f64, f64)| {
-            with_active_commands(|commands| {
-                commands.look_at(
-                    entity,
-                    Vec3::new(target_x as f32, target_y as f32, target_z as f32),
-                )
-            })
-        })?,
+        lua.create_function(
+            |_, (entity, target_x, target_y, target_z): (i64, f64, f64, f64)| {
+                with_active_commands(|commands| {
+                    commands.look_at(
+                        entity,
+                        Vec3::new(target_x as f32, target_y as f32, target_z as f32),
+                    )
+                })
+            },
+        )?,
     )?;
 
     // get_world_translation(entity: number) -> {x: number, y: number, z: number} | nil

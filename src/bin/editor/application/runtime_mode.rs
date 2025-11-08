@@ -66,7 +66,8 @@ impl EditorApplication {
         if self.shared.ui_plugins_loaded {
             if let Some(ref mut manager) = self.shared.ui_plugin_manager {
                 info!("Re-initializing UI plugins after scene restore");
-                ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
+                ctx.scene
+                    .run_scripts_for_world(manager.world_mut(), 0.0, true);
             }
         }
 

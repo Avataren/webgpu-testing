@@ -59,7 +59,9 @@ impl SceneRuntime {
         &self.lua_scripting
     }
 
-    pub(crate) fn lua_scripting_mut(&mut self) -> &mut crate::scripting::lua::state::ScriptingState {
+    pub(crate) fn lua_scripting_mut(
+        &mut self,
+    ) -> &mut crate::scripting::lua::state::ScriptingState {
         &mut self.lua_scripting
     }
 
@@ -94,7 +96,7 @@ impl SceneRuntime {
         self.scripting.set_pending_state_restoration(saved_state);
 
         // Reset Lua scripts
-        let lua_saved_state = self.lua_scripting.extract_all_state();
+        let lua_saved_state = self.lua_scripting.extract_state_for_world(world);
 
         {
             use crate::scripting::LuaScriptComponent;
@@ -105,7 +107,7 @@ impl SceneRuntime {
         }
 
         self.lua_scripting.reset_runtime();
-        self.lua_scripting.restore_state(lua_saved_state);
+        self.lua_scripting.restore_state(world, lua_saved_state);
     }
 
     pub(crate) fn advance_time(&mut self, dt: f64) -> f64 {
@@ -126,7 +128,11 @@ impl SceneRuntime {
     }
 
     /// Process UI for all scripts (both Rune and Lua) and return their UI commands.
-    pub(crate) fn process_script_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub(crate) fn process_script_ui(
+        &mut self,
+        world: &World,
+        editor_mode: bool,
+    ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         // Collect Rune UI commands
         let mut all_commands = self.scripting.process_ui(world, editor_mode);
 
@@ -136,29 +142,41 @@ impl SceneRuntime {
             // Convert Lua UiCommands to Rune UiCommands
             let converted_cmds: Vec<crate::scripting::rune::api::ui::UiCommand> =
                 cmds.into_iter().map(|cmd| cmd.into()).collect();
-            all_commands.entry(entity).or_insert_with(Vec::new).extend(converted_cmds);
+            all_commands
+                .entry(entity)
+                .or_insert_with(Vec::new)
+                .extend(converted_cmds);
         }
 
         all_commands
     }
 
     /// Set UI responses from the previous frame to feed back to scripts.
-    pub(crate) fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
-        // Set responses for Rune scripts
-        self.scripting.set_ui_responses(responses.clone());
+    pub(crate) fn set_ui_responses_for_world(
+        &mut self,
+        world_id: usize,
+        responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>,
+        include_rune: bool,
+    ) {
+        if include_rune {
+            self.scripting.set_ui_responses(responses.clone());
+        }
 
-        // Convert and set responses for Lua scripts
-        let lua_responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>> = responses
+        let lua_responses: HashMap<
+            Entity,
+            HashMap<String, crate::scripting::lua::api::ui::UiResponse>,
+        > = responses
             .into_iter()
             .map(|(entity, widget_responses)| {
-                let converted: HashMap<String, crate::scripting::lua::api::ui::UiResponse> = widget_responses
-                    .into_iter()
-                    .map(|(id, resp)| (id, resp.into()))
-                    .collect();
+                let converted: HashMap<String, crate::scripting::lua::api::ui::UiResponse> =
+                    widget_responses
+                        .into_iter()
+                        .map(|(id, resp)| (id, resp.into()))
+                        .collect();
                 (entity, converted)
             })
             .collect();
-        self.lua_scripting.set_ui_responses(lua_responses);
+        self.lua_scripting.set_ui_responses(world_id, lua_responses);
     }
 }
 

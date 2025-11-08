@@ -1,26 +1,24 @@
-use crate::scene::animation::{AnimationClip, AnimationState};
 use super::builder::SceneAssetBuilder;
-use crate::scene::components::{
-    Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId,
-    GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent, MeshBounds,
-    MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
-};
 use super::entity::{
-    SceneAssetEntity, SceneMaterialHandle, absolute_gltf_source, generate_material_asset_path,
-    material_file_matches_pattern, normalize_material_path, relativize_material_texture_paths,
-    sanitize_gltf_stem,
+    absolute_gltf_source, generate_material_asset_path, material_file_matches_pattern,
+    normalize_material_path, relativize_material_texture_paths, sanitize_gltf_stem,
+    SceneAssetEntity, SceneMaterialHandle,
 };
-use crate::scene::graph::SceneInstance;
-use crate::scene::gltf_material_registry::GltfMaterialRegistry;
-use crate::scene::loader::SceneImportDevice;
 use super::resources::resolve_material_handle;
-use super::serialization::{
-    ImportedGltfMeta, SerializedAnimationClip, SerializedTransform,
-};
-use crate::scene::transform::Transform;
+use super::serialization::{ImportedGltfMeta, SerializedAnimationClip, SerializedTransform};
 use crate::asset::{Assets, Handle, MaterialAsset, MeshData};
 use crate::project::{normalize_absolute_path, relativize_path_to_project, CONTENT_DIR};
+use crate::scene::animation::{AnimationClip, AnimationState};
+use crate::scene::components::{
+    Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
+    GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PrimitiveMeshComponent,
+    SpotLight, TransformComponent, Visible,
+};
+use crate::scene::gltf_material_registry::GltfMaterialRegistry;
+use crate::scene::graph::SceneInstance;
+use crate::scene::loader::SceneImportDevice;
+use crate::scene::transform::Transform;
 use hecs::World;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};

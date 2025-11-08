@@ -41,24 +41,29 @@ impl UiContext {
 
     /// Display a text label.
     pub fn label(&self, text: String) {
-        self.commands.lock().unwrap().push(UiCommand::Label { text });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::Label { text });
     }
 
     /// Display a button and return whether it was clicked.
     pub fn button(&self, text: String) -> bool {
         let id = format!("button_{}", text);
-        self.commands.lock().unwrap().push(UiCommand::Button {
-            text: text.clone(),
-        });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::Button { text: text.clone() });
 
-        self.get_response(&id)
-            .map(|r| r.clicked)
-            .unwrap_or(false)
+        self.get_response(&id).map(|r| r.clicked).unwrap_or(false)
     }
 
     /// Display a heading.
     pub fn heading(&self, text: String) {
-        self.commands.lock().unwrap().push(UiCommand::Heading { text });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::Heading { text });
     }
 
     /// Display a separator line.
@@ -70,7 +75,8 @@ impl UiContext {
     pub fn text_edit(&self, id: String, current_value: String) -> String {
         // Check if we have a response from the previous frame
         // If so, use that value to avoid lag/jumping
-        let command_value = self.get_response(&id)
+        let command_value = self
+            .get_response(&id)
             .and_then(|r| r.text_value.clone())
             .unwrap_or_else(|| current_value.clone());
 
@@ -85,19 +91,29 @@ impl UiContext {
 
     /// Display a multiline text editor and return the new value.
     /// If width and height are not provided, the editor will fill available space.
-    pub fn text_edit_multiline(&self, id: String, current_value: String, width: Option<f64>, height: Option<f64>) -> String {
+    pub fn text_edit_multiline(
+        &self,
+        id: String,
+        current_value: String,
+        width: Option<f64>,
+        height: Option<f64>,
+    ) -> String {
         // Check if we have a response from the previous frame
         // If so, use that value to avoid lag/jumping
-        let command_value = self.get_response(&id)
+        let command_value = self
+            .get_response(&id)
             .and_then(|r| r.text_value.clone())
             .unwrap_or_else(|| current_value.clone());
 
-        self.commands.lock().unwrap().push(UiCommand::TextEditMultiline {
-            id: id.clone(),
-            current_value: command_value.clone(),
-            width: width.map(|v| v as f32),
-            height: height.map(|v| v as f32),
-        });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::TextEditMultiline {
+                id: id.clone(),
+                current_value: command_value.clone(),
+                width: width.map(|v| v as f32),
+                height: height.map(|v| v as f32),
+            });
 
         // Return the command value we just used
         command_value
@@ -171,9 +187,10 @@ impl UiContext {
         callback.call::<()>(temp_context.clone())?;
         let menu_items = temp_context.take_commands();
 
-        self.commands.lock().unwrap().push(UiCommand::MenuBar {
-            items: menu_items,
-        });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::MenuBar { items: menu_items });
 
         Ok(())
     }
@@ -204,9 +221,7 @@ impl UiContext {
             text,
         });
 
-        self.get_response(&id)
-            .map(|r| r.clicked)
-            .unwrap_or(false)
+        self.get_response(&id).map(|r| r.clicked).unwrap_or(false)
     }
 }
 

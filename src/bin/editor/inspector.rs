@@ -252,14 +252,18 @@ pub fn show_entity_inspector(
 
         if data.components.camera.is_none() {
             if ui.button("Camera").clicked() {
-                actions.push(InspectorAction::AddCamera { entity: data.entity });
+                actions.push(InspectorAction::AddCamera {
+                    entity: data.entity,
+                });
                 ui.close();
             }
         }
 
         if data.components.mesh.is_none() {
             if ui.button("Mesh").clicked() {
-                actions.push(InspectorAction::AddMesh { entity: data.entity });
+                actions.push(InspectorAction::AddMesh {
+                    entity: data.entity,
+                });
                 ui.close();
             }
         }
@@ -270,15 +274,21 @@ pub fn show_entity_inspector(
         if !has_light {
             ui.menu_button("Light", |ui| {
                 if ui.button("Point Light").clicked() {
-                    actions.push(InspectorAction::AddPointLight { entity: data.entity });
+                    actions.push(InspectorAction::AddPointLight {
+                        entity: data.entity,
+                    });
                     ui.close();
                 }
                 if ui.button("Directional Light").clicked() {
-                    actions.push(InspectorAction::AddDirectionalLight { entity: data.entity });
+                    actions.push(InspectorAction::AddDirectionalLight {
+                        entity: data.entity,
+                    });
                     ui.close();
                 }
                 if ui.button("Spot Light").clicked() {
-                    actions.push(InspectorAction::AddSpotLight { entity: data.entity });
+                    actions.push(InspectorAction::AddSpotLight {
+                        entity: data.entity,
+                    });
                     ui.close();
                 }
             });
@@ -286,21 +296,27 @@ pub fn show_entity_inspector(
 
         if data.components.environment.is_none() {
             if ui.button("Environment").clicked() {
-                actions.push(InspectorAction::AddEnvironment { entity: data.entity });
+                actions.push(InspectorAction::AddEnvironment {
+                    entity: data.entity,
+                });
                 ui.close();
             }
         }
 
         if data.components.particle_system.is_none() {
             if ui.button("Particle System").clicked() {
-                actions.push(InspectorAction::AddParticleSystem { entity: data.entity });
+                actions.push(InspectorAction::AddParticleSystem {
+                    entity: data.entity,
+                });
                 ui.close();
             }
         }
 
         if data.components.script.is_none() {
             if ui.button("Script").clicked() {
-                actions.push(InspectorAction::AddScript { entity: data.entity });
+                actions.push(InspectorAction::AddScript {
+                    entity: data.entity,
+                });
                 ui.close();
             }
         }

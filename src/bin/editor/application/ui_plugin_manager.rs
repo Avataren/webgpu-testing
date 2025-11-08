@@ -172,6 +172,11 @@ impl UiPluginManager {
         &mut self.world
     }
 
+    /// unique identifier for the plugin world (used for scripting state separation)
+    pub fn world_id(&self) -> usize {
+        wgpu_cube::scene::world_id(self.world())
+    }
+
     /// Resolve script path relative to base path
     pub fn resolve_script_path(&self, script_path: &str) -> PathBuf {
         self.base_path.join(script_path)
@@ -222,7 +227,8 @@ impl UiPluginManager {
 
         // Check if entity has the component
         {
-            let _old_component = self.world
+            let _old_component = self
+                .world
                 .get::<&wgpu_cube::scripting::LuaScriptComponent>(entity)
                 .map_err(|_| format!("Entity {:?} has no LuaScriptComponent", entity))?;
             // Drop the reference here
@@ -230,9 +236,9 @@ impl UiPluginManager {
 
         // Create new component with the reloaded source
         // Use File source so it stays editable
-        let new_component = wgpu_cube::scripting::LuaScriptComponent::new(
-            LuaScriptSource::File { path: path.to_path_buf() }
-        );
+        let new_component = wgpu_cube::scripting::LuaScriptComponent::new(LuaScriptSource::File {
+            path: path.to_path_buf(),
+        });
 
         // Replace the component
         self.world
@@ -250,7 +256,11 @@ impl UiPluginManager {
             if let Err(e) = self.world.despawn(plugin.entity) {
                 log::warn!("Failed to despawn plugin entity {:?}: {}", plugin.entity, e);
             } else {
-                log::debug!("Despawned plugin '{}' entity {:?}", plugin.metadata.name, plugin.entity);
+                log::debug!(
+                    "Despawned plugin '{}' entity {:?}",
+                    plugin.metadata.name,
+                    plugin.entity
+                );
             }
         }
         self.plugins.clear();

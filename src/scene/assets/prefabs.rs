@@ -1,11 +1,11 @@
-use crate::scene::components::{CameraComponent, EnvironmentComponent};
 use super::entity::{SceneMaterialField, SceneMaterialHandle};
-use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
-    SerializedBillboard, SerializedDirectionalLight, SerializedMaterial, SerializedMeshBounds,
-    SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
-    SerializedPointLight, SerializedLuaScript, SerializedSpotLight, SerializedTransform,
+    SerializedBillboard, SerializedDirectionalLight, SerializedLuaScript, SerializedMaterial,
+    SerializedMeshBounds, SerializedParticleBehavior, SerializedParticleEmitter,
+    SerializedParticleSystem, SerializedPointLight, SerializedSpotLight, SerializedTransform,
 };
+use crate::renderer::primitives::PrimitiveMeshDescriptor;
+use crate::scene::components::{CameraComponent, EnvironmentComponent};
 use serde::{Deserialize, Serialize};
 
 /// Reference to a prefab entity stored in another scene document.

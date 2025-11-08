@@ -52,8 +52,8 @@ function on_ui(self_entity, ui)
 
         ui:label("Project Name:")
         local project_name = get_string("new_project_name", "MyProject")
-        local changed, new_name = ui:text_edit("project_name_input", project_name)
-        if changed then
+        local new_name = ui:text_edit("project_name_input", project_name)
+        if new_name ~= project_name then
             set_string("new_project_name", new_name)
         end
 

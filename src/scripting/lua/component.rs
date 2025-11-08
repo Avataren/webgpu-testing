@@ -117,7 +117,9 @@ impl LuaScriptInstance {
         env.set_metatable(Some(metatable));
 
         // Load the script's bytecode into this environment
-        lua.load(&**script.chunk).set_environment(env.clone()).exec()?;
+        lua.load(&**script.chunk)
+            .set_environment(env.clone())
+            .exec()?;
 
         // Store the environment in the registry to keep it alive
         let env_registry_key = lua.create_registry_value(env)?;
@@ -144,7 +146,11 @@ impl LuaScriptInstance {
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         if entity_bits != 0 {
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
@@ -166,7 +172,11 @@ impl LuaScriptInstance {
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         if entity_bits != 0 {
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
@@ -188,7 +198,11 @@ impl LuaScriptInstance {
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         if entity_bits != 0 {
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());

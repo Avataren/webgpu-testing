@@ -56,7 +56,11 @@ impl RuneScriptComponent {
         Self {
             source,
             created_called: false,
-            script_mode: if editor_tool { ScriptMode::EditorOnly } else { ScriptMode::RuntimeOnly },
+            script_mode: if editor_tool {
+                ScriptMode::EditorOnly
+            } else {
+                ScriptMode::RuntimeOnly
+            },
         }
     }
 
@@ -100,7 +104,11 @@ impl RuneScriptComponent {
     /// Set whether this script should run in editor mode (legacy).
     #[deprecated(note = "Use set_script_mode() instead")]
     pub fn set_editor_tool(&mut self, editor_tool: bool) {
-        self.script_mode = if editor_tool { ScriptMode::EditorOnly } else { ScriptMode::RuntimeOnly };
+        self.script_mode = if editor_tool {
+            ScriptMode::EditorOnly
+        } else {
+            ScriptMode::RuntimeOnly
+        };
     }
 }
 
@@ -143,7 +151,11 @@ impl RuneScriptInstance {
         // resolve_entity_bits will correctly return it as already resolved instead of panicking
         if entity_bits != 0 {
             // Directly register the entity_bits mapping without needing to convert to Entity first
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
@@ -164,7 +176,11 @@ impl RuneScriptInstance {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         if entity_bits != 0 {
             // Directly register the entity_bits mapping without needing to convert to Entity first
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());
@@ -184,7 +200,11 @@ impl RuneScriptInstance {
     ) -> Result<FunctionCallOutcome, RuneScriptingError> {
         // Pre-register self_entity in the registry to prevent collision with allocated handles
         if entity_bits != 0 {
-            commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
         }
 
         let _commands_guard = CommandGuard::enter(commands.clone());

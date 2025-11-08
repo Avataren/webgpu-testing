@@ -78,7 +78,10 @@ fn test_rotate() {
 
     // Check that rotation is not the identity quaternion
     assert!(
-        (rotation.w - 1.0).abs() > 0.01 || rotation.x.abs() > 0.01 || rotation.y.abs() > 0.01 || rotation.z.abs() > 0.01,
+        (rotation.w - 1.0).abs() > 0.01
+            || rotation.x.abs() > 0.01
+            || rotation.y.abs() > 0.01
+            || rotation.z.abs() > 0.01,
         "Rotation should have been applied"
     );
 }
@@ -155,10 +158,7 @@ fn test_look_at() {
     let rotation = transform_comp.0.rotation;
 
     // The rotation should be set to look at the target
-    assert!(
-        rotation.w.abs() > 0.0,
-        "Rotation should have been applied"
-    );
+    assert!(rotation.w.abs() > 0.0, "Rotation should have been applied");
 }
 
 #[test]
@@ -269,15 +269,14 @@ fn test_set_parent() {
     let world = scene.main_world();
     let parent_comp = world.get::<&Parent>(child);
     assert!(parent_comp.is_ok(), "Child should have Parent component");
-    assert_eq!(
-        parent_comp.unwrap().0,
-        parent,
-        "Parent entity should match"
-    );
+    assert_eq!(parent_comp.unwrap().0, parent, "Parent entity should match");
 
     // Verify parent has child in Children component
     let children_comp = world.get::<&Children>(parent);
-    assert!(children_comp.is_ok(), "Parent should have Children component");
+    assert!(
+        children_comp.is_ok(),
+        "Parent should have Children component"
+    );
     assert!(
         children_comp.unwrap().0.contains(&child),
         "Parent's children should contain child"
@@ -324,7 +323,10 @@ fn test_unparent() {
     // Verify parent was removed
     let world = scene.main_world();
     let parent_comp = world.get::<&Parent>(child);
-    assert!(parent_comp.is_err(), "Child should not have Parent component");
+    assert!(
+        parent_comp.is_err(),
+        "Child should not have Parent component"
+    );
 
     // Verify parent's children was updated
     let children_comp = world.get::<&Children>(parent);
@@ -470,7 +472,10 @@ fn test_multiple_transforms() {
     // Check rotation (should not be identity)
     let rotation = transform_comp.0.rotation;
     assert!(
-        (rotation.w - 1.0).abs() > 0.01 || rotation.x.abs() > 0.01 || rotation.y.abs() > 0.01 || rotation.z.abs() > 0.01,
+        (rotation.w - 1.0).abs() > 0.01
+            || rotation.x.abs() > 0.01
+            || rotation.y.abs() > 0.01
+            || rotation.z.abs() > 0.01,
         "Rotation should be applied"
     );
 }

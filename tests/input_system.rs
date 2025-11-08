@@ -1,7 +1,7 @@
 use glam::Vec2;
-use wgpu_cube::scene::{InputState, Scene};
 use wgpu_cube::scene::components::{Name, TransformComponent};
 use wgpu_cube::scene::Transform;
+use wgpu_cube::scene::{InputState, Scene};
 use wgpu_cube::scripting::RuneScriptComponent;
 
 #[test]

@@ -72,7 +72,11 @@ impl RuneScriptingRuntime {
         Ok((RuneScript::new(loaded.name, unit), script_mode))
     }
 
-    pub(crate) fn instantiate(&self, script: Arc<RuneScript>, source: RuneScriptSource) -> RuneScriptInstance {
+    pub(crate) fn instantiate(
+        &self,
+        script: Arc<RuneScript>,
+        source: RuneScriptSource,
+    ) -> RuneScriptInstance {
         RuneScriptInstance::new(self.runtime.clone(), script, source)
     }
 }
@@ -109,4 +113,3 @@ fn parse_script_mode_annotation(source: &str) -> ScriptMode {
     }
     ScriptMode::RuntimeOnly
 }
-

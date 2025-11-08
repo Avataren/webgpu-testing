@@ -2,7 +2,6 @@
 ///
 /// This module provides a safe interface for Rune scripts to create
 /// egui-based user interfaces that can run in both editor and play modes.
-
 mod commands;
 mod context;
 

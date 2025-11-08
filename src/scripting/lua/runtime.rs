@@ -5,7 +5,7 @@ use mlua::{Lua, LuaOptions, StdLib};
 
 use super::api;
 use super::error::LuaScriptingError;
-use super::types::{LuaScript, LuaScriptSource, ScriptMode, parse_script_mode_annotation};
+use super::types::{parse_script_mode_annotation, LuaScript, LuaScriptSource, ScriptMode};
 
 /// Runtime wrapper responsible for compiling and executing Lua scripts.
 pub struct LuaScriptingRuntime {
@@ -24,15 +24,12 @@ impl LuaScriptingRuntime {
     pub fn new() -> Result<Self, LuaScriptingError> {
         // Create Lua VM with safe standard libraries
         // Exclude potentially dangerous modules: DEBUG, IO
-        let lua = Lua::new_with(
-            StdLib::ALL_SAFE,
-            LuaOptions::default()
-        )?;
+        let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
 
         // Disable some unsafe functions that might bypass our API
         lua.globals().set("dofile", mlua::Nil)?;
         lua.globals().set("loadfile", mlua::Nil)?;
-        lua.globals().set("require", mlua::Nil)?;  // We'll provide our own module system
+        lua.globals().set("require", mlua::Nil)?; // We'll provide our own module system
 
         // Register all API functions
         api::register_all_apis(&lua)?;
@@ -68,11 +65,11 @@ impl LuaScriptingRuntime {
 
         // Compile the Lua code to bytecode
         let chunk = if let Some(path) = &loaded.path {
-            self.lua.load(&*loaded.contents)
+            self.lua
+                .load(&*loaded.contents)
                 .set_name(path.to_string_lossy())
         } else {
-            self.lua.load(&*loaded.contents)
-                .set_name(&*loaded.name)
+            self.lua.load(&*loaded.contents).set_name(&*loaded.name)
         };
 
         // Convert to bytecode for faster loading
@@ -107,11 +104,7 @@ impl LuaScriptingRuntime {
     ///
     /// Returns `Ok(())` if the function exists and executes successfully.
     /// Returns `Err` if there's a Lua error during execution.
-    pub fn call_function<A, R>(
-        &self,
-        name: &str,
-        args: A,
-    ) -> Result<R, LuaScriptingError>
+    pub fn call_function<A, R>(&self, name: &str, args: A) -> Result<R, LuaScriptingError>
     where
         A: mlua::IntoLuaMulti,
         R: mlua::FromLuaMulti,
@@ -120,9 +113,10 @@ impl LuaScriptingRuntime {
 
         if !globals.contains_key(name)? {
             // Function doesn't exist - this is okay, just return default
-            return Err(LuaScriptingError::Lua(mlua::Error::RuntimeError(
-                format!("function '{}' not found", name)
-            )));
+            return Err(LuaScriptingError::Lua(mlua::Error::RuntimeError(format!(
+                "function '{}' not found",
+                name
+            ))));
         }
 
         let func: mlua::Function = globals.get(name)?;
@@ -173,10 +167,7 @@ mod tests {
     #[test]
     fn test_compile_simple_script() {
         let runtime = LuaScriptingRuntime::new().unwrap();
-        let source = LuaScriptSource::inline(
-            "test",
-            "function update(self_entity, dt) end"
-        );
+        let source = LuaScriptSource::inline("test", "function update(self_entity, dt) end");
 
         let result = runtime.compile(&source);
         assert!(result.is_ok());
@@ -189,10 +180,8 @@ mod tests {
     #[test]
     fn test_parse_tool_annotation() {
         let runtime = LuaScriptingRuntime::new().unwrap();
-        let source = LuaScriptSource::inline(
-            "test",
-            "-- @tool\nfunction update(self_entity, dt) end"
-        );
+        let source =
+            LuaScriptSource::inline("test", "-- @tool\nfunction update(self_entity, dt) end");
 
         let (_script, mode) = runtime.compile(&source).unwrap();
         assert_eq!(mode, ScriptMode::Both);
@@ -201,10 +190,7 @@ mod tests {
     #[test]
     fn test_parse_editor_annotation() {
         let runtime = LuaScriptingRuntime::new().unwrap();
-        let source = LuaScriptSource::inline(
-            "test",
-            "-- @editor\nfunction on_ui(ui) end"
-        );
+        let source = LuaScriptSource::inline("test", "-- @editor\nfunction on_ui(ui) end");
 
         let (_script, mode) = runtime.compile(&source).unwrap();
         assert_eq!(mode, ScriptMode::EditorOnly);
@@ -219,7 +205,7 @@ mod tests {
                 function greet(name)
                     return "Hello, " .. name
                 end
-            "#
+            "#,
         );
 
         let (script, _) = runtime.compile(&source).unwrap();

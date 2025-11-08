@@ -53,7 +53,11 @@ pub(crate) fn get_component(entity_bits: i64, component_name: String) -> VmResul
 /// set_component(entity, "Visible", true);
 /// ```
 #[rune::function]
-pub(crate) fn set_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+pub(crate) fn set_component(
+    entity_bits: i64,
+    component_name: String,
+    value: Value,
+) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut()
             .with(|commands| commands.set_component(entity_bits, component_name, value))
@@ -73,7 +77,11 @@ pub(crate) fn set_component(entity_bits: i64, component_name: String, value: Val
 /// });
 /// ```
 #[rune::function]
-pub(crate) fn add_component(entity_bits: i64, component_name: String, value: Value) -> VmResult<()> {
+pub(crate) fn add_component(
+    entity_bits: i64,
+    component_name: String,
+    value: Value,
+) -> VmResult<()> {
     ACTIVE_COMMANDS.with(|cell| {
         cell.borrow_mut()
             .with(|commands| commands.add_component(entity_bits, component_name, value))

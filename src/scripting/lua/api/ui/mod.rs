@@ -2,7 +2,6 @@
 ///
 /// This module provides a safe interface for Lua scripts to create
 /// egui-based user interfaces that can run in both editor and play modes.
-
 mod commands;
 mod context;
 
@@ -33,9 +32,7 @@ impl UserData for UiContext {
         });
 
         // Display a button and return whether it was clicked
-        methods.add_method("button", |_, this, text: String| {
-            Ok(this.button(text))
-        });
+        methods.add_method("button", |_, this, text: String| Ok(this.button(text)));
 
         // Display a heading
         methods.add_method("heading", |_, this, text: String| {
@@ -50,9 +47,10 @@ impl UserData for UiContext {
         });
 
         // Display a text edit field
-        methods.add_method("text_edit", |_, this, (id, current_value): (String, String)| {
-            Ok(this.text_edit(id, current_value))
-        });
+        methods.add_method(
+            "text_edit",
+            |_, this, (id, current_value): (String, String)| Ok(this.text_edit(id, current_value)),
+        );
 
         // Display a multiline text editor
         methods.add_method("text_edit_multiline", |_, this, (id, current_value, width, height): (String, String, Option<f64>, Option<f64>)| {
@@ -60,29 +58,39 @@ impl UserData for UiContext {
         });
 
         // Display a slider
-        methods.add_method("slider", |_, this, (id, current_value, min, max): (String, f64, f64, f64)| {
-            Ok(this.slider(id, current_value, min, max))
-        });
+        methods.add_method(
+            "slider",
+            |_, this, (id, current_value, min, max): (String, f64, f64, f64)| {
+                Ok(this.slider(id, current_value, min, max))
+            },
+        );
 
         // Display a drag value widget
-        methods.add_method("drag_value", |_, this, (id, current_value): (String, f64)| {
-            Ok(this.drag_value(id, current_value))
-        });
+        methods.add_method(
+            "drag_value",
+            |_, this, (id, current_value): (String, f64)| Ok(this.drag_value(id, current_value)),
+        );
 
         // Display a checkbox
-        methods.add_method("checkbox", |_, this, (id, current_value, label): (String, bool, String)| {
-            Ok(this.checkbox(id, current_value, label))
-        });
+        methods.add_method(
+            "checkbox",
+            |_, this, (id, current_value, label): (String, bool, String)| {
+                Ok(this.checkbox(id, current_value, label))
+            },
+        );
 
         // Display a color picker (returns table with r, g, b)
-        methods.add_method("color_edit", |lua, this, (id, r, g, b): (String, f64, f64, f64)| {
-            let (new_r, new_g, new_b) = this.color_edit(id, r, g, b);
-            let table = lua.create_table()?;
-            table.set("r", new_r)?;
-            table.set("g", new_g)?;
-            table.set("b", new_b)?;
-            Ok(table)
-        });
+        methods.add_method(
+            "color_edit",
+            |lua, this, (id, r, g, b): (String, f64, f64, f64)| {
+                let (new_r, new_g, new_b) = this.color_edit(id, r, g, b);
+                let table = lua.create_table()?;
+                table.set("r", new_r)?;
+                table.set("g", new_g)?;
+                table.set("b", new_b)?;
+                Ok(table)
+            },
+        );
 
         // Display a menu bar with menus
         methods.add_method("menu_bar", |_, this, callback: mlua::Function| {
@@ -90,9 +98,10 @@ impl UserData for UiContext {
         });
 
         // Display a menu with a title
-        methods.add_method("menu", |_, this, (text, callback): (String, mlua::Function)| {
-            this.menu(text, callback)
-        });
+        methods.add_method(
+            "menu",
+            |_, this, (text, callback): (String, mlua::Function)| this.menu(text, callback),
+        );
 
         // Display a menu item (like a button in a menu)
         methods.add_method("menu_item", |_, this, (id, text): (String, String)| {

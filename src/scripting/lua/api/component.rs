@@ -3,7 +3,9 @@ use log::{error, warn};
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
 use crate::scripting::component_registry::ComponentRegistryError;
-use crate::scripting::lua::guards::{with_active_commands, with_active_registry, with_active_world};
+use crate::scripting::lua::guards::{
+    with_active_commands, with_active_registry, with_active_world,
+};
 
 /// Register component API functions with the Lua runtime.
 pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
@@ -80,9 +82,7 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "remove_component",
         lua.create_function(|_, (entity_bits, component_name): (i64, String)| {
-            with_active_commands(|commands| {
-                commands.remove_component(entity_bits, component_name)
-            })
+            with_active_commands(|commands| commands.remove_component(entity_bits, component_name))
         })?,
     )?;
 

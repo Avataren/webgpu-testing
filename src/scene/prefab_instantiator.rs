@@ -56,10 +56,7 @@ impl<'a> PrefabInstantiator<'a> {
         prefab_origin: Option<PrefabInstanceDescriptor>,
     ) -> SceneNodeId {
         let parent_id = parent.unwrap_or(self.scene.root_id());
-        assert!(
-            self.scene.is_valid_node(parent_id),
-            "Invalid parent node"
-        );
+        assert!(self.scene.is_valid_node(parent_id), "Invalid parent node");
 
         let (instance, renderer_restored) = match renderer.take() {
             Some(device) => {
@@ -73,7 +70,8 @@ impl<'a> PrefabInstantiator<'a> {
         };
         *renderer = renderer_restored;
 
-        let should_apply_camera = parent.is_none() && self.scene.main_scene() == self.scene.root_id();
+        let should_apply_camera =
+            parent.is_none() && self.scene.main_scene() == self.scene.root_id();
         let active_camera_entity = if should_apply_camera {
             instance.active_camera()
         } else {

@@ -14,7 +14,9 @@ use super::{SceneCamera, SceneEnvironment, SceneImportsManager, SceneRuntimeCont
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
-use crate::scene::components::{CameraComponent, SelectedInEditor, TransformComponent, WorldTransform};
+use crate::scene::components::{
+    CameraComponent, SelectedInEditor, TransformComponent, WorldTransform,
+};
 use crate::scene::transform::Transform;
 use crate::scene::Camera;
 use crate::scripting::ScriptingState;
@@ -136,7 +138,10 @@ impl Scene {
     ///
     /// This should be called during the UI phase to collect UI commands from scripts
     /// that implement on_ui().
-    pub fn process_script_ui(&mut self, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub fn process_script_ui(
+        &mut self,
+        editor_mode: bool,
+    ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
             self.runtime.process_script_ui(world, editor_mode)
@@ -149,7 +154,11 @@ impl Scene {
     ///
     /// This allows processing scripts that are not part of the main scene,
     /// such as editor UI plugins managed separately.
-    pub fn process_script_ui_for_world(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub fn process_script_ui_for_world(
+        &mut self,
+        world: &World,
+        editor_mode: bool,
+    ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         self.runtime.process_script_ui(world, editor_mode)
     }
 
@@ -160,8 +169,23 @@ impl Scene {
         self.runtime.run_scripts(world, dt, editor_mode);
     }
 
-    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
-        self.runtime.set_ui_responses(responses);
+    pub fn set_ui_responses(
+        &mut self,
+        responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>,
+    ) {
+        let world_id = crate::scene::world_id(self.main_world());
+        self.runtime
+            .set_ui_responses_for_world(world_id, responses, true);
+    }
+
+    /// Set UI responses for a specific world (e.g., plugin worlds).
+    pub fn set_ui_responses_for_world_id(
+        &mut self,
+        world_id: usize,
+        responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>,
+    ) {
+        self.runtime
+            .set_ui_responses_for_world(world_id, responses, false);
     }
 
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
@@ -971,7 +995,6 @@ impl Scene {
 
         node_id
     }
-
 
     pub fn export_main_asset(&self, name: impl Into<String>) -> Option<SceneAsset> {
         self.export_node_asset_internal(self.main_scene, Some(name.into()), true)

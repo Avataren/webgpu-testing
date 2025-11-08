@@ -2,8 +2,8 @@ use super::core::SceneAsset;
 use super::entity::SceneAssetEntity;
 use super::prefabs::ScenePrefabRef;
 use super::serialization::SerializedTransform;
-use crate::scene::transform::Transform;
 use crate::asset::Assets;
+use crate::scene::transform::Transform;
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -110,7 +110,6 @@ impl SceneTreeAssetNodeBuilder {
     }
 }
 
-
 pub(crate) fn serialize_world(
     world: &World,
     assets: &Assets,
@@ -118,7 +117,10 @@ pub(crate) fn serialize_world(
     let mut entities: Vec<Entity> = Vec::new();
     for (entity, _) in world.query::<()>().iter() {
         // Skip editor plugin entities - they should not be serialized with the scene
-        if world.get::<&crate::scene::components::EditorPlugin>(entity).is_ok() {
+        if world
+            .get::<&crate::scene::components::EditorPlugin>(entity)
+            .is_ok()
+        {
             continue;
         }
         entities.push(entity);
@@ -152,4 +154,3 @@ pub(crate) fn build_tree_asset_node(
         children,
     }
 }
-

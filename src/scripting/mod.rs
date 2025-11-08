@@ -1,8 +1,10 @@
 pub mod component_registry;
-pub mod rune;
 pub mod lua;
+pub mod rune;
 
-pub use component_registry::{ComponentRegistry, ComponentRegistryError, FromRuneValue, ToRuneValue};
+pub use component_registry::{
+    ComponentRegistry, ComponentRegistryError, FromRuneValue, ToRuneValue,
+};
 pub use rune::{
     PendingGltfImport, RuneScriptComponent, RuneScriptSource, RuneScriptingError,
     RuneScriptingPlugin, RuneScriptingRuntime, ScriptingState,
@@ -10,6 +12,5 @@ pub use rune::{
 
 // Lua exports
 pub use lua::{
-    LuaScriptComponent, LuaScriptSource, LuaScriptingError, LuaScriptingPlugin,
-    LuaScriptingRuntime,
+    LuaScriptComponent, LuaScriptSource, LuaScriptingError, LuaScriptingPlugin, LuaScriptingRuntime,
 };

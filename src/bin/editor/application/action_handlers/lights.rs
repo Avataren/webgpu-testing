@@ -45,7 +45,11 @@ pub fn handle_update_directional_light(
                 true
             }
             Err(err) => {
-                log::warn!("Failed to update directional light for {:?}: {}", entity, err);
+                log::warn!(
+                    "Failed to update directional light for {:?}: {}",
+                    entity,
+                    err
+                );
                 false
             }
         }

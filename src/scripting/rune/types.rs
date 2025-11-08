@@ -30,7 +30,10 @@ impl RuneScriptSource {
         Self::File { path: path.into() }
     }
 
-    pub(crate) fn load(&self, script_root: Option<&Path>) -> Result<LoadedScript, RuneScriptingError> {
+    pub(crate) fn load(
+        &self,
+        script_root: Option<&Path>,
+    ) -> Result<LoadedScript, RuneScriptingError> {
         match self {
             Self::Inline { name, source } => Ok(LoadedScript {
                 name: name.clone(),

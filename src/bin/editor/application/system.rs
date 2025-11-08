@@ -4,12 +4,15 @@ use std::path::PathBuf;
 
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
-use super::core::{EditorApplication, EditorSharedState, EditorSystemIndices, PendingScriptAction, PendingShaderAction};
+use super::core::{
+    EditorApplication, EditorSharedState, EditorSystemIndices, PendingScriptAction,
+    PendingShaderAction,
+};
 use super::history_system::HistorySystem;
 use super::project_system::ProjectSystem;
 use super::script_editor_system::ScriptEditorSystem;
-use super::shader_editor_system::ShaderEditorSystem;
 use super::selection_system::SelectionSystem;
+use super::shader_editor_system::ShaderEditorSystem;
 use crate::asset_browser::AssetBrowserState;
 use crate::history::EditorHistory;
 use crate::inspector::InspectorAction;
@@ -36,15 +39,9 @@ pub(super) enum EditorCommand {
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,
-    ReloadPlugin {
-        entity: Entity,
-        path: PathBuf,
-    },
+    ReloadPlugin { entity: Entity, path: PathBuf },
     LoadProject(PathBuf),
-    CreateProject {
-        name: String,
-        location: PathBuf,
-    },
+    CreateProject { name: String, location: PathBuf },
 }
 
 #[derive(Debug)]

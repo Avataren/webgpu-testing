@@ -84,7 +84,10 @@ pub enum SerializedAnimationTarget {
 }
 
 impl SerializedAnimationTarget {
-    pub(crate) fn from_target(target: &AnimationTarget, index_map: &HashMap<Entity, usize>) -> Option<Self> {
+    pub(crate) fn from_target(
+        target: &AnimationTarget,
+        index_map: &HashMap<Entity, usize>,
+    ) -> Option<Self> {
         match target {
             AnimationTarget::Transform { entity, property } => {
                 let entity_index = *index_map.get(entity)?;

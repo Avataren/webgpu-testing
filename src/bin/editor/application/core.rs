@@ -24,12 +24,12 @@ use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
 use super::scene_tabs_panel::SceneTabsPanel;
 use super::script_editor_system::ScriptEditorSystem;
-use super::shader_editor_system::ShaderEditorSystem;
-use super::selection_system::SelectionSystem;
-#[cfg(not(target_arch = "wasm32"))]
-use super::shader_watcher::ShaderWatcher;
 #[cfg(not(target_arch = "wasm32"))]
 use super::script_watcher::ScriptWatcher;
+use super::selection_system::SelectionSystem;
+use super::shader_editor_system::ShaderEditorSystem;
+#[cfg(not(target_arch = "wasm32"))]
+use super::shader_watcher::ShaderWatcher;
 use super::system::EditorSystem;
 use super::{EditorCommand, EditorContext, EditorEvent, EditorSystemsAccess};
 use wgpu_cube::DefaultUI;
@@ -120,13 +120,21 @@ pub struct EditorSharedState {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) script_watcher: Option<ScriptWatcher>,
     /// UI commands from scene scripts collected during gpu_update
-    pub(super) script_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
+    pub(super) script_ui_commands:
+        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI commands from plugin scripts collected during gpu_update
-    pub(super) plugin_ui_commands: std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
+    pub(super) plugin_ui_commands:
+        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
-    pub(super) script_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
+    pub(super) script_ui_responses: std::collections::HashMap<
+        Entity,
+        std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+    >,
     /// UI responses from plugin scripts to be fed back to plugins in the next frame
-    pub(super) plugin_ui_responses: std::collections::HashMap<Entity, std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>>,
+    pub(super) plugin_ui_responses: std::collections::HashMap<
+        Entity,
+        std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+    >,
     /// UI plugin manager for loading and managing editor plugins
     pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
     /// Flag to track if UI plugins have been loaded (should only load after project is opened)
@@ -723,10 +731,7 @@ impl EditorApplication {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn process_script_file_changes(&mut self) {
         // Get script directories to watch
-        let script_dirs = vec![
-            PathBuf::from("examples/scripts"),
-            PathBuf::from("scripts"),
-        ];
+        let script_dirs = vec![PathBuf::from("examples/scripts"), PathBuf::from("scripts")];
 
         let Some(watcher) = self.shared.script_watcher.as_mut() else {
             return;
@@ -944,13 +949,19 @@ impl EditorApplication {
 
             // Add success notification
             if reload_count == 1 {
-                self.shared.reload_notifications.push(ReloadNotification::success(
-                    format!("✅ Reloaded: {}", plugin_names[0]),
-                ));
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::success(format!(
+                        "✅ Reloaded: {}",
+                        plugin_names[0]
+                    )));
             } else {
-                self.shared.reload_notifications.push(ReloadNotification::success(
-                    format!("✅ Reloaded {} plugins", reload_count),
-                ));
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::success(format!(
+                        "✅ Reloaded {} plugins",
+                        reload_count
+                    )));
             }
         }
     }
@@ -1017,7 +1028,11 @@ impl EditorApplication {
         let (name, location) = pending.into_iter().next().unwrap();
         let project_dir = location.join(&name);
 
-        log::info!("Processing project create request: '{}' at {:?}", name, project_dir);
+        log::info!(
+            "Processing project create request: '{}' at {:?}",
+            name,
+            project_dir
+        );
 
         // Queue the create through ProjectSystem
         self.project_system_mut()
@@ -1042,7 +1057,11 @@ impl EditorApplication {
                     self.enqueue_command(EditorCommand::LoadProject(path));
                 }
                 LuaEditorCommand::CreateProject { name, location } => {
-                    log::info!("Processing Lua command: CreateProject({}, {:?})", name, location);
+                    log::info!(
+                        "Processing Lua command: CreateProject({}, {:?})",
+                        name,
+                        location
+                    );
                     self.enqueue_command(EditorCommand::CreateProject { name, location });
                 }
             }

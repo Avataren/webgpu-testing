@@ -81,7 +81,9 @@ impl Drop for StateGuard {
     }
 }
 
-pub(crate) fn with_active_state<R>(f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>) -> VmResult<R> {
+pub(crate) fn with_active_state<R>(
+    f: impl FnOnce(&mut ScriptStateMap) -> VmResult<R>,
+) -> VmResult<R> {
     ACTIVE_STATE.with(|cell| {
         let opt = cell.borrow();
         let Some(rc) = opt.as_ref() else {
@@ -182,8 +184,9 @@ pub(crate) fn with_active_entity<R>(f: impl FnOnce(i64) -> VmResult<R>) -> VmRes
     })
 }
 
-
-pub(crate) fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> VmResult<R>) -> VmResult<R> {
+pub(crate) fn with_active_registry<R>(
+    f: impl FnOnce(&ComponentRegistry) -> VmResult<R>,
+) -> VmResult<R> {
     ACTIVE_REGISTRY.with(|cell| {
         let opt = cell.borrow();
         let Some(ptr) = *opt else {
@@ -196,7 +199,9 @@ pub(crate) fn with_active_registry<R>(f: impl FnOnce(&ComponentRegistry) -> VmRe
     })
 }
 
-pub(crate) fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> VmResult<R>) -> VmResult<R> {
+pub(crate) fn with_active_input_state<R>(
+    f: impl FnOnce(&InputState) -> VmResult<R>,
+) -> VmResult<R> {
     ACTIVE_INPUT_STATE.with(|cell| {
         let opt = cell.borrow();
         let Some(ptr) = *opt else {
@@ -209,7 +214,9 @@ pub(crate) fn with_active_input_state<R>(f: impl FnOnce(&InputState) -> VmResult
     })
 }
 
-pub(crate) fn with_active_event_queue<R>(f: impl FnOnce(&mut Vec<ScriptEvent>) -> VmResult<R>) -> VmResult<R> {
+pub(crate) fn with_active_event_queue<R>(
+    f: impl FnOnce(&mut Vec<ScriptEvent>) -> VmResult<R>,
+) -> VmResult<R> {
     ACTIVE_EVENT_QUEUE.with(|cell| {
         let opt = cell.borrow();
         let Some(rc) = opt.as_ref() else {

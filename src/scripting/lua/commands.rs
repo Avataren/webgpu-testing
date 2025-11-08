@@ -53,7 +53,9 @@ impl ScriptCommands {
             }
 
             if registry.contains(handle) {
-                return Err(mlua::Error::RuntimeError("entity handle is not yet available".into()));
+                return Err(mlua::Error::RuntimeError(
+                    "entity handle is not yet available".into(),
+                ));
             }
         }
 
@@ -104,7 +106,12 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn attach_inline_script(&mut self, handle: i64, name: String, source: String) -> Result<(), mlua::Error> {
+    pub fn attach_inline_script(
+        &mut self,
+        handle: i64,
+        name: String,
+        source: String,
+    ) -> Result<(), mlua::Error> {
         let descriptor = LuaScriptSource::inline(name, source);
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.scripts.push(descriptor);
@@ -134,7 +141,12 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn import_gltf(&mut self, handle: i64, path: String, scale: f32) -> Result<(), mlua::Error> {
+    pub fn import_gltf(
+        &mut self,
+        handle: i64,
+        path: String,
+        scale: f32,
+    ) -> Result<(), mlua::Error> {
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::ImportGltf {
@@ -145,7 +157,12 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn set_component(&mut self, handle: i64, component_name: String, value: serde_json::Value) -> Result<(), mlua::Error> {
+    pub fn set_component(
+        &mut self,
+        handle: i64,
+        component_name: String,
+        value: serde_json::Value,
+    ) -> Result<(), mlua::Error> {
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::SetComponent {
@@ -156,7 +173,12 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn add_component(&mut self, handle: i64, component_name: String, value: serde_json::Value) -> Result<(), mlua::Error> {
+    pub fn add_component(
+        &mut self,
+        handle: i64,
+        component_name: String,
+        value: serde_json::Value,
+    ) -> Result<(), mlua::Error> {
         // Check if this is a pending entity first
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.components.insert(component_name, value);
@@ -173,7 +195,11 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn remove_component(&mut self, handle: i64, component_name: String) -> Result<(), mlua::Error> {
+    pub fn remove_component(
+        &mut self,
+        handle: i64,
+        component_name: String,
+    ) -> Result<(), mlua::Error> {
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::RemoveComponent {
@@ -186,10 +212,8 @@ impl ScriptCommands {
     pub fn translate(&mut self, handle: i64, delta: Vec3) -> Result<(), mlua::Error> {
         let entity_bits = self.resolve_entity_bits(handle)?;
 
-        self.existing.push(ExistingCommand::Translate {
-            entity_bits,
-            delta,
-        });
+        self.existing
+            .push(ExistingCommand::Translate { entity_bits, delta });
         Ok(())
     }
 
@@ -213,10 +237,8 @@ impl ScriptCommands {
 
         let entity_bits = self.resolve_entity_bits(handle)?;
 
-        self.existing.push(ExistingCommand::SetScale {
-            entity_bits,
-            scale,
-        });
+        self.existing
+            .push(ExistingCommand::SetScale { entity_bits, scale });
         Ok(())
     }
 
@@ -230,7 +252,11 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn set_parent(&mut self, handle: i64, parent_handle: Option<i64>) -> Result<(), mlua::Error> {
+    pub fn set_parent(
+        &mut self,
+        handle: i64,
+        parent_handle: Option<i64>,
+    ) -> Result<(), mlua::Error> {
         // If the child is a pending entity, store the parent handle to be resolved later
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.parent = parent_handle;
@@ -268,7 +294,11 @@ impl ScriptCommands {
         Ok(())
     }
 
-    pub fn unsubscribe_event(&mut self, handle: i64, event_name: String) -> Result<(), mlua::Error> {
+    pub fn unsubscribe_event(
+        &mut self,
+        handle: i64,
+        event_name: String,
+    ) -> Result<(), mlua::Error> {
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::UnsubscribeEvent {
@@ -283,7 +313,11 @@ impl ScriptCommands {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    pub fn apply(&mut self, world: &mut World, _registry: &ComponentRegistry) -> Result<ScriptApplyResult, LuaScriptingError> {
+    pub fn apply(
+        &mut self,
+        world: &mut World,
+        _registry: &ComponentRegistry,
+    ) -> Result<ScriptApplyResult, LuaScriptingError> {
         use log::error;
 
         let mut result = ScriptApplyResult::default();
@@ -298,7 +332,10 @@ impl ScriptCommands {
                 world.insert_one(entity, Name(name))?;
             }
 
-            if pending.translation.is_some() || pending.rotation.is_some() || pending.scale.is_some() {
+            if pending.translation.is_some()
+                || pending.rotation.is_some()
+                || pending.scale.is_some()
+            {
                 let mut transform = Transform::default();
                 if let Some(translation) = pending.translation.take() {
                     transform.translation = translation;
@@ -341,7 +378,10 @@ impl ScriptCommands {
                 parent_handle as u64
             } else {
                 // Parent handle is not resolved - this shouldn't happen now that all entities are spawned
-                error!("Failed to resolve parent handle {} for entity {:?}", parent_handle, child_entity);
+                error!(
+                    "Failed to resolve parent handle {} for entity {:?}",
+                    parent_handle, child_entity
+                );
                 continue;
             };
             drop(registry);
@@ -476,10 +516,7 @@ impl ScriptCommands {
                     // For now, log a warning
                     warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
                 }
-                ExistingCommand::Translate {
-                    entity_bits,
-                    delta,
-                } => {
+                ExistingCommand::Translate { entity_bits, delta } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
                     };
@@ -502,10 +539,7 @@ impl ScriptCommands {
                         transform.rotation = rotation * transform.rotation;
                     })?;
                 }
-                ExistingCommand::SetScale {
-                    entity_bits,
-                    scale,
-                } => {
+                ExistingCommand::SetScale { entity_bits, scale } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
                     };
@@ -525,7 +559,8 @@ impl ScriptCommands {
                     Self::modify_transform(world, entity, |transform| {
                         let direction = (target - transform.translation).normalize();
                         if direction.length_squared() > 0.0 {
-                            transform.rotation = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                            transform.rotation =
+                                glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
                         }
                     })?;
                 }
@@ -568,7 +603,8 @@ impl ScriptCommands {
 
                         // Add to parent's children
                         // Check if parent has Children component first
-                        let has_children = world.satisfies::<&Children>(parent_entity).unwrap_or(false);
+                        let has_children =
+                            world.satisfies::<&Children>(parent_entity).unwrap_or(false);
 
                         if has_children {
                             // Parent has Children, add this entity
@@ -617,10 +653,9 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    result.event_unsubscriptions.push(PendingEventUnsubscription {
-                        entity,
-                        event_name,
-                    });
+                    result
+                        .event_unsubscriptions
+                        .push(PendingEventUnsubscription { entity, event_name });
                 }
             }
         }

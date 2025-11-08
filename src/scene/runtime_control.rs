@@ -27,7 +27,9 @@ impl SceneRuntimeController {
         self.runtime.lua_scripting()
     }
 
-    pub(crate) fn lua_scripting_mut(&mut self) -> &mut crate::scripting::lua::state::ScriptingState {
+    pub(crate) fn lua_scripting_mut(
+        &mut self,
+    ) -> &mut crate::scripting::lua::state::ScriptingState {
         self.runtime.lua_scripting_mut()
     }
 
@@ -67,12 +69,26 @@ impl SceneRuntimeController {
         self.runtime.run_scripts(world, dt, editor_mode);
     }
 
-    pub(crate) fn process_script_ui(&mut self, world: &World, editor_mode: bool) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    pub(crate) fn process_script_ui(
+        &mut self,
+        world: &World,
+        editor_mode: bool,
+    ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>>
+    {
         self.runtime.process_script_ui(world, editor_mode)
     }
 
-    pub(crate) fn set_ui_responses(&mut self, responses: std::collections::HashMap<hecs::Entity, std::collections::HashMap<String, crate::scripting::rune::api::ui::UiResponse>>) {
-        self.runtime.set_ui_responses(responses);
+    pub(crate) fn set_ui_responses_for_world(
+        &mut self,
+        world_id: usize,
+        responses: std::collections::HashMap<
+            hecs::Entity,
+            std::collections::HashMap<String, crate::scripting::rune::api::ui::UiResponse>,
+        >,
+        include_rune: bool,
+    ) {
+        self.runtime
+            .set_ui_responses_for_world(world_id, responses, include_rune);
     }
 }
 

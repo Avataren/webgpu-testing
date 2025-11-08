@@ -28,7 +28,9 @@ use crate::scripting::rune::guards::{with_active_registry, with_active_world};
 /// }
 /// ```
 #[rune::function]
-pub(crate) fn query_entities_with_component(component_name: String) -> VmResult<rune::alloc::Vec<i64>> {
+pub(crate) fn query_entities_with_component(
+    component_name: String,
+) -> VmResult<rune::alloc::Vec<i64>> {
     with_active_world(|world| {
         with_active_registry(|registry| {
             let mut result = rune::alloc::Vec::new();
@@ -79,7 +81,12 @@ pub(crate) fn query_entities_with_component(component_name: String) -> VmResult<
 /// }
 /// ```
 #[rune::function]
-pub(crate) fn get_entities_in_radius(x: f64, y: f64, z: f64, radius: f64) -> VmResult<rune::alloc::Vec<i64>> {
+pub(crate) fn get_entities_in_radius(
+    x: f64,
+    y: f64,
+    z: f64,
+    radius: f64,
+) -> VmResult<rune::alloc::Vec<i64>> {
     with_active_world(|world| {
         let center = Vec3::new(x as f32, y as f32, z as f32);
         let radius_sq = (radius * radius) as f32;
@@ -251,9 +258,12 @@ pub(crate) fn get_entities_in_box(
             let pos = transform.0.translation;
 
             // Check if position is within bounds
-            if pos.x >= min_vec.x && pos.x <= max_vec.x
-                && pos.y >= min_vec.y && pos.y <= max_vec.y
-                && pos.z >= min_vec.z && pos.z <= max_vec.z
+            if pos.x >= min_vec.x
+                && pos.x <= max_vec.x
+                && pos.y >= min_vec.y
+                && pos.y <= max_vec.y
+                && pos.z >= min_vec.z
+                && pos.z <= max_vec.z
             {
                 let handle = entity_bits(entity);
                 if let Err(e) = result.try_push(handle) {

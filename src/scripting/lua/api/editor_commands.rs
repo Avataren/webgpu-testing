@@ -1,6 +1,6 @@
+use mlua::{Lua, Result as LuaResult};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use mlua::{Lua, Result as LuaResult};
 
 /// Editor commands that can be queued from Lua scripts
 #[derive(Clone, Debug)]
@@ -51,7 +51,11 @@ pub(crate) fn register_editor_command_api(lua: &Lua) -> LuaResult<()> {
         "create_project",
         lua.create_function(|_, (name, location): (String, String)| {
             let location_buf = PathBuf::from(&location);
-            log::info!("Lua script requesting project creation: '{}' at {:?}", name, location_buf);
+            log::info!(
+                "Lua script requesting project creation: '{}' at {:?}",
+                name,
+                location_buf
+            );
 
             if let Ok(mut queue) = get_queue().lock() {
                 queue.push(LuaEditorCommand::CreateProject {

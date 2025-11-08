@@ -2,14 +2,10 @@
 ///
 /// Provides sandboxed file operations. Only allows access to specific directories
 /// to prevent scripts from accessing sensitive system files.
-
-use std::path::{Path, PathBuf, Component};
+use std::path::{Component, Path, PathBuf};
 
 /// Allowed directories for file operations
-const ALLOWED_DIRS: &[&str] = &[
-    "examples/scripts",
-    "scripts",
-];
+const ALLOWED_DIRS: &[&str] = &["examples/scripts", "scripts"];
 
 /// Normalize a path by resolving . and .. components without requiring the file to exist.
 /// This prevents path traversal attacks.
@@ -87,7 +83,10 @@ pub fn read_file(path: String) -> String {
     let path_buf = PathBuf::from(&path);
 
     if !is_path_allowed(&path_buf) {
-        log::error!("Script attempted to read file outside allowed directories: {}", path);
+        log::error!(
+            "Script attempted to read file outside allowed directories: {}",
+            path
+        );
         return format!("ERROR: Access denied to '{}'", path);
     }
 
@@ -117,7 +116,10 @@ pub fn write_file(path: String, contents: String) -> String {
     let path_buf = PathBuf::from(&path);
 
     if !is_path_allowed(&path_buf) {
-        log::error!("Script attempted to write file outside allowed directories: {}", path);
+        log::error!(
+            "Script attempted to write file outside allowed directories: {}",
+            path
+        );
         return format!("ERROR: Access denied to '{}'", path);
     }
 
@@ -168,7 +170,10 @@ pub fn list_files(dir_path: String) -> Vec<String> {
     let path_buf = PathBuf::from(&dir_path);
 
     if !is_path_allowed(&path_buf) {
-        log::error!("Script attempted to list directory outside allowed directories: {}", dir_path);
+        log::error!(
+            "Script attempted to list directory outside allowed directories: {}",
+            dir_path
+        );
         return vec![];
     }
 

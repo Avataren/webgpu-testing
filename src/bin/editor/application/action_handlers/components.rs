@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Material;
-use wgpu_cube::ScenePrimitivePreset;
 use wgpu_cube::scene::{
     CameraComponent, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshComponent,
     ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight,
 };
+use wgpu_cube::ScenePrimitivePreset;
 
 use super::{ActionContext, ActionResult};
 
@@ -45,15 +45,22 @@ pub fn handle_add_mesh(ctx: &mut ActionContext, entity: Entity) -> ActionResult 
     // Try to use existing cube mesh (created during setup or previous usage)
     let descriptor = PrimitiveMeshDescriptor::from(ScenePrimitivePreset::Cube);
     if let Some(mesh_handle) = ctx.scene.assets.primitive_mesh_handle(descriptor) {
-        let material_handle = ctx.scene.assets.materials.insert(MaterialAsset::from_material(
-            Material::pbr(),
-            PathBuf::new(),
-        ));
+        let material_handle = ctx
+            .scene
+            .assets
+            .materials
+            .insert(MaterialAsset::from_material(
+                Material::pbr(),
+                PathBuf::new(),
+            ));
 
         let world = ctx.scene.main_world_mut();
         match world.insert(
             entity,
-            (MeshComponent(mesh_handle), MaterialComponent(material_handle)),
+            (
+                MeshComponent(mesh_handle),
+                MaterialComponent(material_handle),
+            ),
         ) {
             Ok(_) => {
                 log::info!("Added mesh component to entity {:?}", entity);
@@ -88,7 +95,11 @@ pub fn handle_add_point_light(ctx: &mut ActionContext, entity: Entity) -> Action
                 ActionResult::scene_changed()
             }
             Err(err) => {
-                log::warn!("Failed to add point light component to {:?}: {}", entity, err);
+                log::warn!(
+                    "Failed to add point light component to {:?}: {}",
+                    entity,
+                    err
+                );
                 ActionResult::no_change()
             }
         }
@@ -99,7 +110,10 @@ pub fn handle_add_point_light(ctx: &mut ActionContext, entity: Entity) -> Action
 pub fn handle_add_directional_light(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
     let world = ctx.scene.main_world_mut();
     if world.get::<&DirectionalLight>(entity).is_ok() {
-        log::warn!("Entity {:?} already has a directional light component", entity);
+        log::warn!(
+            "Entity {:?} already has a directional light component",
+            entity
+        );
         ActionResult::no_change()
     } else {
         let light = DirectionalLight::default();
@@ -136,7 +150,11 @@ pub fn handle_add_spot_light(ctx: &mut ActionContext, entity: Entity) -> ActionR
                 ActionResult::scene_changed()
             }
             Err(err) => {
-                log::warn!("Failed to add spot light component to {:?}: {}", entity, err);
+                log::warn!(
+                    "Failed to add spot light component to {:?}: {}",
+                    entity,
+                    err
+                );
                 ActionResult::no_change()
             }
         }
@@ -177,7 +195,10 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
 pub fn handle_add_particle_system(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
     let world = ctx.scene.main_world_mut();
     if world.get::<&ParticleSystemComponent>(entity).is_ok() {
-        log::warn!("Entity {:?} already has a particle system component", entity);
+        log::warn!(
+            "Entity {:?} already has a particle system component",
+            entity
+        );
         ActionResult::no_change()
     } else {
         let component = ParticleSystemComponent::default();

@@ -11,22 +11,18 @@ use crate::scripting::rune::guards::{with_active_entity, with_active_state};
 /// Generic helper to get a typed value from state with default
 fn get_typed<T: FromValue>(key: String, default: T) -> VmResult<T> {
     with_active_entity(move |handle| {
-        with_active_state(move |map| {
-            match map.get(&(handle, key)) {
-                Some(value) => try_result(T::from_value(value.clone())),
-                None => VmResult::Ok(default),
-            }
+        with_active_state(move |map| match map.get(&(handle, key)) {
+            Some(value) => try_result(T::from_value(value.clone())),
+            None => VmResult::Ok(default),
         })
     })
 }
 
 /// Generic helper to get a typed value from state for a specific entity
 fn get_typed_for<T: FromValue>(handle: i64, key: String, default: T) -> VmResult<T> {
-    with_active_state(move |map| {
-        match map.get(&(handle, key)) {
-            Some(value) => try_result(T::from_value(value.clone())),
-            None => VmResult::Ok(default),
-        }
+    with_active_state(move |map| match map.get(&(handle, key)) {
+        Some(value) => try_result(T::from_value(value.clone())),
+        None => VmResult::Ok(default),
     })
 }
 
@@ -107,11 +103,9 @@ pub(crate) fn try_get_state(key: String) -> VmResult<Value> {
 pub(crate) fn get_f64(key: String) -> VmResult<f64> {
     // Panics if not found (original behavior for backward compatibility)
     with_active_entity(move |handle| {
-        with_active_state(move |map| {
-            match map.get(&(handle, key)) {
-                Some(value) => try_result(f64::from_value(value.clone())),
-                None => VmResult::panic("State key not found"),
-            }
+        with_active_state(move |map| match map.get(&(handle, key)) {
+            Some(value) => try_result(f64::from_value(value.clone())),
+            None => VmResult::panic("State key not found"),
         })
     })
 }

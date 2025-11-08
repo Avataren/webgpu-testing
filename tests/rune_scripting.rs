@@ -119,7 +119,10 @@ fn rune_script_recursive_spawning_with_parents() {
 
     // Count total entities
     let entity_count = world.iter().count();
-    assert_eq!(entity_count, 4, "Should have 4 entities (root + 3 children)");
+    assert_eq!(
+        entity_count, 4,
+        "Should have 4 entities (root + 3 children)"
+    );
 
     // Count parent relationships
     let parent_count = world.query::<&Parent>().iter().count();
@@ -144,13 +147,22 @@ fn rune_script_recursive_spawning_with_parents() {
     let child3 = child3.expect("Child3 should exist");
 
     // Verify parent-child relationships
-    let child1_parent = world.get::<&Parent>(child1).expect("Child1 should have parent");
-    assert_eq!(child1_parent.0, root_entity, "Child1's parent should be root");
+    let child1_parent = world
+        .get::<&Parent>(child1)
+        .expect("Child1 should have parent");
+    assert_eq!(
+        child1_parent.0, root_entity,
+        "Child1's parent should be root"
+    );
 
-    let child2_parent = world.get::<&Parent>(child2).expect("Child2 should have parent");
+    let child2_parent = world
+        .get::<&Parent>(child2)
+        .expect("Child2 should have parent");
     assert_eq!(child2_parent.0, child1, "Child2's parent should be Child1");
 
-    let child3_parent = world.get::<&Parent>(child3).expect("Child3 should have parent");
+    let child3_parent = world
+        .get::<&Parent>(child3)
+        .expect("Child3 should have parent");
     assert_eq!(child3_parent.0, child2, "Child3's parent should be Child2");
 
     println!("Recursive spawning with parents test passed!");

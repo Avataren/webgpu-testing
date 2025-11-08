@@ -1,7 +1,7 @@
 use glam::Vec3;
 use wgpu_cube::scene::components::{
-    Name, TransformComponent, Visible, PointLight, DirectionalLight,
-    SpotLight, RotateAnimation, OrbitAnimation, CanCastShadow,
+    CanCastShadow, DirectionalLight, Name, OrbitAnimation, PointLight, RotateAnimation, SpotLight,
+    TransformComponent, Visible,
 };
 use wgpu_cube::scene::Scene;
 use wgpu_cube::scene::Transform;

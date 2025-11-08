@@ -10,7 +10,9 @@ use crate::scripting::component_registry::ComponentRegistry;
 use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, RuneScriptComponent, RuneScriptInstance};
 use super::error::RuneScriptingError;
-use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, RegistryGuard, StateGuard, WorldGuard};
+use super::guards::{
+    CommandGuard, EntityGuard, EventQueueGuard, RegistryGuard, StateGuard, WorldGuard,
+};
 use super::runtime::RuneScriptingRuntime;
 use super::types::{EventSubscription, EventSubscriptions, ScriptEvent, ScriptStateMap};
 
@@ -122,7 +124,12 @@ impl ScriptingState {
     /// * `world` - The entity world
     /// * `dt` - Delta time in seconds. If 0, only editor tool scripts will run.
     /// * `editor_mode` - If true, editor tool scripts will run even when dt is 0
-    pub fn update_scripts(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
+    pub fn update_scripts(
+        &mut self,
+        world: &mut World,
+        dt: f64,
+        editor_mode: bool,
+    ) -> Result<(), RuneScriptingError> {
         log::debug!(target: "script_update", "update_scripts called with dt={}, editor_mode={}", dt, editor_mode);
         self.retain_instances(world);
         self.process_on_created(world)?;
@@ -158,7 +165,11 @@ impl ScriptingState {
 
                     let instance = self.ensure_instance(entity, component)?;
                     let commands = instance.command_buffer();
-                    instance.call_on_created(entity_bits(entity), commands.clone(), event_queue.clone())?;
+                    instance.call_on_created(
+                        entity_bits(entity),
+                        commands.clone(),
+                        event_queue.clone(),
+                    )?;
                     component.mark_created();
 
                     if !commands.borrow().is_empty() {
@@ -214,7 +225,12 @@ impl ScriptingState {
         Ok(())
     }
 
-    fn process_updates(&mut self, world: &mut World, dt: f64, editor_mode: bool) -> Result<(), RuneScriptingError> {
+    fn process_updates(
+        &mut self,
+        world: &mut World,
+        dt: f64,
+        editor_mode: bool,
+    ) -> Result<(), RuneScriptingError> {
         let mut pending_commands: Vec<Rc<RefCell<ScriptCommands>>> = Vec::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
 
@@ -249,7 +265,12 @@ impl ScriptingState {
 
                 let instance = self.ensure_instance(entity, component)?;
                 let commands = instance.command_buffer();
-                instance.call_update(entity_bits(entity), dt, commands.clone(), event_queue.clone())?;
+                instance.call_update(
+                    entity_bits(entity),
+                    dt,
+                    commands.clone(),
+                    event_queue.clone(),
+                )?;
 
                 if !commands.borrow().is_empty() {
                     pending_commands.push(commands.clone());
@@ -317,17 +338,20 @@ impl ScriptingState {
                 // Prepare the command buffer and call the event handler
                 let commands = {
                     // Get the script component in a scope to drop the borrow
-                    let mut component = match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
-                        Ok(comp) => comp,
-                        Err(_) => continue,
-                    };
+                    let mut component =
+                        match world.get::<&mut RuneScriptComponent>(subscription.entity_id) {
+                            Ok(comp) => comp,
+                            Err(_) => continue,
+                        };
 
                     if !component.created_called() {
                         continue;
                     }
 
                     // Get the script instance
-                    let instance = match self.ensure_instance(subscription.entity_id, &mut *component) {
+                    let instance = match self
+                        .ensure_instance(subscription.entity_id, &mut *component)
+                    {
                         Ok(inst) => inst,
                         Err(e) => {
                             error!(target: "script", "Failed to get script instance for event dispatch: {}", e);
@@ -346,7 +370,11 @@ impl ScriptingState {
                         let entity_bits_val = entity_bits(subscription.entity_id);
                         if let Some(nz) = NonZeroU64::new(entity_bits_val as u64) {
                             if let Some(entity) = Entity::from_bits(nz.into()) {
-                                commands.borrow_mut().registry.borrow_mut().resolve(entity_bits_val, entity);
+                                commands
+                                    .borrow_mut()
+                                    .registry
+                                    .borrow_mut()
+                                    .resolve(entity_bits_val, entity);
                             }
                         }
                     }
@@ -359,10 +387,11 @@ impl ScriptingState {
                         let _entity_guard = EntityGuard::enter(entity_bits(subscription.entity_id));
 
                         // Call the event handler function
-                        let result = instance.call_function([subscription.callback_name.as_str()], (event_data,));
+                        let result = instance
+                            .call_function([subscription.callback_name.as_str()], (event_data,));
 
                         match result {
-                            Ok(FunctionCallOutcome::Executed) => {},
+                            Ok(FunctionCallOutcome::Executed) => {}
                             Ok(FunctionCallOutcome::Missing) => {
                                 warn!(target: "script",
                                     "Event handler '{}' not found on entity {:?}",
@@ -377,7 +406,7 @@ impl ScriptingState {
                     }
 
                     commands
-                };  // component borrow is dropped here
+                }; // component borrow is dropped here
 
                 // Apply any commands generated by the event handler
                 if !commands.borrow().is_empty() {
@@ -403,7 +432,9 @@ impl ScriptingState {
 
                             // Process event unsubscriptions
                             for unsub in result.event_unsubscriptions {
-                                if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
+                                if let Some(subs) =
+                                    self.event_subscriptions.get_mut(&unsub.event_name)
+                                {
                                     subs.retain(|s| s.entity_id != unsub.entity);
                                 }
                             }
@@ -434,7 +465,11 @@ impl ScriptingState {
     /// Call on_ui() for all scripts and collect their UI commands.
     ///
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
-    pub fn process_ui(&mut self, world: &World, editor_mode: bool) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
+    pub fn process_ui(
+        &mut self,
+        world: &World,
+        editor_mode: bool,
+    ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
         use super::commands::entity_bits;
         use super::runtime::ScriptMode;
@@ -497,7 +532,12 @@ impl ScriptingState {
             let commands = instance.command_buffer();
 
             // Call the on_ui function (if it exists)
-            match instance.call_on_ui(entity_bits(entity), ui_context.clone(), commands, event_queue.clone()) {
+            match instance.call_on_ui(
+                entity_bits(entity),
+                ui_context.clone(),
+                commands,
+                event_queue.clone(),
+            ) {
                 Ok(FunctionCallOutcome::Executed) => {
                     // Collect the UI commands from the context
                     let cmds = ui_context.take_commands();
@@ -519,7 +559,10 @@ impl ScriptingState {
 
     /// Set UI responses for scripts. This should be called after rendering UI
     /// so that the next frame can access the responses.
-    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>) {
+    pub fn set_ui_responses(
+        &mut self,
+        responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
+    ) {
         self.ui_responses = responses;
     }
 

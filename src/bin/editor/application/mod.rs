@@ -13,16 +13,16 @@ mod runtime_mode;
 mod scene_creation_system;
 mod scene_tabs_panel;
 mod script_editor_system;
-mod shader_editor_system;
 mod scripts;
 mod selection_system;
 mod setup;
+mod shader_editor_system;
 mod ui_plugin_manager;
 
 #[cfg(not(target_arch = "wasm32"))]
-mod shader_watcher;
-#[cfg(not(target_arch = "wasm32"))]
 mod script_watcher;
+#[cfg(not(target_arch = "wasm32"))]
+mod shader_watcher;
 mod ui;
 use self::asset_browser_system::AssetBrowserSystem;
 #[allow(unused_imports)]
@@ -38,9 +38,7 @@ use std::path::PathBuf;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
-use wgpu_cube::asset::{
-    Handle, MaterialAsset, Mesh,
-};
+use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::gpu_particles::ParticleEmitter;
 use wgpu_cube::renderer::primitives::{quad_mesh, PrimitiveMeshDescriptor};
 use wgpu_cube::renderer::{CustomRenderContext, CustomRenderStage, Material, RenderRegion};
@@ -50,9 +48,9 @@ use wgpu_cube::scene::components::{
 use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
-    MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
-    ParticleSystemComponent, PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
-    SceneTreeAsset, SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
+    MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent, ParticleSystemComponent,
+    PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset,
+    SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
 use wgpu_cube::scripting::LuaScriptingPlugin;
 use wgpu_cube::{
@@ -175,11 +173,13 @@ impl EditorApplication {
 
             // Initialize the newly loaded plugin scripts by running them in the plugin world
             // This ensures on_created() is called and script instances are created
-            let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
+            let is_editor_mode =
+                matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
             if is_editor_mode {
                 log::info!("Initializing UI plugin scripts in editor mode");
                 if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-                    ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
+                    ctx.scene
+                        .run_scripts_for_world(manager.world_mut(), 0.0, true);
                 }
             }
         }
@@ -267,9 +267,18 @@ impl EditorApplication {
 
         // Merge scene and plugin UI responses from the previous frame
         // This is critical for widgets like text inputs to work properly
-        let mut all_responses = self.shared.script_ui_responses.clone();
-        all_responses.extend(self.shared.plugin_ui_responses.clone());
-        ctx.scene.set_ui_responses(all_responses);
+        let scene_responses = self.shared.script_ui_responses.clone();
+        ctx.scene.set_ui_responses(scene_responses);
+
+        if let Some(manager) = self.shared.ui_plugin_manager.as_ref() {
+            if !self.shared.plugin_ui_responses.is_empty() {
+                let plugin_world_id = manager.world_id();
+                ctx.scene.set_ui_responses_for_world_id(
+                    plugin_world_id,
+                    self.shared.plugin_ui_responses.clone(),
+                );
+            }
+        }
 
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
@@ -277,7 +286,21 @@ impl EditorApplication {
         // Process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(manager.world(), editor_mode);
+            self.shared.plugin_ui_commands = ctx
+                .scene
+                .process_script_ui_for_world(manager.world(), editor_mode);
+
+            if self.shared.plugin_ui_commands.is_empty() {
+                log::debug!(
+                    "No plugin UI commands collected from {} plugins (all scripts idle this frame)",
+                    manager.plugins().len()
+                );
+            } else {
+                log::debug!(
+                    "Collected UI commands from {} plugins",
+                    self.shared.plugin_ui_commands.len()
+                );
+            }
         } else {
             self.shared.plugin_ui_commands.clear();
         }
@@ -500,8 +523,14 @@ impl EditorApplication {
     fn render_script_ui(&mut self, ctx: &egui::Context) {
         use std::collections::HashMap;
 
-        let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
-        let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
+        let mut plugin_responses: HashMap<
+            hecs::Entity,
+            HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+        > = HashMap::new();
+        let mut scene_responses: HashMap<
+            hecs::Entity,
+            HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+        > = HashMap::new();
 
         // Render plugin manager window if we have plugins and it's open
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
@@ -514,12 +543,17 @@ impl EditorApplication {
 
                     // Separate plugins by type
                     let plugins = manager.plugins_mut();
-                    let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) =
-                        plugins.iter_mut().partition(|p| p.metadata.plugin_type == PluginType::Editor);
+                    let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) = plugins
+                        .iter_mut()
+                        .partition(|p| p.metadata.plugin_type == PluginType::Editor);
 
                     // Show Editor Plugins section
                     ui.heading("Editor Plugins");
-                    ui.label(egui::RichText::new("Built-in editor functionality").small().italics());
+                    ui.label(
+                        egui::RichText::new("Built-in editor functionality")
+                            .small()
+                            .italics(),
+                    );
                     ui.separator();
 
                     if editor_plugins.is_empty() {
@@ -532,7 +566,10 @@ impl EditorApplication {
 
                             ui.horizontal(|ui| {
                                 let was_visible = plugin.visible;
-                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                if ui
+                                    .checkbox(&mut plugin.visible, &plugin.metadata.name)
+                                    .changed()
+                                {
                                     log::info!(
                                         "Plugin '{}' visibility changed: {} -> {}",
                                         plugin.metadata.name,
@@ -543,7 +580,10 @@ impl EditorApplication {
                                 ui.label(egui::RichText::new(&plugin.metadata.category).weak());
                             });
 
-                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.label(
+                                egui::RichText::new(format!("  {}", plugin.metadata.description))
+                                    .small(),
+                            );
                             ui.add_space(4.0);
                         }
                     }
@@ -552,7 +592,11 @@ impl EditorApplication {
 
                     // Show User Plugins section
                     ui.heading("User Plugins");
-                    ui.label(egui::RichText::new("Custom user-created plugins").small().italics());
+                    ui.label(
+                        egui::RichText::new("Custom user-created plugins")
+                            .small()
+                            .italics(),
+                    );
                     ui.separator();
 
                     if user_plugins.is_empty() {
@@ -565,7 +609,10 @@ impl EditorApplication {
 
                             ui.horizontal(|ui| {
                                 let was_visible = plugin.visible;
-                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                if ui
+                                    .checkbox(&mut plugin.visible, &plugin.metadata.name)
+                                    .changed()
+                                {
                                     log::info!(
                                         "Plugin '{}' visibility changed: {} -> {}",
                                         plugin.metadata.name,
@@ -576,7 +623,10 @@ impl EditorApplication {
                                 ui.label(egui::RichText::new(&plugin.metadata.category).weak());
                             });
 
-                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.label(
+                                egui::RichText::new(format!("  {}", plugin.metadata.description))
+                                    .small(),
+                            );
                             ui.add_space(4.0);
                         }
                     }
@@ -675,18 +725,15 @@ impl EditorApplication {
             );
 
             let (bg_color, text_color) = match notification.severity {
-                NotificationSeverity::Success => (
-                    egui::Color32::from_rgb(40, 180, 40),
-                    egui::Color32::WHITE,
-                ),
-                NotificationSeverity::Warning => (
-                    egui::Color32::from_rgb(220, 180, 20),
-                    egui::Color32::BLACK,
-                ),
-                NotificationSeverity::Error => (
-                    egui::Color32::from_rgb(200, 40, 40),
-                    egui::Color32::WHITE,
-                ),
+                NotificationSeverity::Success => {
+                    (egui::Color32::from_rgb(40, 180, 40), egui::Color32::WHITE)
+                }
+                NotificationSeverity::Warning => {
+                    (egui::Color32::from_rgb(220, 180, 20), egui::Color32::BLACK)
+                }
+                NotificationSeverity::Error => {
+                    (egui::Color32::from_rgb(200, 40, 40), egui::Color32::WHITE)
+                }
             };
 
             egui::Area::new(format!("reload_notification_{}", index).into())
@@ -1718,7 +1765,8 @@ impl EditorApplication {
                 }
             }
         }
-        */ // END OF OLD IMPLEMENTATION
+        */
+        // END OF OLD IMPLEMENTATION
 
         if transforms_changed {
             ctx.scene.propagate_transforms();

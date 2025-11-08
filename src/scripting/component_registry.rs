@@ -7,17 +7,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hecs::{Entity, World};
-use rune::runtime::Value;
 use rune::alloc::String as RuneString;
+use rune::runtime::Value;
 use thiserror::Error;
 
-use crate::scene::{Name, TransformComponent, Transform};
 use crate::scene::components::{
-    Visible, CameraComponent, PointLight, DirectionalLight, SpotLight,
-    RotateAnimation, OrbitAnimation, Parent, Children,
-    MeshComponent, MaterialComponent, PrimitiveMeshComponent,
-    ParticleEmitterComponent, CanCastShadow,
+    CameraComponent, CanCastShadow, Children, DirectionalLight, MaterialComponent, MeshComponent,
+    OrbitAnimation, Parent, ParticleEmitterComponent, PointLight, PrimitiveMeshComponent,
+    RotateAnimation, SpotLight, Visible,
 };
+use crate::scene::{Name, Transform, TransformComponent};
 
 /// Error type for component registry operations.
 #[derive(Debug, Error)]
@@ -66,7 +65,12 @@ trait ComponentHandler: Send + Sync {
     fn get(&self, world: &World, entity: Entity) -> Result<Value, ComponentRegistryError>;
 
     /// Set component on entity from Rune value.
-    fn set(&self, world: &mut World, entity: Entity, value: &Value) -> Result<(), ComponentRegistryError>;
+    fn set(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        value: &Value,
+    ) -> Result<(), ComponentRegistryError>;
 
     /// Check if entity has this component.
     fn has(&self, world: &World, entity: Entity) -> bool;
@@ -98,11 +102,16 @@ where
             .to_rune_value()
     }
 
-    fn set(&self, world: &mut World, entity: Entity, value: &Value) -> Result<(), ComponentRegistryError> {
+    fn set(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        value: &Value,
+    ) -> Result<(), ComponentRegistryError> {
         let component = T::from_rune_value(value)?;
-        world
-            .insert_one(entity, component)
-            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("failed to insert component: {}", e)))?;
+        world.insert_one(entity, component).map_err(|e| {
+            ComponentRegistryError::FromRuneValue(format!("failed to insert component: {}", e))
+        })?;
         Ok(())
     }
 
@@ -244,9 +253,9 @@ impl ToRuneValue for Name {
 
 impl FromRuneValue for Name {
     fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
-        let string = value
-            .borrow_string_ref()
-            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected string: {}", e)))?;
+        let string = value.borrow_string_ref().map_err(|e| {
+            ComponentRegistryError::FromRuneValue(format!("expected string: {}", e))
+        })?;
 
         Ok(Name((*string).to_string()))
     }
@@ -254,8 +263,8 @@ impl FromRuneValue for Name {
 
 impl ToRuneValue for TransformComponent {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -265,7 +274,10 @@ impl ToRuneValue for TransformComponent {
         trans_vec.try_push(Value::from(translation.x as f64))?;
         trans_vec.try_push(Value::from(translation.y as f64))?;
         trans_vec.try_push(Value::from(translation.z as f64))?;
-        obj.insert(RuneString::try_from("translation")?, rune::to_value(trans_vec)?)?;
+        obj.insert(
+            RuneString::try_from("translation")?,
+            rune::to_value(trans_vec)?,
+        )?;
 
         // Rotation (as euler angles YXZ) as array [yaw, pitch, roll]
         let (yaw, pitch, roll) = self.0.rotation.to_euler(glam::EulerRot::YXZ);
@@ -331,7 +343,10 @@ impl ToRuneValue for CameraComponent {
         let mut obj = Object::new();
 
         // Expose projection data
-        obj.insert(RuneString::try_from("near")?, Value::from(self.near() as f64))?;
+        obj.insert(
+            RuneString::try_from("near")?,
+            Value::from(self.near() as f64),
+        )?;
         obj.insert(RuneString::try_from("far")?, Value::from(self.far() as f64))?;
 
         Ok(rune::to_value(obj)?)
@@ -352,8 +367,8 @@ impl FromRuneValue for CameraComponent {
 
 impl ToRuneValue for PointLight {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -364,8 +379,14 @@ impl ToRuneValue for PointLight {
         color_vec.try_push(Value::from(self.color.z as f64))?;
         obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
 
-        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
-        obj.insert(RuneString::try_from("range")?, Value::from(self.range as f64))?;
+        obj.insert(
+            RuneString::try_from("intensity")?,
+            Value::from(self.intensity as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("range")?,
+            Value::from(self.range as f64),
+        )?;
 
         Ok(rune::to_value(obj)?)
     }
@@ -384,8 +405,8 @@ impl FromRuneValue for PointLight {
 
 impl ToRuneValue for DirectionalLight {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -396,8 +417,14 @@ impl ToRuneValue for DirectionalLight {
         color_vec.try_push(Value::from(self.color.z as f64))?;
         obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
 
-        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
-        obj.insert(RuneString::try_from("shadow_size")?, Value::from(self.shadow_size as f64))?;
+        obj.insert(
+            RuneString::try_from("intensity")?,
+            Value::from(self.intensity as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("shadow_size")?,
+            Value::from(self.shadow_size as f64),
+        )?;
 
         Ok(rune::to_value(obj)?)
     }
@@ -416,8 +443,8 @@ impl FromRuneValue for DirectionalLight {
 
 impl ToRuneValue for SpotLight {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -428,10 +455,22 @@ impl ToRuneValue for SpotLight {
         color_vec.try_push(Value::from(self.color.z as f64))?;
         obj.insert(RuneString::try_from("color")?, rune::to_value(color_vec)?)?;
 
-        obj.insert(RuneString::try_from("intensity")?, Value::from(self.intensity as f64))?;
-        obj.insert(RuneString::try_from("inner_angle")?, Value::from(self.inner_angle as f64))?;
-        obj.insert(RuneString::try_from("outer_angle")?, Value::from(self.outer_angle as f64))?;
-        obj.insert(RuneString::try_from("range")?, Value::from(self.range as f64))?;
+        obj.insert(
+            RuneString::try_from("intensity")?,
+            Value::from(self.intensity as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("inner_angle")?,
+            Value::from(self.inner_angle as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("outer_angle")?,
+            Value::from(self.outer_angle as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("range")?,
+            Value::from(self.range as f64),
+        )?;
 
         Ok(rune::to_value(obj)?)
     }
@@ -477,8 +516,9 @@ impl ToRuneValue for MeshComponent {
 
 impl FromRuneValue for MeshComponent {
     fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
-        let index = rune::from_value::<i64>(value.clone())
-            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e)))?;
+        let index = rune::from_value::<i64>(value.clone()).map_err(|e| {
+            ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e))
+        })?;
         Ok(MeshComponent(crate::asset::Handle::new(index as usize)))
     }
 }
@@ -492,8 +532,9 @@ impl ToRuneValue for MaterialComponent {
 
 impl FromRuneValue for MaterialComponent {
     fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
-        let index = rune::from_value::<i64>(value.clone())
-            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e)))?;
+        let index = rune::from_value::<i64>(value.clone()).map_err(|e| {
+            ComponentRegistryError::FromRuneValue(format!("expected handle index: {}", e))
+        })?;
         Ok(MaterialComponent(crate::asset::Handle::new(index as usize)))
     }
 }
@@ -531,8 +572,8 @@ impl FromRuneValue for PrimitiveMeshComponent {
 
 impl ToRuneValue for RotateAnimation {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -543,7 +584,10 @@ impl ToRuneValue for RotateAnimation {
         axis_vec.try_push(Value::from(self.axis.z as f64))?;
         obj.insert(RuneString::try_from("axis")?, rune::to_value(axis_vec)?)?;
 
-        obj.insert(RuneString::try_from("speed")?, Value::from(self.speed as f64))?;
+        obj.insert(
+            RuneString::try_from("speed")?,
+            Value::from(self.speed as f64),
+        )?;
 
         Ok(rune::to_value(obj)?)
     }
@@ -561,8 +605,8 @@ impl FromRuneValue for RotateAnimation {
 
 impl ToRuneValue for OrbitAnimation {
     fn to_rune_value(&self) -> Result<Value, ComponentRegistryError> {
-        use rune::runtime::Object;
         use rune::alloc::Vec as RuneVec;
+        use rune::runtime::Object;
 
         let mut obj = Object::new();
 
@@ -573,9 +617,18 @@ impl ToRuneValue for OrbitAnimation {
         center_vec.try_push(Value::from(self.center.z as f64))?;
         obj.insert(RuneString::try_from("center")?, rune::to_value(center_vec)?)?;
 
-        obj.insert(RuneString::try_from("radius")?, Value::from(self.radius as f64))?;
-        obj.insert(RuneString::try_from("speed")?, Value::from(self.speed as f64))?;
-        obj.insert(RuneString::try_from("offset")?, Value::from(self.offset as f64))?;
+        obj.insert(
+            RuneString::try_from("radius")?,
+            Value::from(self.radius as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("speed")?,
+            Value::from(self.speed as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("offset")?,
+            Value::from(self.offset as f64),
+        )?;
 
         Ok(rune::to_value(obj)?)
     }
@@ -606,10 +659,12 @@ impl ToRuneValue for Parent {
 
 impl FromRuneValue for Parent {
     fn from_rune_value(value: &Value) -> Result<Self, ComponentRegistryError> {
-        let bits = rune::from_value::<i64>(value.clone())
-            .map_err(|e| ComponentRegistryError::FromRuneValue(format!("expected entity bits: {}", e)))?;
-        let entity = hecs::Entity::from_bits(bits as u64)
-            .ok_or_else(|| ComponentRegistryError::FromRuneValue("invalid entity bits".to_string()))?;
+        let bits = rune::from_value::<i64>(value.clone()).map_err(|e| {
+            ComponentRegistryError::FromRuneValue(format!("expected entity bits: {}", e))
+        })?;
+        let entity = hecs::Entity::from_bits(bits as u64).ok_or_else(|| {
+            ComponentRegistryError::FromRuneValue("invalid entity bits".to_string())
+        })?;
         Ok(Parent(entity))
     }
 }
@@ -645,11 +700,20 @@ impl ToRuneValue for ParticleEmitterComponent {
 
         let mut obj = Object::new();
 
-        obj.insert(RuneString::try_from("spawn_rate")?, Value::from(self.spawn_rate as f64))?;
-        obj.insert(RuneString::try_from("auto_respawn")?, Value::from(self.auto_respawn))?;
+        obj.insert(
+            RuneString::try_from("spawn_rate")?,
+            Value::from(self.spawn_rate as f64),
+        )?;
+        obj.insert(
+            RuneString::try_from("auto_respawn")?,
+            Value::from(self.auto_respawn),
+        )?;
 
         if let Some(burst) = self.burst_count {
-            obj.insert(RuneString::try_from("burst_count")?, Value::from(burst as i64))?;
+            obj.insert(
+                RuneString::try_from("burst_count")?,
+                Value::from(burst as i64),
+            )?;
         }
 
         Ok(rune::to_value(obj)?)
@@ -666,7 +730,7 @@ impl FromRuneValue for ParticleEmitterComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{Vec3, Quat};
+    use glam::{Quat, Vec3};
 
     #[test]
     fn test_name_component_roundtrip() {
@@ -707,7 +771,9 @@ mod tests {
         // Set component
         let new_name = Name("Updated".to_string());
         let new_value = new_name.to_rune_value().unwrap();
-        registry.set_component(&mut world, entity, "Name", &new_value).unwrap();
+        registry
+            .set_component(&mut world, entity, "Name", &new_value)
+            .unwrap();
 
         let updated = world.get::<&Name>(entity).unwrap();
         assert_eq!(updated.0, "Updated");
@@ -721,6 +787,8 @@ mod tests {
         let entity = world.spawn((Name("Test".to_string()),));
 
         assert!(registry.has_component(&world, entity, "Name").unwrap());
-        assert!(!registry.has_component(&world, entity, "TransformComponent").unwrap());
+        assert!(!registry
+            .has_component(&world, entity, "TransformComponent")
+            .unwrap());
     }
 }

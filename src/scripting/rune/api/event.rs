@@ -68,9 +68,8 @@ pub(crate) fn subscribe_event(event_name: String, callback_name: String) -> VmRe
     };
 
     ACTIVE_COMMANDS.with(|cell| {
-        cell.borrow_mut().with(|commands| {
-            commands.subscribe_event(entity_bits, event_name, callback_name)
-        })
+        cell.borrow_mut()
+            .with(|commands| commands.subscribe_event(entity_bits, event_name, callback_name))
     })
 }
 

@@ -91,24 +91,21 @@ fn test_get_entities_in_radius() {
     // Create entities at different positions
     let mut transform1 = Transform::default();
     transform1.translation = Vec3::new(0.0, 0.0, 0.0);
-    let _entity1 = scene.main_world_mut().spawn((
-        Name("Near1".to_string()),
-        TransformComponent(transform1),
-    ));
+    let _entity1 = scene
+        .main_world_mut()
+        .spawn((Name("Near1".to_string()), TransformComponent(transform1)));
 
     let mut transform2 = Transform::default();
     transform2.translation = Vec3::new(5.0, 0.0, 0.0);
-    let _entity2 = scene.main_world_mut().spawn((
-        Name("Near2".to_string()),
-        TransformComponent(transform2),
-    ));
+    let _entity2 = scene
+        .main_world_mut()
+        .spawn((Name("Near2".to_string()), TransformComponent(transform2)));
 
     let mut transform3 = Transform::default();
     transform3.translation = Vec3::new(20.0, 0.0, 0.0);
-    let _entity3 = scene.main_world_mut().spawn((
-        Name("Far".to_string()),
-        TransformComponent(transform3),
-    ));
+    let _entity3 = scene
+        .main_world_mut()
+        .spawn((Name("Far".to_string()), TransformComponent(transform3)));
 
     // Create test script
     let _test_entity = scene.main_world_mut().spawn((
@@ -142,17 +139,15 @@ fn test_get_nearest_entity() {
     // Create entities at different distances
     let mut transform1 = Transform::default();
     transform1.translation = Vec3::new(10.0, 0.0, 0.0);
-    let _entity1 = scene.main_world_mut().spawn((
-        Name("Far".to_string()),
-        TransformComponent(transform1),
-    ));
+    let _entity1 = scene
+        .main_world_mut()
+        .spawn((Name("Far".to_string()), TransformComponent(transform1)));
 
     let mut transform2 = Transform::default();
     transform2.translation = Vec3::new(2.0, 0.0, 0.0);
-    let _entity2 = scene.main_world_mut().spawn((
-        Name("Near".to_string()),
-        TransformComponent(transform2),
-    ));
+    let _entity2 = scene
+        .main_world_mut()
+        .spawn((Name("Near".to_string()), TransformComponent(transform2)));
 
     // Create test script
     let _test_entity = scene.main_world_mut().spawn((

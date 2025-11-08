@@ -31,7 +31,10 @@ impl LuaScriptSource {
         Self::File { path: path.into() }
     }
 
-    pub(crate) fn load(&self, script_root: Option<&Path>) -> Result<LoadedScript, LuaScriptingError> {
+    pub(crate) fn load(
+        &self,
+        script_root: Option<&Path>,
+    ) -> Result<LoadedScript, LuaScriptingError> {
         match self {
             Self::Inline { name, source } => Ok(LoadedScript {
                 name: name.clone(),
@@ -47,12 +50,11 @@ impl LuaScriptSource {
                     path.clone()
                 };
 
-                let contents = std::fs::read_to_string(&absolute).map_err(|source| {
-                    LuaScriptingError::Io {
+                let contents =
+                    std::fs::read_to_string(&absolute).map_err(|source| LuaScriptingError::Io {
                         path: absolute.clone(),
                         source,
-                    }
-                })?;
+                    })?;
 
                 Ok(LoadedScript {
                     name: Arc::from(absolute.to_string_lossy().into_owned().into_boxed_str()),

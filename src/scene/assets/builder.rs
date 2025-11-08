@@ -1,15 +1,15 @@
-use crate::scene::animation::AnimationState;
-use crate::scene::components::{CameraComponent, EnvironmentComponent};
 use super::core::SceneAsset;
 use super::entity::{SceneAssetEntity, SceneMaterialHandle};
 use super::prefabs::ScenePrefabRef;
-use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use super::serialization::{
-    SerializedAnimationClip, SerializedBillboard, SerializedDirectionalLight, SerializedMaterial,
-    SerializedMeshBounds, SerializedParticleBehavior, SerializedParticleEmitter,
-    SerializedParticleSystem, SerializedPointLight, SerializedLuaScript, SerializedSpotLight,
+    SerializedAnimationClip, SerializedBillboard, SerializedDirectionalLight, SerializedLuaScript,
+    SerializedMaterial, SerializedMeshBounds, SerializedParticleBehavior,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedPointLight, SerializedSpotLight,
     SerializedTransform,
 };
+use crate::renderer::primitives::PrimitiveMeshDescriptor;
+use crate::scene::animation::AnimationState;
+use crate::scene::components::{CameraComponent, EnvironmentComponent};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -305,4 +305,3 @@ impl SceneAssetBuilder {
         }
     }
 }
-

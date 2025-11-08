@@ -71,11 +71,9 @@ pub(crate) fn register_state_api(lua: &Lua) -> LuaResult<()> {
                 with_active_state(|state| {
                     state.insert(
                         (entity, key),
-                        serde_json::Value::Number(
-                            serde_json::Number::from_f64(value).ok_or_else(|| {
-                                mlua::Error::RuntimeError("Number is not finite".to_string())
-                            })?,
-                        ),
+                        serde_json::Value::Number(serde_json::Number::from_f64(value).ok_or_else(
+                            || mlua::Error::RuntimeError("Number is not finite".to_string()),
+                        )?),
                     );
                     Ok(())
                 })
@@ -88,25 +86,23 @@ pub(crate) fn register_state_api(lua: &Lua) -> LuaResult<()> {
         "get_f64",
         lua.create_function(|_lua, key: String| {
             with_active_entity(|entity| {
-                with_active_state(|state| {
-                    match state.get(&(entity, key.clone())) {
-                        Some(serde_json::Value::Number(n)) => {
-                            if let Some(f) = n.as_f64() {
-                                Ok(f)
-                            } else {
-                                Err(mlua::Error::RuntimeError(
-                                    "Value is not a number".to_string(),
-                                ))
-                            }
+                with_active_state(|state| match state.get(&(entity, key.clone())) {
+                    Some(serde_json::Value::Number(n)) => {
+                        if let Some(f) = n.as_f64() {
+                            Ok(f)
+                        } else {
+                            Err(mlua::Error::RuntimeError(
+                                "Value is not a number".to_string(),
+                            ))
                         }
-                        Some(_) => Err(mlua::Error::RuntimeError(
-                            "Value is not a number".to_string(),
-                        )),
-                        None => Err(mlua::Error::RuntimeError(format!(
-                            "State key not found: {}",
-                            key
-                        ))),
                     }
+                    Some(_) => Err(mlua::Error::RuntimeError(
+                        "Value is not a number".to_string(),
+                    )),
+                    None => Err(mlua::Error::RuntimeError(format!(
+                        "State key not found: {}",
+                        key
+                    ))),
                 })
             })
         })?,
@@ -213,11 +209,9 @@ pub(crate) fn register_state_api(lua: &Lua) -> LuaResult<()> {
             with_active_state(|state| {
                 state.insert(
                     (entity, key),
-                    serde_json::Value::Number(
-                        serde_json::Number::from_f64(value).ok_or_else(|| {
-                            mlua::Error::RuntimeError("Number is not finite".to_string())
-                        })?,
-                    ),
+                    serde_json::Value::Number(serde_json::Number::from_f64(value).ok_or_else(
+                        || mlua::Error::RuntimeError("Number is not finite".to_string()),
+                    )?),
                 );
                 Ok(())
             })

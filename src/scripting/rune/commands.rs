@@ -115,7 +115,12 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
-    pub fn attach_inline_script(&mut self, handle: i64, name: String, source: String) -> VmResult<()> {
+    pub fn attach_inline_script(
+        &mut self,
+        handle: i64,
+        name: String,
+        source: String,
+    ) -> VmResult<()> {
         let descriptor = RuneScriptSource::inline(name, source);
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.script = Some(descriptor);
@@ -165,7 +170,12 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
-    pub fn set_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+    pub fn set_component(
+        &mut self,
+        handle: i64,
+        component_name: String,
+        value: Value,
+    ) -> VmResult<()> {
         let entity_bits = match self.resolve_entity_bits(handle) {
             VmResult::Ok(bits) => bits,
             VmResult::Err(err) => return VmResult::Err(err),
@@ -179,7 +189,12 @@ impl ScriptCommands {
         VmResult::Ok(())
     }
 
-    pub fn add_component(&mut self, handle: i64, component_name: String, value: Value) -> VmResult<()> {
+    pub fn add_component(
+        &mut self,
+        handle: i64,
+        component_name: String,
+        value: Value,
+    ) -> VmResult<()> {
         // Check if this is a pending entity first
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.components.push((component_name, value));
@@ -218,10 +233,8 @@ impl ScriptCommands {
             VmResult::Err(err) => return VmResult::Err(err),
         };
 
-        self.existing.push(ExistingCommand::Translate {
-            entity_bits,
-            delta,
-        });
+        self.existing
+            .push(ExistingCommand::Translate { entity_bits, delta });
         VmResult::Ok(())
     }
 
@@ -251,10 +264,8 @@ impl ScriptCommands {
             VmResult::Err(err) => return VmResult::Err(err),
         };
 
-        self.existing.push(ExistingCommand::SetScale {
-            entity_bits,
-            scale,
-        });
+        self.existing
+            .push(ExistingCommand::SetScale { entity_bits, scale });
         VmResult::Ok(())
     }
 
@@ -335,7 +346,11 @@ impl ScriptCommands {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    pub fn apply(&mut self, world: &mut World, registry: &ComponentRegistry) -> Result<ScriptApplyResult, RuneScriptingError> {
+    pub fn apply(
+        &mut self,
+        world: &mut World,
+        registry: &ComponentRegistry,
+    ) -> Result<ScriptApplyResult, RuneScriptingError> {
         use log::error;
 
         let mut result = ScriptApplyResult::default();
@@ -350,7 +365,10 @@ impl ScriptCommands {
                 world.insert_one(entity, Name(name))?;
             }
 
-            if pending.translation.is_some() || pending.rotation.is_some() || pending.scale.is_some() {
+            if pending.translation.is_some()
+                || pending.rotation.is_some()
+                || pending.scale.is_some()
+            {
                 let mut transform = Transform::default();
                 if let Some(translation) = pending.translation.take() {
                     transform.translation = translation;
@@ -390,7 +408,10 @@ impl ScriptCommands {
                 parent_handle as u64
             } else {
                 // Parent handle is not resolved - this shouldn't happen now that all entities are spawned
-                error!("Failed to resolve parent handle {} for entity {:?}", parent_handle, child_entity);
+                error!(
+                    "Failed to resolve parent handle {} for entity {:?}",
+                    parent_handle, child_entity
+                );
                 continue;
             };
             drop(registry);
@@ -525,10 +546,7 @@ impl ScriptCommands {
                     // For now, log a warning
                     warn!(target: "script", "remove_component not yet fully implemented for {}", component_name);
                 }
-                ExistingCommand::Translate {
-                    entity_bits,
-                    delta,
-                } => {
+                ExistingCommand::Translate { entity_bits, delta } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
                     };
@@ -551,10 +569,7 @@ impl ScriptCommands {
                         transform.rotation = rotation * transform.rotation;
                     })?;
                 }
-                ExistingCommand::SetScale {
-                    entity_bits,
-                    scale,
-                } => {
+                ExistingCommand::SetScale { entity_bits, scale } => {
                     let Some(entity) = Entity::from_bits(entity_bits) else {
                         continue;
                     };
@@ -574,7 +589,8 @@ impl ScriptCommands {
                     Self::modify_transform(world, entity, |transform| {
                         let direction = (target - transform.translation).normalize();
                         if direction.length_squared() > 0.0 {
-                            transform.rotation = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                            transform.rotation =
+                                glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
                         }
                     })?;
                 }
@@ -617,7 +633,8 @@ impl ScriptCommands {
 
                         // Add to parent's children
                         // Check if parent has Children component first
-                        let has_children = world.satisfies::<&Children>(parent_entity).unwrap_or(false);
+                        let has_children =
+                            world.satisfies::<&Children>(parent_entity).unwrap_or(false);
 
                         if has_children {
                             // Parent has Children, add this entity
@@ -666,10 +683,9 @@ impl ScriptCommands {
                         return Err(ComponentError::NoSuchEntity.into());
                     }
 
-                    result.event_unsubscriptions.push(PendingEventUnsubscription {
-                        entity,
-                        event_name,
-                    });
+                    result
+                        .event_unsubscriptions
+                        .push(PendingEventUnsubscription { entity, event_name });
                 }
             }
         }

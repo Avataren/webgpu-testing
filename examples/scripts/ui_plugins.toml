@@ -22,7 +22,7 @@ description = "Minimal UI test script for debugging"
 category = "Debug"
 plugin_type = "user"
 enabled = true
-default_visible = true
+default_visible = false
 
 # Script Editor - Edit script files directly in the editor
 [[plugin]]
@@ -32,7 +32,7 @@ description = "Basic script editor for editing Lua script files"
 category = "Development"
 plugin_type = "editor"
 enabled = false
-default_visible = true
+default_visible = false
 
 # Simple Text Editor - General purpose text editor
 [[plugin]]
@@ -42,7 +42,7 @@ description = "Simple text editor with file I/O support"
 category = "Development"
 plugin_type = "editor"
 enabled = true
-default_visible = true
+default_visible = false
 
 # Disabled plugins for now while we fix the scripting issues
 [[plugin]]
