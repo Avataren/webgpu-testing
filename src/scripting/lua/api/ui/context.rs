@@ -36,13 +36,7 @@ impl UiContext {
 
     /// Get a response for a specific widget ID.
     fn get_response(&self, id: &str) -> Option<UiResponse> {
-        let responses = self.responses.lock().unwrap();
-        let response = responses.get(id).cloned();
-        if id.starts_with("file_") && !responses.is_empty() {
-            println!("[LUA CONTEXT] get_response('{}') - available responses: {:?}, found: {:?}",
-                id, responses.keys().collect::<Vec<_>>(), response.is_some());
-        }
-        response
+        self.responses.lock().unwrap().get(id).cloned()
     }
 
     /// Display a text label.
@@ -210,15 +204,9 @@ impl UiContext {
             text,
         });
 
-        let clicked = self.get_response(&id)
+        self.get_response(&id)
             .map(|r| r.clicked)
-            .unwrap_or(false);
-
-        if clicked {
-            println!("[LUA] Menu item '{}' CLICKED!", id);
-        }
-
-        clicked
+            .unwrap_or(false)
     }
 }
 

@@ -601,14 +601,6 @@ impl EditorApplication {
         }
 
         // Store responses for the next frame (kept separate to avoid Entity ID collisions)
-        // Debug: only log when we have clicks
-        for (entity, responses) in &plugin_responses {
-            for (id, response) in responses {
-                if response.clicked {
-                    println!("[EDITOR] Plugin entity {:?} response '{}' clicked", entity, id);
-                }
-            }
-        }
         self.shared.script_ui_responses = scene_responses;
         self.shared.plugin_ui_responses = plugin_responses;
     }

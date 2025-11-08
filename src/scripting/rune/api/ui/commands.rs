@@ -43,9 +43,6 @@ impl UiCommand {
             UiCommand::MenuItem { id, .. } => {
                 // For all other commands, use render_with_id
                 if let Some((id, response)) = self.render_with_id(ui) {
-                    if response.clicked {
-                        println!("[RUNE] MenuItem '{}' CLICKED!", id);
-                    }
                     responses.insert(id, response);
                 }
             }
