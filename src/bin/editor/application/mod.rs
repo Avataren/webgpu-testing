@@ -503,9 +503,10 @@ impl EditorApplication {
         let mut plugin_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
         let mut scene_responses: HashMap<hecs::Entity, HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>> = HashMap::new();
 
-        // Render plugin manager window if we have plugins
+        // Render plugin manager window if we have plugins and it's open
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            egui::Window::new("UI Plugins")
+            egui::Window::new("Plugin Manager")
+                .open(&mut self.shared.windows.plugin_manager)
                 .resizable(true)
                 .default_size([300.0, 400.0])
                 .show(ctx, |ui| {
