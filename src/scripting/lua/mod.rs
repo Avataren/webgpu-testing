@@ -25,6 +25,9 @@ pub mod runtime;
 pub mod state;
 pub mod types;
 
+#[cfg(test)]
+mod integration_tests;
+
 // Public exports
 pub use component::{FunctionCallOutcome, LuaScriptComponent};
 pub use error::LuaScriptingError;
