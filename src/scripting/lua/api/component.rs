@@ -1,3 +1,22 @@
+//! # Component API
+//!
+//! This module provides functions for managing entity components in the ECS.
+//!
+//! ## Features
+//!
+//! - **Component queries** - Check if an entity has a component
+//! - **Component access** - Get component data (Phase 2 feature, currently stubbed)
+//! - **Component modification** - Set, add, or remove components
+//!
+//! ## Component Data Format
+//!
+//! Component values are passed as Lua tables that match the component's structure.
+//! The system automatically serializes Lua values to JSON for component storage.
+//!
+//! ## Known Limitations
+//!
+//! - `get_component()` is not yet fully implemented and returns `nil` (Phase 2)
+
 use hecs::Entity;
 use log::{error, warn};
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
@@ -7,7 +26,55 @@ use crate::scripting::lua::guards::{
     with_active_commands, with_active_registry, with_active_world,
 };
 
-/// Register component API functions with the Lua runtime.
+/// Registers component API functions with the Lua runtime.
+///
+/// This function exposes component management functions to Lua scripts.
+///
+/// ## Available Functions
+///
+/// - `has_component(entity, component_name)` - Returns true if entity has component
+/// - `get_component(entity, component_name)` - Get component data (not yet implemented)
+/// - `set_component(entity, component_name, value)` - Set component data
+/// - `add_component(entity, component_name, value)` - Add new component
+/// - `remove_component(entity, component_name)` - Remove component from entity
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- Check if entity has a component
+/// if has_component(entity, "Health") then
+///     log_info("Entity has health component")
+/// end
+///
+/// -- Add a component
+/// add_component(entity, "Health", {
+///     current = 100,
+///     max = 100
+/// })
+///
+/// -- Modify a component
+/// set_component(entity, "Health", {
+///     current = 50,
+///     max = 100
+/// })
+///
+/// -- Remove a component
+/// remove_component(entity, "Health")
+///
+/// -- Get component (Phase 2 - currently returns nil)
+/// local health = get_component(entity, "Health")
+/// if health then
+///     log_info("Health: " .. health.current .. "/" .. health.max)
+/// end
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 

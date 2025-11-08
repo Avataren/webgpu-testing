@@ -1,7 +1,45 @@
-/// UI module for exposing egui to Lua scripts.
-///
-/// This module provides a safe interface for Lua scripts to create
-/// egui-based user interfaces that can run in both editor and play modes.
+//! # UI API
+//!
+//! This module provides a user interface API for Lua scripts using egui.
+//!
+//! ## Features
+//!
+//! - **Widgets** - Buttons, labels, text inputs, sliders, checkboxes, color pickers
+//! - **Layout** - Headings, separators, menu bars
+//! - **Editor integration** - Create custom editor tools and panels
+//!
+//! ## Usage
+//!
+//! UI functions are only available in the `on_ui(self_entity, ui)` callback,
+//! which is called for scripts marked with `@editor` or `@tool` annotations.
+//!
+//! The `ui` parameter provides methods to create widgets. Most widgets return
+//! updated values, enabling immediate-mode GUI patterns.
+//!
+//! ## Script Modes
+//!
+//! - **`@editor`** - Script runs only in editor mode, has access to UI
+//! - **`@tool`** - Script runs in editor and play modes (currently same as @editor)
+//! - **No annotation** - Script runs only in play mode, no UI access
+//!
+//! ## Example
+//!
+//! ```lua
+//! -- @editor
+//!
+//! function on_ui(self_entity, ui)
+//!     ui:heading("My Tool")
+//!     ui:separator()
+//!
+//!     if ui:button("Click Me") then
+//!         log_info("Button clicked!")
+//!     end
+//!
+//!     local value = ui:slider("speed", get_f64("speed", 5.0), 0, 10)
+//!     set_f64("speed", value)
+//! end
+//! ```
+
 mod commands;
 mod context;
 
@@ -10,7 +48,36 @@ pub use context::UiContext;
 
 use mlua::{Lua, UserData, UserDataMethods};
 
-/// Register UI API with Lua.
+/// Registers UI API with the Lua runtime.
+///
+/// The UI API works differently from other APIs - instead of registering global
+/// functions, it passes a `UiContext` userdata object to the `on_ui()` callback.
+///
+/// Scripts call methods on the `ui` parameter like `ui:button("text")`.
+///
+/// ## Available UI Methods
+///
+/// - `ui:label(text)` - Display text label
+/// - `ui:heading(text)` - Display heading
+/// - `ui:separator()` - Display horizontal line
+/// - `ui:button(text)` - Display button, returns true if clicked
+/// - `ui:checkbox(id, value, label)` - Display checkbox, returns new value
+/// - `ui:text_edit(id, value)` - Single-line text input, returns new value
+/// - `ui:text_edit_multiline(id, value, width, height)` - Multi-line text, returns new value
+/// - `ui:slider(id, value, min, max)` - Numeric slider, returns new value
+/// - `ui:drag_value(id, value)` - Numeric drag input, returns new value
+/// - `ui:color_edit(id, r, g, b)` - Color picker, returns {r, g, b} table
+/// - `ui:menu_bar(callback)` - Create menu bar, calls callback to add menus
+/// - `ui:menu(text, callback)` - Create menu in menu bar, calls callback for items
+/// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime (unused, kept for API consistency)
+///
+/// # Returns
+///
+/// `Ok(())` always succeeds.
 pub fn register_ui_api(_lua: &Lua) -> mlua::Result<()> {
     // Register UiContext as a userdata type that Lua scripts can interact with
     // The actual context will be passed to on_ui() callback

@@ -1,8 +1,31 @@
+//! # Editor Commands API
+//!
+//! This module provides functions for Lua scripts to control the editor.
+//!
+//! ## Features
+//!
+//! - **Project management** - Load or create projects from scripts
+//! - **Command queueing** - Commands are queued and processed by editor
+//!
+//! ## Use Cases
+//!
+//! - Creating editor tools and utilities
+//! - Automating project workflows
+//! - Building custom project launchers
+//!
+//! ## Notes
+//!
+//! These commands are typically used in scripts marked with `@editor` or `@tool`
+//! annotations, as they only make sense in the editor context.
+
 use mlua::{Lua, Result as LuaResult};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-/// Editor commands that can be queued from Lua scripts
+/// Editor commands that can be queued from Lua scripts.
+///
+/// These commands are queued when scripts call editor functions and are
+/// processed by the editor's main loop.
 #[derive(Clone, Debug)]
 pub enum LuaEditorCommand {
     LoadProject(PathBuf),
@@ -24,8 +47,42 @@ pub fn drain_editor_commands() -> Vec<LuaEditorCommand> {
         .unwrap_or_default()
 }
 
-/// Register editor command API with Lua.
-/// These functions allow Lua scripts to send commands to the editor.
+/// Registers editor command API functions with the Lua runtime.
+///
+/// This function exposes editor control functions to Lua scripts.
+///
+/// ## Available Functions
+///
+/// - `load_project(path)` - Request editor to load project from path
+/// - `create_project(name, location)` - Request editor to create new project
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- @editor
+/// -- Project launcher tool
+///
+/// function on_ui(self_entity, ui)
+///     ui:heading("Project Launcher")
+///     ui:separator()
+///
+///     if ui:button("Load Example Project") then
+///         load_project("examples/demo_project")
+///     end
+///
+///     if ui:button("Create New Project") then
+///         create_project("MyGame", "C:/Projects")
+///     end
+/// end
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_editor_command_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 

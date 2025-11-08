@@ -1,3 +1,21 @@
+//! # Hierarchy API
+//!
+//! This module provides functions for managing parent-child relationships
+//! between entities in the scene graph.
+//!
+//! ## Features
+//!
+//! - **Parenting** - Set or clear parent-child relationships
+//! - **Queries** - Get parent or list all children
+//! - **Transform propagation** - Child transforms are automatically computed
+//!   relative to parent world transforms
+//!
+//! ## Notes
+//!
+//! - Children arrays use **1-based indexing** (Lua convention)
+//! - Setting parent to `nil` unparents the entity
+//! - World transforms are automatically updated when hierarchy changes
+
 use hecs::Entity;
 use mlua::{Lua, Result as LuaResult};
 
@@ -5,7 +23,50 @@ use crate::scene::components::{Children, Parent};
 use crate::scripting::lua::commands::entity_bits;
 use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 
-/// Register hierarchy API functions with the Lua runtime.
+/// Registers hierarchy API functions with the Lua runtime.
+///
+/// This function exposes parent-child relationship management to Lua scripts.
+///
+/// ## Available Functions
+///
+/// - `set_parent(entity, parent)` - Set parent (or nil to unparent)
+/// - `get_parent(entity)` - Returns parent handle or nil
+/// - `get_children(entity)` - Returns 1-indexed table array or nil
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- Create a hierarchy
+/// local parent = spawn_entity("Parent")
+/// local child1 = spawn_entity("Child1")
+/// local child2 = spawn_entity("Child2")
+///
+/// set_parent(child1, parent)
+/// set_parent(child2, parent)
+///
+/// -- Query relationships
+/// local p = get_parent(child1)
+/// log_info("Child1's parent: " .. tostring(p))
+///
+/// local children = get_children(parent)
+/// if children then
+///     log_info("Parent has " .. #children .. " children")
+///     for i = 1, #children do
+///         log_info("Child " .. i .. ": " .. children[i])
+///     end
+/// end
+///
+/// -- Unparent an entity
+/// set_parent(child1, nil)
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_hierarchy_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 

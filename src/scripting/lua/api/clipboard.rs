@@ -1,8 +1,21 @@
-/// Clipboard API for Lua scripts.
-///
-/// Provides functions to copy text to the system clipboard.
-/// Note: Reading from clipboard is not supported by egui for security reasons.
-/// Users must paste text using Ctrl+V into text fields.
+//! # Clipboard API
+//!
+//! This module provides clipboard access for Lua scripts.
+//!
+//! ## Features
+//!
+//! - **Write clipboard** - Copy text to system clipboard
+//! - **Read clipboard** - Returns empty string (security restriction)
+//!
+//! ## Security Note
+//!
+//! Reading from clipboard is intentionally disabled for security reasons.
+//! Users should paste text directly into UI text fields using Ctrl+V/Cmd+V.
+//!
+//! ## Platform Support
+//!
+//! Clipboard operations work on all platforms where egui is available.
+
 use std::cell::RefCell;
 
 use mlua::{Lua, Result as LuaResult};
@@ -46,7 +59,34 @@ impl Drop for ClipboardGuard {
     }
 }
 
-/// Register clipboard API functions with the Lua runtime.
+/// Registers clipboard API functions with the Lua runtime.
+///
+/// This function exposes clipboard access to Lua scripts.
+///
+/// ## Available Functions
+///
+/// - `get_clipboard()` - Returns empty string (read disabled for security)
+/// - `set_clipboard(text)` - Copy text to system clipboard
+///
+/// # Example Lua usage
+///
+/// ```lua
+/// -- Copy text to clipboard
+/// set_clipboard("Hello, World!")
+/// log_info("Text copied to clipboard")
+///
+/// -- Attempt to read (returns empty string)
+/// local text = get_clipboard()
+/// -- text will be "" - use UI paste instead
+/// ```
+///
+/// # Arguments
+///
+/// * `lua` - The Lua runtime to register functions with
+///
+/// # Returns
+///
+/// `Ok(())` on success, or a Lua error if registration fails.
 pub(crate) fn register_clipboard_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
