@@ -142,6 +142,9 @@ impl EditorApplication {
 
         self.sync_active_scene_state(ctx);
 
+        // Process Lua editor commands from plugins
+        self.process_lua_editor_commands();
+
         // Regular editor updates
         self.drain_update_commands(ctx);
         self.run_system_updates(ctx);

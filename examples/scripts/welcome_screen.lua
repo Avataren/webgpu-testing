@@ -28,9 +28,10 @@ function on_ui(self_entity, ui)
     if ui:button("📂  Open Project Folder...") then
         local path = open_folder_dialog()
         if path then
-            -- TODO: Send command to editor to load project
-            set_string("status_message", "Selected: " .. path)
-            log_info("Open project: " .. path)
+            -- Send command to editor to load the project
+            load_project(path)
+            set_string("status_message", "Loading project: " .. path)
+            log_info("Requested project load: " .. path)
         end
     end
 
@@ -83,10 +84,11 @@ function on_ui(self_entity, ui)
 
         if ui:button(button_label) then
             if can_create then
-                -- TODO: Send command to editor to create project
+                -- Send command to editor to create the project
+                create_project(project_name, new_project_path)
                 local full_path = new_project_path .. "/" .. project_name
                 set_string("status_message", "Creating project: " .. full_path)
-                log_info("Create project: " .. project_name .. " at " .. new_project_path)
+                log_info("Requested project creation: " .. project_name .. " at " .. new_project_path)
 
                 -- Reset form after creation attempt
                 set_bool("show_create_form", false)

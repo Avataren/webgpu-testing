@@ -288,6 +288,14 @@ impl ProjectController {
         self.pending_build.take()
     }
 
+    pub fn request_load_project(&mut self, path: PathBuf) {
+        self.pending_load = Some(path);
+    }
+
+    pub fn request_create_project(&mut self, request: NewProjectRequest) {
+        self.pending_create = Some(request);
+    }
+
     pub fn report_startup_error(&mut self, message: impl Into<String>) {
         self.startup_dialog.visible = true;
         self.startup_dialog.error_message = Some(message.into());

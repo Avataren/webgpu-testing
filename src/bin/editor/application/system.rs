@@ -40,6 +40,11 @@ pub(super) enum EditorCommand {
         entity: Entity,
         path: PathBuf,
     },
+    LoadProject(PathBuf),
+    CreateProject {
+        name: String,
+        location: PathBuf,
+    },
 }
 
 #[derive(Debug)]

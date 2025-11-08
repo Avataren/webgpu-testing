@@ -799,6 +799,8 @@ impl EditorApplication {
         let mut pending_deletions = Vec::new();
         let mut pending_inspector = Vec::new();
         let mut pending_plugin_reloads = Vec::new();
+        let mut pending_project_loads = Vec::new();
+        let mut pending_project_creates = Vec::new();
 
         while let Some(command) = queue.pop_front() {
             match command {
@@ -815,6 +817,8 @@ impl EditorApplication {
                 HistoryRedo => remaining.push_back(HistoryRedo),
                 HistoryCommitTransforms => remaining.push_back(HistoryCommitTransforms),
                 ReloadPlugin { entity, path } => pending_plugin_reloads.push((entity, path)),
+                LoadProject(path) => pending_project_loads.push(path),
+                CreateProject { name, location } => pending_project_creates.push((name, location)),
             }
         }
 
@@ -828,6 +832,14 @@ impl EditorApplication {
 
         if !pending_plugin_reloads.is_empty() {
             self.process_pending_plugin_reloads(ctx, pending_plugin_reloads);
+        }
+
+        if !pending_project_loads.is_empty() {
+            self.process_pending_project_loads(ctx, pending_project_loads);
+        }
+
+        if !pending_project_creates.is_empty() {
+            self.process_pending_project_creates(ctx, pending_project_creates);
         }
 
         if !pending_deletions.is_empty() {
@@ -969,6 +981,71 @@ impl EditorApplication {
         match mode {
             RuntimeMode::Editor => self.shared.viewports.scene_viewport.region(),
             RuntimeMode::Playing => self.shared.viewports.game_viewport.region(),
+        }
+    }
+
+    pub(super) fn process_pending_project_loads(
+        &mut self,
+        _ctx: &mut UpdateContext,
+        pending: Vec<PathBuf>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        // Take the first load request (ignore duplicates)
+        let path = pending.into_iter().next().unwrap();
+
+        log::info!("Processing project load request: {:?}", path);
+
+        // Queue the load through ProjectSystem
+        self.project_system_mut()
+            .controller_mut()
+            .request_load_project(path);
+    }
+
+    pub(super) fn process_pending_project_creates(
+        &mut self,
+        _ctx: &mut UpdateContext,
+        pending: Vec<(String, PathBuf)>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+
+        // Take the first create request (ignore duplicates)
+        let (name, location) = pending.into_iter().next().unwrap();
+        let project_dir = location.join(&name);
+
+        log::info!("Processing project create request: '{}' at {:?}", name, project_dir);
+
+        // Queue the create through ProjectSystem
+        self.project_system_mut()
+            .controller_mut()
+            .request_create_project(crate::project::NewProjectRequest {
+                directory: project_dir,
+                metadata: wgpu_cube::project::ProjectMetadata {
+                    name,
+                    description: String::new(),
+                },
+            });
+    }
+
+    pub(super) fn process_lua_editor_commands(&mut self) {
+        use wgpu_cube::scripting::lua::api::{drain_editor_commands, LuaEditorCommand};
+
+        let commands = drain_editor_commands();
+        for command in commands {
+            match command {
+                LuaEditorCommand::LoadProject(path) => {
+                    log::info!("Processing Lua command: LoadProject({:?})", path);
+                    self.enqueue_command(EditorCommand::LoadProject(path));
+                }
+                LuaEditorCommand::CreateProject { name, location } => {
+                    log::info!("Processing Lua command: CreateProject({}, {:?})", name, location);
+                    self.enqueue_command(EditorCommand::CreateProject { name, location });
+                }
+            }
         }
     }
 }
