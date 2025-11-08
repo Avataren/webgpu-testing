@@ -646,10 +646,9 @@ impl EditorApplication {
             if welcome_screen_visible {
                 egui::Area::new("welcome_modal_overlay".into())
                     .fixed_pos(egui::pos2(0.0, 0.0))
+                    .interactable(false)  // Don't capture input events
                     .show(ctx, |ui| {
                         let screen_rect = ctx.viewport_rect();
-                        ui.allocate_space(screen_rect.size());
-
                         let painter = ui.painter();
                         painter.rect_filled(
                             screen_rect,
@@ -685,7 +684,7 @@ impl EditorApplication {
                     // Configure Welcome Screen as modal
                     if is_welcome_screen {
                         // Make the window take up 80% of the screen for a spacious layout
-                        let screen_rect = ctx.screen_rect();
+                        let screen_rect = ctx.viewport_rect();
                         let window_width = screen_rect.width() * 0.8;
                         let window_height = screen_rect.height() * 0.8;
 
@@ -694,23 +693,42 @@ impl EditorApplication {
                             .collapsible(false)
                             .resizable(false)
                             .title_bar(false)
-                            .default_size([window_width, window_height])
+                            .fixed_size([window_width, window_height])  // Force size every frame
                             .interactable(true);  // Ensure it always accepts input
                     }
 
                     let window_response = window.show(ctx, |ui| {
-                        for command in commands {
-                            command.render_and_collect(ui, &mut responses);
+                        if is_welcome_screen {
+                            // Enable scrolling for welcome screen content
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for command in commands {
+                                        command.render_and_collect(ui, &mut responses);
+                                    }
+                                });
+                        } else {
+                            // Regular rendering for other plugins
+                            for command in commands {
+                                command.render_and_collect(ui, &mut responses);
+                            }
                         }
                     });
 
-                    // For Welcome Screen, request focus only if no child widget has it
-                    // This prevents the modal from locking while still allowing text input
+                    // For Welcome Screen, refocus on clicks outside to prevent UI lock
                     if is_welcome_screen {
                         if let Some(response) = window_response {
-                            // Only request focus if nothing else currently has focus
-                            if ctx.memory(|mem| mem.focus().is_none()) {
-                                response.response.request_focus();
+                            // Only refocus when clicking outside the window
+                            // This prevents UI from locking when clicking the overlay
+                            // but allows text fields to maintain focus during normal use
+                            if ctx.input(|i| i.pointer.any_click()) {
+                                let click_pos = ctx.input(|i| i.pointer.interact_pos());
+
+                                if let Some(pos) = click_pos {
+                                    if !response.response.rect.contains(pos) {
+                                        response.response.request_focus();
+                                    }
+                                }
                             }
                         }
                     }
