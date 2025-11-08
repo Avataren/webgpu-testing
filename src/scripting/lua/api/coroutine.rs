@@ -91,7 +91,7 @@ fn next_coroutine_id() -> CoroutineId {
 }
 
 /// Set the currently executing coroutine ID
-fn set_current_coroutine_id(id: Option<CoroutineId>) {
+pub(crate) fn set_current_coroutine_id(id: Option<CoroutineId>) {
     CURRENT_COROUTINE_ID.with(|cell| {
         *cell.borrow_mut() = id;
     });

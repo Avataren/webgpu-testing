@@ -20,7 +20,7 @@ pub mod ui;
 use mlua::{Lua, Result as LuaResult};
 
 pub use clipboard::{ClipboardAccess, ClipboardGuard};
-pub(crate) use coroutine::CoroutineGuard;
+pub(crate) use coroutine::{set_current_coroutine_id, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
 pub use ui::{UiCommand, UiContext, UiResponse};
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use mlua::Lua;
 
-use super::api::CoroutineGuard;
+use super::api::{set_current_coroutine_id, CoroutineGuard};
 use super::commands::ScriptCommands;
 use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
@@ -340,11 +340,17 @@ impl LuaScriptInstance {
 
         // Resume ready coroutines
         for id in to_resume {
+            // Set current coroutine ID before resuming
+            set_current_coroutine_id(Some(id));
+
             let result = {
                 let mut coroutines = self.coroutines.borrow_mut();
                 let coro_state = match coroutines.get_mut(&id) {
                     Some(state) => state,
-                    None => continue,
+                    None => {
+                        set_current_coroutine_id(None);
+                        continue;
+                    }
                 };
 
                 // Mark as running
@@ -381,6 +387,9 @@ impl LuaScriptInstance {
                     }
                 }
             }
+
+            // Clear current coroutine ID after processing
+            set_current_coroutine_id(None);
         }
 
         // Clean up dead coroutines
