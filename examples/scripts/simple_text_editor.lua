@@ -2,6 +2,19 @@
 -- Simple Text Editor Plugin
 -- A fully functional text editor with file open/save dialogs
 
+local function ensure_file_version()
+    local ok, value = pcall(function()
+        return get_f64("file_version")
+    end)
+
+    if ok then
+        return value
+    end
+
+    set_f64("file_version", 0)
+    return 0
+end
+
 function on_created(self_entity)
     log_info("Simple Text Editor plugin created")
 
@@ -36,7 +49,7 @@ function on_ui(self_entity, ui)
                         set_bool("has_unsaved_changes", false)
 
                         -- Increment version to clear UI cache for the text editor
-                        local version = get_f64("file_version")
+                        local version = ensure_file_version()
                         set_f64("file_version", version + 1)
 
                         -- Remember the directory for next time
@@ -101,7 +114,7 @@ function on_ui(self_entity, ui)
                 set_bool("has_unsaved_changes", false)
 
                 -- Increment version to clear UI cache for the text editor
-                local version = get_f64("file_version")
+                local version = ensure_file_version()
                 set_f64("file_version", version + 1)
 
                 set_string("status_message", "New file created")
@@ -134,7 +147,7 @@ function on_ui(self_entity, ui)
     -- Multiline text editor (fills available space)
     -- Use file_version in the widget ID to reset UI cache when loading new files
     local content = get_string("text_content", "")
-    local version = get_f64("file_version")
+    local version = ensure_file_version()
     local widget_id = "content_" .. tostring(math.floor(version))
     local new_content = ui:text_edit_multiline(widget_id, content, nil, nil)
 
