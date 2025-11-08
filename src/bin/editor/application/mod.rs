@@ -165,21 +165,18 @@ impl EditorApplication {
             self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
         }
 
-        // Load UI plugins if a project is open and plugins haven't been loaded yet
+        // Load UI plugins on first update (no project required - welcome screen needs this)
         if !self.shared.ui_plugins_loaded {
-            let has_project = self.project_system().controller().current_dir().is_some();
-            if has_project {
-                Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
-                self.shared.ui_plugins_loaded = true;
+            Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
+            self.shared.ui_plugins_loaded = true;
 
-                // Initialize the newly loaded plugin scripts by running them in the plugin world
-                // This ensures on_created() is called and script instances are created
-                let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
-                if is_editor_mode {
-                    log::info!("Initializing UI plugin scripts in editor mode");
-                    if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-                        ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
-                    }
+            // Initialize the newly loaded plugin scripts by running them in the plugin world
+            // This ensures on_created() is called and script instances are created
+            let is_editor_mode = matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
+            if is_editor_mode {
+                log::info!("Initializing UI plugin scripts in editor mode");
+                if let Some(ref mut manager) = self.shared.ui_plugin_manager {
+                    ctx.scene.run_scripts_for_world(manager.world_mut(), 0.0, true);
                 }
             }
         }
