@@ -731,7 +731,6 @@ impl EditorApplication {
                             if clicked_outside || nothing_focused {
                                 response.response.request_focus();
                             }
-                            }
                         }
                     }
 
