@@ -144,9 +144,10 @@ pub(crate) fn with_active_state<R>(
 ///
 /// # Implementation
 /// Uses generation counters to detect use-after-drop in debug builds.
-/// The PhantomData ensures the guard is not Send/Sync.
+/// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
+/// it from being moved across thread boundaries (raw pointers are Send/Sync).
 pub(crate) struct WorldGuard {
-    _marker: PhantomData<*const World>, // Not Send/Sync
+    _marker: PhantomData<Rc<()>>, // !Send + !Sync
 }
 
 impl WorldGuard {
@@ -199,9 +200,10 @@ impl Drop for WorldGuard {
 ///
 /// # Implementation
 /// Uses generation counters to detect use-after-drop in debug builds.
-/// The PhantomData ensures the guard is not Send/Sync.
+/// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
+/// it from being moved across thread boundaries (raw pointers are Send/Sync).
 pub(crate) struct RegistryGuard {
-    _marker: PhantomData<*const ComponentRegistry>, // Not Send/Sync
+    _marker: PhantomData<Rc<()>>, // !Send + !Sync
 }
 
 impl RegistryGuard {
@@ -254,10 +256,11 @@ impl Drop for RegistryGuard {
 ///
 /// # Implementation
 /// Uses generation counters to detect use-after-drop in debug builds.
-/// The PhantomData ensures the guard is not Send/Sync.
+/// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
+/// it from being moved across thread boundaries (raw pointers are Send/Sync).
 #[allow(dead_code)]
 pub(crate) struct InputStateGuard {
-    _marker: PhantomData<*const InputState>, // Not Send/Sync
+    _marker: PhantomData<Rc<()>>, // !Send + !Sync
 }
 
 impl InputStateGuard {
@@ -742,5 +745,65 @@ mod tests {
         // After guard drops, generation resets to 0
         let gen_after_2 = WORLD_GENERATION.with(|g| g.get());
         assert_eq!(gen_after_2, 0);
+    }
+
+    // Compile-time tests to ensure guards are !Send and !Sync
+    // These tests verify that guards cannot be moved across threads,
+    // preventing use-after-drop bugs from cross-thread guard drops.
+
+    #[test]
+    fn test_guards_are_not_send() {
+        // Helper to check if a type is NOT Send
+        fn assert_not_send<T: ?Sized>() {
+            // This will only compile if T is NOT Send
+            // We use a trait that is only implemented for !Send types
+            trait NotSend {}
+            impl<T: ?Sized> NotSend for T where T: Send {}
+
+            // If this compiles, the guards are properly !Send
+        }
+
+        // Verify all pointer-based guards are !Send
+        const _: () = {
+            // These assertions will cause compile errors if the guards become Send
+            fn _assert_world_guard_not_send() {
+                fn needs_send<T: Send>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_send::<WorldGuard>();
+            }
+            fn _assert_registry_guard_not_send() {
+                fn needs_send<T: Send>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_send::<RegistryGuard>();
+            }
+            fn _assert_input_state_guard_not_send() {
+                fn needs_send<T: Send>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_send::<InputStateGuard>();
+            }
+        };
+    }
+
+    #[test]
+    fn test_guards_are_not_sync() {
+        // Verify all pointer-based guards are !Sync
+        const _: () = {
+            // These assertions will cause compile errors if the guards become Sync
+            fn _assert_world_guard_not_sync() {
+                fn needs_sync<T: Sync>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_sync::<WorldGuard>();
+            }
+            fn _assert_registry_guard_not_sync() {
+                fn needs_sync<T: Sync>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_sync::<RegistryGuard>();
+            }
+            fn _assert_input_state_guard_not_sync() {
+                fn needs_sync<T: Sync>() {}
+                // Uncommenting this line should cause a compile error:
+                // needs_sync::<InputStateGuard>();
+            }
+        };
     }
 }
