@@ -411,7 +411,8 @@ struct StartupDialogState {
 impl StartupDialogState {
     fn new() -> Self {
         Self {
-            visible: cfg!(not(target_arch = "wasm32")),
+            // Disabled by default - now handled by Welcome Screen plugin
+            visible: false,
             new_project_name: "NewProject".to_string(),
             new_project_root: None,
             error_message: None,

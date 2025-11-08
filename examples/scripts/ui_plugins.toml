@@ -4,6 +4,16 @@
 # Each plugin is a Lua script with @editor annotation that provides
 # editor functionality through the UI scripting system.
 
+# Welcome Screen - VSCode-style project launcher
+[[plugin]]
+name = "Welcome Screen"
+script = "welcome_screen.lua"
+description = "Welcome screen with quick actions for opening/creating projects"
+category = "Core"
+plugin_type = "editor"
+enabled = true
+default_visible = true
+
 # Minimal test plugin for debugging
 [[plugin]]
 name = "Minimal Test"
