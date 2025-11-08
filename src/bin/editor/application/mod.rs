@@ -508,32 +508,77 @@ impl EditorApplication {
             egui::Window::new("Plugin Manager")
                 .open(&mut self.shared.windows.plugin_manager)
                 .resizable(true)
-                .default_size([300.0, 400.0])
+                .default_size([350.0, 500.0])
                 .show(ctx, |ui| {
-                    ui.heading("Installed Plugins");
+                    use ui_plugin_manager::PluginType;
+
+                    // Separate plugins by type
+                    let plugins = manager.plugins_mut();
+                    let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) =
+                        plugins.iter_mut().partition(|p| p.metadata.plugin_type == PluginType::Editor);
+
+                    // Show Editor Plugins section
+                    ui.heading("Editor Plugins");
+                    ui.label(egui::RichText::new("Built-in editor functionality").small().italics());
                     ui.separator();
 
-                    let plugins = manager.plugins_mut();
-                    for plugin in plugins {
-                        if !plugin.metadata.enabled {
-                            continue;
-                        }
-
-                        ui.horizontal(|ui| {
-                            let was_visible = plugin.visible;
-                            if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
-                                log::info!(
-                                    "Plugin '{}' visibility changed: {} -> {}",
-                                    plugin.metadata.name,
-                                    was_visible,
-                                    plugin.visible
-                                );
+                    if editor_plugins.is_empty() {
+                        ui.label(egui::RichText::new("No editor plugins installed").weak());
+                    } else {
+                        for plugin in &mut editor_plugins {
+                            if !plugin.metadata.enabled {
+                                continue;
                             }
-                            ui.label(&plugin.metadata.category);
-                        });
 
-                        ui.label(format!("  {}", plugin.metadata.description));
-                        ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let was_visible = plugin.visible;
+                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                    log::info!(
+                                        "Plugin '{}' visibility changed: {} -> {}",
+                                        plugin.metadata.name,
+                                        was_visible,
+                                        plugin.visible
+                                    );
+                                }
+                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
+                            });
+
+                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.add_space(4.0);
+                        }
+                    }
+
+                    ui.add_space(8.0);
+
+                    // Show User Plugins section
+                    ui.heading("User Plugins");
+                    ui.label(egui::RichText::new("Custom user-created plugins").small().italics());
+                    ui.separator();
+
+                    if user_plugins.is_empty() {
+                        ui.label(egui::RichText::new("No user plugins installed").weak());
+                    } else {
+                        for plugin in &mut user_plugins {
+                            if !plugin.metadata.enabled {
+                                continue;
+                            }
+
+                            ui.horizontal(|ui| {
+                                let was_visible = plugin.visible;
+                                if ui.checkbox(&mut plugin.visible, &plugin.metadata.name).changed() {
+                                    log::info!(
+                                        "Plugin '{}' visibility changed: {} -> {}",
+                                        plugin.metadata.name,
+                                        was_visible,
+                                        plugin.visible
+                                    );
+                                }
+                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
+                            });
+
+                            ui.label(egui::RichText::new(format!("  {}", plugin.metadata.description)).small());
+                            ui.add_space(4.0);
+                        }
                     }
                 });
 
