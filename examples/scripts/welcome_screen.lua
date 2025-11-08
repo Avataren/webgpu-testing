@@ -15,6 +15,7 @@ end
 function on_ui(self_entity, ui)
     local show_create = get_bool("show_create_form", false)
     local status = get_string("status_message", "")
+    local new_project_path = get_string("new_project_path", "")
 
     -- Header section
     ui:heading("Welcome to WebGPU Editor")
@@ -24,16 +25,21 @@ function on_ui(self_entity, ui)
     -- Quick Actions Section
     ui:heading("Start")
 
-    if ui:button("Open Project Folder...") then
-        -- TODO: This needs open_folder_dialog() which doesn't exist yet
-        -- For now, just show a message
-        set_string("status_message", "Open folder dialog not yet implemented in Lua API")
-        log_info("Open project requested")
+    if ui:button("📂  Open Project Folder...") then
+        local path = open_folder_dialog()
+        if path then
+            -- TODO: Send command to editor to load project
+            set_string("status_message", "Selected: " .. path)
+            log_info("Open project: " .. path)
+        end
     end
 
-    if ui:button("Create New Project") then
-        set_bool("show_create_form", not show_create)
-        set_string("status_message", "")
+    if ui:button("✨  Create New Project") then
+        local new_show_create = not show_create
+        set_bool("show_create_form", new_show_create)
+        if new_show_create then
+            set_string("status_message", "")
+        end
     end
 
     ui:separator()
@@ -41,27 +47,51 @@ function on_ui(self_entity, ui)
     -- Create Project Form (shown when "Create New Project" is clicked)
     if show_create then
         ui:heading("Create New Project")
+        ui:label("")
 
+        ui:label("Project Name:")
         local project_name = get_string("new_project_name", "MyProject")
         local changed, new_name = ui:text_edit("project_name_input", project_name)
         if changed then
             set_string("new_project_name", new_name)
         end
 
-        ui:label("Project Name: " .. project_name)
         ui:label("")
-        ui:label("Location: (folder dialog not yet available)")
+        ui:label("Location:")
+        if new_project_path == "" then
+            ui:label("(no folder selected)")
+        else
+            ui:label(new_project_path)
+        end
 
         if ui:button("Choose Folder...") then
-            set_string("status_message", "Folder dialog not yet implemented in Lua API")
+            local path = open_folder_dialog()
+            if path then
+                set_string("new_project_path", path)
+                set_string("status_message", "Location set to: " .. path)
+            end
         end
 
         ui:label("")
 
-        if ui:button("Create Project") then
-            -- TODO: Implement project creation
-            set_string("status_message", "Project creation: " .. project_name)
-            log_info("Create project: " .. project_name)
+        -- Only allow creating if both name and path are set
+        local can_create = project_name ~= "" and new_project_path ~= ""
+        local button_label = "Create Project"
+        if not can_create then
+            button_label = "Create Project (choose name and location first)"
+        end
+
+        if ui:button(button_label) then
+            if can_create then
+                -- TODO: Send command to editor to create project
+                local full_path = new_project_path .. "/" .. project_name
+                set_string("status_message", "Creating project: " .. full_path)
+                log_info("Create project: " .. project_name .. " at " .. new_project_path)
+
+                -- Reset form after creation attempt
+                set_bool("show_create_form", false)
+                set_string("new_project_path", "")
+            end
         end
 
         ui:separator()
@@ -77,13 +107,13 @@ function on_ui(self_entity, ui)
 
     -- Getting Started Tips
     ui:heading("Getting Started")
-    ui:label("Projects contain all your scenes, assets, and scripts")
-    ui:label("Projects are stored as folders on your disk")
-    ui:label("Each project can have multiple scenes")
+    ui:label("💡 Projects contain all your scenes, assets, and scripts")
+    ui:label("📁 Projects are stored as folders on your disk")
+    ui:label("🎮 Each project can have multiple scenes")
 
     -- Status message
     if status ~= "" then
         ui:separator()
-        ui:label("Status: " .. status)
+        ui:label(status)
     end
 end

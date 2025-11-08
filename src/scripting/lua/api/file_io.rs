@@ -343,5 +343,37 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
+    // open_folder_dialog(start_dir: string) -> string | nil
+    // Opens a native folder picker dialog and returns the selected folder path
+    // start_dir is optional - the directory to start in
+    globals.set(
+        "open_folder_dialog",
+        lua.create_function(|_, start_dir: Option<String>| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut dialog = rfd::FileDialog::new();
+
+                // Set starting directory if provided
+                if let Some(dir) = start_dir {
+                    let path = PathBuf::from(&dir);
+                    if path.exists() && path.is_dir() {
+                        dialog = dialog.set_directory(&path);
+                    }
+                }
+
+                match dialog.pick_folder() {
+                    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                    None => Ok(None),
+                }
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                log::error!("Folder dialogs not supported on WASM");
+                Ok(None)
+            }
+        })?,
+    )?;
+
     Ok(())
 }
