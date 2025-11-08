@@ -704,10 +704,14 @@ impl EditorApplication {
                         }
                     });
 
-                    // For Welcome Screen, always request focus to prevent locking
+                    // For Welcome Screen, request focus only if no child widget has it
+                    // This prevents the modal from locking while still allowing text input
                     if is_welcome_screen {
                         if let Some(response) = window_response {
-                            response.response.request_focus();
+                            // Only request focus if nothing else currently has focus
+                            if ctx.memory(|mem| mem.focus().is_none()) {
+                                response.response.request_focus();
+                            }
                         }
                     }
 
