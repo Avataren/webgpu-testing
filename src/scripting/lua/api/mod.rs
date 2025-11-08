@@ -4,6 +4,7 @@
 
 mod clipboard;
 mod component;
+mod coroutine;
 mod editor_commands;
 mod entity;
 mod events;
@@ -19,6 +20,7 @@ pub mod ui;
 use mlua::{Lua, Result as LuaResult};
 
 pub use clipboard::{ClipboardAccess, ClipboardGuard};
+pub(crate) use coroutine::{set_current_coroutine_id, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
 pub use ui::{UiCommand, UiContext, UiResponse};
 
@@ -37,6 +39,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     clipboard::register_clipboard_api(lua)?;
     ui::register_ui_api(lua)?;
     editor_commands::register_editor_command_api(lua)?;
+    coroutine::register_coroutine_api(lua)?;
 
     Ok(())
 }

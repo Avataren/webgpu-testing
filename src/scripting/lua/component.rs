@@ -6,11 +6,12 @@ use std::sync::Arc;
 
 use mlua::Lua;
 
+use super::api::{set_current_coroutine_id, CoroutineGuard};
 use super::commands::ScriptCommands;
 use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
 use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, StateGuard};
-use super::types::{LuaScript, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap};
+use super::types::{CoroutineMap, LuaScript, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap};
 
 /// Component that attaches a Lua script to an entity.
 #[derive(Clone)]
@@ -90,6 +91,8 @@ pub(crate) struct LuaScriptInstance {
     pub(crate) source: LuaScriptSource,
     pub(crate) handles: Rc<RefCell<EntityHandleRegistry>>,
     pub(crate) state_store: Rc<RefCell<ScriptStateMap>>,
+    /// Active coroutines for this script instance
+    pub(crate) coroutines: Rc<RefCell<CoroutineMap>>,
     /// Registry key for this instance's environment table
     pub(crate) env_registry_key: mlua::RegistryKey,
 }
@@ -129,6 +132,7 @@ impl LuaScriptInstance {
             source,
             handles: Rc::new(RefCell::new(EntityHandleRegistry::default())),
             state_store: Rc::new(RefCell::new(HashMap::new())),
+            coroutines: Rc::new(RefCell::new(HashMap::new())),
             env_registry_key,
         })
     }
@@ -158,6 +162,7 @@ impl LuaScriptInstance {
         let _state_guard = StateGuard::enter(&state);
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _entity_guard = EntityGuard::enter(entity_bits);
+        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
 
         self.call_function(lua, "on_created", entity_bits)
     }
@@ -184,6 +189,7 @@ impl LuaScriptInstance {
         let _state_guard = StateGuard::enter(&state);
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _entity_guard = EntityGuard::enter(entity_bits);
+        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
 
         self.call_function_with_args(lua, "update", (entity_bits, dt))
     }
@@ -210,6 +216,7 @@ impl LuaScriptInstance {
         let _state_guard = StateGuard::enter(&state);
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _entity_guard = EntityGuard::enter(entity_bits);
+        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
 
         self.call_function_with_args(lua, "on_ui", (entity_bits, ui_context))
     }
@@ -295,6 +302,102 @@ impl LuaScriptInstance {
             Ok(_) => Ok(FunctionCallOutcome::Executed),
             Err(e) => Err(LuaScriptingError::Lua(e)),
         }
+    }
+
+    /// Process and resume coroutines that are ready to run.
+    ///
+    /// This updates wait states and resumes coroutines that have completed their wait.
+    pub(crate) fn process_coroutines(
+        &mut self,
+        _lua: &Lua,
+        dt: f64,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<(), LuaScriptingError> {
+        use super::types::CoroutineStatus;
+
+        let _commands_guard = CommandGuard::enter(commands.clone());
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
+
+        // Collect IDs of coroutines that are ready to resume
+        let mut to_resume = Vec::new();
+        {
+            let mut coroutines = self.coroutines.borrow_mut();
+
+            // Update all coroutines' wait states
+            for (id, coro_state) in coroutines.iter_mut() {
+                coro_state.update(dt);
+
+                // Check if ready to resume
+                if coro_state.status == CoroutineStatus::Suspended && coro_state.is_ready(dt) {
+                    to_resume.push(*id);
+                }
+            }
+        }
+
+        // Resume ready coroutines
+        for id in to_resume {
+            // Set current coroutine ID before resuming
+            set_current_coroutine_id(Some(id));
+
+            let result = {
+                let mut coroutines = self.coroutines.borrow_mut();
+                let coro_state = match coroutines.get_mut(&id) {
+                    Some(state) => state,
+                    None => {
+                        set_current_coroutine_id(None);
+                        continue;
+                    }
+                };
+
+                // Mark as running
+                coro_state.status = CoroutineStatus::Running;
+
+                // Reset the wait state
+                coro_state.reset_wait();
+
+                // Resume the coroutine
+                coro_state.thread.resume::<()>(())
+            };
+
+            // Update status based on result
+            let mut coroutines = self.coroutines.borrow_mut();
+            if let Some(coro_state) = coroutines.get_mut(&id) {
+                match result {
+                    Ok(_) => {
+                        // Check if thread is finished or in error state
+                        match coro_state.thread.status() {
+                            mlua::ThreadStatus::Error => {
+                                coro_state.status = CoroutineStatus::Dead;
+                            }
+                            mlua::ThreadStatus::Resumable => {
+                                coro_state.status = CoroutineStatus::Suspended;
+                            }
+                            _ => {
+                                coro_state.status = CoroutineStatus::Suspended;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        coro_state.status = CoroutineStatus::Dead;
+                        log::error!(target: "script", "Coroutine {} error: {}", id, e);
+                    }
+                }
+            }
+
+            // Clear current coroutine ID after processing
+            set_current_coroutine_id(None);
+        }
+
+        // Clean up dead coroutines
+        self.coroutines
+            .borrow_mut()
+            .retain(|_, state| state.status != CoroutineStatus::Dead);
+
+        Ok(())
     }
 }
 
