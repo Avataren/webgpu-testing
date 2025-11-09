@@ -83,13 +83,6 @@ mod tests {
         Ok(())
     }
 
-    /// Test component registry.
-    #[test]
-    fn test_component_registry_access() -> Result<(), LuaScriptingError> {
-        let state = ScriptingState::new()?;
-        let _registry = state.component_registry();
-        Ok(())
-    }
 
     /// Test multiple script sources.
     #[test]

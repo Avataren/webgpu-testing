@@ -429,35 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_guard_lifecycle() {
-        // Create a dummy registry
-        let registry = ComponentRegistry::new();
-
-        // Initially, accessing active registry should fail
-        let result = with_active_registry(|_r| Ok(()));
-        assert!(result.is_err());
-
-        // Create a guard
-        {
-            let _guard = RegistryGuard::enter(&registry);
-
-            // Now access should succeed
-            let result = with_active_registry(|_r| Ok(42));
-            assert_eq!(result.unwrap(), 42);
-
-            // Verify generation counter is non-zero
-            let gen = REGISTRY_GENERATION.with(|g| g.get());
-            assert_ne!(gen, 0);
-        }
-
-        // After guard is dropped, access should fail again
-        let result = with_active_registry(|_r| Ok(()));
-        assert!(result.is_err());
-
-        // Generation counter should be reset
-        let gen = REGISTRY_GENERATION.with(|g| g.get());
-        assert_eq!(gen, 0);
-    }
 
     #[test]
     fn test_entity_guard_lifecycle() {
@@ -591,14 +562,6 @@ mod tests {
             panic!("Expected RuntimeError");
         }
 
-        let result = with_active_registry(|_| Ok(()));
-        assert!(result.is_err());
-        if let Err(mlua::Error::RuntimeError(msg)) = result {
-            assert_eq!(msg, "component registry not available");
-        } else {
-            panic!("Expected RuntimeError");
-        }
-
         let result = with_active_input_state(|_| Ok(()));
         assert!(result.is_err());
         if let Err(mlua::Error::RuntimeError(msg)) = result {
@@ -671,11 +634,6 @@ mod tests {
                 // Uncommenting this line should cause a compile error:
                 // needs_send::<WorldGuard>();
             }
-            fn _assert_registry_guard_not_send() {
-                fn needs_send<T: Send>() {}
-                // Uncommenting this line should cause a compile error:
-                // needs_send::<RegistryGuard>();
-            }
             fn _assert_input_state_guard_not_send() {
                 fn needs_send<T: Send>() {}
                 // Uncommenting this line should cause a compile error:
@@ -693,11 +651,6 @@ mod tests {
                 fn needs_sync<T: Sync>() {}
                 // Uncommenting this line should cause a compile error:
                 // needs_sync::<WorldGuard>();
-            }
-            fn _assert_registry_guard_not_sync() {
-                fn needs_sync<T: Sync>() {}
-                // Uncommenting this line should cause a compile error:
-                // needs_sync::<RegistryGuard>();
             }
             fn _assert_input_state_guard_not_sync() {
                 fn needs_sync<T: Sync>() {}

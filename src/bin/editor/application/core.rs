@@ -121,19 +121,19 @@ pub struct EditorSharedState {
     pub(super) script_watcher: Option<ScriptWatcher>,
     /// UI commands from scene scripts collected during gpu_update
     pub(super) script_ui_commands:
-        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
+        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::lua::api::ui::UiCommand>>,
     /// UI commands from plugin scripts collected during gpu_update
     pub(super) plugin_ui_commands:
-        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::rune::api::ui::UiCommand>>,
+        std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::lua::api::ui::UiCommand>>,
     /// UI responses to be fed back to scripts in the next frame
     pub(super) script_ui_responses: std::collections::HashMap<
         Entity,
-        std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+        std::collections::HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
     >,
     /// UI responses from plugin scripts to be fed back to plugins in the next frame
     pub(super) plugin_ui_responses: std::collections::HashMap<
         Entity,
-        std::collections::HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+        std::collections::HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
     >,
     /// UI plugin manager for loading and managing editor plugins
     pub(super) ui_plugin_manager: Option<super::ui_plugin_manager::UiPluginManager>,
