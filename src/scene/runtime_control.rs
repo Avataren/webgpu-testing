@@ -24,13 +24,13 @@ impl SceneRuntimeController {
     }
 
     pub(crate) fn lua_scripting(&self) -> &crate::scripting::lua::state::ScriptingState {
-        self.runtime.lua_scripting()
+        self.runtime.scripting()
     }
 
     pub(crate) fn lua_scripting_mut(
         &mut self,
     ) -> &mut crate::scripting::lua::state::ScriptingState {
-        self.runtime.lua_scripting_mut()
+        self.runtime.scripting_mut()
     }
 
     pub(crate) fn init_timer(&mut self) {
@@ -77,7 +77,7 @@ impl SceneRuntimeController {
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
         per_entity_viewports: Option<&std::collections::HashMap<hecs::Entity, (f32, f32, f32)>>,
-    ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>>
+    ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::lua::api::ui::UiCommand>>
     {
         self.runtime.process_script_ui(
             world,
@@ -94,12 +94,11 @@ impl SceneRuntimeController {
         world_id: usize,
         responses: std::collections::HashMap<
             hecs::Entity,
-            std::collections::HashMap<String, crate::scripting::rune::api::ui::UiResponse>,
+            std::collections::HashMap<String, crate::scripting::lua::api::ui::UiResponse>,
         >,
-        include_rune: bool,
     ) {
         self.runtime
-            .set_ui_responses_for_world(world_id, responses, include_rune);
+            .set_ui_responses_for_world(world_id, responses);
     }
 }
 
@@ -114,7 +113,7 @@ mod tests {
     use super::SceneRuntimeController;
     use crate::scene::components::TransformComponent;
     use crate::scene::transform::Transform;
-    use crate::scripting::RuneScriptComponent;
+    use crate::scripting::LuaScriptComponent;
     use glam::Vec3;
     use hecs::World;
 
@@ -124,7 +123,7 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn((
             TransformComponent(Transform::default()),
-            RuneScriptComponent::new_inline(
+            LuaScriptComponent::new_inline(
                 "RuntimeControllerTest",
                 r#"
                 pub fn on_created(self_entity) {

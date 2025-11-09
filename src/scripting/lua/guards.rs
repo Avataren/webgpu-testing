@@ -5,7 +5,6 @@ use std::rc::Rc;
 use hecs::World;
 
 use crate::scene::InputState;
-use crate::scripting::component_registry::ComponentRegistry;
 
 use super::commands::ScriptCommands;
 use super::types::{ScriptEvent, ScriptStateMap};
@@ -66,9 +65,6 @@ thread_local! {
     // to detect use-after-drop bugs in debug builds
     pub(crate) static ACTIVE_WORLD: RefCell<Option<TrackedPointer<World>>> = const { RefCell::new(None) };
     pub(crate) static WORLD_GENERATION: Cell<Generation> = const { Cell::new(0) };
-
-    pub(crate) static ACTIVE_REGISTRY: RefCell<Option<TrackedPointer<ComponentRegistry>>> = const { RefCell::new(None) };
-    pub(crate) static REGISTRY_GENERATION: Cell<Generation> = const { Cell::new(0) };
 
     pub(crate) static ACTIVE_INPUT_STATE: RefCell<Option<TrackedPointer<InputState>>> = const { RefCell::new(None) };
     pub(crate) static INPUT_STATE_GENERATION: Cell<Generation> = const { Cell::new(0) };
@@ -185,61 +181,6 @@ impl Drop for WorldGuard {
 
         // Reset generation counter when guard is dropped
         WORLD_GENERATION.with(|gen| gen.set(0));
-    }
-}
-
-/// Guard that makes a ComponentRegistry reference available to Lua scripts during execution.
-///
-/// # Safety Constraints
-/// - The ComponentRegistry reference must remain valid for the entire lifetime of this guard
-/// - Only one RegistryGuard should be active per thread at a time
-/// - Script execution must be single-threaded and non-reentrant
-/// - The guard must not be moved across thread boundaries
-///
-/// # Implementation
-/// Uses generation counters to detect use-after-drop in debug builds.
-/// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
-/// it from being moved across thread boundaries (raw pointers are Send/Sync).
-pub(crate) struct RegistryGuard {
-    _marker: PhantomData<Rc<()>>, // !Send + !Sync
-}
-
-impl RegistryGuard {
-    /// Creates a new RegistryGuard, making the component registry available to scripts.
-    ///
-    /// # Safety Constraints
-    /// The caller must ensure that:
-    /// - `registry` remains valid for the entire lifetime of this guard
-    /// - No other RegistryGuard is active on this thread
-    /// - Script execution will not be reentrant
-    pub fn enter(registry: &ComponentRegistry) -> Self {
-        let ptr = registry as *const ComponentRegistry;
-        let generation = REGISTRY_GENERATION.with(|gen| {
-            let new_gen = gen.get().wrapping_add(1);
-            gen.set(new_gen);
-            new_gen
-        });
-
-        debug_assert!(
-            ACTIVE_REGISTRY.with(|cell| cell.borrow().is_none()),
-            "RegistryGuard: attempted to create guard while another is active"
-        );
-
-        ACTIVE_REGISTRY
-            .with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
-
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl Drop for RegistryGuard {
-    fn drop(&mut self) {
-        ACTIVE_REGISTRY.with(|cell| *cell.borrow_mut() = None);
-
-        // Reset generation counter when guard is dropped
-        REGISTRY_GENERATION.with(|gen| gen.set(0));
     }
 }
 
@@ -385,46 +326,6 @@ pub(crate) fn with_active_entity<R>(
     })
 }
 
-/// Executes a closure with access to the active ComponentRegistry reference.
-///
-/// # Safety
-/// This function dereferences a raw pointer that was stored during RegistryGuard::enter.
-/// The following invariants must hold:
-/// - The RegistryGuard that set this pointer must still be alive
-/// - The ComponentRegistry reference must not have been moved or deallocated
-/// - Script execution must be single-threaded
-///
-/// # Panics (Debug builds only)
-/// - If no RegistryGuard is active
-/// - If the generation counter has changed (indicating the guard was dropped)
-pub(crate) fn with_active_registry<R>(
-    f: impl FnOnce(&ComponentRegistry) -> Result<R, mlua::Error>,
-) -> Result<R, mlua::Error> {
-    ACTIVE_REGISTRY.with(|cell| {
-        let opt = cell.borrow();
-        let Some(tracked) = opt.as_ref() else {
-            return Err(mlua::Error::RuntimeError(
-                "component registry not available".into(),
-            ));
-        };
-
-        // Verify the generation counter matches in debug builds
-        debug_assert_eq!(
-            tracked.generation,
-            REGISTRY_GENERATION.with(|gen| gen.get()),
-            "RegistryGuard generation mismatch - guard may have been dropped"
-        );
-
-        // SAFETY: The ComponentRegistry pointer is valid because:
-        // 1. It was set by RegistryGuard::enter with a valid reference
-        // 2. The RegistryGuard is still alive (verified by generation counter in debug)
-        // 3. Script execution is single-threaded and non-reentrant
-        // 4. The ComponentRegistry is not moved during guard lifetime
-        let registry = unsafe { &*tracked.ptr };
-        f(registry)
-    })
-}
-
 /// Executes a closure with access to the active InputState reference.
 ///
 /// # Safety
@@ -528,35 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_guard_lifecycle() {
-        // Create a dummy registry
-        let registry = ComponentRegistry::new();
-
-        // Initially, accessing active registry should fail
-        let result = with_active_registry(|_r| Ok(()));
-        assert!(result.is_err());
-
-        // Create a guard
-        {
-            let _guard = RegistryGuard::enter(&registry);
-
-            // Now access should succeed
-            let result = with_active_registry(|_r| Ok(42));
-            assert_eq!(result.unwrap(), 42);
-
-            // Verify generation counter is non-zero
-            let gen = REGISTRY_GENERATION.with(|g| g.get());
-            assert_ne!(gen, 0);
-        }
-
-        // After guard is dropped, access should fail again
-        let result = with_active_registry(|_r| Ok(()));
-        assert!(result.is_err());
-
-        // Generation counter should be reset
-        let gen = REGISTRY_GENERATION.with(|g| g.get());
-        assert_eq!(gen, 0);
-    }
 
     #[test]
     fn test_entity_guard_lifecycle() {
@@ -690,14 +562,6 @@ mod tests {
             panic!("Expected RuntimeError");
         }
 
-        let result = with_active_registry(|_| Ok(()));
-        assert!(result.is_err());
-        if let Err(mlua::Error::RuntimeError(msg)) = result {
-            assert_eq!(msg, "component registry not available");
-        } else {
-            panic!("Expected RuntimeError");
-        }
-
         let result = with_active_input_state(|_| Ok(()));
         assert!(result.is_err());
         if let Err(mlua::Error::RuntimeError(msg)) = result {
@@ -770,11 +634,6 @@ mod tests {
                 // Uncommenting this line should cause a compile error:
                 // needs_send::<WorldGuard>();
             }
-            fn _assert_registry_guard_not_send() {
-                fn needs_send<T: Send>() {}
-                // Uncommenting this line should cause a compile error:
-                // needs_send::<RegistryGuard>();
-            }
             fn _assert_input_state_guard_not_send() {
                 fn needs_send<T: Send>() {}
                 // Uncommenting this line should cause a compile error:
@@ -792,11 +651,6 @@ mod tests {
                 fn needs_sync<T: Sync>() {}
                 // Uncommenting this line should cause a compile error:
                 // needs_sync::<WorldGuard>();
-            }
-            fn _assert_registry_guard_not_sync() {
-                fn needs_sync<T: Sync>() {}
-                // Uncommenting this line should cause a compile error:
-                // needs_sync::<RegistryGuard>();
             }
             fn _assert_input_state_guard_not_sync() {
                 fn needs_sync<T: Sync>() {}

@@ -127,11 +127,11 @@ impl Scene {
     }
 
     pub fn lua_scripting(&self) -> &crate::scripting::lua::state::ScriptingState {
-        self.runtime.lua_scripting()
+        self.runtime.scripting()
     }
 
     pub fn lua_scripting_mut(&mut self) -> &mut crate::scripting::lua::state::ScriptingState {
-        self.runtime.lua_scripting_mut()
+        self.runtime.scripting_mut()
     }
 
     /// Process UI for all scripts in the main scene and return their UI commands.
@@ -145,7 +145,7 @@ impl Scene {
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
         per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
             self.runtime.process_script_ui(
@@ -173,7 +173,7 @@ impl Scene {
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
         per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
+    ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
         self.runtime.process_script_ui(
             world,
             editor_mode,
@@ -193,21 +193,21 @@ impl Scene {
 
     pub fn set_ui_responses(
         &mut self,
-        responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>,
+        responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
     ) {
         let world_id = crate::scene::world_id(self.main_world());
         self.runtime
-            .set_ui_responses_for_world(world_id, responses, true);
+            .set_ui_responses_for_world(world_id, responses);
     }
 
     /// Set UI responses for a specific world (e.g., plugin worlds).
     pub fn set_ui_responses_for_world_id(
         &mut self,
         world_id: usize,
-        responses: HashMap<Entity, HashMap<String, crate::scripting::rune::api::ui::UiResponse>>,
+        responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
     ) {
         self.runtime
-            .set_ui_responses_for_world(world_id, responses, false);
+            .set_ui_responses_for_world(world_id, responses);
     }
 
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {

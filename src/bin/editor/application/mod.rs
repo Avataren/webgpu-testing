@@ -560,11 +560,11 @@ impl EditorApplication {
 
         let mut plugin_responses: HashMap<
             hecs::Entity,
-            HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+            HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
         > = HashMap::new();
         let mut scene_responses: HashMap<
             hecs::Entity,
-            HashMap<String, wgpu_cube::scripting::rune::api::ui::UiResponse>,
+            HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
         > = HashMap::new();
 
         // Render plugin manager window if we have plugins and it's open
@@ -1755,13 +1755,18 @@ impl EditorApplication {
                     {
                         let world = ctx.scene.main_world_mut();
                         // Check if entity already has a script component
-                        if world.get::<&RuneScriptComponent>(entity).is_ok() {
+                        if world.get::<&LuaScriptComponent>(entity).is_ok() {
                             log::warn!("Entity {:?} already has a script component", entity);
                         } else {
                             // Create a default inline script
-                            let default_script = RuneScriptComponent::new(RuneScriptSource::inline(
+                            let default_script = LuaScriptComponent::new(LuaScriptSource::inline(
                                 "new_script",
-                                "// New script\n\npub fn on_update(dt) {\n    // Your code here\n}\n",
+                                "-- New script
+
+function update(self_entity, dt)
+    -- Your code here
+end
+",
                             ));
                             match world.insert(entity, (default_script,)) {
                                 Ok(_) => {
@@ -1791,10 +1796,10 @@ impl EditorApplication {
                     {
                         let world = ctx.scene.main_world_mut();
                         // Check if entity has a script component
-                        if let Ok(mut script) = world.get::<&mut RuneScriptComponent>(entity) {
+                        if let Ok(mut script) = world.get::<&mut LuaScriptComponent>(entity) {
                             // Create new script source from file
-                            let new_source = RuneScriptSource::File { path: script_path.clone() };
-                            *script = RuneScriptComponent::new(new_source);
+                            let new_source = LuaScriptSource::File { path: script_path.clone() };
+                            *script = LuaScriptComponent::new(new_source);
                             updated = true;
                             log::info!(
                                 "Changed script source for entity {:?} to {:?}",

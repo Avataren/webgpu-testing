@@ -7,7 +7,6 @@ use log::error;
 use mlua::LuaSerdeExt;
 
 use crate::scene;
-use crate::scripting::component_registry::ComponentRegistry;
 
 type WorldId = usize;
 
@@ -24,7 +23,6 @@ pub struct ScriptingState {
     runtime: LuaScriptingRuntime,
     instances: HashMap<WorldId, HashMap<Entity, LuaScriptInstance>>,
     pending_gltf_imports: Vec<PendingGltfImport>,
-    component_registry: ComponentRegistry,
     event_subscriptions: EventSubscriptions,
     /// Pending state restoration per world after script reload
     pending_state_restoration: HashMap<WorldId, HashMap<Entity, ScriptStateMap>>,
@@ -39,7 +37,6 @@ impl ScriptingState {
             runtime: LuaScriptingRuntime::new()?,
             instances: HashMap::new(),
             pending_gltf_imports: Vec::new(),
-            component_registry: ComponentRegistry::new(),
             event_subscriptions: HashMap::new(),
             pending_state_restoration: HashMap::new(),
             ui_responses: HashMap::new(),
@@ -388,7 +385,7 @@ impl ScriptingState {
     ) -> Result<(), LuaScriptingError> {
         let result = commands
             .borrow_mut()
-            .apply(world, &self.component_registry)?;
+            .apply(world)?;
 
         // Store pending glTF imports
         self.pending_gltf_imports.extend(result.gltf_imports);
@@ -559,15 +556,6 @@ impl ScriptingState {
         std::mem::take(&mut self.pending_gltf_imports)
     }
 
-    /// Access the component registry.
-    pub fn component_registry(&self) -> &ComponentRegistry {
-        &self.component_registry
-    }
-
-    /// Mutably access the component registry.
-    pub fn component_registry_mut(&mut self) -> &mut ComponentRegistry {
-        &mut self.component_registry
-    }
     /// Call on_ui() for all scripts and collect their UI commands.
     ///
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
@@ -586,7 +574,7 @@ impl ScriptingState {
         per_entity_viewports: Option<&HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
-        use super::guards::{RegistryGuard, WorldGuard};
+        use super::guards::WorldGuard;
 
         log::debug!(target: "script_ui", "Lua process_ui called with editor_mode={}", editor_mode);
 
@@ -595,9 +583,8 @@ impl ScriptingState {
         let mut ui_commands = HashMap::new();
         let event_queue = Rc::new(RefCell::new(Vec::new()));
 
-        // Set up guards for World and ComponentRegistry access
+        // Set up guard for World access
         let _world_guard = WorldGuard::enter(world);
-        let _registry_guard = RegistryGuard::enter(&self.component_registry);
 
         let mut query = world.query::<&LuaScriptComponent>();
         for (entity, component) in query.iter() {
