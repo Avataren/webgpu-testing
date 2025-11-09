@@ -24,7 +24,6 @@ pub fn handle_update_point_light(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -56,7 +55,6 @@ pub fn handle_update_directional_light(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -84,7 +82,6 @@ pub fn handle_update_spot_light(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

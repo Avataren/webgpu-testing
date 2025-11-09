@@ -43,7 +43,6 @@ pub fn handle_update_material(
     if can_update {
         if let Some(asset) = ctx.scene.assets.material_mut(handle) {
             *asset.material_mut() = material;
-            ctx.app.record_scene_change(ctx.scene);
             ActionResult::scene_changed()
         } else {
             log::warn!(
@@ -102,7 +101,6 @@ pub fn handle_set_material_kind(
                 asset.set_asset_type(AssetTypeTag::default());
             }
         }
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         log::warn!(
@@ -185,7 +183,6 @@ pub fn handle_assign_shader_source(
             metadata.set_source_path(Some(canonical));
             asset.set_kind(MaterialKind::Shader(metadata));
             asset.set_asset_type(AssetTypeTag::new("shader_material"));
-            ctx.app.record_scene_change(ctx.scene);
             ActionResult::scene_changed()
         } else {
             log::warn!(
@@ -288,7 +285,6 @@ pub fn handle_create_shader_source(
             metadata.set_source_path(Some(canonical));
             asset.set_kind(MaterialKind::Shader(metadata));
             asset.set_asset_type(AssetTypeTag::new("shader_material"));
-            ctx.app.record_scene_change(ctx.scene);
             ActionResult::scene_changed()
         } else {
             log::warn!(
@@ -336,7 +332,6 @@ pub fn handle_create_shader_material(
         .insert_one(entity, MaterialComponent(new_handle))
     {
         Ok(_) => {
-            ctx.app.record_scene_change(ctx.scene);
             ActionResult::scene_changed()
         }
         Err(err) => {

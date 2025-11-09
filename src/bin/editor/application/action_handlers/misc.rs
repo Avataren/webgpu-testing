@@ -49,7 +49,6 @@ pub fn handle_set_can_cast_shadow(
     }
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -75,7 +74,6 @@ pub fn handle_rename_entity(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

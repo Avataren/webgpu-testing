@@ -37,7 +37,6 @@ pub fn handle_update_camera(
             ctx.scene.set_active_camera_entity(Some(entity));
             ctx.app.shared.active_camera_entity = ctx.scene.active_camera_entity();
         }
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

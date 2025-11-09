@@ -281,12 +281,16 @@ impl EditorApplication {
         }
 
         // Get viewport information for in-game UI positioning
-        let (viewport_width, viewport_height, pixels_per_point) = if let Some(rect) = self.shared.viewports.game_viewport.rect() {
-            let ppp = ctx.egui.pixels_per_point();
-            (Some(rect.width()), Some(rect.height()), Some(ppp))
-        } else {
-            (None, None, None)
-        };
+        let (viewport_width, viewport_height, pixels_per_point) =
+            if let Some(rect) = self.shared.viewports.game_viewport.rect() {
+                (
+                    Some(rect.width()),
+                    Some(rect.height()),
+                    self.shared.last_pixels_per_point,
+                )
+            } else {
+                (None, None, None)
+            };
 
         // Process scene scripts
         self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode, viewport_width, viewport_height, pixels_per_point);
@@ -321,6 +325,7 @@ impl EditorApplication {
 
         self.shared.viewports.scene_viewport.clear();
         self.shared.viewports.game_viewport.clear();
+        self.shared.last_pixels_per_point = Some(ctx.pixels_per_point());
 
         self.project_system_mut().show_startup_dialog(ctx);
 
@@ -952,6 +957,7 @@ impl EditorApplication {
 
         self.resolve_active_camera_entity(&mut ctx.scene);
         let mut transforms_changed = false;
+        let mut scene_changed = false;
 
         // Route all actions through the dispatcher
         use action_handlers::dispatch_action;
@@ -971,6 +977,9 @@ impl EditorApplication {
 
             if result.transforms_changed {
                 transforms_changed = true;
+            }
+            if result.scene_changed {
+                scene_changed = true;
             }
         }
 
@@ -1907,6 +1916,10 @@ impl EditorApplication {
 
         if transforms_changed {
             ctx.scene.propagate_transforms();
+        }
+
+        if scene_changed {
+            self.record_scene_change(&mut ctx.scene);
         }
     }
 

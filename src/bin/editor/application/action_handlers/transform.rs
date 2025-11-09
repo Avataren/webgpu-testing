@@ -24,7 +24,6 @@ pub fn handle_update_transform(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::transforms_changed()
     } else {
         ActionResult::no_change()

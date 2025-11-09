@@ -2079,17 +2079,6 @@ fn show_script_section(
     action
 }
 
-fn show_add_script_section(ui: &mut egui::Ui, entity: Entity) -> Option<InspectorAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        ui.label("Script");
-        if ui.button("Add Script").clicked() {
-            action = Some(InspectorAction::AddScript { entity });
-        }
-    });
-    action
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 struct ScriptListCache {
     scripts: Vec<PathBuf>,

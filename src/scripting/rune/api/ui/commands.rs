@@ -74,7 +74,7 @@ impl UiCommand {
         // Special handling for MenuBar and Menu to avoid double rendering
         match self {
             UiCommand::MenuBar { items } => {
-                egui::menu::bar(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
                     for item in items {
                         item.render_and_collect(ui, responses);
                     }
@@ -100,7 +100,7 @@ impl UiCommand {
                     }
                 });
             }
-            UiCommand::MenuItem { id, .. } => {
+            UiCommand::MenuItem { .. } => {
                 // For all other commands, use render_with_id
                 if let Some((id, response)) = self.render_with_id(ui) {
                     responses.insert(id, response);
@@ -260,7 +260,7 @@ impl UiCommand {
                 })
             }
             UiCommand::MenuBar { items } => {
-                egui::menu::bar(ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
                     for item in items {
                         item.render(ui);
                     }

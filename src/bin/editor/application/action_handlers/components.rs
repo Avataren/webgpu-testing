@@ -22,7 +22,6 @@ pub fn handle_add_camera(ctx: &mut ActionContext, entity: Entity) -> ActionResul
         match world.insert(entity, (camera,)) {
             Ok(_) => {
                 log::info!("Added camera component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -64,7 +63,6 @@ pub fn handle_add_mesh(ctx: &mut ActionContext, entity: Entity) -> ActionResult 
         ) {
             Ok(_) => {
                 log::info!("Added mesh component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -91,7 +89,6 @@ pub fn handle_add_point_light(ctx: &mut ActionContext, entity: Entity) -> Action
         match world.insert(entity, (light,)) {
             Ok(_) => {
                 log::info!("Added point light component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -120,7 +117,6 @@ pub fn handle_add_directional_light(ctx: &mut ActionContext, entity: Entity) -> 
         match world.insert(entity, (light,)) {
             Ok(_) => {
                 log::info!("Added directional light component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -146,7 +142,6 @@ pub fn handle_add_spot_light(ctx: &mut ActionContext, entity: Entity) -> ActionR
         match world.insert(entity, (light,)) {
             Ok(_) => {
                 log::info!("Added spot light component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -187,7 +182,6 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
     }
 
     ctx.scene.set_environment(component.to_environment());
-    ctx.app.record_scene_change(ctx.scene);
     ActionResult::scene_changed()
 }
 
@@ -206,7 +200,6 @@ pub fn handle_add_particle_system(ctx: &mut ActionContext, entity: Entity) -> Ac
         match world.insert(entity, (component, emitter)) {
             Ok(_) => {
                 log::info!("Added particle system component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {

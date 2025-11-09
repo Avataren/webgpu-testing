@@ -22,7 +22,6 @@ pub fn handle_add_script(ctx: &mut ActionContext, entity: Entity) -> ActionResul
         match world.insert(entity, (default_script,)) {
             Ok(_) => {
                 log::info!("Added Lua script component to entity {:?}", entity);
-                ctx.app.record_scene_change(ctx.scene);
                 ActionResult::scene_changed()
             }
             Err(err) => {
@@ -62,7 +61,6 @@ pub fn handle_change_script_source(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         // Reload the script runtime to pick up the new script
         ctx.scene.reset_script_runtime();
         ActionResult::scene_changed()

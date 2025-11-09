@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
-use wgpu_cube::project::{ProjectError, ProjectManifest, SceneDocument};
+use wgpu_cube::project::{ProjectManifest, SceneDocument};
 use wgpu_cube::scene::{
     InstantiatedSceneAsset, Name, SceneLibrary, Transform, TransformComponent, Visible,
 };

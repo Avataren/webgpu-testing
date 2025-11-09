@@ -221,6 +221,17 @@ impl UiPluginManager {
             .name
             .clone();
 
+        if let Some(expected_path) = self.get_script_path(entity) {
+            if expected_path != path {
+                log::warn!(
+                    "Reloading plugin '{}' with path {:?}, but manifest path is {:?}",
+                    plugin_name,
+                    path,
+                    expected_path
+                );
+            }
+        }
+
         // Read the new script source
         let _source_code = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read script {}: {}", path.display(), e))?;

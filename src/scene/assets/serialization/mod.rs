@@ -17,6 +17,7 @@ pub use components::{
     SerializedPointLight, SerializedSpotLight,
 };
 
+#[allow(unused_imports)]
 pub use material::{SerializedMaterial, SerializedMaterialKind, SerializedTextureSlot};
 
 pub use transform::SerializedTransform;

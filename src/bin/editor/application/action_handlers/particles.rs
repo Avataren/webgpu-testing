@@ -49,7 +49,6 @@ pub fn handle_update_particle_system(
     }
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -85,7 +84,6 @@ pub fn handle_update_particle_emitter(
     };
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -122,7 +120,6 @@ pub fn handle_update_particle_behavior(
     }
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
@@ -178,7 +175,6 @@ pub fn handle_set_billboard(
     }
 
     if updated {
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

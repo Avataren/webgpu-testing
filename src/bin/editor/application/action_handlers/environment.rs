@@ -79,7 +79,6 @@ pub fn handle_update_environment(
         if let Some(env) = environment {
             ctx.scene.set_environment(env);
         }
-        ctx.app.record_scene_change(ctx.scene);
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

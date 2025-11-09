@@ -143,6 +143,8 @@ pub struct EditorSharedState {
     pub(super) welcome_plugin_override: Option<bool>,
     /// Reload notifications shown as toasts
     pub(super) reload_notifications: Vec<ReloadNotification>,
+    /// Last known egui pixels-per-point (recorded during UI rendering)
+    pub(super) last_pixels_per_point: Option<f32>,
 }
 
 impl EditorSharedState {
@@ -392,6 +394,7 @@ impl EditorApplicationBuilder {
             ui_plugins_loaded: false,
             welcome_plugin_override: None,
             reload_notifications: Vec::new(),
+            last_pixels_per_point: None,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -923,7 +926,9 @@ impl EditorApplication {
             return;
         };
 
+        let total_requests = pending.len();
         let mut reload_count = 0;
+        let mut failed_count = 0;
         let mut plugin_names = Vec::new();
 
         for (entity, path) in pending {
@@ -935,6 +940,7 @@ impl EditorApplication {
                 }
                 Err(err) => {
                     log::error!("❌ Failed to reload plugin: {}", err);
+                    failed_count += 1;
                     // Add error notification
                     self.shared
                         .reload_notifications
@@ -965,6 +971,14 @@ impl EditorApplication {
                         "✅ Reloaded {} plugins",
                         reload_count
                     )));
+            }
+
+            if failed_count > 0 {
+                self.shared.reload_notifications.push(
+                    ReloadNotification::warning(format!(
+                        "Reloaded {reload_count} plugin(s); {failed_count} of {total_requests} failed"
+                    )),
+                );
             }
         }
     }
