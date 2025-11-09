@@ -176,15 +176,19 @@ impl UiContext {
 
     /// Display a checkbox and return the new value.
     pub fn checkbox(&self, id: String, current_value: bool, label: String) -> bool {
+        // Prefer the last response so the visual state stays in sync with egui.
+        let command_value = self
+            .get_response(&id)
+            .and_then(|r| r.bool_value)
+            .unwrap_or(current_value);
+
         self.commands.lock().unwrap().push(UiCommand::Checkbox {
-            id: id.clone(),
-            current_value,
+            id,
+            current_value: command_value,
             label,
         });
 
-        self.get_response(&id)
-            .and_then(|r| r.bool_value)
-            .unwrap_or(current_value)
+        command_value
     }
 
     /// Display a color picker and return the new RGB values as a table.

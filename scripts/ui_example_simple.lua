@@ -1,4 +1,4 @@
--- @editor
+-- 
 -- Simple Lua UI example demonstrating basic widgets
 -- Attach this to any entity in the editor to see a basic UI panel
 
