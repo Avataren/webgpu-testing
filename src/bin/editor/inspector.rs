@@ -241,10 +241,14 @@ pub fn show_entity_inspector(
     // Add context menu for adding missing components
     begin_section(ui, &mut first_section);
     ui.add_space(4.0);
-    let response = ui.allocate_response(
-        egui::vec2(ui.available_width(), ui.spacing().interact_size.y * 3.0),
-        egui::Sense::click(),
-    );
+    let mut remaining = ui.available_size();
+    if remaining.x <= 0.0 {
+        remaining.x = ui.available_width();
+    }
+    if remaining.y <= 0.0 {
+        remaining.y = ui.spacing().interact_size.y * 3.0;
+    }
+    let response = ui.allocate_response(remaining, egui::Sense::click());
 
     response.context_menu(|ui| {
         ui.label("Add Component");
@@ -2054,26 +2058,30 @@ fn show_script_section(
                 _ => None,
             };
 
-            for script_path in available_scripts {
-                let file_name = script_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown");
+            egui::ScrollArea::vertical()
+                .max_height(500.0)
+                .show(ui, |ui| {
+                    for script_path in available_scripts {
+                        let file_name = script_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown");
 
-                let is_current = current_path.as_ref() == Some(&script_path);
-                let button_text = if is_current {
-                    format!("● {}", file_name)
-                } else {
-                    file_name.to_string()
-                };
+                        let is_current = current_path.as_ref() == Some(&script_path);
+                        let button_text = if is_current {
+                            format!("● {}", file_name)
+                        } else {
+                            file_name.to_string()
+                        };
 
-                if ui.button(button_text).clicked() && !is_current {
-                    action = Some(InspectorAction::ChangeScriptSource {
-                        entity,
-                        script_path,
-                    });
-                }
-            }
+                        if ui.button(button_text).clicked() && !is_current {
+                            action = Some(InspectorAction::ChangeScriptSource {
+                                entity,
+                                script_path,
+                            });
+                        }
+                    }
+                });
         }
     });
     action
