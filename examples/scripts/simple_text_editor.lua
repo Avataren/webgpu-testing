@@ -173,12 +173,15 @@ function on_ui(self_entity, ui)
     local viewport = ui:get_viewport_size()
     local editor_width = 780
     if viewport.width and viewport.width > 0 then
-        editor_width = math.max(360, math.min(viewport.width - 32, 1200))
+        editor_width = math.max(320, viewport.width - 32)
     end
 
+    local reserved_top_height = 240 -- heading + toolbar + status labels
+    local reserved_panel_height = 90 -- footer panel spacing
     local editor_height = 800
     if viewport.height and viewport.height > 0 then
-        editor_height = math.max(300, math.min(viewport.height - 140, 1400))
+        local available = viewport.height - reserved_top_height - reserved_panel_height
+        editor_height = math.max(220, available)
     end
     local new_content = ui:text_edit_multiline(widget_id, content, editor_width, editor_height)
 
@@ -188,4 +191,22 @@ function on_ui(self_entity, ui)
     end
 
     set_string("text_content", new_content)
+
+    ui:separator()
+    ui:label("Actions:")
+    if ui:button("Save Changes") then
+        local current_path = get_string("current_path", "")
+        if current_path ~= "" then
+            local current_content = get_string("text_content", "")
+            local error = write_file(current_path, current_content)
+            if error == "" then
+                set_bool("has_unsaved_changes", false)
+                set_string("status_message", "Saved: " .. current_path)
+            else
+                set_string("status_message", error)
+            end
+        else
+            set_string("status_message", "No file selected")
+        end
+    end
 end
