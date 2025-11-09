@@ -1065,622 +1065,684 @@ impl EditorApplication {
         }
 
         /* OLD IMPLEMENTATION REMOVED - kept for reference during transition
-        for action in actions {
-            match action {
-                InspectorAction::UpdateTransform { entity, transform } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut TransformComponent>(entity) {
-                            Ok(mut component) => {
-                                component.0 = transform;
-                                updated = true;
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to update transform for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if updated {
-                        transforms_changed = true;
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateCamera { entity, component } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut CameraComponent>(entity) {
-                            Ok(mut existing) => {
-                                if *existing != component {
-                                    *existing = component;
-                                    updated = true;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to update camera for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if updated {
-                        if self.shared.active_camera_entity.is_none()
-                            || self.shared.active_camera_entity == Some(entity)
-                        {
-                            ctx.scene.set_active_camera_entity(Some(entity));
-                            self.shared.active_camera_entity = ctx.scene.active_camera_entity();
-                        }
-
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateMaterial {
-                    entity,
-                    handle,
-                    material,
-                } => {
-                    let mut can_update = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&MaterialComponent>(entity) {
-                            Ok(component) => {
-                                if component.0 == handle {
-                                    can_update = true;
-                                } else {
-                                    log::warn!(
-                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                        entity,
-                                        component.0.index(),
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to access material for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if can_update {
-                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                            *asset.material_mut() = material;
-                            self.record_scene_change(&mut ctx.scene);
-                        } else {
-                            log::warn!(
-                                "Inspector material asset missing for handle {:?}",
-                                handle.index()
-                            );
-                        }
-                    }
-                }
-                InspectorAction::SetMaterialKind {
-                    entity,
-                    handle,
-                    kind,
-                } => {
-                    let mut can_update = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&MaterialComponent>(entity) {
-                            Ok(component) => {
-                                if component.0 == handle {
-                                    can_update = true;
-                                } else {
-                                    log::warn!(
-                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                        entity,
-                                        component.0.index(),
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to access material for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if !can_update {
-                        continue;
-                    }
-
-                    if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                        asset.set_kind(kind.clone());
-                        match kind {
-                            MaterialKind::Shader(_) => {
-                                asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            }
-                            MaterialKind::Pbr => {
-                                asset.set_asset_type(AssetTypeTag::default());
-                            }
-                        }
-                        self.record_scene_change(&mut ctx.scene);
-                    } else {
-                        log::warn!(
-                            "Inspector material asset missing for handle {:?}",
-                            handle.index()
-                        );
-                    }
-                }
-                InspectorAction::AssignShaderSource {
-                    entity,
-                    handle,
-                    shader_path,
-                } => {
-                    let mut can_update = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&MaterialComponent>(entity) {
-                            Ok(component) => {
-                                if component.0 == handle {
-                                    can_update = true;
-                                } else {
-                                    log::warn!(
-                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                        entity,
-                                        component.0.index(),
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to access material for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if !can_update {
-                        continue;
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let Some(content_root) = self.project_system().content_root() else {
-                            log::warn!(
-                                "Cannot assign shader without an open project for handle {:?}",
-                                handle.index()
-                            );
-                            continue;
-                        };
-
-                        let canonical = shader_path.canonicalize().unwrap_or(shader_path.clone());
-
-                        if !canonical.starts_with(&content_root) {
-                            log::warn!(
-                                "Shader {:?} is outside of the project content directory",
-                                canonical
-                            );
-                            continue;
-                        }
-
-                        let source = match fs::read_to_string(&canonical) {
-                            Ok(contents) => contents,
-                            Err(err) => {
-                                log::warn!("Failed to read shader source {:?}: {}", canonical, err);
-                                continue;
-                            }
-                        };
-
-                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                            let mut metadata = match asset.kind().clone() {
-                                MaterialKind::Shader(existing) => existing,
-                                MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
-                            };
-                            metadata.set_wgsl_source(source);
-                            metadata.set_source_path(Some(canonical));
-                            asset.set_kind(MaterialKind::Shader(metadata));
-                            asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            self.record_scene_change(&mut ctx.scene);
-                        } else {
-                            log::warn!(
-                                "Inspector material asset missing for handle {:?}",
-                                handle.index()
-                            );
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let _ = (entity, handle, shader_path);
-                        log::warn!("Assigning shader files is unavailable on WebAssembly builds.");
-                    }
-                }
-                InspectorAction::CreateShaderSource {
-                    entity,
-                    handle,
-                    suggested_stem,
-                } => {
-                    let mut can_update = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&MaterialComponent>(entity) {
-                            Ok(component) => {
-                                if component.0 == handle {
-                                    can_update = true;
-                                } else {
-                                    log::warn!(
-                                        "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                        entity,
-                                        component.0.index(),
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to access material for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if !can_update {
-                        continue;
-                    }
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let Some(content_root) = self.project_system().content_root() else {
-                            log::warn!(
-                                "Cannot create shader without an open project for handle {:?}",
-                                handle.index()
-                            );
-                            continue;
-                        };
-
-                        let shader_dir = content_root.join("shaders");
-                        if let Err(err) = fs::create_dir_all(&shader_dir) {
-                            log::warn!(
-                                "Failed to create shader directory {:?}: {}",
-                                shader_dir,
-                                err
-                            );
-                            continue;
-                        }
-
-                        let base_stem = if suggested_stem.trim().is_empty() {
-                            format!("material_{}", handle.index())
-                        } else {
-                            suggested_stem.clone()
-                        };
-
-                        let mut candidate = shader_dir.join(format!("{base_stem}.wgsl"));
-                        let mut counter = 1usize;
-                        while candidate.exists() {
-                            candidate = shader_dir.join(format!("{base_stem}_{counter:02}.wgsl"));
-                            counter += 1;
-                        }
-
-                        if let Err(err) =
-                            fs::write(&candidate, ShaderMaterialMetadata::DEFAULT_TEMPLATE)
-                        {
-                            log::warn!("Failed to write shader template {:?}: {}", candidate, err);
-                            continue;
-                        }
-
-                        let canonical = candidate.canonicalize().unwrap_or(candidate.clone());
-
-                        if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                            let mut metadata = match asset.kind().clone() {
-                                MaterialKind::Shader(existing) => existing,
-                                MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
-                            };
-                            metadata.set_wgsl_source(ShaderMaterialMetadata::DEFAULT_TEMPLATE);
-                            metadata.set_source_path(Some(canonical));
-                            asset.set_kind(MaterialKind::Shader(metadata));
-                            asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            self.record_scene_change(&mut ctx.scene);
-                        } else {
-                            log::warn!(
-                                "Inspector material asset missing for handle {:?}",
-                                handle.index()
-                            );
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let _ = (entity, handle, suggested_stem);
-                        log::warn!("Creating shader files is unavailable on WebAssembly builds.");
-                    }
-                }
-                InspectorAction::CreateShaderMaterial { entity, source } => {
-                    let Some(source_asset) = ctx.scene.assets.material(source).cloned() else {
-                        log::warn!(
-                            "Inspector shader material source missing for handle {:?}",
-                            source.index()
-                        );
-                        continue;
-                    };
-
-                    let mut shader_asset = source_asset;
-                    shader_asset.set_kind(MaterialKind::Shader(
-                        ShaderMaterialMetadata::default_template(),
-                    ));
-                    shader_asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                    shader_asset.set_canonical_path(PathBuf::new());
-
-                    let new_handle = ctx.scene.assets.insert_material_asset(shader_asset);
-
-                    match ctx
-                        .scene
-                        .main_world_mut()
-                        .insert_one(entity, MaterialComponent(new_handle))
-                    {
-                        Ok(_) => {
-                            self.record_scene_change(&mut ctx.scene);
-                        }
-                        Err(err) => {
-                            log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
-                        }
-                    }
-                }
-                InspectorAction::UpdatePointLight { entity, light } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut PointLight>(entity) {
-                            Ok(mut component) => {
-                                *component = light;
-                                updated = true;
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update point light for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateDirectionalLight { entity, light } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut DirectionalLight>(entity) {
-                            Ok(mut component) => {
-                                *component = light;
-                                updated = true;
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update directional light for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateSpotLight { entity, light } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut SpotLight>(entity) {
-                            Ok(mut component) => {
-                                *component = light;
-                                updated = true;
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to update spot light for {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateEnvironment { entity, component } => {
-                    let previous = ctx
-                        .scene
-                        .main_world()
-                        .get::<&EnvironmentComponent>(entity)
-                        .ok()
-                        .map(|existing| EnvironmentComponent::clone(&*existing));
-
-                    let mut component = component;
-                    let should_enable_hdr = {
-                        let new_path = component
-                            .hdr
-                            .as_ref()
-                            .and_then(|hdr| hdr.path.as_ref())
-                            .map(|path| path.as_path());
-                        let previous_path = previous
-                            .as_ref()
-                            .and_then(|prev| prev.hdr.as_ref())
-                            .and_then(|hdr| hdr.path.as_ref())
-                            .map(|path| path.as_path());
-
-                        match (previous_path, new_path) {
-                            (Some(prev), Some(new)) => prev != new,
-                            (None, Some(_)) => true,
-                            _ => false,
-                        }
-                    };
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        if let Err(err) =
-                            self.copy_environment_asset_if_needed(&mut component, previous.as_ref())
-                        {
-                            log::warn!("{err}");
-                            self.asset_browser_state_mut().report_error(err);
-                        }
-                    }
-
-                    if let Some(hdr) = component.hdr.as_mut() {
-                        if should_enable_hdr && hdr.path.is_some() {
-                            hdr.enabled = true;
-                        }
-                    }
-
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut EnvironmentComponent>(entity) {
-                            Ok(mut existing) => {
-                                if *existing != component {
-                                    *existing = component.clone();
-                                    updated = true;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update environment for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-                    }
-
-                    if updated {
-                        ctx.scene.set_environment(component.to_environment());
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateParticleSystem { entity, component } => {
-                    let mut updated = false;
-                    let new_spawn_rate = component.spawn_rate;
-                    let mut spawn_rate_changed = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut ParticleSystemComponent>(entity) {
-                            Ok(mut existing) => {
-                                spawn_rate_changed =
-                                    (existing.spawn_rate - new_spawn_rate).abs() > f32::EPSILON;
-                                if *existing != component {
-                                    *existing = component;
-                                    updated = true;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update particle system for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-
-                        if spawn_rate_changed {
-                            match world.get::<&mut ParticleEmitterComponent>(entity) {
-                                Ok(mut emitter) => {
-                                    if (emitter.spawn_rate - new_spawn_rate).abs() > f32::EPSILON {
-                                        emitter.spawn_rate = new_spawn_rate;
-                                        updated = true;
-                                    }
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "Failed to update particle emitter spawn rate for {:?}: {}",
-                                        entity,
-                                        err
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateParticleEmitter { entity, component } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut ParticleEmitterComponent>(entity) {
-                            Ok(mut existing) => {
-                                if *existing != component {
-                                    *existing = component;
-                                    updated = true;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update particle emitter for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::UpdateParticleBehavior {
-                    entity,
-                    behavior,
-                    config,
-                } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match world.get::<&mut ParticleSystemComponent>(entity) {
-                            Ok(mut existing) => {
-                                let config = config.ensure_variant(behavior);
-                                if existing.behavior != behavior
-                                    || existing.behavior_config != config
-                                {
-                                    existing.behavior = behavior;
-                                    existing.behavior_config = config;
-                                    updated = true;
-                                }
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to update particle behavior for {:?}: {}",
-                                    entity,
-                                    err
-                                );
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::SetBillboard { entity, billboard } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        match billboard {
-                            Some(component) => {
-                                let mut needs_insert = false;
-                                match world.get::<&mut Billboard>(entity) {
-                                    Ok(mut existing) => {
-                                        *existing = component;
+                for action in actions {
+                    match action {
+                        InspectorAction::UpdateTransform { entity, transform } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut TransformComponent>(entity) {
+                                    Ok(mut component) => {
+                                        component.0 = transform;
                                         updated = true;
                                     }
                                     Err(err) => {
-                                        log::debug!(
-                                            "Billboard missing for {:?} while enabling: {}",
+                                        log::warn!("Failed to update transform for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                transforms_changed = true;
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateCamera { entity, component } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut CameraComponent>(entity) {
+                                    Ok(mut existing) => {
+                                        if *existing != component {
+                                            *existing = component;
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to update camera for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                if self.shared.active_camera_entity.is_none()
+                                    || self.shared.active_camera_entity == Some(entity)
+                                {
+                                    ctx.scene.set_active_camera_entity(Some(entity));
+                                    self.shared.active_camera_entity = ctx.scene.active_camera_entity();
+                                }
+
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateMaterial {
+                            entity,
+                            handle,
+                            material,
+                        } => {
+                            let mut can_update = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&MaterialComponent>(entity) {
+                                    Ok(component) => {
+                                        if component.0 == handle {
+                                            can_update = true;
+                                        } else {
+                                            log::warn!(
+                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                                entity,
+                                                component.0.index(),
+                                                handle.index()
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if can_update {
+                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                                    *asset.material_mut() = material;
+                                    self.record_scene_change(&mut ctx.scene);
+                                } else {
+                                    log::warn!(
+                                        "Inspector material asset missing for handle {:?}",
+                                        handle.index()
+                                    );
+                                }
+                            }
+                        }
+                        InspectorAction::SetMaterialKind {
+                            entity,
+                            handle,
+                            kind,
+                        } => {
+                            let mut can_update = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&MaterialComponent>(entity) {
+                                    Ok(component) => {
+                                        if component.0 == handle {
+                                            can_update = true;
+                                        } else {
+                                            log::warn!(
+                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                                entity,
+                                                component.0.index(),
+                                                handle.index()
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if !can_update {
+                                continue;
+                            }
+
+                            if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                                asset.set_kind(kind.clone());
+                                match kind {
+                                    MaterialKind::Shader(_) => {
+                                        asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                                    }
+                                    MaterialKind::Pbr => {
+                                        asset.set_asset_type(AssetTypeTag::default());
+                                    }
+                                }
+                                self.record_scene_change(&mut ctx.scene);
+                            } else {
+                                log::warn!(
+                                    "Inspector material asset missing for handle {:?}",
+                                    handle.index()
+                                );
+                            }
+                        }
+                        InspectorAction::AssignShaderSource {
+                            entity,
+                            handle,
+                            shader_path,
+                        } => {
+                            let mut can_update = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&MaterialComponent>(entity) {
+                                    Ok(component) => {
+                                        if component.0 == handle {
+                                            can_update = true;
+                                        } else {
+                                            log::warn!(
+                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                                entity,
+                                                component.0.index(),
+                                                handle.index()
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if !can_update {
+                                continue;
+                            }
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let Some(content_root) = self.project_system().content_root() else {
+                                    log::warn!(
+                                        "Cannot assign shader without an open project for handle {:?}",
+                                        handle.index()
+                                    );
+                                    continue;
+                                };
+
+                                let canonical = shader_path.canonicalize().unwrap_or(shader_path.clone());
+
+                                if !canonical.starts_with(&content_root) {
+                                    log::warn!(
+                                        "Shader {:?} is outside of the project content directory",
+                                        canonical
+                                    );
+                                    continue;
+                                }
+
+                                let source = match fs::read_to_string(&canonical) {
+                                    Ok(contents) => contents,
+                                    Err(err) => {
+                                        log::warn!("Failed to read shader source {:?}: {}", canonical, err);
+                                        continue;
+                                    }
+                                };
+
+                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                                    let mut metadata = match asset.kind().clone() {
+                                        MaterialKind::Shader(existing) => existing,
+                                        MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
+                                    };
+                                    metadata.set_wgsl_source(source);
+                                    metadata.set_source_path(Some(canonical));
+                                    asset.set_kind(MaterialKind::Shader(metadata));
+                                    asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                                    self.record_scene_change(&mut ctx.scene);
+                                } else {
+                                    log::warn!(
+                                        "Inspector material asset missing for handle {:?}",
+                                        handle.index()
+                                    );
+                                }
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let _ = (entity, handle, shader_path);
+                                log::warn!("Assigning shader files is unavailable on WebAssembly builds.");
+                            }
+                        }
+                        InspectorAction::CreateShaderSource {
+                            entity,
+                            handle,
+                            suggested_stem,
+                        } => {
+                            let mut can_update = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&MaterialComponent>(entity) {
+                                    Ok(component) => {
+                                        if component.0 == handle {
+                                            can_update = true;
+                                        } else {
+                                            log::warn!(
+                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
+                                                entity,
+                                                component.0.index(),
+                                                handle.index()
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if !can_update {
+                                continue;
+                            }
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let Some(content_root) = self.project_system().content_root() else {
+                                    log::warn!(
+                                        "Cannot create shader without an open project for handle {:?}",
+                                        handle.index()
+                                    );
+                                    continue;
+                                };
+
+                                let shader_dir = content_root.join("shaders");
+                                if let Err(err) = fs::create_dir_all(&shader_dir) {
+                                    log::warn!(
+                                        "Failed to create shader directory {:?}: {}",
+                                        shader_dir,
+                                        err
+                                    );
+                                    continue;
+                                }
+
+                                let base_stem = if suggested_stem.trim().is_empty() {
+                                    format!("material_{}", handle.index())
+                                } else {
+                                    suggested_stem.clone()
+                                };
+
+                                let mut candidate = shader_dir.join(format!("{base_stem}.wgsl"));
+                                let mut counter = 1usize;
+                                while candidate.exists() {
+                                    candidate = shader_dir.join(format!("{base_stem}_{counter:02}.wgsl"));
+                                    counter += 1;
+                                }
+
+                                if let Err(err) =
+                                    fs::write(&candidate, ShaderMaterialMetadata::DEFAULT_TEMPLATE)
+                                {
+                                    log::warn!("Failed to write shader template {:?}: {}", candidate, err);
+                                    continue;
+                                }
+
+                                let canonical = candidate.canonicalize().unwrap_or(candidate.clone());
+
+                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
+                                    let mut metadata = match asset.kind().clone() {
+                                        MaterialKind::Shader(existing) => existing,
+                                        MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
+                                    };
+                                    metadata.set_wgsl_source(ShaderMaterialMetadata::DEFAULT_TEMPLATE);
+                                    metadata.set_source_path(Some(canonical));
+                                    asset.set_kind(MaterialKind::Shader(metadata));
+                                    asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                                    self.record_scene_change(&mut ctx.scene);
+                                } else {
+                                    log::warn!(
+                                        "Inspector material asset missing for handle {:?}",
+                                        handle.index()
+                                    );
+                                }
+                            }
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let _ = (entity, handle, suggested_stem);
+                                log::warn!("Creating shader files is unavailable on WebAssembly builds.");
+                            }
+                        }
+                        InspectorAction::CreateShaderMaterial { entity, source } => {
+                            let Some(source_asset) = ctx.scene.assets.material(source).cloned() else {
+                                log::warn!(
+                                    "Inspector shader material source missing for handle {:?}",
+                                    source.index()
+                                );
+                                continue;
+                            };
+
+                            let mut shader_asset = source_asset;
+                            shader_asset.set_kind(MaterialKind::Shader(
+                                ShaderMaterialMetadata::default_template(),
+                            ));
+                            shader_asset.set_asset_type(AssetTypeTag::new("shader_material"));
+                            shader_asset.set_canonical_path(PathBuf::new());
+
+                            let new_handle = ctx.scene.assets.insert_material_asset(shader_asset);
+
+                            match ctx
+                                .scene
+                                .main_world_mut()
+                                .insert_one(entity, MaterialComponent(new_handle))
+                            {
+                                Ok(_) => {
+                                    self.record_scene_change(&mut ctx.scene);
+                                }
+                                Err(err) => {
+                                    log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
+                                }
+                            }
+                        }
+                        InspectorAction::UpdatePointLight { entity, light } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut PointLight>(entity) {
+                                    Ok(mut component) => {
+                                        *component = light;
+                                        updated = true;
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update point light for {:?}: {}",
                                             entity,
                                             err
                                         );
-                                        needs_insert = true;
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateDirectionalLight { entity, light } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut DirectionalLight>(entity) {
+                                    Ok(mut component) => {
+                                        *component = light;
+                                        updated = true;
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update directional light for {:?}: {}",
+                                            entity,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateSpotLight { entity, light } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut SpotLight>(entity) {
+                                    Ok(mut component) => {
+                                        *component = light;
+                                        updated = true;
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to update spot light for {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateEnvironment { entity, component } => {
+                            let previous = ctx
+                                .scene
+                                .main_world()
+                                .get::<&EnvironmentComponent>(entity)
+                                .ok()
+                                .map(|existing| EnvironmentComponent::clone(&*existing));
+
+                            let mut component = component;
+                            let should_enable_hdr = {
+                                let new_path = component
+                                    .hdr
+                                    .as_ref()
+                                    .and_then(|hdr| hdr.path.as_ref())
+                                    .map(|path| path.as_path());
+                                let previous_path = previous
+                                    .as_ref()
+                                    .and_then(|prev| prev.hdr.as_ref())
+                                    .and_then(|hdr| hdr.path.as_ref())
+                                    .map(|path| path.as_path());
+
+                                match (previous_path, new_path) {
+                                    (Some(prev), Some(new)) => prev != new,
+                                    (None, Some(_)) => true,
+                                    _ => false,
+                                }
+                            };
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                if let Err(err) =
+                                    self.copy_environment_asset_if_needed(&mut component, previous.as_ref())
+                                {
+                                    log::warn!("{err}");
+                                    self.asset_browser_state_mut().report_error(err);
+                                }
+                            }
+
+                            if let Some(hdr) = component.hdr.as_mut() {
+                                if should_enable_hdr && hdr.path.is_some() {
+                                    hdr.enabled = true;
+                                }
+                            }
+
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut EnvironmentComponent>(entity) {
+                                    Ok(mut existing) => {
+                                        if *existing != component {
+                                            *existing = component.clone();
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update environment for {:?}: {}",
+                                            entity,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                ctx.scene.set_environment(component.to_environment());
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateParticleSystem { entity, component } => {
+                            let mut updated = false;
+                            let new_spawn_rate = component.spawn_rate;
+                            let mut spawn_rate_changed = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut ParticleSystemComponent>(entity) {
+                                    Ok(mut existing) => {
+                                        spawn_rate_changed =
+                                            (existing.spawn_rate - new_spawn_rate).abs() > f32::EPSILON;
+                                        if *existing != component {
+                                            *existing = component;
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update particle system for {:?}: {}",
+                                            entity,
+                                            err
+                                        );
+                                    }
+                                }
+
+                                if spawn_rate_changed {
+                                    match world.get::<&mut ParticleEmitterComponent>(entity) {
+                                        Ok(mut emitter) => {
+                                            if (emitter.spawn_rate - new_spawn_rate).abs() > f32::EPSILON {
+                                                emitter.spawn_rate = new_spawn_rate;
+                                                updated = true;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            log::warn!(
+                                                "Failed to update particle emitter spawn rate for {:?}: {}",
+                                                entity,
+                                                err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateParticleEmitter { entity, component } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut ParticleEmitterComponent>(entity) {
+                                    Ok(mut existing) => {
+                                        if *existing != component {
+                                            *existing = component;
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update particle emitter for {:?}: {}",
+                                            entity,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::UpdateParticleBehavior {
+                            entity,
+                            behavior,
+                            config,
+                        } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match world.get::<&mut ParticleSystemComponent>(entity) {
+                                    Ok(mut existing) => {
+                                        let config = config.ensure_variant(behavior);
+                                        if existing.behavior != behavior
+                                            || existing.behavior_config != config
+                                        {
+                                            existing.behavior = behavior;
+                                            existing.behavior_config = config;
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        log::warn!(
+                                            "Failed to update particle behavior for {:?}: {}",
+                                            entity,
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::SetBillboard { entity, billboard } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                match billboard {
+                                    Some(component) => {
+                                        let mut needs_insert = false;
+                                        match world.get::<&mut Billboard>(entity) {
+                                            Ok(mut existing) => {
+                                                *existing = component;
+                                                updated = true;
+                                            }
+                                            Err(err) => {
+                                                log::debug!(
+                                                    "Billboard missing for {:?} while enabling: {}",
+                                                    entity,
+                                                    err
+                                                );
+                                                needs_insert = true;
+                                            }
+                                        }
+
+                                        if needs_insert {
+                                            match world.insert(entity, (component,)) {
+                                                Ok(_) => {
+                                                    updated = true;
+                                                }
+                                                Err(insert_err) => {
+                                                    log::warn!(
+                                                        "Failed to add Billboard to {:?}: {}",
+                                                        entity,
+                                                        insert_err
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None => match world.remove_one::<Billboard>(entity) {
+                                        Ok(_) => {
+                                            updated = true;
+                                        }
+                                        Err(err) => {
+                                            log::debug!(
+                                                "Billboard missing for {:?} while disabling: {}",
+                                                entity,
+                                                err
+                                            );
+                                        }
+                                    },
+                                }
+                            }
+
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::SetCanCastShadow {
+                            entity,
+                            casts_shadow,
+                        } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                let mut needs_insert = false;
+                                match world.get::<&mut CanCastShadow>(entity) {
+                                    Ok(mut component) => {
+                                        if component.0 != casts_shadow {
+                                            component.0 = casts_shadow;
+                                            updated = true;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        if casts_shadow {
+                                            needs_insert = true;
+                                        } else {
+                                            log::debug!(
+                                                "CanCastShadow missing for {:?} while disabling shadows: {}",
+                                                entity,
+                                                err
+                                            );
+                                        }
                                     }
                                 }
 
                                 if needs_insert {
-                                    match world.insert(entity, (component,)) {
+                                    match world.insert(entity, (CanCastShadow(true),)) {
                                         Ok(_) => {
                                             updated = true;
                                         }
                                         Err(insert_err) => {
                                             log::warn!(
-                                                "Failed to add Billboard to {:?}: {}",
+                                                "Failed to add CanCastShadow to {:?}: {}",
                                                 entity,
                                                 insert_err
                                             );
@@ -1688,316 +1750,254 @@ impl EditorApplication {
                                     }
                                 }
                             }
-                            None => match world.remove_one::<Billboard>(entity) {
-                                Ok(_) => {
-                                    updated = true;
-                                }
-                                Err(err) => {
-                                    log::debug!(
-                                        "Billboard missing for {:?} while disabling: {}",
-                                        entity,
-                                        err
-                                    );
-                                }
-                            },
-                        }
-                    }
 
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::SetCanCastShadow {
-                    entity,
-                    casts_shadow,
-                } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        let mut needs_insert = false;
-                        match world.get::<&mut CanCastShadow>(entity) {
-                            Ok(mut component) => {
-                                if component.0 != casts_shadow {
-                                    component.0 = casts_shadow;
-                                    updated = true;
-                                }
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
                             }
-                            Err(err) => {
-                                if casts_shadow {
-                                    needs_insert = true;
+                        }
+                        InspectorAction::AddScript { entity } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                // Check if entity already has a script component
+                                if world.get::<&LuaScriptComponent>(entity).is_ok() {
+                                    log::warn!("Entity {:?} already has a script component", entity);
                                 } else {
-                                    log::debug!(
-                                        "CanCastShadow missing for {:?} while disabling shadows: {}",
-                                        entity,
-                                        err
-                                    );
+                                    // Create a default inline script
+                                    let default_script = LuaScriptComponent::new(LuaScriptSource::inline(
+                                        "new_script",
+                                        "-- New script
+
+        function update(self_entity, dt)
+            -- Your code here
+        end
+        ",
+                                    ));
+                                    match world.insert(entity, (default_script,)) {
+                                        Ok(_) => {
+                                            updated = true;
+                                            log::info!("Added script component to entity {:?}", entity);
+                                        }
+                                        Err(err) => {
+                                            log::warn!(
+                                                "Failed to add script component to {:?}: {}",
+                                                entity,
+                                                err
+                                            );
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        if needs_insert {
-                            match world.insert(entity, (CanCastShadow(true),)) {
-                                Ok(_) => {
+                            if updated {
+                                self.record_scene_change(&mut ctx.scene);
+                            }
+                        }
+                        InspectorAction::ChangeScriptSource {
+                            entity,
+                            script_path,
+                        } => {
+                            let mut updated = false;
+                            {
+                                let world = ctx.scene.main_world_mut();
+                                // Check if entity has a script component
+                                if let Ok(mut script) = world.get::<&mut LuaScriptComponent>(entity) {
+                                    // Create new script source from file
+                                    let new_source = LuaScriptSource::File { path: script_path.clone() };
+                                    *script = LuaScriptComponent::new(new_source);
                                     updated = true;
-                                }
-                                Err(insert_err) => {
-                                    log::warn!(
-                                        "Failed to add CanCastShadow to {:?}: {}",
+                                    log::info!(
+                                        "Changed script source for entity {:?} to {:?}",
                                         entity,
-                                        insert_err
+                                        script_path
                                     );
+                                } else {
+                                    log::warn!("Entity {:?} does not have a script component", entity);
                                 }
                             }
-                        }
-                    }
 
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::AddScript { entity } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        // Check if entity already has a script component
-                        if world.get::<&LuaScriptComponent>(entity).is_ok() {
-                            log::warn!("Entity {:?} already has a script component", entity);
-                        } else {
-                            // Create a default inline script
-                            let default_script = LuaScriptComponent::new(LuaScriptSource::inline(
-                                "new_script",
-                                "-- New script
-
-function update(self_entity, dt)
-    -- Your code here
-end
-",
-                            ));
-                            match world.insert(entity, (default_script,)) {
-                                Ok(_) => {
-                                    updated = true;
-                                    log::info!("Added script component to entity {:?}", entity);
-                                }
-                                Err(err) => {
-                                    log::warn!(
-                                        "Failed to add script component to {:?}: {}",
-                                        entity,
-                                        err
-                                    );
-                                }
-                            }
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::ChangeScriptSource {
-                    entity,
-                    script_path,
-                } => {
-                    let mut updated = false;
-                    {
-                        let world = ctx.scene.main_world_mut();
-                        // Check if entity has a script component
-                        if let Ok(mut script) = world.get::<&mut LuaScriptComponent>(entity) {
-                            // Create new script source from file
-                            let new_source = LuaScriptSource::File { path: script_path.clone() };
-                            *script = LuaScriptComponent::new(new_source);
-                            updated = true;
-                            log::info!(
-                                "Changed script source for entity {:?} to {:?}",
-                                entity,
-                                script_path
-                            );
-                        } else {
-                            log::warn!("Entity {:?} does not have a script component", entity);
-                        }
-                    }
-
-                    if updated {
-                        self.record_scene_change(&mut ctx.scene);
-                        // Reload the script runtime to pick up the new script
-                        ctx.scene.reset_script_runtime();
-                    }
-                }
-                InspectorAction::AddCamera { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&CameraComponent>(entity).is_ok() {
-                        log::warn!("Entity {:?} already has a camera component", entity);
-                    } else {
-                        let camera = CameraComponent::default();
-                        match world.insert(entity, (camera,)) {
-                            Ok(_) => {
-                                log::info!("Added camera component to entity {:?}", entity);
+                            if updated {
                                 self.record_scene_change(&mut ctx.scene);
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to add camera component to {:?}: {}", entity, err);
+                                // Reload the script runtime to pick up the new script
+                                ctx.scene.reset_script_runtime();
                             }
                         }
-                    }
-                }
-                InspectorAction::AddMesh { entity } => {
-                    // Check if entity already has a mesh component
-                    let has_mesh = {
-                        let world = ctx.scene.main_world_mut();
-                        world.get::<&MeshComponent>(entity).is_ok()
-                    };
-
-                    if has_mesh {
-                        log::warn!("Entity {:?} already has a mesh component", entity);
-                    } else {
-                        // Try to use existing cube mesh (created during setup or previous usage)
-                        let descriptor = PrimitiveMeshDescriptor::from(ScenePrimitivePreset::Cube);
-                        if let Some(mesh_handle) = ctx.scene.assets.primitive_mesh_handle(descriptor) {
-                            let material_handle = ctx
-                                .scene
-                                .assets
-                                .materials
-                                .insert(MaterialAsset::from_material(
-                                    Material::pbr(),
-                                    PathBuf::new(),
-                                ));
+                        InspectorAction::AddCamera { entity } => {
                             let world = ctx.scene.main_world_mut();
-                            match world.insert(entity, (MeshComponent(mesh_handle), MaterialComponent(material_handle))) {
-                                Ok(_) => {
-                                    log::info!("Added mesh component to entity {:?}", entity);
-                                    self.record_scene_change(&mut ctx.scene);
+                            if world.get::<&CameraComponent>(entity).is_ok() {
+                                log::warn!("Entity {:?} already has a camera component", entity);
+                            } else {
+                                let camera = CameraComponent::default();
+                                match world.insert(entity, (camera,)) {
+                                    Ok(_) => {
+                                        log::info!("Added camera component to entity {:?}", entity);
+                                        self.record_scene_change(&mut ctx.scene);
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to add camera component to {:?}: {}", entity, err);
+                                    }
                                 }
-                                Err(err) => {
-                                    log::warn!("Failed to add mesh component to {:?}: {}", entity, err);
-                                }
-                            }
-                        } else {
-                            log::warn!("Cannot add mesh component: cube primitive not yet created. Try creating a cube primitive first.");
-                        }
-                    }
-                }
-                InspectorAction::AddPointLight { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&PointLight>(entity).is_ok() {
-                        log::warn!("Entity {:?} already has a point light component", entity);
-                    } else {
-                        let light = PointLight::default();
-                        match world.insert(entity, (light,)) {
-                            Ok(_) => {
-                                log::info!("Added point light component to entity {:?}", entity);
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to add point light component to {:?}: {}", entity, err);
                             }
                         }
-                    }
-                }
-                InspectorAction::AddDirectionalLight { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&DirectionalLight>(entity).is_ok() {
-                        log::warn!("Entity {:?} already has a directional light component", entity);
-                    } else {
-                        let light = DirectionalLight::default();
-                        match world.insert(entity, (light,)) {
-                            Ok(_) => {
-                                log::info!("Added directional light component to entity {:?}", entity);
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to add directional light component to {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-                }
-                InspectorAction::AddSpotLight { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&SpotLight>(entity).is_ok() {
-                        log::warn!("Entity {:?} already has a spot light component", entity);
-                    } else {
-                        let light = SpotLight::default();
-                        match world.insert(entity, (light,)) {
-                            Ok(_) => {
-                                log::info!("Added spot light component to entity {:?}", entity);
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                            Err(err) => {
-                                log::warn!("Failed to add spot light component to {:?}: {}", entity, err);
-                            }
-                        }
-                    }
-                }
-                InspectorAction::AddEnvironment { entity } => {
-                    // Check if entity already has an environment component
-                    let has_environment = {
-                        let world = ctx.scene.main_world_mut();
-                        world.get::<&EnvironmentComponent>(entity).is_ok()
-                    };
+                        InspectorAction::AddMesh { entity } => {
+                            // Check if entity already has a mesh component
+                            let has_mesh = {
+                                let world = ctx.scene.main_world_mut();
+                                world.get::<&MeshComponent>(entity).is_ok()
+                            };
 
-                    if has_environment {
-                        log::warn!("Entity {:?} already has an environment component", entity);
-                    } else {
-                        let component = EnvironmentComponent::from_environment(ctx.scene.environment());
-                        {
+                            if has_mesh {
+                                log::warn!("Entity {:?} already has a mesh component", entity);
+                            } else {
+                                // Try to use existing cube mesh (created during setup or previous usage)
+                                let descriptor = PrimitiveMeshDescriptor::from(ScenePrimitivePreset::Cube);
+                                if let Some(mesh_handle) = ctx.scene.assets.primitive_mesh_handle(descriptor) {
+                                    let material_handle = ctx
+                                        .scene
+                                        .assets
+                                        .materials
+                                        .insert(MaterialAsset::from_material(
+                                            Material::pbr(),
+                                            PathBuf::new(),
+                                        ));
+                                    let world = ctx.scene.main_world_mut();
+                                    match world.insert(entity, (MeshComponent(mesh_handle), MaterialComponent(material_handle))) {
+                                        Ok(_) => {
+                                            log::info!("Added mesh component to entity {:?}", entity);
+                                            self.record_scene_change(&mut ctx.scene);
+                                        }
+                                        Err(err) => {
+                                            log::warn!("Failed to add mesh component to {:?}: {}", entity, err);
+                                        }
+                                    }
+                                } else {
+                                    log::warn!("Cannot add mesh component: cube primitive not yet created. Try creating a cube primitive first.");
+                                }
+                            }
+                        }
+                        InspectorAction::AddPointLight { entity } => {
                             let world = ctx.scene.main_world_mut();
-                            match world.insert(entity, (component.clone(),)) {
-                                Ok(_) => {
-                                    log::info!("Added environment component to entity {:?}", entity);
-                                }
-                                Err(err) => {
-                                    log::warn!("Failed to add environment component to {:?}: {}", entity, err);
-                                    return;
+                            if world.get::<&PointLight>(entity).is_ok() {
+                                log::warn!("Entity {:?} already has a point light component", entity);
+                            } else {
+                                let light = PointLight::default();
+                                match world.insert(entity, (light,)) {
+                                    Ok(_) => {
+                                        log::info!("Added point light component to entity {:?}", entity);
+                                        self.record_scene_change(&mut ctx.scene);
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to add point light component to {:?}: {}", entity, err);
+                                    }
                                 }
                             }
                         }
-                        ctx.scene.set_environment(component.to_environment());
-                        self.record_scene_change(&mut ctx.scene);
-                    }
-                }
-                InspectorAction::AddParticleSystem { entity } => {
-                    let world = ctx.scene.main_world_mut();
-                    if world.get::<&ParticleSystemComponent>(entity).is_ok() {
-                        log::warn!("Entity {:?} already has a particle system component", entity);
-                    } else {
-                        let component = ParticleSystemComponent::default();
-                        let emitter = ParticleEmitterComponent::default();
-                        match world.insert(entity, (component, emitter)) {
-                            Ok(_) => {
-                                log::info!("Added particle system component to entity {:?}", entity);
+                        InspectorAction::AddDirectionalLight { entity } => {
+                            let world = ctx.scene.main_world_mut();
+                            if world.get::<&DirectionalLight>(entity).is_ok() {
+                                log::warn!("Entity {:?} already has a directional light component", entity);
+                            } else {
+                                let light = DirectionalLight::default();
+                                match world.insert(entity, (light,)) {
+                                    Ok(_) => {
+                                        log::info!("Added directional light component to entity {:?}", entity);
+                                        self.record_scene_change(&mut ctx.scene);
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to add directional light component to {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+                        }
+                        InspectorAction::AddSpotLight { entity } => {
+                            let world = ctx.scene.main_world_mut();
+                            if world.get::<&SpotLight>(entity).is_ok() {
+                                log::warn!("Entity {:?} already has a spot light component", entity);
+                            } else {
+                                let light = SpotLight::default();
+                                match world.insert(entity, (light,)) {
+                                    Ok(_) => {
+                                        log::info!("Added spot light component to entity {:?}", entity);
+                                        self.record_scene_change(&mut ctx.scene);
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to add spot light component to {:?}: {}", entity, err);
+                                    }
+                                }
+                            }
+                        }
+                        InspectorAction::AddEnvironment { entity } => {
+                            // Check if entity already has an environment component
+                            let has_environment = {
+                                let world = ctx.scene.main_world_mut();
+                                world.get::<&EnvironmentComponent>(entity).is_ok()
+                            };
+
+                            if has_environment {
+                                log::warn!("Entity {:?} already has an environment component", entity);
+                            } else {
+                                let component = EnvironmentComponent::from_environment(ctx.scene.environment());
+                                {
+                                    let world = ctx.scene.main_world_mut();
+                                    match world.insert(entity, (component.clone(),)) {
+                                        Ok(_) => {
+                                            log::info!("Added environment component to entity {:?}", entity);
+                                        }
+                                        Err(err) => {
+                                            log::warn!("Failed to add environment component to {:?}: {}", entity, err);
+                                            return;
+                                        }
+                                    }
+                                }
+                                ctx.scene.set_environment(component.to_environment());
                                 self.record_scene_change(&mut ctx.scene);
                             }
-                            Err(err) => {
-                                log::warn!("Failed to add particle system component to {:?}: {}", entity, err);
+                        }
+                        InspectorAction::AddParticleSystem { entity } => {
+                            let world = ctx.scene.main_world_mut();
+                            if world.get::<&ParticleSystemComponent>(entity).is_ok() {
+                                log::warn!("Entity {:?} already has a particle system component", entity);
+                            } else {
+                                let component = ParticleSystemComponent::default();
+                                let emitter = ParticleEmitterComponent::default();
+                                match world.insert(entity, (component, emitter)) {
+                                    Ok(_) => {
+                                        log::info!("Added particle system component to entity {:?}", entity);
+                                        self.record_scene_change(&mut ctx.scene);
+                                    }
+                                    Err(err) => {
+                                        log::warn!("Failed to add particle system component to {:?}: {}", entity, err);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                InspectorAction::RenameEntity { entity, new_name } => {
-                    let renamed = {
-                        let world = ctx.scene.main_world_mut();
-                        if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
-                            name.0 = new_name;
-                            true
-                        } else {
-                            false
-                        }
-                    };
+                        InspectorAction::RenameEntity { entity, new_name } => {
+                            let renamed = {
+                                let world = ctx.scene.main_world_mut();
+                                if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
+                                    name.0 = new_name;
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
 
-                    if renamed {
-                        log::info!("Renamed entity {:?}", entity);
-                        self.record_scene_change(&mut ctx.scene);
-                    } else {
-                        log::warn!("Entity {:?} does not have a Name component", entity);
+                            if renamed {
+                                log::info!("Renamed entity {:?}", entity);
+                                self.record_scene_change(&mut ctx.scene);
+                            } else {
+                                log::warn!("Entity {:?} does not have a Name component", entity);
+                            }
+                        }
+                        InspectorAction::EditScript { .. } => {
+                            // Script edits are handled immediately in the UI stage.
+                        }
+                        InspectorAction::EditShader { .. } => {
+                            // Shader edits are handled immediately in the UI stage.
+                        }
                     }
                 }
-                InspectorAction::EditScript { .. } => {
-                    // Script edits are handled immediately in the UI stage.
-                }
-                InspectorAction::EditShader { .. } => {
-                    // Shader edits are handled immediately in the UI stage.
-                }
-            }
-        }
-        */
+                */
         // END OF OLD IMPLEMENTATION
 
         if transforms_changed {

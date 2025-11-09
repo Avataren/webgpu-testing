@@ -71,6 +71,16 @@ local ACTION_LAYOUT = {
     button_gap = 16,
     hint_lines = 1,
 }
+local LAYOUT_CHROME = {
+    menu_bar_lines = 1.35,
+    panel_heading_lines = 1.0,
+    panel_body_gap_lines = 1.0,
+    top_level_gap_lines = 5,
+    action_stack_gap_lines = 1,
+    button_line_scale = 1.35,
+    separator_count = 2,
+    safety_lines = 0.5,
+}
 
 local function truncate_middle(text, max_chars)
     if not text then
@@ -87,19 +97,26 @@ local function truncate_middle(text, max_chars)
     return string.sub(text, 1, head) .. "..." .. string.sub(text, -tail)
 end
 
-local function format_display_name(path)
+local function format_display_name(path, max_chars)
     if not path or path == "" then
         return "Untitled document"
     end
 
-    if #path > 56 then
-        return ".../" .. get_filename(path)
+    local limit = max_chars or 56
+    if #path <= limit then
+        return path
     end
 
-    return path
+    local filename = get_filename(path)
+    if filename ~= "" and (#filename + 4) <= limit then
+        local remaining = math.max(4, limit - 4)
+        return ".../" .. truncate_middle(filename, remaining)
+    end
+
+    return truncate_middle(path, limit)
 end
 
-local function format_directory_label(path)
+local function format_directory_label(path, max_chars)
     if not path or path == "" then
         return "Workspace root"
     end
@@ -109,7 +126,7 @@ local function format_directory_label(path)
         return "Workspace root"
     end
 
-    return truncate_middle(dir, 48)
+    return truncate_middle(dir, max_chars or 48)
 end
 
 local function derive_typography(pixels_per_point)
@@ -121,14 +138,6 @@ local function derive_typography(pixels_per_point)
     }
 end
 
-local function estimate_lines(text, chars_per_line)
-    if not text or text == "" then
-        return 0
-    end
-    local capacity = math.max(1, chars_per_line or #text)
-    return math.max(1, math.ceil(#text / capacity))
-end
-
 local function estimate_action_rows(width)
     local available = math.max(ACTION_LAYOUT.button_width, width - (PANEL_LIMITS.margin * 2))
     local space_per_button = ACTION_LAYOUT.button_width + ACTION_LAYOUT.button_gap
@@ -136,25 +145,60 @@ local function estimate_action_rows(width)
     return math.ceil(ACTION_LAYOUT.buttons / per_row)
 end
 
-local function estimate_reserved_height(state, metrics)
-    local chars_per_line = math.max(12, math.floor((metrics.panel_width - PANEL_LIMITS.margin) / metrics.typography.char))
-    local doc_label = "Document: " .. format_display_name(state.file_path)
-    local status_badge = state.has_unsaved and "[unsaved]" or "[saved]"
-    local header_lines = 1
-    if (#doc_label + #status_badge + 4) > chars_per_line then
-        header_lines = 2
+local function derive_label_constraints(panel_width, typography)
+    local chars_per_line = math.max(
+        24,
+        math.floor((panel_width - PANEL_LIMITS.margin) / math.max(1, typography.char))
+    )
+
+    local header_layout = "split"
+    if panel_width < 520 then
+        header_layout = "stacked"
     end
-    local folder_lines = estimate_lines("Folder: " .. format_directory_label(state.file_path), chars_per_line)
-    local status_lines = estimate_lines("Status: " .. (state.status or "Ready"), chars_per_line)
-    local action_rows = estimate_action_rows(metrics.panel_width)
+
+    return {
+        max_label_chars = math.max(24, chars_per_line - 8),
+        header_layout = header_layout,
+    }
+end
+
+local function estimate_reserved_height(metrics)
+    local line = metrics.typography.line
+    local separator = metrics.typography.separator
+    local header_lines = metrics.header_layout == "stacked" and 3 or 2
+    local action_rows = metrics.action_rows or 1
 
     local reserved = 0
-    reserved = reserved + (header_lines + folder_lines + status_lines) * metrics.typography.line
-    reserved = reserved + (ACTION_LAYOUT.hint_lines * metrics.typography.line)
-    reserved = reserved + (action_rows * (metrics.typography.line + metrics.spacing.vertical))
-    reserved = reserved + (metrics.spacing.vertical * 5)
-    reserved = reserved + (metrics.typography.separator * 2)
+    reserved = reserved + LAYOUT_CHROME.menu_bar_lines * line
+    reserved = reserved + header_lines * line
+    reserved = reserved + line
+    reserved = reserved + LAYOUT_CHROME.top_level_gap_lines * line
+    reserved = reserved + (LAYOUT_CHROME.panel_heading_lines + LAYOUT_CHROME.panel_body_gap_lines) * line
+    reserved = reserved + (ACTION_LAYOUT.hint_lines + LAYOUT_CHROME.action_stack_gap_lines) * line
+
+    local button_line = line * LAYOUT_CHROME.button_line_scale
+    reserved = reserved + (action_rows * button_line)
+    reserved = reserved + (math.max(0, action_rows - 1) * metrics.spacing.vertical)
+
+    reserved = reserved + (LAYOUT_CHROME.separator_count * separator)
+    reserved = reserved + LAYOUT_CHROME.safety_lines * line
     return reserved
+end
+
+local function guaranteed_chrome_height(metrics)
+    local line = metrics.typography.line
+    local separator = metrics.typography.separator
+    local header_block = (metrics.header_layout == "stacked" and 3 or 2) * line
+    local status_block = line
+    local hint_block = ACTION_LAYOUT.hint_lines * line
+    local action_rows = metrics.action_rows or 1
+    local buttons_block = (line * (LAYOUT_CHROME.button_line_scale + 0.4)) * action_rows
+        + (metrics.spacing.vertical * math.max(0, action_rows - 1))
+    local padding = line * 4 + PANEL_LIMITS.margin * 0.5
+    local separators = separator * 3
+
+    local chrome = header_block + status_block + hint_block + buttons_block + padding + separators
+    return math.max(260, chrome)
 end
 
 local function compute_layout_metrics(ui, state)
@@ -182,10 +226,14 @@ local function compute_layout_metrics(ui, state)
         horizontal = typography.line * 0.5,
     }
 
-    local reserved_height = estimate_reserved_height(state, {
+    local label_constraints = derive_label_constraints(clamped_width, typography)
+    local action_rows = estimate_action_rows(clamped_width)
+    local reserved_height = estimate_reserved_height({
         panel_width = clamped_width,
         typography = typography,
         spacing = spacing,
+        header_layout = label_constraints.header_layout,
+        action_rows = action_rows,
     })
 
     local available = math.max(0, height - reserved_height)
@@ -203,6 +251,19 @@ local function compute_layout_metrics(ui, state)
         editor_height = typography.line * 4
     end
 
+    local chrome_floor = guaranteed_chrome_height({
+        typography = typography,
+        spacing = spacing,
+        header_layout = label_constraints.header_layout,
+        action_rows = action_rows,
+    })
+    local max_editor_from_chrome = math.max(0, height - chrome_floor)
+    if max_editor_from_chrome > 0 then
+        editor_height = math.min(editor_height, max_editor_from_chrome)
+    else
+        editor_height = math.min(editor_height, typography.line * 4)
+    end
+
     return {
         viewport = viewport,
         panel_width = clamped_width,
@@ -210,7 +271,22 @@ local function compute_layout_metrics(ui, state)
         editor_height = editor_height,
         typography = typography,
         spacing = spacing,
+        header_layout = label_constraints.header_layout,
+        max_label_chars = label_constraints.max_label_chars,
+        action_rows = action_rows,
     }
+end
+
+local function refresh_display_cache(state, metrics)
+    local label_chars = metrics.max_label_chars or 48
+    local doc_chars = math.max(16, label_chars - 12)
+    state.display_name = format_display_name(state.file_path, doc_chars)
+    if state.has_unsaved then
+        state.display_name = state.display_name .. " *"
+    end
+    state.folder_label = format_directory_label(state.file_path, label_chars)
+    state.status_label = truncate_middle(state.status or "Ready", label_chars)
+    state.status_badge = state.has_unsaved and "[unsaved]" or "[saved]"
 end
 
 local LayoutContext = {}
@@ -466,33 +542,42 @@ local function build_action_nodes(state)
 end
 
 local function document_header_node(state)
-    local display = format_display_name(state.file_path)
-    if state.has_unsaved then
-        display = display .. " *"
-    end
+    local doc_label = "Document: " .. (state.display_name or format_display_name(state.file_path))
+    local badge = state.status_badge or ""
+    local folder = "Folder: " .. (state.folder_label or format_directory_label(state.file_path))
+    local layout_mode = state.header_layout or "split"
 
-    local folder = format_directory_label(state.file_path)
-    local status_badge = state.has_unsaved and "[unsaved]" or "[saved]"
+    if layout_mode == "stacked" then
+        return Layout.stack({
+            function(ctx)
+                ctx.ui:label(doc_label)
+            end,
+            function(ctx)
+                ctx.ui:label(badge)
+            end,
+            function(ctx)
+                ctx.ui:label(folder)
+            end,
+        }, { gap = "none" })
+    end
 
     return Layout.stack({
         Layout.row({
             function(ctx)
-                ctx.ui:label("Document: " .. display)
+                ctx.ui:label(doc_label)
             end,
             function(ctx)
-                ctx.ui:label(status_badge)
+                ctx.ui:label(badge)
             end,
-        }, { gap = "space", wrap = true }),
+        }, { gap = "space", wrap = false }),
         function(ctx)
-            ctx.ui:label("Folder: " .. folder)
+            ctx.ui:label(folder)
         end,
     }, { gap = "none" })
 end
 
 local function status_message_node(state)
-    local status = state.status or "Ready"
-    status = truncate_middle(status, 96)
-
+    local status = state.status_label or truncate_middle(state.status or "Ready", 96)
     return function(ctx)
         ctx.ui:label("Status: " .. status)
     end
@@ -594,6 +679,9 @@ function on_ui(self_entity, ui)
     local metrics = compute_layout_metrics(ui, state)
     state.editor_width = metrics.editor_width
     state.editor_height = metrics.editor_height
+    state.header_layout = metrics.header_layout
+    state.max_label_chars = metrics.max_label_chars
+    refresh_display_cache(state, metrics)
 
     local layout_tree = Layout.stack({
         document_header_node(state),

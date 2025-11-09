@@ -87,8 +87,7 @@ impl SceneRuntimeController {
             std::collections::HashMap<String, crate::scripting::lua::api::ui::UiResponse>,
         >,
     ) {
-        self.runtime
-            .set_ui_responses_for_world(world_id, responses);
+        self.runtime.set_ui_responses_for_world(world_id, responses);
     }
 }
 

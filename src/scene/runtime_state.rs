@@ -15,8 +15,7 @@ impl SceneRuntime {
         Self {
             time: 0.0,
             last_frame: None,
-            scripting: ScriptingState::new()
-                .expect("Failed to initialize Lua scripting runtime"),
+            scripting: ScriptingState::new().expect("Failed to initialize Lua scripting runtime"),
         }
     }
 

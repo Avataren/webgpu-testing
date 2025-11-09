@@ -83,7 +83,6 @@ mod tests {
         Ok(())
     }
 
-
     /// Test multiple script sources.
     #[test]
     fn test_multiple_script_sources() {

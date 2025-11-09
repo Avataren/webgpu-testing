@@ -110,7 +110,7 @@ impl UiCommand {
         // Special handling for MenuBar and Menu to avoid double rendering
         match self {
             UiCommand::MenuBar { items } => {
-                println!("Rendering MenuBar with {} items", items.len());
+                // println!("Rendering MenuBar with {} items", items.len());
                 egui::MenuBar::new().ui(ui, |ui| {
                     for item in items {
                         item.render_and_collect(ui, responses, viewport_rect);
@@ -118,7 +118,7 @@ impl UiCommand {
                 });
             }
             UiCommand::Menu { text, items } => {
-                println!("Rendering Menu '{}' with {} items", text, items.len());
+                // println!("Rendering Menu '{}' with {} items", text, items.len());
                 ui.menu_button(text, |ui| {
                     for item in items {
                         item.render_and_collect(ui, responses, viewport_rect);
@@ -272,17 +272,42 @@ impl UiCommand {
                 height,
             } => {
                 let mut text = current_value.clone();
-                let text_edit = egui::TextEdit::multiline(&mut text).code_editor();
+                let width = *width;
+                let height = *height;
+                let add_text_editor =
+                    |target_ui: &mut egui::Ui, size: egui::Vec2, text: &mut String| {
+                        target_ui.add_sized(size, egui::TextEdit::multiline(text).code_editor())
+                    };
 
-                // Calculate size based on provided dimensions or use available space
-                let size = match (width, height) {
-                    (Some(w), Some(h)) => egui::vec2(*w, *h),
-                    (Some(w), None) => egui::vec2(*w, ui.available_height()),
-                    (None, Some(h)) => egui::vec2(ui.available_width(), *h),
-                    (None, None) => ui.available_size(),
+                let response = if let Some(target_height) = height {
+                    let target_width = width.unwrap_or_else(|| ui.available_width());
+                    let mut inner_response = None;
+
+                    egui::ScrollArea::both()
+                        .auto_shrink([false, false])
+                        .max_width(target_width)
+                        .max_height(target_height)
+                        .show(ui, |scroll_ui| {
+                            scroll_ui.set_min_size(egui::vec2(target_width, target_height));
+                            let resp = add_text_editor(
+                                scroll_ui,
+                                egui::vec2(target_width, target_height),
+                                &mut text,
+                            );
+                            inner_response = Some(resp);
+                        });
+
+                    inner_response.expect("ScrollArea should always render text editor")
+                } else {
+                    let size = match (width, height) {
+                        (Some(w), None) => egui::vec2(w, ui.available_height()),
+                        (None, Some(h)) => egui::vec2(ui.available_width(), h),
+                        (Some(w), Some(h)) => egui::vec2(w, h),
+                        (None, None) => ui.available_size(),
+                    };
+                    add_text_editor(ui, size, &mut text)
                 };
 
-                let response = ui.add_sized(size, text_edit);
                 Some(UiResponse {
                     clicked: response.clicked(),
                     hovered: response.hovered(),
