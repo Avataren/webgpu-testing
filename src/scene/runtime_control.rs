@@ -73,9 +73,12 @@ impl SceneRuntimeController {
         &mut self,
         world: &World,
         editor_mode: bool,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+        pixels_per_point: Option<f32>,
     ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>>
     {
-        self.runtime.process_script_ui(world, editor_mode)
+        self.runtime.process_script_ui(world, editor_mode, viewport_width, viewport_height, pixels_per_point)
     }
 
     pub(crate) fn set_ui_responses_for_world(

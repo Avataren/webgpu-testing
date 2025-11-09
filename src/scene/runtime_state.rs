@@ -132,12 +132,15 @@ impl SceneRuntime {
         &mut self,
         world: &World,
         editor_mode: bool,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+        pixels_per_point: Option<f32>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
-        // Collect Rune UI commands
+        // Collect Rune UI commands (Rune doesn't support viewport info yet)
         let mut all_commands = self.scripting.process_ui(world, editor_mode);
 
         // Collect Lua UI commands and convert them to Rune UiCommand type
-        let lua_commands = self.lua_scripting.process_ui(world, editor_mode);
+        let lua_commands = self.lua_scripting.process_ui(world, editor_mode, viewport_width, viewport_height, pixels_per_point);
         for (entity, cmds) in lua_commands {
             // Convert Lua UiCommands to Rune UiCommands
             let converted_cmds: Vec<crate::scripting::rune::api::ui::UiCommand> =

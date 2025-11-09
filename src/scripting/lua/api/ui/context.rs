@@ -13,6 +13,11 @@ use std::sync::{Arc, Mutex};
 pub struct UiContext {
     commands: Arc<Mutex<Vec<UiCommand>>>,
     responses: Arc<Mutex<HashMap<String, UiResponse>>>,
+    /// Viewport dimensions for in-game UI positioning (in logical points)
+    viewport_width: Arc<Mutex<Option<f32>>>,
+    viewport_height: Arc<Mutex<Option<f32>>>,
+    /// DPI scaling factor (pixels per point)
+    pixels_per_point: Arc<Mutex<Option<f32>>>,
 }
 
 impl UiContext {
@@ -21,7 +26,31 @@ impl UiContext {
         Self {
             commands: Arc::new(Mutex::new(Vec::new())),
             responses: Arc::new(Mutex::new(HashMap::new())),
+            viewport_width: Arc::new(Mutex::new(None)),
+            viewport_height: Arc::new(Mutex::new(None)),
+            pixels_per_point: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Set viewport information for in-game UI positioning.
+    pub fn set_viewport_info(&self, width: f32, height: f32, pixels_per_point: f32) {
+        *self.viewport_width.lock().unwrap() = Some(width);
+        *self.viewport_height.lock().unwrap() = Some(height);
+        *self.pixels_per_point.lock().unwrap() = Some(pixels_per_point);
+    }
+
+    /// Get the viewport size (width, height) in logical points.
+    /// Returns (0, 0) if viewport info is not set.
+    pub fn get_viewport_size(&self) -> (f32, f32) {
+        let width = self.viewport_width.lock().unwrap().unwrap_or(0.0);
+        let height = self.viewport_height.lock().unwrap().unwrap_or(0.0);
+        (width, height)
+    }
+
+    /// Get the DPI scaling factor (pixels per point).
+    /// Returns 1.0 if not set.
+    pub fn get_pixels_per_point(&self) -> f32 {
+        self.pixels_per_point.lock().unwrap().unwrap_or(1.0)
     }
 
     /// Get the recorded commands for rendering.
@@ -180,6 +209,12 @@ impl UiContext {
     pub fn centered_area(&self, width: f64, callback: mlua::Function) -> mlua::Result<()> {
         let temp_context = UiContext::new();
         temp_context.set_responses(self.responses.lock().unwrap().clone());
+        // Copy viewport info to temporary context
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        if vp_width > 0.0 && vp_height > 0.0 {
+            temp_context.set_viewport_info(vp_width, vp_height, ppp);
+        }
 
         callback.call::<()>(temp_context.clone())?;
         let commands = temp_context.take_commands();
@@ -203,6 +238,12 @@ impl UiContext {
 
         // Copy responses from parent context so menu items can check them!
         temp_context.set_responses(self.responses.lock().unwrap().clone());
+        // Copy viewport info
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        if vp_width > 0.0 && vp_height > 0.0 {
+            temp_context.set_viewport_info(vp_width, vp_height, ppp);
+        }
 
         callback.call::<()>(temp_context.clone())?;
         let menu_items = temp_context.take_commands();
@@ -222,6 +263,12 @@ impl UiContext {
 
         // Copy responses from parent context so menu items can check them!
         temp_context.set_responses(self.responses.lock().unwrap().clone());
+        // Copy viewport info
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        if vp_width > 0.0 && vp_height > 0.0 {
+            temp_context.set_viewport_info(vp_width, vp_height, ppp);
+        }
 
         callback.call::<()>(temp_context.clone())?;
         let menu_items = temp_context.take_commands();
