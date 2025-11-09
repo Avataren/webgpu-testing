@@ -2051,7 +2051,7 @@ fn show_script_section(
 
         let available_scripts = list_available_scripts();
         if available_scripts.is_empty() {
-            ui.label("No script files found in scripts/");
+            ui.label("No script files found under scripts/ or examples/scripts/");
         } else {
             let current_path = match script.source() {
                 LuaScriptSource::File { path } => Some(path.clone()),
@@ -2108,26 +2108,32 @@ fn list_available_scripts() -> Vec<PathBuf> {
                 return cached.scripts.clone();
             }
         }
-
         // Cache miss or expired, refresh from filesystem
-        let scripts_dir = PathBuf::from("scripts");
         let mut scripts = Vec::new();
+        let candidate_dirs = [
+            PathBuf::from("scripts"),
+            PathBuf::from("examples/scripts"),
+        ];
 
-        if scripts_dir.exists() && scripts_dir.is_dir() {
-            if let Ok(entries) = fs::read_dir(&scripts_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_file() {
-                            let path = entry.path();
-                            if path.extension().and_then(|s| s.to_str()) == Some("lua") {
-                                scripts.push(path);
+        for scripts_dir in candidate_dirs {
+            if scripts_dir.exists() && scripts_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(&scripts_dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(file_type) = entry.file_type() {
+                            if file_type.is_file() {
+                                let path = entry.path();
+                                if path.extension().and_then(|s| s.to_str()) == Some("lua") {
+                                    scripts.push(path);
+                                }
                             }
                         }
                     }
                 }
             }
-            scripts.sort();
         }
+
+        scripts.sort();
+        scripts.dedup();
 
         // Update cache
         *cache = Some(ScriptListCache {
