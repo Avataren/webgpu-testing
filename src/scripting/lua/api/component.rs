@@ -21,9 +21,8 @@ use hecs::Entity;
 use log::{error, warn};
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
-use crate::scripting::component_registry::ComponentRegistryError;
 use crate::scripting::lua::guards::{
-    with_active_commands, with_active_registry, with_active_world,
+    with_active_commands, with_active_world,
 };
 
 /// Registers component API functions with the Lua runtime.
@@ -79,29 +78,14 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
     // has_component(entity: number, component_name: string) -> boolean
+    // TODO: This feature is not yet fully implemented for Lua
+    // The rune-based component registry has been removed
     globals.set(
         "has_component",
         lua.create_function(|_, (entity_bits, component_name): (i64, String)| {
-            with_active_world(|world| {
-                with_active_registry(|registry| {
-                    let entity = match Entity::from_bits(entity_bits as u64) {
-                        Some(e) => e,
-                        None => return Ok(false),
-                    };
-
-                    match registry.has_component(world, entity, &component_name) {
-                        Ok(has) => Ok(has),
-                        Err(ComponentRegistryError::UnknownComponent(name)) => {
-                            warn!(target: "script", "Unknown component type: {}", name);
-                            Ok(false)
-                        }
-                        Err(e) => {
-                            error!(target: "script", "Failed to check component: {}", e);
-                            Ok(false)
-                        }
-                    }
-                })
-            })
+            warn!(target: "script", "has_component not yet fully implemented for Lua (entity: {}, component: {})", entity_bits, component_name);
+            // Return false for now - this will be implemented when we add a Lua-specific component system
+            Ok(false)
         })?,
     )?;
 

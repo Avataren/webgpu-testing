@@ -8,7 +8,6 @@ use hecs::{ComponentError, Entity, World};
 use log::warn;
 
 use crate::scene::{Name, Parent, Transform, TransformComponent};
-use crate::scripting::component_registry::ComponentRegistry;
 
 use super::component::LuaScriptComponent;
 use super::entity_registry::{EntityHandleRegistry, ExistingCommand, PendingEntity};
@@ -316,7 +315,6 @@ impl ScriptCommands {
     pub fn apply(
         &mut self,
         world: &mut World,
-        _registry: &ComponentRegistry,
     ) -> Result<ScriptApplyResult, LuaScriptingError> {
         use log::error;
 

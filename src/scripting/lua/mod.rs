@@ -134,6 +134,7 @@ pub mod types;
 mod integration_tests;
 
 // Public exports
+pub use commands::PendingGltfImport;
 pub use component::{FunctionCallOutcome, LuaScriptComponent};
 pub use error::LuaScriptingError;
 pub use plugin::LuaScriptingPlugin;

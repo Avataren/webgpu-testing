@@ -4,8 +4,6 @@ use std::sync::Arc;
 use hecs::{ComponentError, NoSuchEntity};
 use thiserror::Error;
 
-use crate::scripting::component_registry::ComponentRegistryError;
-
 /// Error type produced by the Lua scripting integration.
 #[derive(Debug, Error)]
 pub enum LuaScriptingError {
@@ -28,9 +26,6 @@ pub enum LuaScriptingError {
     /// Tried to access an entity that no longer exists.
     #[error("failed to access entity: {0}")]
     MissingEntity(#[from] NoSuchEntity),
-    /// Component registry error.
-    #[error("component registry error: {0}")]
-    ComponentRegistry(#[from] ComponentRegistryError),
     /// Serialization error when converting Lua values.
     #[error("serialization error: {0}")]
     Serialization(String),

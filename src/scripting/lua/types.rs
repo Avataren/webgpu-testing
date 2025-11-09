@@ -41,7 +41,7 @@ use super::error::LuaScriptingError;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LuaScriptSource {
     /// Inline source code bundled with an entity.
-    Inline { name: Arc<str>, source: Arc<str> },
+    Inline { name: String, source: String },
     /// External file that should be loaded at runtime.
     File { path: PathBuf },
 }
@@ -50,8 +50,8 @@ impl LuaScriptSource {
     /// Construct an inline script source.
     pub fn inline(name: impl Into<String>, source: impl Into<String>) -> Self {
         Self::Inline {
-            name: Arc::from(name.into().into_boxed_str()),
-            source: Arc::from(source.into().into_boxed_str()),
+            name: name.into(),
+            source: source.into(),
         }
     }
 
@@ -86,8 +86,8 @@ impl LuaScriptSource {
                     })?;
 
                 Ok(LoadedScript {
-                    name: Arc::from(absolute.to_string_lossy().into_owned().into_boxed_str()),
-                    contents: Arc::from(contents.into_boxed_str()),
+                    name: absolute.to_string_lossy().into_owned(),
+                    contents: contents,
                     path: Some(absolute),
                 })
             }
@@ -96,8 +96,8 @@ impl LuaScriptSource {
 }
 
 pub(crate) struct LoadedScript {
-    pub name: Arc<str>,
-    pub contents: Arc<str>,
+    pub name: String,
+    pub contents: String,
     pub path: Option<PathBuf>,
 }
 
@@ -164,7 +164,7 @@ pub(crate) fn parse_script_mode_annotation(source: &str) -> ScriptMode {
 /// Compiled Lua script with callable functions.
 #[derive(Clone)]
 pub(crate) struct LuaScript {
-    pub name: Arc<str>,
+    pub name: String,
     #[allow(dead_code)]
     pub mode: ScriptMode,
     /// Compiled Lua chunk (stored as bytecode for reuse)
@@ -172,7 +172,7 @@ pub(crate) struct LuaScript {
 }
 
 impl LuaScript {
-    pub fn new(name: Arc<str>, mode: ScriptMode, chunk: Vec<u8>) -> Arc<Self> {
+    pub fn new(name: String, mode: ScriptMode, chunk: Vec<u8>) -> Arc<Self> {
         Arc::new(Self {
             name,
             mode,
