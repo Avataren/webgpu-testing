@@ -571,10 +571,18 @@ impl ScriptingState {
     /// Call on_ui() for all scripts and collect their UI commands.
     ///
     /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
+    ///
+    /// # Parameters
+    /// - `viewport_width`: Optional viewport width in logical points
+    /// - `viewport_height`: Optional viewport height in logical points
+    /// - `pixels_per_point`: Optional DPI scaling factor
     pub fn process_ui(
         &mut self,
         world: &World,
         editor_mode: bool,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+        pixels_per_point: Option<f32>,
     ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
         use super::guards::{RegistryGuard, WorldGuard};
@@ -634,6 +642,11 @@ impl ScriptingState {
 
             // Create a UI context for this script
             let ui_context = UiContext::new();
+
+            // Set viewport information if available
+            if let (Some(width), Some(height), Some(ppp)) = (viewport_width, viewport_height, pixels_per_point) {
+                ui_context.set_viewport_info(width, height, ppp);
+            }
 
             // Set responses from the previous frame
             if let Some(responses) = self

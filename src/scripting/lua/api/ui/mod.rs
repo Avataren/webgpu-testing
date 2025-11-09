@@ -70,6 +70,8 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:menu_bar(callback)` - Create menu bar, calls callback to add menus
 /// - `ui:menu(text, callback)` - Create menu in menu bar, calls callback for items
 /// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
+/// - `ui:get_viewport_size()` - Get viewport dimensions as {width, height} table
+/// - `ui:get_pixels_per_point()` - Get DPI scaling factor
 ///
 /// # Arguments
 ///
@@ -179,6 +181,20 @@ impl UserData for UiContext {
         // Display a menu item (like a button in a menu)
         methods.add_method("menu_item", |_, this, (id, text): (String, String)| {
             Ok(this.menu_item(id, text))
+        });
+
+        // Get the viewport size for in-game UI positioning
+        methods.add_method("get_viewport_size", |lua, this, ()| {
+            let (width, height) = this.get_viewport_size();
+            let table = lua.create_table()?;
+            table.set("width", width)?;
+            table.set("height", height)?;
+            Ok(table)
+        });
+
+        // Get the DPI scaling factor (pixels per point)
+        methods.add_method("get_pixels_per_point", |_, this, ()| {
+            Ok(this.get_pixels_per_point())
         });
     }
 }

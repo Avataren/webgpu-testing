@@ -280,15 +280,23 @@ impl EditorApplication {
             }
         }
 
+        // Get viewport information for in-game UI positioning
+        let (viewport_width, viewport_height, pixels_per_point) = if let Some(rect) = self.shared.viewports.game_viewport.rect() {
+            let ppp = ctx.egui.pixels_per_point();
+            (Some(rect.width()), Some(rect.height()), Some(ppp))
+        } else {
+            (None, None, None)
+        };
+
         // Process scene scripts
-        self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode);
+        self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode, viewport_width, viewport_height, pixels_per_point);
 
         // Process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
             self.shared.plugin_ui_commands = ctx
                 .scene
-                .process_script_ui_for_world(manager.world(), editor_mode);
+                .process_script_ui_for_world(manager.world(), editor_mode, viewport_width, viewport_height, pixels_per_point);
 
             if self.shared.plugin_ui_commands.is_empty() {
                 log::debug!(

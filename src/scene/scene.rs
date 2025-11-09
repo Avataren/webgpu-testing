@@ -141,10 +141,13 @@ impl Scene {
     pub fn process_script_ui(
         &mut self,
         editor_mode: bool,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+        pixels_per_point: Option<f32>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
-            self.runtime.process_script_ui(world, editor_mode)
+            self.runtime.process_script_ui(world, editor_mode, viewport_width, viewport_height, pixels_per_point)
         } else {
             HashMap::new()
         }
@@ -158,8 +161,11 @@ impl Scene {
         &mut self,
         world: &World,
         editor_mode: bool,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+        pixels_per_point: Option<f32>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
-        self.runtime.process_script_ui(world, editor_mode)
+        self.runtime.process_script_ui(world, editor_mode, viewport_width, viewport_height, pixels_per_point)
     }
 
     /// Run scripts in a custom world (e.g., UI plugins).
