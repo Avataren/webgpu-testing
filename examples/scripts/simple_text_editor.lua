@@ -169,15 +169,8 @@ function on_ui(self_entity, ui)
     local content = get_string("text_content", "")
     local version = ensure_file_version()
     local widget_id = "content_" .. tostring(math.floor(version))
-    local viewport = ui:get_viewport_size()
     local editor_width = 780
-    if viewport.width and viewport.width > 0 then
-        editor_width = math.min(editor_width, math.max(360, viewport.width - 40))
-    end
-    local editor_height = 600
-    if viewport.height and viewport.height > 0 then
-        editor_height = math.min(editor_height, math.max(260, viewport.height - 220))
-    end
+    local editor_height = 800
     local new_content = ui:text_edit_multiline(widget_id, content, editor_width, editor_height)
 
     -- Track unsaved changes

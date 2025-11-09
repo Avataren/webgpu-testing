@@ -754,6 +754,8 @@ impl EditorApplication {
                             .title_bar(false)
                             .fixed_size([window_width, window_height]) // Force size every frame
                             .interactable(true); // Ensure it always accepts input
+                    } else if is_text_editor {
+                        window = window.vscroll(true).hscroll(true);
                     }
 
                     let window_response = window.show(ctx, |ui| {
