@@ -99,7 +99,7 @@ pub enum UiCommand {
 ### 1.2 Lua API
 
 ```lua
--- @ingame  (new annotation for in-game UI scripts)
+-- @tool  (runs in both editor and play modes)
 
 function on_ui(self_entity, ui)
     -- Health bar in top-left
@@ -215,19 +215,21 @@ local dpi_scale = ui:get_pixels_per_point()
    - Store in `UiContext` for Lua access
 
 2. **RenderRegion Application** (NEW)
-   - When rendering UI commands for "in-game" scripts
-   - Apply game viewport's RenderRegion before egui rendering
+   - When rendering UI commands for `@tool` scripts
+   - Render within game viewport in play mode
+   - Render as overlay in editor mode (for WYSIWYG)
    - Ensures UI is clipped to game view
 
-3. **Script Annotation** (lua/api/ui/mod.rs)
-   - Add `@ingame` annotation
-   - Distinguishes editor panels vs in-game overlays
-   - In-game scripts render within game viewport
+3. **Script Mode Detection** (lua/api/ui/mod.rs)
+   - Use existing `@tool` annotation (runs in both editor and play)
+   - `@tool` scripts render anchored UI within game viewport
+   - In editor: show with WYSIWYG editing capabilities
+   - In play: show as actual in-game UI
 
 **Example Flow**:
 ```rust
 // In EditorApplication::render() or similar
-for (entity, script) in ingame_ui_scripts {
+for (entity, script) in tool_ui_scripts {
     // Get game viewport region
     let viewport_region = self.viewport_system.game_viewport.region();
     let viewport_rect = self.viewport_system.game_viewport.rect();
@@ -236,7 +238,8 @@ for (entity, script) in ingame_ui_scripts {
     let ui_ctx = UiContext::new_with_viewport(
         viewport_rect.width(),
         viewport_rect.height(),
-        egui_ctx.pixels_per_point()
+        egui_ctx.pixels_per_point(),
+        self.is_editor_mode // For WYSIWYG features
     );
 
     // Execute script: on_ui(entity, ui_ctx)
@@ -279,15 +282,262 @@ let final_pos = match anchor {
 };
 ```
 
-### 1.7 Phase 1 Deliverables
+### 1.7 WYSIWYG Editing in Editor Mode
 
+**Goal**: Allow visual positioning of anchored panels in the editor without editing Lua code.
+
+**Design Principles**:
+- Make anchored panels draggable in editor mode
+- Show visual guides (anchor point, offset lines, measurements)
+- Save positions back to entity properties or script state
+- Toggle between "Design Mode" (draggable) and "Preview Mode" (interactive)
+
+#### 1.7.1 Visual Guides
+
+When rendering anchored panels in editor mode, add visual overlays:
+
+```rust
+// In AnchoredPanel::render_and_collect() - editor mode only
+if is_editor_mode {
+    // 1. Draw anchor point indicator
+    ui.painter().circle_filled(
+        anchor_pos,
+        4.0,
+        egui::Color32::from_rgb(255, 150, 0)
+    );
+
+    // 2. Draw offset lines
+    ui.painter().line_segment(
+        [anchor_pos, final_pos],
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 150, 0))
+    );
+
+    // 3. Show measurements
+    ui.painter().text(
+        anchor_pos + vec2(5.0, 5.0),
+        egui::Align2::LEFT_TOP,
+        format!("offset: ({:.0}, {:.0})", offset_x, offset_y),
+        egui::FontId::monospace(10.0),
+        egui::Color32::WHITE
+    );
+
+    // 4. Highlight panel border
+    ui.painter().rect_stroke(
+        panel_rect,
+        0.0,
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 150, 0))
+    );
+}
+```
+
+#### 1.7.2 Draggable Panels
+
+Make panels interactable in design mode:
+
+```rust
+// Add ID to AnchoredPanel for tracking
+pub struct AnchoredPanel {
+    id: String,           // Unique ID for this panel
+    anchor: Anchor,
+    offset_x: f32,
+    offset_y: f32,
+    // ... rest
+}
+
+// In render_and_collect()
+if is_design_mode {
+    // Create invisible sense region for dragging
+    let sense_response = ui.allocate_rect(panel_rect, egui::Sense::drag());
+
+    if sense_response.dragged() {
+        let delta = sense_response.drag_delta();
+
+        // Convert delta to new offsets based on anchor
+        let (new_offset_x, new_offset_y) = calculate_new_offsets(
+            anchor,
+            offset_x,
+            offset_y,
+            delta
+        );
+
+        // Emit event or update command state
+        emit_panel_moved_event(id, new_offset_x, new_offset_y);
+    }
+
+    // Visual feedback while dragging
+    if sense_response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if sense_response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+}
+```
+
+#### 1.7.3 Saving Edited Positions
+
+**Option A: Save to Entity Components** (Recommended)
+Store anchor positions as entity components that override script defaults:
+
+```rust
+// New component
+#[derive(Component)]
+pub struct UiPanelOverride {
+    pub panel_id: String,
+    pub anchor: Anchor,
+    pub offset_x: f32,
+    pub offset_y: f32,
+}
+
+// When creating UiContext for script
+let overrides = entity.get::<UiPanelOverride>();
+ui_ctx.set_panel_overrides(overrides);
+
+// In Lua script
+ui:anchored_panel("health_bar", "top_left", 10, 10, 200, 50, function(panel)
+    -- Default position (10, 10) from top_left
+    -- Editor override can change this without touching script
+end)
+```
+
+**Option B: Save to Script Properties**
+Store in entity's script component properties (if that exists):
+
+```rust
+// In script component
+pub struct ScriptComponent {
+    // ... existing fields ...
+    pub ui_panel_positions: HashMap<String, (Anchor, f32, f32)>,
+}
+```
+
+**Option C: Save to Separate UI Layout File**
+Store UI layouts separately from scripts:
+
+```lua
+-- ui_layouts/hud_layout.lua
+return {
+    health_bar = { anchor = "top_left", offset_x = 15, offset_y = 12 },
+    score = { anchor = "top_right", offset_x = 15, offset_y = 12 },
+}
+```
+
+#### 1.7.4 Design Mode Toggle
+
+Add UI controls in editor for design mode:
+
+```rust
+// In editor menu bar or toolbar
+if ui.button("🎨 Design Mode").clicked() {
+    self.ui_design_mode = !self.ui_design_mode;
+}
+
+// Pass to UiContext
+ui_ctx.set_design_mode(self.ui_design_mode);
+
+// Visual indicator
+if self.ui_design_mode {
+    // Show overlay in game viewport
+    egui::Area::new("design_mode_indicator")
+        .fixed_pos(viewport_rect.left_top() + vec2(5.0, 5.0))
+        .show(ctx, |ui| {
+            ui.colored_label(
+                egui::Color32::from_rgb(255, 150, 0),
+                "🎨 DESIGN MODE - Drag panels to reposition"
+            );
+        });
+}
+```
+
+#### 1.7.5 Anchor Snapping
+
+Add snap-to-anchor functionality for easier positioning:
+
+```rust
+// When dragging, allow switching anchor points
+if sense_response.drag_released() {
+    // Check if panel center is closer to a different anchor
+    let panel_center = panel_rect.center();
+    let new_anchor = find_closest_anchor(viewport_rect, panel_center);
+
+    if new_anchor != current_anchor {
+        // Recalculate offsets for new anchor
+        let new_offsets = calculate_offsets_from_position(
+            new_anchor,
+            viewport_rect,
+            panel_center
+        );
+
+        emit_panel_anchor_changed(id, new_anchor, new_offsets);
+    }
+}
+
+// Visual feedback: show all anchor points
+if is_design_mode {
+    for anchor in Anchor::ALL {
+        let pos = get_anchor_position(viewport_rect, anchor);
+        ui.painter().circle_stroke(
+            pos,
+            8.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 100))
+        );
+    }
+}
+```
+
+#### 1.7.6 WYSIWYG Workflow
+
+**Typical usage**:
+
+1. **Create script** with anchored panels using default positions
+   ```lua
+   -- @tool
+   function on_ui(self_entity, ui)
+       ui:anchored_panel("health_bar", "top_left", 10, 10, 200, 50, function(panel)
+           panel:label("Health: " .. get_health())
+       end)
+   end
+   ```
+
+2. **Enable Design Mode** in editor (button in toolbar)
+
+3. **Drag panels** to desired positions
+   - Visual guides show anchor point and offsets
+   - All 9 anchor points visible for reference
+   - Measurements update in real-time
+
+4. **Release panel** to commit position
+   - Offsets automatically calculated
+   - Saved to entity component (overrides script defaults)
+
+5. **Toggle Preview Mode** to test interactivity
+   - Buttons/sliders work normally
+   - No dragging or visual guides
+
+6. **Play mode** uses exact positions from editor
+   - Overrides applied to anchored panels
+   - Positions consistent between editor and play
+
+### 1.8 Phase 1 Deliverables
+
+**Core Features**:
 - ✅ `Anchor` enum with 9 positions
 - ✅ `AnchoredPanel` command
-- ✅ Lua API: `ui:anchored_panel(anchor, x, y, w, h, callback)`
+- ✅ Lua API: `ui:anchored_panel(id, anchor, x, y, w, h, callback)`
 - ✅ Viewport dimensions exposed to Lua
-- ✅ `@ingame` script annotation
+- ✅ `@tool` script support (runs in editor + play)
 - ✅ Rendering integration with game viewport
+
+**WYSIWYG Features**:
+- ✅ Visual guides (anchor points, offset lines, measurements)
+- ✅ Draggable panels in design mode
+- ✅ Design mode toggle in editor
+- ✅ Position overrides saved to entity components
+- ✅ Anchor snapping (optional but recommended)
+- ✅ Real-time offset display
+
+**Examples**:
 - ✅ Example script: HUD with health/score/crosshair
+- ✅ WYSIWYG tutorial video/documentation
 
 ---
 
@@ -470,9 +720,10 @@ fn layout_flex(
 **Goal**: Connect RenderRegion to Lua UI system
 
 - [ ] Pass viewport dimensions to UiContext creation
-- [ ] Add `@ingame` script annotation parser
+- [ ] Detect `@tool` scripts for in-game UI rendering
 - [ ] Add `ui:get_viewport_size()` Lua API
-- [ ] Render `@ingame` scripts within game viewport Area
+- [ ] Add `ui:get_pixels_per_point()` Lua API
+- [ ] Render `@tool` scripts within game viewport Area
 - [ ] Test: Simple label in game viewport
 - [ ] **Validation**: Lua script can query viewport size and UI appears in game view
 
@@ -480,9 +731,9 @@ fn layout_flex(
 **Goal**: Enable corner/edge positioning
 
 - [ ] Add `Anchor` enum (9 positions)
-- [ ] Add `AnchoredPanel` command
+- [ ] Add `AnchoredPanel` command with ID parameter
 - [ ] Implement anchor position calculation
-- [ ] Add `ui:anchored_panel()` Lua API
+- [ ] Add `ui:anchored_panel(id, anchor, x, y, w, h, callback)` Lua API
 - [ ] Test: HUD elements in all 9 positions
 - [ ] **Validation**: Health bar in top-left, score in top-right, both stay in position
 
@@ -496,21 +747,68 @@ fn layout_flex(
 - [ ] Test: UI at various offsets, ensure clamping works
 - [ ] **Validation**: UI positioned 10px from edges, doesn't overflow viewport
 
-### Milestone 4: Example and Documentation (1 day)
-**Goal**: Demonstrate anchoring system
+### Milestone 4: WYSIWYG Visual Guides (2 days)
+**Goal**: Show visual feedback for anchored panels in editor
+
+- [ ] Add editor mode detection to UiContext
+- [ ] Draw anchor point indicators (orange circles)
+- [ ] Draw offset lines from anchor to panel
+- [ ] Show offset measurements as text
+- [ ] Highlight panel borders in design mode
+- [ ] Test: Visual guides appear only in editor mode
+- [ ] **Validation**: Can see anchor points and offset lines for all panels
+
+### Milestone 5: WYSIWYG Dragging (2-3 days)
+**Goal**: Make panels draggable in editor
+
+- [ ] Add `UiPanelOverride` component for storing positions
+- [ ] Implement drag sensing for anchored panels
+- [ ] Calculate new offsets from drag delta
+- [ ] Update component on drag release
+- [ ] Apply overrides when creating UiContext
+- [ ] Visual feedback (cursor changes, highlight while dragging)
+- [ ] Test: Drag panels, verify positions persist
+- [ ] **Validation**: Can drag panel to new position and it stays there
+
+### Milestone 6: Design Mode Toggle (1 day)
+**Goal**: Add UI controls for switching modes
+
+- [ ] Add "Design Mode" button to editor toolbar
+- [ ] Pass design mode flag to UiContext
+- [ ] Show design mode indicator overlay
+- [ ] Toggle between draggable and interactive modes
+- [ ] Test: Design mode enables dragging, preview mode enables interaction
+- [ ] **Validation**: Can toggle modes and behavior changes correctly
+
+### Milestone 7: Anchor Snapping (1-2 days)
+**Goal**: Auto-switch anchor when dragging to different area (Optional but recommended)
+
+- [ ] Implement `find_closest_anchor()` for panel position
+- [ ] Recalculate offsets when anchor changes
+- [ ] Update override component with new anchor
+- [ ] Show all 9 anchor points in design mode
+- [ ] Visual feedback when anchor would change
+- [ ] Test: Drag from top-left to bottom-right, anchor switches
+- [ ] **Validation**: Panel stays in visual position when anchor switches
+
+### Milestone 8: Example and Documentation (1 day)
+**Goal**: Demonstrate complete anchoring + WYSIWYG system
 
 - [ ] Create `examples/scripts/ingame_hud.lua`
   - Health bar (top-left)
   - Score (top-right)
   - Crosshair (center)
   - Mini-map (bottom-right)
-- [ ] Write documentation for `@ingame` annotation
+- [ ] Write WYSIWYG workflow documentation
 - [ ] Document anchoring API
-- [ ] **Validation**: Example runs and looks like a real game HUD
+- [ ] Create video/GIF of WYSIWYG editing
+- [ ] **Validation**: Example runs, can be edited visually, works in play mode
 
-**Phase 1 Complete**: ~5-7 days
+**Phase 1 Complete**: ~11-14 days (with WYSIWYG)
 
-### Milestone 5: Flex Container (3-4 days)
+---
+
+### Milestone 9: Flex Container (3-4 days)
 **Goal**: Basic flex layout
 
 - [ ] Add `FlexContainer` and `FlexItem` commands
@@ -520,7 +818,7 @@ fn layout_flex(
 - [ ] Test: Horizontal button bar, vertical list
 - [ ] **Validation**: Buttons evenly spaced, list items stack vertically
 
-### Milestone 6: Flex Sizing (2-3 days)
+### Milestone 10: Flex Sizing (2-3 days)
 **Goal**: Grow/shrink and constraints
 
 - [ ] Implement flex grow/shrink algorithm
@@ -529,7 +827,7 @@ fn layout_flex(
 - [ ] Test: Mixed fixed and flexible items
 - [ ] **Validation**: Flexible items expand to fill space, fixed items stay sized
 
-### Milestone 7: Advanced Layout (2-3 days)
+### Milestone 11: Advanced Layout (2-3 days)
 **Goal**: Alignment, justification, wrapping
 
 - [ ] Implement align (start, center, end, stretch)
@@ -538,7 +836,7 @@ fn layout_flex(
 - [ ] Test: Complex layouts with multiple containers
 - [ ] **Validation**: Items aligned and justified as specified
 
-### Milestone 8: Example and Polish (2 days)
+### Milestone 12: Example and Polish (2 days)
 **Goal**: Production-ready flex layouts
 
 - [ ] Create `examples/scripts/inventory_flex.lua`
@@ -549,7 +847,7 @@ fn layout_flex(
 
 **Phase 2 Complete**: ~9-12 days
 
-**Total Estimated Time**: 14-19 days
+**Total Estimated Time**: ~20-26 days (Phase 1 + Phase 2 with WYSIWYG)
 
 ---
 
@@ -622,17 +920,19 @@ egui::Area::new("game_ui")
 **Three Modes**:
 
 1. **@editor** (existing)
-   - Renders in editor panels
+   - Renders in editor panels only
    - Has access to all editor state
    - Not constrained to viewport
+   - For editor tools and plugins
 
-2. **@ingame** (new)
-   - Renders within game viewport
-   - Anchored/positioned relative to viewport
-   - For HUD, menus, overlays
+2. **@tool** (existing - now used for in-game UI)
+   - Runs in both editor and play modes
+   - Renders within game viewport (with anchoring)
+   - In editor: WYSIWYG editing with visual guides
+   - In play: Actual in-game UI (HUD, menus, overlays)
 
 3. **(no annotation)** (existing)
-   - Runs in play mode
+   - Runs in play mode only
    - No UI access
    - Game logic only
 
