@@ -57,6 +57,10 @@ pub enum UiCommand {
         id: String,
         text: String,
     },
+    Horizontal {
+        items: Vec<UiCommand>,
+        wrap: bool,
+    },
     CenteredArea {
         width: Option<f32>,
         items: Vec<UiCommand>,
@@ -88,6 +92,19 @@ impl UiCommand {
                         item.render_and_collect(ui, responses);
                     }
                 });
+            }
+            UiCommand::Horizontal { items, wrap } => {
+                let mut render_children = |ui: &mut egui::Ui| {
+                    for item in items {
+                        item.render_and_collect(ui, responses);
+                    }
+                };
+
+                if *wrap {
+                    ui.horizontal_wrapped(|ui| render_children(ui));
+                } else {
+                    ui.horizontal(|ui| render_children(ui));
+                }
             }
             UiCommand::CenteredArea { width, items } => {
                 ui.vertical_centered(|ui| {
@@ -278,6 +295,20 @@ impl UiCommand {
                 });
                 None
             }
+            UiCommand::Horizontal { items, wrap } => {
+                let render_children = |ui: &mut egui::Ui| {
+                    for item in items {
+                        item.render(ui);
+                    }
+                };
+
+                if *wrap {
+                    ui.horizontal_wrapped(|ui| render_children(ui));
+                } else {
+                    ui.horizontal(|ui| render_children(ui));
+                }
+                None
+            }
             UiCommand::MenuItem { id: _, text } => {
                 let clicked = ui.button(text).clicked();
                 if clicked {
@@ -382,6 +413,12 @@ impl From<UiCommand> for crate::scripting::rune::api::ui::UiCommand {
             },
             UiCommand::MenuItem { id, text } => {
                 crate::scripting::rune::api::ui::UiCommand::MenuItem { id, text }
+            }
+            UiCommand::Horizontal { items, wrap } => {
+                crate::scripting::rune::api::ui::UiCommand::Horizontal {
+                    wrap,
+                    items: items.into_iter().map(|cmd| cmd.into()).collect(),
+                }
             }
             UiCommand::CenteredArea { width, items } => {
                 crate::scripting::rune::api::ui::UiCommand::CenteredArea {

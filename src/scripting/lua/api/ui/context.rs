@@ -235,6 +235,36 @@ impl UiContext {
         Ok(())
     }
 
+    fn record_horizontal(&self, callback: mlua::Function, wrap: bool) -> mlua::Result<()> {
+        let temp_context = UiContext::new();
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        if vp_width > 0.0 && vp_height > 0.0 {
+            temp_context.set_viewport_info(vp_width, vp_height, ppp);
+        }
+
+        callback.call::<()>(temp_context.clone())?;
+        let items = temp_context.take_commands();
+
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::Horizontal { items, wrap });
+
+        Ok(())
+    }
+
+    /// Layout items horizontally without wrapping.
+    pub fn horizontal(&self, callback: mlua::Function) -> mlua::Result<()> {
+        self.record_horizontal(callback, false)
+    }
+
+    /// Layout items horizontally and allow wrapping onto multiple rows.
+    pub fn horizontal_wrapped(&self, callback: mlua::Function) -> mlua::Result<()> {
+        self.record_horizontal(callback, true)
+    }
+
     /// Display a menu bar. The callback function will be called to add menu items.
     pub fn menu_bar(&self, callback: mlua::Function) -> mlua::Result<()> {
         // Collect all commands from the callback

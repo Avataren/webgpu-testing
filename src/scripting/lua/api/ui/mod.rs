@@ -70,6 +70,8 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:menu_bar(callback)` - Create menu bar, calls callback to add menus
 /// - `ui:menu(text, callback)` - Create menu in menu bar, calls callback for items
 /// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
+/// - `ui:horizontal(callback)` - Layout items horizontally (single row)
+/// - `ui:horizontal_wrapped(callback)` - Layout items horizontally with wrapping
 /// - `ui:get_viewport_size()` - Get viewport dimensions as {width, height} table
 /// - `ui:get_pixels_per_point()` - Get DPI scaling factor
 ///
@@ -120,6 +122,15 @@ impl UserData for UiContext {
             "centered_area",
             |_, this, (width, callback): (f64, mlua::Function)| this.centered_area(width, callback),
         );
+
+        // Layout items horizontally
+        methods.add_method("horizontal", |_, this, callback: mlua::Function| {
+            this.horizontal(callback)
+        });
+
+        methods.add_method("horizontal_wrapped", |_, this, callback: mlua::Function| {
+            this.horizontal_wrapped(callback)
+        });
 
         // Display a text edit field
         methods.add_method(
