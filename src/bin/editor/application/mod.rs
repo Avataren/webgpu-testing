@@ -713,7 +713,7 @@ impl EditorApplication {
             // Render each plugin's UI in a separate window (only if visible)
             for (entity, commands) in &self.shared.plugin_ui_commands {
                 // Check if this plugin is visible
-                if let Some(plugin) = manager.get_plugin(*entity) {
+                if let Some(plugin) = manager.get_plugin_mut(*entity) {
                     if !plugin.visible {
                         continue;
                     }
@@ -728,10 +728,17 @@ impl EditorApplication {
                         continue;
                     }
 
+                    let mut open_flag = plugin.visible;
+                    let default_size = if is_text_editor {
+                        [800.0, 800.0]
+                    } else {
+                        [500.0, 400.0]
+                    };
                     let mut window = egui::Window::new(window_title)
                         .resizable(true)
-                        .default_size([500.0, 400.0])
-                        .collapsible(true);
+                        .default_size(default_size)
+                        .collapsible(true)
+                        .open(&mut open_flag);
 
                     // Configure Welcome Screen as modal
                     if is_welcome_screen {
@@ -789,6 +796,8 @@ impl EditorApplication {
                     if !responses.is_empty() {
                         plugin_responses.insert(*entity, responses);
                     }
+
+                    plugin.visible = open_flag;
                 }
             }
 

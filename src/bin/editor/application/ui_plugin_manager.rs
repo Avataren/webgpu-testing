@@ -162,6 +162,12 @@ impl UiPluginManager {
             .and_then(|&index| self.plugins.get(index))
     }
 
+    /// Get mutable plugin by entity
+    pub fn get_plugin_mut(&mut self, entity: Entity) -> Option<&mut LoadedPlugin> {
+        let index = *self.entity_to_plugin.get(&entity)?;
+        self.plugins.get_mut(index)
+    }
+
     /// Get the plugin world (read-only)
     pub fn world(&self) -> &hecs::World {
         &self.world
