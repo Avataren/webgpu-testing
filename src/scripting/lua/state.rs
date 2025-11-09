@@ -583,6 +583,7 @@ impl ScriptingState {
         viewport_width: Option<f32>,
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
+        per_entity_viewports: Option<&HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
         use super::api::ui::UiContext;
         use super::guards::{RegistryGuard, WorldGuard};
@@ -644,7 +645,15 @@ impl ScriptingState {
             let ui_context = UiContext::new();
 
             // Set viewport information if available
-            if let (Some(width), Some(height), Some(ppp)) =
+            if let Some(map) = per_entity_viewports {
+                if let Some((width, height, ppp)) = map.get(&entity) {
+                    ui_context.set_viewport_info(*width, *height, *ppp);
+                } else if let (Some(width), Some(height), Some(ppp)) =
+                    (viewport_width, viewport_height, pixels_per_point)
+                {
+                    ui_context.set_viewport_info(width, height, ppp);
+                }
+            } else if let (Some(width), Some(height), Some(ppp)) =
                 (viewport_width, viewport_height, pixels_per_point)
             {
                 ui_context.set_viewport_info(width, height, ppp);

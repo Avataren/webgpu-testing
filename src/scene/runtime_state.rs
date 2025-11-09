@@ -135,6 +135,7 @@ impl SceneRuntime {
         viewport_width: Option<f32>,
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
+        per_entity_viewports: Option<&HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         // Collect Rune UI commands (Rune doesn't support viewport info yet)
         let mut all_commands = self.scripting.process_ui(world, editor_mode);
@@ -146,6 +147,7 @@ impl SceneRuntime {
             viewport_width,
             viewport_height,
             pixels_per_point,
+            per_entity_viewports,
         );
         for (entity, cmds) in lua_commands {
             // Convert Lua UiCommands to Rune UiCommands

@@ -299,6 +299,7 @@ impl EditorApplication {
             viewport_width,
             viewport_height,
             pixels_per_point,
+            None,
         );
 
         // Process UI plugin scripts (from separate world)
@@ -315,6 +316,7 @@ impl EditorApplication {
                 viewport_width,
                 viewport_height,
                 pixels_per_point,
+                Some(&self.shared.plugin_window_sizes),
             );
 
             if self.shared.plugin_ui_commands.is_empty() {
@@ -715,6 +717,7 @@ impl EditorApplication {
                 // Check if this plugin is visible
                 if let Some(plugin) = manager.get_plugin_mut(*entity) {
                     if !plugin.visible {
+                        self.shared.plugin_window_sizes.remove(entity);
                         continue;
                     }
 
@@ -778,7 +781,7 @@ impl EditorApplication {
 
                     // For Welcome Screen, refocus on clicks outside to prevent UI lock
                     if is_welcome_screen {
-                        if let Some(response) = window_response {
+                        if let Some(ref response) = window_response {
                             let clicked_outside = ctx.input(|input| {
                                 if input.pointer.any_click() {
                                     if let Some(pos) = input.pointer.interact_pos() {
@@ -793,6 +796,20 @@ impl EditorApplication {
                                 response.response.request_focus();
                             }
                         }
+                    }
+
+                    if let Some(window_response) = &window_response {
+                        let rect = window_response.response.rect;
+                        let logical_width = rect.width() / ctx.pixels_per_point();
+                        let logical_height = rect.height() / ctx.pixels_per_point();
+                        self.shared.plugin_window_sizes.insert(
+                            *entity,
+                            (logical_width, logical_height, ctx.pixels_per_point()),
+                        );
+                    }
+
+                    if !open_flag {
+                        self.shared.plugin_window_sizes.remove(entity);
                     }
 
                     if !responses.is_empty() {
@@ -841,6 +858,7 @@ impl EditorApplication {
                     scene_responses.insert(*entity, responses);
                 }
             }
+            self.shared.plugin_window_sizes.clear();
         }
 
         self.shared.welcome_plugin_override = welcome_override;

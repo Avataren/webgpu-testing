@@ -144,6 +144,7 @@ impl Scene {
         viewport_width: Option<f32>,
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
+        per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
@@ -153,6 +154,7 @@ impl Scene {
                 viewport_width,
                 viewport_height,
                 pixels_per_point,
+                per_entity_viewports,
             )
         } else {
             HashMap::new()
@@ -170,6 +172,7 @@ impl Scene {
         viewport_width: Option<f32>,
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
+        per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<crate::scripting::rune::api::ui::UiCommand>> {
         self.runtime.process_script_ui(
             world,
@@ -177,6 +180,7 @@ impl Scene {
             viewport_width,
             viewport_height,
             pixels_per_point,
+            per_entity_viewports,
         )
     }
 

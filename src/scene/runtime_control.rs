@@ -76,6 +76,7 @@ impl SceneRuntimeController {
         viewport_width: Option<f32>,
         viewport_height: Option<f32>,
         pixels_per_point: Option<f32>,
+        per_entity_viewports: Option<&std::collections::HashMap<hecs::Entity, (f32, f32, f32)>>,
     ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::rune::api::ui::UiCommand>>
     {
         self.runtime.process_script_ui(
@@ -84,6 +85,7 @@ impl SceneRuntimeController {
             viewport_width,
             viewport_height,
             pixels_per_point,
+            per_entity_viewports,
         )
     }
 

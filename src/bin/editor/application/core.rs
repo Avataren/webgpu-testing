@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 #[cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::Path};
@@ -143,6 +143,8 @@ pub struct EditorSharedState {
     pub(super) welcome_plugin_override: Option<bool>,
     /// Reload notifications shown as toasts
     pub(super) reload_notifications: Vec<ReloadNotification>,
+    /// Cached plugin window sizes (logical width, height, pixels_per_point)
+    pub(super) plugin_window_sizes: HashMap<Entity, (f32, f32, f32)>,
     /// Last known egui pixels-per-point (recorded during UI rendering)
     pub(super) last_pixels_per_point: Option<f32>,
 }
@@ -395,6 +397,7 @@ impl EditorApplicationBuilder {
             welcome_plugin_override: None,
             reload_notifications: Vec::new(),
             last_pixels_per_point: None,
+            plugin_window_sizes: HashMap::new(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]
