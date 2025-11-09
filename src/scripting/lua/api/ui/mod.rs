@@ -113,6 +113,12 @@ impl UserData for UiContext {
             Ok(())
         });
 
+        // Display a centered area with optional fixed width
+        methods.add_method(
+            "centered_area",
+            |_, this, (width, callback): (f64, mlua::Function)| this.centered_area(width, callback),
+        );
+
         // Display a text edit field
         methods.add_method(
             "text_edit",

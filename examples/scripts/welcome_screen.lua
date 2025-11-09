@@ -57,6 +57,180 @@ local function add_recent_project(project_path)
     save_recent_projects(filtered)
 end
 
+local PANEL_WIDTH = 640.0
+
+local function spacer(ui, lines)
+    lines = lines or 1
+    for _ = 1, lines do
+        ui:label("")
+    end
+end
+
+local function hero_section(ui)
+    spacer(ui, 2)
+    ui:heading("✨ Welcome to WebGPU Editor")
+    ui:label("Design, iterate, and ship GPU-driven experiences from one place.")
+    ui:label("Pick a starting point below to begin creating.")
+    spacer(ui, 1)
+    ui:separator()
+    spacer(ui, 1)
+end
+
+local function render_open_button(ui)
+    if ui:button("📂  Open Project Folder...") then
+        local path = open_folder_dialog()
+        if path then
+            add_recent_project(path)
+            load_project(path)
+            set_string("status_message", "Loading project: " .. path)
+            log_info("Requested project load: " .. path)
+            set_bool("welcome_visible", false)
+        end
+    end
+
+    ui:label("Open an existing workspace folder from disk.")
+    spacer(ui, 1)
+end
+
+local function render_create_toggle(ui, show_create)
+    local label = show_create and "➖  Hide Create Project" or "✨  Create New Project"
+    if ui:button(label) then
+        local new_state = not show_create
+        set_bool("show_create_form", new_state)
+        if new_state then
+            set_string("status_message", "")
+        end
+        show_create = new_state
+    end
+
+    ui:label("Generate a fresh starter project with curated defaults.")
+    spacer(ui, 1)
+
+    return show_create
+end
+
+local function render_quick_actions(ui, show_create)
+    ui:heading("🚀 Quick Start")
+    ui:label("Choose how you'd like to jump in.")
+    spacer(ui, 1)
+
+    render_open_button(ui)
+    return render_create_toggle(ui, show_create)
+end
+
+local function render_create_form(ui, current_path)
+    spacer(ui, 1)
+    ui:separator()
+    spacer(ui, 1)
+
+    ui:heading("🆕 Create a New Project")
+    ui:label("Give it a name and choose a destination folder.")
+    spacer(ui, 1)
+
+    ui:label("Project Name")
+    spacer(ui, 0)
+    local project_name = get_string("new_project_name", "MyProject")
+    local new_name = ui:text_edit("project_name_input", project_name)
+    if new_name ~= project_name then
+        set_string("new_project_name", new_name)
+        project_name = new_name
+    end
+
+    spacer(ui, 1)
+    ui:label("Install Location")
+    if current_path == "" then
+        ui:label("(No folder selected yet)")
+    else
+        ui:label("📁  " .. current_path)
+    end
+
+    spacer(ui, 1)
+    if ui:button("Choose Folder...") then
+        local path = open_folder_dialog()
+        if path then
+            current_path = path
+            set_string("new_project_path", path)
+            set_string("status_message", "Location set to: " .. path)
+        end
+    end
+
+    spacer(ui, 1)
+    local can_create = project_name ~= "" and current_path ~= ""
+    local button_label = can_create and "🚀  Create Project" or "Select a name & folder to continue"
+    if ui:button(button_label) and can_create then
+        local full_path = current_path .. "/" .. project_name
+        add_recent_project(full_path)
+        create_project(project_name, current_path)
+        set_string("status_message", "Creating project: " .. full_path)
+        log_info("Requested project creation: " .. project_name .. " at " .. current_path)
+        set_bool("show_create_form", false)
+        set_string("new_project_path", "")
+        set_bool("welcome_visible", false)
+        current_path = ""
+    end
+
+    spacer(ui, 1)
+    return current_path
+end
+
+local function render_recent_projects_section(ui)
+    spacer(ui, 1)
+    ui:separator()
+    spacer(ui, 1)
+
+    ui:heading("📁 Recent Projects")
+    ui:label("Jump back into something you opened recently.")
+    spacer(ui, 1)
+
+    local recent_projects = load_recent_projects()
+    if #recent_projects == 0 then
+        ui:label("No recent projects yet.")
+        ui:label("Open or create a project and it will appear here.")
+        spacer(ui, 1)
+        return
+    end
+
+    for _, project_path in ipairs(recent_projects) do
+        local folder_name = project_path:match("([^/\\]+)$") or project_path
+
+        if ui:button("▶  " .. folder_name) then
+            add_recent_project(project_path)
+            load_project(project_path)
+            set_string("status_message", "Loading project: " .. project_path)
+            log_info("Requested project load from recent: " .. project_path)
+            set_bool("welcome_visible", false)
+            return
+        end
+
+        ui:label("   " .. project_path)
+        spacer(ui, 1)
+    end
+end
+
+local function render_tips_section(ui)
+    spacer(ui, 1)
+    ui:separator()
+    spacer(ui, 1)
+
+    ui:heading("💡 Helpful Hints")
+    ui:label("• Press Play to preview your scene instantly.")
+    ui:label("")
+    ui:label("• Drag a folder into the editor to load it as a project.")
+    ui:label("")
+    ui:label("• UI plugins live in examples/scripts — tweak them anytime.")
+end
+
+local function render_status_line(ui, status)
+    if status == "" then
+        return
+    end
+
+    spacer(ui, 1)
+    ui:separator()
+    spacer(ui, 1)
+    ui:label("Status: " .. status)
+end
+
 function on_created(self_entity)
     log_info("Welcome Screen plugin created")
 
@@ -78,187 +252,16 @@ function on_ui(self_entity, ui)
     local status = get_string("status_message", "")
     local new_project_path = get_string("new_project_path", "")
 
-    -- Add top padding
-    ui:label("")
-    ui:label("")
+    ui:centered_area(PANEL_WIDTH, function(center)
+        hero_section(center)
+        show_create = render_quick_actions(center, show_create)
 
-    -- Header section with larger text
-    ui:heading("Welcome to WebGPU Editor")
-    ui:label("")
-    ui:label("Get started by opening an existing project or creating a new one")
-    ui:label("")
-    ui:label("")
-    ui:separator()
-    ui:label("")
-    ui:label("")
-
-    -- Quick Actions Section
-    ui:heading("Start")
-    ui:label("")
-
-    if ui:button("📂  Open Project Folder...") then
-        local path = open_folder_dialog()
-        if path then
-            -- Add to recent projects
-            add_recent_project(path)
-
-            -- Send command to editor to load the project
-            load_project(path)
-            set_string("status_message", "Loading project: " .. path)
-            log_info("Requested project load: " .. path)
-
-            -- Hide welcome screen
-            set_bool("welcome_visible", false)
-        end
-    end
-
-    ui:label("")
-
-    if ui:button("✨  Create New Project") then
-        local new_show_create = not show_create
-        set_bool("show_create_form", new_show_create)
-        if new_show_create then
-            set_string("status_message", "")
-        end
-    end
-
-    ui:label("")
-    ui:label("")
-    ui:separator()
-    ui:label("")
-
-    -- Create Project Form (shown when "Create New Project" is clicked)
-    if show_create then
-        ui:label("")
-        ui:heading("Create New Project")
-        ui:label("")
-        ui:label("")
-
-        ui:label("Project Name:")
-        ui:label("")
-        local project_name = get_string("new_project_name", "MyProject")
-        local new_name = ui:text_edit("project_name_input", project_name)
-        if new_name ~= project_name then
-            set_string("new_project_name", new_name)
+        if show_create then
+            new_project_path = render_create_form(center, new_project_path)
         end
 
-        ui:label("")
-        ui:label("")
-        ui:label("Location:")
-        ui:label("")
-        if new_project_path == "" then
-            ui:label("(no folder selected)")
-        else
-            ui:label(new_project_path)
-        end
-
-        ui:label("")
-
-        if ui:button("Choose Folder...") then
-            local path = open_folder_dialog()
-            if path then
-                set_string("new_project_path", path)
-                set_string("status_message", "Location set to: " .. path)
-            end
-        end
-
-        ui:label("")
-        ui:label("")
-
-        -- Only allow creating if both name and path are set
-        local can_create = project_name ~= "" and new_project_path ~= ""
-        local button_label = "Create Project"
-        if not can_create then
-            button_label = "Create Project (choose name and location first)"
-        end
-
-        if ui:button(button_label) then
-            if can_create then
-                local full_path = new_project_path .. "/" .. project_name
-
-                -- Add to recent projects
-                add_recent_project(full_path)
-
-                -- Send command to editor to create the project
-                create_project(project_name, new_project_path)
-                set_string("status_message", "Creating project: " .. full_path)
-                log_info("Requested project creation: " .. project_name .. " at " .. new_project_path)
-
-                -- Reset form after creation attempt
-                set_bool("show_create_form", false)
-                set_string("new_project_path", "")
-
-                -- Hide welcome screen
-                set_bool("welcome_visible", false)
-            end
-        end
-
-        ui:label("")
-        ui:label("")
-        ui:separator()
-        ui:label("")
-    end
-
-    -- Recent Projects Section
-    ui:heading("Recent Projects")
-    ui:label("")
-
-    local recent_projects = load_recent_projects()
-    if #recent_projects == 0 then
-        ui:label("")
-        ui:label("No recent projects")
-        ui:label("")
-        ui:label("Recent projects will appear here once you")
-        ui:label("open or create your first project.")
-        ui:label("")
-    else
-        for i, project_path in ipairs(recent_projects) do
-            -- Extract just the folder name for display
-            local folder_name = project_path:match("([^/\\]+)$") or project_path
-
-            if ui:button("📁  " .. folder_name) then
-                -- Add to recent (moves it to top)
-                add_recent_project(project_path)
-
-                -- Load the project
-                load_project(project_path)
-                set_string("status_message", "Loading project: " .. project_path)
-                log_info("Requested project load from recent: " .. project_path)
-
-                -- Hide welcome screen
-                set_bool("welcome_visible", false)
-            end
-
-            -- Show full path as smaller text
-            ui:label("  " .. project_path)
-
-            if i < #recent_projects then
-                ui:label("")
-            end
-        end
-    end
-
-    ui:label("")
-    ui:label("")
-    ui:separator()
-    ui:label("")
-    ui:label("")
-
-    -- Getting Started Tips
-    ui:heading("Getting Started")
-    ui:label("")
-    ui:label("💡 Projects contain all your scenes, assets, and scripts")
-    ui:label("")
-    ui:label("📁 Projects are stored as folders on your disk")
-    ui:label("")
-    ui:label("🎮 Each project can have multiple scenes")
-
-    -- Status message
-    if status ~= "" then
-        ui:label("")
-        ui:label("")
-        ui:separator()
-        ui:label("")
-        ui:label(status)
-    end
+        render_recent_projects_section(center)
+        render_tips_section(center)
+        render_status_line(center, status)
+    end)
 end

@@ -57,6 +57,10 @@ pub enum UiCommand {
         id: String,
         text: String,
     },
+    CenteredArea {
+        width: Option<f32>,
+        items: Vec<UiCommand>,
+    },
 }
 
 impl UiCommand {
@@ -78,6 +82,19 @@ impl UiCommand {
             }
             UiCommand::Menu { text, items } => {
                 ui.menu_button(text, |ui| {
+                    for item in items {
+                        item.render_and_collect(ui, responses);
+                    }
+                });
+            }
+            UiCommand::CenteredArea { width, items } => {
+                ui.vertical_centered(|ui| {
+                    if let Some(w) = width {
+                        ui.set_width(*w);
+                    } else {
+                        let target = (ui.available_width() * 0.6_f32).clamp(320.0, 760.0);
+                        ui.set_width(target);
+                    }
                     for item in items {
                         item.render_and_collect(ui, responses);
                     }
@@ -266,6 +283,20 @@ impl UiCommand {
                 } else {
                     None
                 }
+            }
+            UiCommand::CenteredArea { width, items } => {
+                ui.vertical_centered(|ui| {
+                    if let Some(w) = width {
+                        ui.set_width(*w);
+                    } else {
+                        let target = (ui.available_width() * 0.6_f32).clamp(320.0, 760.0);
+                        ui.set_width(target);
+                    }
+                    for item in items {
+                        item.render(ui);
+                    }
+                });
+                None
             }
         }
     }

@@ -176,6 +176,26 @@ impl UiContext {
         (r, g, b)
     }
 
+    /// Render a block of UI centered horizontally with an optional fixed width.
+    pub fn centered_area(&self, width: f64, callback: mlua::Function) -> mlua::Result<()> {
+        let temp_context = UiContext::new();
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+
+        callback.call::<()>(temp_context.clone())?;
+        let commands = temp_context.take_commands();
+
+        self.commands.lock().unwrap().push(UiCommand::CenteredArea {
+            width: if width > 0.0 {
+                Some(width as f32)
+            } else {
+                None
+            },
+            items: commands,
+        });
+
+        Ok(())
+    }
+
     /// Display a menu bar. The callback function will be called to add menu items.
     pub fn menu_bar(&self, callback: mlua::Function) -> mlua::Result<()> {
         // Collect all commands from the callback
