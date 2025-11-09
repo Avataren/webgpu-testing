@@ -192,8 +192,6 @@ fn strip_verbatim_prefix(path: &str) -> PathBuf {
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
-    #[error("scene has no serializable content")]
-    EmptyScene,
     #[error("project manifest contains no scenes")]
     NoScenes,
     #[error("failed to access the filesystem: {0}")]
@@ -350,9 +348,10 @@ impl ProjectManifest {
         existing_document: Option<&SceneDocument>,
     ) -> Result<Self, ProjectError> {
         let engine_camera = SerializedEngineCamera::from_camera(scene.camera());
+        let scene_name = metadata.name.clone();
         let mut asset = scene
-            .export_main_asset(metadata.name.clone())
-            .ok_or(ProjectError::EmptyScene)?;
+            .export_main_asset(scene_name.clone())
+            .unwrap_or_else(|| SceneAsset::builder(scene_name).build());
         let environment = SerializedEnvironment::from_environment(scene.environment());
         let mut package_dirs: BTreeSet<PathBuf> = BTreeSet::new();
         let mut referenced_mesh_indices: HashSet<usize> = HashSet::new();

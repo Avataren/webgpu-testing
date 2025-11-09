@@ -291,3 +291,30 @@ fn project_manifest_roundtrip_restores_engine_camera() {
         other => panic!("expected perspective camera, got {:?}", other),
     }
 }
+
+#[test]
+fn project_manifest_capture_succeeds_for_empty_scene() {
+    let scene = Scene::new();
+    let metadata = ProjectMetadata {
+        name: "Empty Scene".to_string(),
+        ..Default::default()
+    };
+
+    let manifest = ProjectManifest::capture(&scene, metadata, None)
+        .expect("capturing an empty scene should still succeed");
+
+    assert_eq!(
+        manifest.scenes().len(),
+        1,
+        "capture should produce a single scene document"
+    );
+
+    let document = &manifest.scenes()[0];
+    let asset = manifest
+        .scene_asset(&document.id)
+        .expect("captured manifest should retain a scene asset");
+    assert!(
+        asset.entities.is_empty(),
+        "empty scenes should serialize without entities"
+    );
+}

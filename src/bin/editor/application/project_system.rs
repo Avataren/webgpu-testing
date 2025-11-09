@@ -410,9 +410,6 @@ impl ProjectSystem {
                     self.controller.set_current_dir(dir);
                 }
             }
-            Err(ProjectError::EmptyScene) => {
-                warn!("Skipping project save: no exportable scene data available");
-            }
             Err(err) => {
                 error!("Failed to prepare project for saving: {err}");
             }
@@ -570,12 +567,6 @@ impl ProjectSystem {
                                 error!("Failed to build project for {:?}: {err}", request.platform);
                             }
                         }
-                    }
-                    Err(ProjectError::EmptyScene) => {
-                        warn!(
-                            "Skipping project build: no exportable scene data available for {:?}",
-                            request.platform
-                        );
                     }
                     Err(err) => {
                         error!("Failed to prepare project for building: {err}");
