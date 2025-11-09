@@ -36,6 +36,7 @@ pub(super) enum EditorCommand {
     ActivateScene(SceneDocumentId),
     CloseScene(SceneDocumentId),
     NewScene,
+    RenameScene(SceneDocumentId),
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,

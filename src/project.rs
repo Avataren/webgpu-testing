@@ -30,8 +30,7 @@ fn generate_scene_document_id() -> String {
 fn default_scene_relative_path(document_id: &str) -> PathBuf {
     PathBuf::from(CONTENT_DIR)
         .join(SCENE_LIBRARY_DIR)
-        .join(document_id)
-        .join(SCENE_FILE_NAME)
+        .join(format!("{}.json", document_id))
 }
 
 fn collect_metadata_files(dir: &Path) -> Vec<PathBuf> {
@@ -565,20 +564,28 @@ impl ProjectManifest {
         if scenes_root.exists() {
             for entry in fs::read_dir(&scenes_root)? {
                 let entry = entry?;
-                if !entry.file_type()?.is_dir() {
+                if !entry.file_type()?.is_file() {
                     continue;
                 }
 
-                let document_id = match entry.file_name().into_string() {
-                    Ok(id) => id,
+                let file_name = match entry.file_name().into_string() {
+                    Ok(name) => name,
                     Err(name) => {
                         warn!(
-                            "Skipping scene directory with invalid UTF-8 name: {:?}",
+                            "Skipping scene file with invalid UTF-8 name: {:?}",
                             name
                         );
                         continue;
                     }
                 };
+
+                // Only process .json files
+                if !file_name.ends_with(".json") {
+                    continue;
+                }
+
+                // Extract document_id from filename (remove .json extension)
+                let document_id = file_name.trim_end_matches(".json").to_string();
 
                 let relative_path = default_scene_relative_path(&document_id);
                 let scene_path = dir.join(&relative_path);

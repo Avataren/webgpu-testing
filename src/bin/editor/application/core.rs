@@ -12,6 +12,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
@@ -115,6 +116,8 @@ pub struct EditorSharedState {
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
     pub(super) pending_new_scenes: Vec<NewSceneRequest>,
     pub(super) next_untitled_scene_index: u32,
+    pub(super) pending_scene_rename: Option<SceneDocumentId>,
+    pub(super) rename_dialog_text: String,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -384,6 +387,8 @@ impl EditorApplicationBuilder {
             particle_mesh_bounds: None,
             pending_new_scenes: Vec::new(),
             next_untitled_scene_index: 1,
+            pending_scene_rename: None,
+            rename_dialog_text: String::new(),
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -824,6 +829,9 @@ impl EditorApplication {
                 ActivateScene(document_id) => ctx.request_active_scene(document_id),
                 CloseScene(document_id) => ctx.request_close_scene(document_id),
                 NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
+                RenameScene(document_id) => {
+                    self.shared.pending_scene_rename = Some(document_id);
+                }
                 Script(action) => remaining.push_back(Script(action)),
                 Shader(action) => remaining.push_back(Shader(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
