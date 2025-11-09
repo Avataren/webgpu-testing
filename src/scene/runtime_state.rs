@@ -140,7 +140,13 @@ impl SceneRuntime {
         let mut all_commands = self.scripting.process_ui(world, editor_mode);
 
         // Collect Lua UI commands and convert them to Rune UiCommand type
-        let lua_commands = self.lua_scripting.process_ui(world, editor_mode, viewport_width, viewport_height, pixels_per_point);
+        let lua_commands = self.lua_scripting.process_ui(
+            world,
+            editor_mode,
+            viewport_width,
+            viewport_height,
+            pixels_per_point,
+        );
         for (entity, cmds) in lua_commands {
             // Convert Lua UiCommands to Rune UiCommands
             let converted_cmds: Vec<crate::scripting::rune::api::ui::UiCommand> =

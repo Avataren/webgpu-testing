@@ -120,6 +120,9 @@ pub enum InspectorAction {
         entity: Entity,
         script_path: PathBuf,
     },
+    OpenTextEditor {
+        path: PathBuf,
+    },
     AddCamera {
         entity: Entity,
     },
@@ -2040,10 +2043,17 @@ fn show_script_section(
         ui.label(source_label);
 
         if ui.button("Edit").clicked() {
-            action = Some(InspectorAction::EditScript {
-                entity,
-                component: script.clone(),
-            });
+            match script.source() {
+                LuaScriptSource::File { path } => {
+                    action = Some(InspectorAction::OpenTextEditor { path: path.clone() });
+                }
+                _ => {
+                    action = Some(InspectorAction::EditScript {
+                        entity,
+                        component: script.clone(),
+                    });
+                }
+            }
         }
 
         ui.separator();
@@ -2110,10 +2120,7 @@ fn list_available_scripts() -> Vec<PathBuf> {
         }
         // Cache miss or expired, refresh from filesystem
         let mut scripts = Vec::new();
-        let candidate_dirs = [
-            PathBuf::from("scripts"),
-            PathBuf::from("examples/scripts"),
-        ];
+        let candidate_dirs = [PathBuf::from("scripts"), PathBuf::from("examples/scripts")];
 
         for scripts_dir in candidate_dirs {
             if scripts_dir.exists() && scripts_dir.is_dir() {

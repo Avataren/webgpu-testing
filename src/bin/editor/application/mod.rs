@@ -34,7 +34,7 @@ use self::scene_tabs_panel::SceneTabAction;
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
@@ -52,6 +52,7 @@ use wgpu_cube::scene::{
     PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset,
     SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
+use wgpu_cube::scripting::lua::api::enqueue_text_editor_request;
 use wgpu_cube::scripting::LuaScriptingPlugin;
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
@@ -293,14 +294,28 @@ impl EditorApplication {
             };
 
         // Process scene scripts
-        self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode, viewport_width, viewport_height, pixels_per_point);
+        self.shared.script_ui_commands = ctx.scene.process_script_ui(
+            editor_mode,
+            viewport_width,
+            viewport_height,
+            pixels_per_point,
+        );
 
         // Process UI plugin scripts (from separate world)
         // Keep them separate to avoid Entity ID collisions between worlds
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            self.shared.plugin_ui_commands = ctx
-                .scene
-                .process_script_ui_for_world(manager.world(), editor_mode, viewport_width, viewport_height, pixels_per_point);
+            {
+                let world = manager.world_mut();
+                ctx.scene.run_scripts_for_world(world, 0.0, editor_mode);
+            }
+
+            self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(
+                manager.world(),
+                editor_mode,
+                viewport_width,
+                viewport_height,
+                pixels_per_point,
+            );
 
             if self.shared.plugin_ui_commands.is_empty() {
                 log::debug!(
@@ -706,9 +721,10 @@ impl EditorApplication {
                     let mut responses = HashMap::new();
                     let window_title = plugin.metadata.name.clone();
                     let is_welcome_screen = plugin.metadata.name == "Welcome Screen";
+                    let is_text_editor = plugin.metadata.name == "Text Editor";
 
                     // Skip non-welcome windows when welcome modal is active
-                    if welcome_screen_visible && !is_welcome_screen {
+                    if welcome_screen_visible && !is_welcome_screen && !is_text_editor {
                         continue;
                     }
 
@@ -821,6 +837,37 @@ impl EditorApplication {
         // Store responses for the next frame (kept separate to avoid Entity ID collisions)
         self.shared.script_ui_responses = scene_responses;
         self.shared.plugin_ui_responses = plugin_responses;
+    }
+
+    pub(super) fn open_text_editor_with_path(&mut self, path: &Path) -> bool {
+        let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
+            log::warn!(
+                "Cannot open Text Editor plugin for {} - plugin manager not initialized",
+                path.display()
+            );
+            return false;
+        };
+
+        let mut plugin_found = false;
+        for plugin in manager.plugins_mut() {
+            if plugin.metadata.name == "Text Editor" {
+                plugin.visible = true;
+                plugin_found = true;
+                break;
+            }
+        }
+
+        if !plugin_found {
+            log::warn!(
+                "Text Editor plugin not registered or disabled (needed for {}).",
+                path.display()
+            );
+            return false;
+        }
+
+        enqueue_text_editor_request(path);
+        log::info!("Queued {} for the Text Editor plugin", path.display());
+        true
     }
 
     fn apply_welcome_screen_visibility(&mut self, project_loaded: bool) {

@@ -14,6 +14,7 @@ mod input;
 mod logging;
 mod query;
 mod state;
+mod text_editor_bridge;
 mod transform;
 pub mod ui;
 
@@ -22,6 +23,7 @@ use mlua::{Lua, Result as LuaResult};
 pub use clipboard::{ClipboardAccess, ClipboardGuard};
 pub(crate) use coroutine::{set_current_coroutine_id, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
+pub use text_editor_bridge::enqueue_text_editor_request;
 pub use ui::{UiCommand, UiContext, UiResponse};
 
 /// Register all Lua API functions with the runtime.
@@ -40,6 +42,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     ui::register_ui_api(lua)?;
     editor_commands::register_editor_command_api(lua)?;
     coroutine::register_coroutine_api(lua)?;
+    text_editor_bridge::register_text_editor_bridge_api(lua)?;
 
     Ok(())
 }

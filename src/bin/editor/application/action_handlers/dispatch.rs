@@ -16,7 +16,9 @@ use super::particles::{
     handle_set_billboard, handle_update_particle_behavior, handle_update_particle_emitter,
     handle_update_particle_system,
 };
-use super::scripts::{handle_add_script, handle_change_script_source, handle_edit_script};
+use super::scripts::{
+    handle_add_script, handle_change_script_source, handle_edit_script, handle_open_text_editor,
+};
 use super::shader::handle_edit_shader;
 use super::transform::handle_update_transform;
 use super::{ActionContext, ActionResult};
@@ -117,6 +119,7 @@ pub fn dispatch_action<'a>(
         InspectorAction::EditScript { entity, component } => {
             handle_edit_script(&mut ctx, entity, component)
         }
+        InspectorAction::OpenTextEditor { path } => handle_open_text_editor(&mut ctx, path),
 
         // Particle actions
         InspectorAction::UpdateParticleSystem { entity, component } => {

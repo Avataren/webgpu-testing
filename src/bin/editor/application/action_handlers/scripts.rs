@@ -80,3 +80,14 @@ pub fn handle_edit_script(
     // Script edits are handled immediately in the UI stage
     ActionResult::no_change()
 }
+
+/// Handle OpenTextEditor action by delegating to the Text Editor plugin
+pub fn handle_open_text_editor(ctx: &mut ActionContext, path: PathBuf) -> ActionResult {
+    if !ctx.app.open_text_editor_with_path(&path) {
+        log::warn!(
+            "Failed to open Text Editor plugin for path: {}",
+            path.display()
+        );
+    }
+    ActionResult::no_change()
+}

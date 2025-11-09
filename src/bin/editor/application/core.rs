@@ -974,11 +974,11 @@ impl EditorApplication {
             }
 
             if failed_count > 0 {
-                self.shared.reload_notifications.push(
-                    ReloadNotification::warning(format!(
-                        "Reloaded {reload_count} plugin(s); {failed_count} of {total_requests} failed"
-                    )),
-                );
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::warning(format!(
+                    "Reloaded {reload_count} plugin(s); {failed_count} of {total_requests} failed"
+                )));
             }
         }
     }

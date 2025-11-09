@@ -644,7 +644,9 @@ impl ScriptingState {
             let ui_context = UiContext::new();
 
             // Set viewport information if available
-            if let (Some(width), Some(height), Some(ppp)) = (viewport_width, viewport_height, pixels_per_point) {
+            if let (Some(width), Some(height), Some(ppp)) =
+                (viewport_width, viewport_height, pixels_per_point)
+            {
                 ui_context.set_viewport_info(width, height, ppp);
             }
 

@@ -331,9 +331,7 @@ pub fn handle_create_shader_material(
         .main_world_mut()
         .insert_one(entity, MaterialComponent(new_handle))
     {
-        Ok(_) => {
-            ActionResult::scene_changed()
-        }
+        Ok(_) => ActionResult::scene_changed(),
         Err(err) => {
             log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
             ActionResult::no_change()
