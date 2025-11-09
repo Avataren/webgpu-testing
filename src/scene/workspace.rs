@@ -245,6 +245,24 @@ impl SceneWorkspace {
         Some(entry.scene)
     }
 
+    /// Renames a scene document, updating the document index.
+    pub fn rename_scene(&mut self, old_document_id: &SceneDocumentId, new_document_id: SceneDocumentId) {
+        // Find the handle for the old document ID
+        let handle = match self.document_index.get(old_document_id).copied() {
+            Some(h) => h,
+            None => return, // Scene not open in workspace
+        };
+
+        // Update the entry's document ID
+        if let Some(entry) = self.scenes.get_mut(handle) {
+            entry.document_id = new_document_id.clone();
+        }
+
+        // Update the document index
+        self.document_index.remove(old_document_id);
+        self.document_index.insert(new_document_id, handle);
+    }
+
     /// Consumes the workspace, returning the active scene if one was present.
     pub fn into_active_scene(mut self) -> Option<Scene> {
         let handle = self.active_scene?;

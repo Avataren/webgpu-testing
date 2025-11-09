@@ -65,6 +65,23 @@ impl SceneLibrary {
         self.assets.get(document_id)
     }
 
+    /// Renames a scene document in the library, moving all cached data to the new ID.
+    pub fn rename(&mut self, old_id: &str, new_id: String, new_path: PathBuf) {
+        // Move asset to new ID
+        if let Some(asset) = self.assets.remove(old_id) {
+            self.assets.insert(new_id.clone(), asset);
+        }
+
+        // Move dependencies to new ID
+        if let Some(deps) = self.dependencies.remove(old_id) {
+            self.dependencies.insert(new_id.clone(), deps);
+        }
+
+        // Update path
+        self.paths.insert(new_id, new_path);
+        self.paths.remove(old_id);
+    }
+
     pub fn set_dependencies(
         &mut self,
         document_id: impl Into<String>,

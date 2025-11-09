@@ -1005,7 +1005,7 @@ impl EditorApplication {
                 self.enqueue_command(EditorCommand::NewScene);
             }
             SceneTabAction::Rename(document_id) => {
-                self.enqueue_command(EditorCommand::RenameScene(document_id));
+                self.shared.pending_scene_rename = Some(document_id);
             }
         }
     }
