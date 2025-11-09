@@ -113,6 +113,8 @@ impl UiCommand {
                 // For all other commands, use render_with_id
                 if let Some((id, response)) = self.render_with_id(ui) {
                     responses.insert(id, response);
+                } else {
+                    let _ = self.render(ui);
                 }
             }
         }
