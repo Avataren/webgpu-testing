@@ -351,6 +351,7 @@ impl EditorApplication {
         }
 
         self.show_menu_bar(ctx);
+        self.show_rename_scene_dialog(ctx);
 
         let active_mode = self.shared.runtime_state.active_mode();
         let is_playing = matches!(active_mode, RuntimeMode::Playing);
@@ -1002,6 +1003,9 @@ impl EditorApplication {
             SceneTabAction::NewScene => {
                 self.shared.runtime_state.request_mode(RuntimeMode::Editor);
                 self.enqueue_command(EditorCommand::NewScene);
+            }
+            SceneTabAction::Rename(document_id) => {
+                self.shared.pending_scene_rename = Some(document_id);
             }
         }
     }

@@ -50,6 +50,7 @@ pub struct UpdateContext<'a> {
     pub runtime: RuntimeMode,
     active_scene_request: Option<SceneDocumentId>,
     close_scene_requests: Vec<SceneDocumentId>,
+    rename_scene_requests: Vec<(SceneDocumentId, SceneDocumentId)>,
 }
 
 impl<'a> UpdateContext<'a> {
@@ -61,12 +62,20 @@ impl<'a> UpdateContext<'a> {
         self.close_scene_requests.push(document_id);
     }
 
+    pub fn request_rename_scene(&mut self, old_document_id: SceneDocumentId, new_document_id: SceneDocumentId) {
+        self.rename_scene_requests.push((old_document_id, new_document_id));
+    }
+
     fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
         self.active_scene_request.take()
     }
 
     fn take_close_scene_requests(&mut self) -> Vec<SceneDocumentId> {
         std::mem::take(&mut self.close_scene_requests)
+    }
+
+    fn take_rename_scene_requests(&mut self) -> Vec<(SceneDocumentId, SceneDocumentId)> {
+        std::mem::take(&mut self.rename_scene_requests)
     }
 }
 
@@ -79,6 +88,7 @@ pub struct GpuUpdateContext<'a> {
     active_scene_request: Option<SceneDocumentId>,
     close_scene_requests: Vec<SceneDocumentId>,
     open_scene_requests: Vec<(SceneDocumentId, Scene)>,
+    rename_scene_requests: Vec<(SceneDocumentId, SceneDocumentId)>,
 }
 
 impl<'a> GpuUpdateContext<'a> {
@@ -101,6 +111,10 @@ impl<'a> GpuUpdateContext<'a> {
         self.open_scene_requests.push((document_id, scene));
     }
 
+    pub fn request_rename_scene(&mut self, old_document_id: SceneDocumentId, new_document_id: SceneDocumentId) {
+        self.rename_scene_requests.push((old_document_id, new_document_id));
+    }
+
     fn take_workspace_swap(&mut self) -> Option<WorkspaceSwapRequest> {
         self.workspace_swap.take()
     }
@@ -115,6 +129,10 @@ impl<'a> GpuUpdateContext<'a> {
 
     fn take_open_scene_requests(&mut self) -> Vec<(SceneDocumentId, Scene)> {
         std::mem::take(&mut self.open_scene_requests)
+    }
+
+    fn take_rename_scene_requests(&mut self) -> Vec<(SceneDocumentId, SceneDocumentId)> {
+        std::mem::take(&mut self.rename_scene_requests)
     }
 }
 
@@ -283,6 +301,7 @@ impl Scheduler {
                 active_request,
                 Vec::new(),
                 Vec::new(),
+                Vec::new(), // No rename requests during startup
             );
             active_handle = new_handle;
             textures_changed |= swap_changed;
@@ -358,11 +377,13 @@ impl Scheduler {
                 runtime,
                 active_scene_request: None,
                 close_scene_requests: Vec::new(),
+                rename_scene_requests: Vec::new(),
             };
             (system)(&mut ctx);
 
             let active_request = ctx.take_active_scene_request();
             let close_requests = ctx.take_close_scene_requests();
+            let rename_requests = ctx.take_rename_scene_requests();
             active_handle = ctx.scene_handle;
             drop(ctx);
 
@@ -373,6 +394,7 @@ impl Scheduler {
                 active_request,
                 close_requests,
                 Vec::new(),
+                rename_requests,
             );
             active_handle = new_handle;
         }
@@ -418,6 +440,7 @@ impl Scheduler {
                 active_scene_request: None,
                 close_scene_requests: Vec::new(),
                 open_scene_requests: Vec::new(),
+                rename_scene_requests: Vec::new(),
             };
             (system)(&mut ctx);
 
@@ -425,6 +448,7 @@ impl Scheduler {
             let active_request = ctx.take_active_scene_request();
             let close_requests = ctx.take_close_scene_requests();
             let open_requests = ctx.take_open_scene_requests();
+            let rename_requests = ctx.take_rename_scene_requests();
             active_handle = ctx.scene_handle;
             drop(ctx);
 
@@ -435,6 +459,7 @@ impl Scheduler {
                 active_request,
                 close_requests,
                 open_requests,
+                rename_requests,
             );
             active_handle = new_handle;
             textures_changed |= swap_changed;
@@ -469,6 +494,7 @@ impl Scheduler {
         active_request: Option<SceneDocumentId>,
         close_requests: Vec<SceneDocumentId>,
         open_requests: Vec<(SceneDocumentId, Scene)>,
+        rename_requests: Vec<(SceneDocumentId, SceneDocumentId)>,
     ) -> (SceneHandle, bool, bool) {
         let mut textures_changed = false;
         let mut workspace_swapped = false;
@@ -532,6 +558,12 @@ impl Scheduler {
 
             if let Some(current) = workspace.active_scene_handle() {
                 handle = current;
+            }
+        }
+
+        if !rename_requests.is_empty() {
+            for (old_document_id, new_document_id) in rename_requests {
+                workspace.rename_scene(&old_document_id, new_document_id);
             }
         }
 

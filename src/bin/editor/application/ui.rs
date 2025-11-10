@@ -114,4 +114,61 @@ impl EditorApplication {
             });
         });
     }
+
+    pub(super) fn show_rename_scene_dialog(&mut self, ctx: &egui::Context) {
+        let Some(document_id) = self.shared.pending_scene_rename.clone() else {
+            return;
+        };
+
+        // Initialize dialog text if empty
+        if self.shared.rename_dialog_text.is_empty() {
+            // Extract the current scene name from document_id
+            self.shared.rename_dialog_text = document_id
+                .trim_end_matches(".scene")
+                .replace('_', " ")
+                .to_string();
+        }
+
+        let mut open = true;
+        let mut confirmed = false;
+        let mut cancelled = false;
+
+        egui::Window::new("Rename Scene")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Enter new scene name:");
+                let response = ui.text_edit_singleline(&mut self.shared.rename_dialog_text);
+
+                // Auto-focus the text field when dialog opens
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    confirmed = true;
+                } else {
+                    response.request_focus();
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+
+        if confirmed && !self.shared.rename_dialog_text.trim().is_empty() {
+            // Enqueue the rename command to be processed during update
+            self.enqueue_command(EditorCommand::RenameScene {
+                old_id: document_id,
+                new_name: self.shared.rename_dialog_text.clone(),
+            });
+            self.shared.pending_scene_rename = None;
+            self.shared.rename_dialog_text.clear();
+        } else if cancelled || !open {
+            self.shared.pending_scene_rename = None;
+            self.shared.rename_dialog_text.clear();
+        }
+    }
 }

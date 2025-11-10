@@ -12,6 +12,7 @@ use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
@@ -115,6 +116,8 @@ pub struct EditorSharedState {
     pub(super) particle_mesh_bounds: Option<MeshBounds>,
     pub(super) pending_new_scenes: Vec<NewSceneRequest>,
     pub(super) next_untitled_scene_index: u32,
+    pub(super) pending_scene_rename: Option<SceneDocumentId>,
+    pub(super) rename_dialog_text: String,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) shader_watcher: Option<ShaderWatcher>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -384,6 +387,8 @@ impl EditorApplicationBuilder {
             particle_mesh_bounds: None,
             pending_new_scenes: Vec::new(),
             next_untitled_scene_index: 1,
+            pending_scene_rename: None,
+            rename_dialog_text: String::new(),
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -824,6 +829,13 @@ impl EditorApplication {
                 ActivateScene(document_id) => ctx.request_active_scene(document_id),
                 CloseScene(document_id) => ctx.request_close_scene(document_id),
                 NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
+                RenameScene { old_id, new_name } => {
+                    // Perform the rename (file, library, documents)
+                    if let Some(new_document_id) = self.perform_scene_rename_internal(&old_id, new_name) {
+                        // Request workspace update
+                        ctx.request_rename_scene(old_id, new_document_id);
+                    }
+                }
                 Script(action) => remaining.push_back(Script(action)),
                 Shader(action) => remaining.push_back(Shader(action)),
                 CreateScene(action) => remaining.push_back(CreateScene(action)),
@@ -1064,6 +1076,96 @@ impl EditorApplication {
                     description: String::new(),
                 },
             });
+    }
+
+    /// Performs scene renaming: file system, library, and document list.
+    /// Returns the new document ID on success, None on failure.
+    pub(super) fn perform_scene_rename_internal(
+        &mut self,
+        old_document_id: &str,
+        new_name: String,
+    ) -> Option<SceneDocumentId> {
+        // Sanitize the new name to create a valid document ID
+        let sanitized = new_name
+            .trim()
+            .replace(' ', "_")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+            .collect::<String>();
+
+        if sanitized.is_empty() {
+            log::warn!("Scene rename failed: invalid name");
+            return None;
+        }
+
+        let new_document_id = format!("{}.scene", sanitized);
+
+        // Check if the new name is different from the old one
+        if new_document_id == old_document_id {
+            return None;
+        }
+
+        // Check if a scene with the new name already exists
+        let existing_ids: std::collections::HashSet<_> = self
+            .project_system()
+            .scene_documents()
+            .iter()
+            .map(|doc| doc.id.as_str())
+            .collect();
+
+        if existing_ids.contains(new_document_id.as_str()) {
+            log::warn!("Scene with name '{}' already exists", new_document_id);
+            return None;
+        }
+
+        // Get the current project directory to rename the file
+        if let Some(project_dir) = self.project_system().controller().current_dir() {
+            let old_path = project_dir
+                .join(wgpu_cube::project::CONTENT_DIR)
+                .join("scenes")
+                .join(format!("{}.json", old_document_id));
+            let new_path = project_dir
+                .join(wgpu_cube::project::CONTENT_DIR)
+                .join("scenes")
+                .join(format!("{}.json", new_document_id));
+
+            // Rename the file on disk
+            if let Err(e) = std::fs::rename(&old_path, &new_path) {
+                log::error!("Failed to rename scene file: {}", e);
+                return None;
+            }
+        }
+
+        // Calculate the new relative path
+        let new_relative_path = std::path::PathBuf::from(wgpu_cube::project::CONTENT_DIR)
+            .join("scenes")
+            .join(format!("{}.json", new_document_id));
+
+        // Update the SceneLibrary to move the cached asset to the new ID
+        self.project_system_mut()
+            .scene_library_mut()
+            .rename(old_document_id, new_document_id.clone(), new_relative_path.clone());
+
+        // Update scene document ID in the project controller
+        let documents = self.project_system().scene_documents().to_vec();
+        let mut updated_documents = Vec::new();
+
+        for doc in documents {
+            if doc.id == old_document_id {
+                let mut new_doc = doc.clone();
+                new_doc.id = new_document_id.clone();
+                new_doc.name = new_name.clone();
+                new_doc.relative_path = new_relative_path.clone();
+                updated_documents.push(new_doc);
+            } else {
+                updated_documents.push(doc);
+            }
+        }
+
+        self.project_system_mut().controller_mut().set_scene_documents(updated_documents);
+
+        log::info!("Renamed scene from '{}' to '{}'", old_document_id, new_document_id);
+        Some(new_document_id)
     }
 
     pub(super) fn process_lua_editor_commands(&mut self) {

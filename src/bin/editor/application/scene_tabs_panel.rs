@@ -6,6 +6,7 @@ pub(super) enum SceneTabAction {
     Activate(SceneDocumentId),
     Close(SceneDocumentId),
     NewScene,
+    Rename(SceneDocumentId),
 }
 
 #[derive(Default)]
@@ -41,12 +42,23 @@ impl SceneTabsPanel {
         let mut actions = Vec::new();
         let mut tab_clicked = false;
         let mut close_clicked = false;
+        let mut rename_clicked = false;
 
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
             ui.horizontal(|ui| {
-                if ui.selectable_label(tab.active, &tab.title).clicked() {
+                let label_response = ui.selectable_label(tab.active, &tab.title);
+
+                // Add context menu for rename
+                label_response.context_menu(|ui| {
+                    if ui.button("Rename").clicked() {
+                        rename_clicked = true;
+                        ui.close();
+                    }
+                });
+
+                if label_response.clicked() {
                     tab_clicked = true;
                 }
 
@@ -63,6 +75,10 @@ impl SceneTabsPanel {
 
         if close_clicked {
             actions.push(SceneTabAction::Close(tab.document_id.clone()));
+        }
+
+        if rename_clicked {
+            actions.push(SceneTabAction::Rename(tab.document_id.clone()));
         }
 
         actions
