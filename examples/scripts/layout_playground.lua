@@ -1,4 +1,4 @@
--- @editor
+
 -- Layout Playground Plugin
 -- Demonstrates the centered_area helper and viewport-aware sizing utilities.
 
