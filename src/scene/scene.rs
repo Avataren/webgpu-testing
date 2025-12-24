@@ -1454,14 +1454,14 @@ mod tests {
             "scene_core_restart_test",
             r#"
                 function on_created(self_entity)
-                    set_state(self_entity, "cube_state", {angle = 0.0})
+                    set_state("cube_state", {angle = 0.0})
                 end
 
                 function update(self_entity, dt)
-                    local state = get_state(self_entity, "cube_state", {angle = 0.0})
+                    local state = get_state("cube_state", {angle = 0.0})
                     local angle = state.angle + dt * 1.5
                     set_rotation(self_entity, angle, 0.0, 0.0)
-                    set_state(self_entity, "cube_state", {angle = angle})
+                    set_state("cube_state", {angle = angle})
                 end
             "#,
         );

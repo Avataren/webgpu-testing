@@ -126,13 +126,13 @@ mod tests {
             LuaScriptComponent::new_inline(
                 "RuntimeControllerTest",
                 r#"
-                pub fn on_created(self_entity) {
-                    set_translation(self_entity, 1.0, 2.0, 3.0);
-                }
+                function on_created(self_entity)
+                    set_translation(self_entity, 1.0, 2.0, 3.0)
+                end
 
-                pub fn update(self_entity, dt) {
-                    set_translation(self_entity, dt, dt, dt);
-                }
+                function update(self_entity, dt)
+                    set_translation(self_entity, dt, dt, dt)
+                end
                 "#,
             ),
         ));

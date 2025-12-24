@@ -32,8 +32,8 @@ mod tests {
         let source = LuaScriptSource::inline("test_script", "return 42");
         match source {
             LuaScriptSource::Inline { name, source } => {
-                assert_eq!(name.as_ref(), "test_script");
-                assert_eq!(source.as_ref(), "return 42");
+                assert_eq!(name.as_str(), "test_script");
+                assert_eq!(source.as_str(), "return 42");
             }
             _ => panic!("Expected inline source"),
         }
