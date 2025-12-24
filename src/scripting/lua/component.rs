@@ -150,23 +150,9 @@ impl LuaScriptInstance {
         commands: Rc<RefCell<ScriptCommands>>,
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        // Pre-register self_entity in the registry to prevent collision with allocated handles
-        if entity_bits != 0 {
-            commands
-                .borrow_mut()
-                .registry
-                .borrow_mut()
-                .resolve_bits(entity_bits, entity_bits as u64);
-        }
-
-        let _commands_guard = CommandGuard::enter(commands.clone());
-        let state = Rc::clone(&self.state_store);
-        let _state_guard = StateGuard::enter(&state);
-        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
-        let _entity_guard = EntityGuard::enter(entity_bits);
-        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
-
-        self.call_function(lua, "on_created", entity_bits)
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            self.call_function(lua, "on_created", entity_bits)
+        })
     }
 
     pub(crate) fn call_update(
@@ -177,23 +163,9 @@ impl LuaScriptInstance {
         commands: Rc<RefCell<ScriptCommands>>,
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        // Pre-register self_entity in the registry to prevent collision with allocated handles
-        if entity_bits != 0 {
-            commands
-                .borrow_mut()
-                .registry
-                .borrow_mut()
-                .resolve_bits(entity_bits, entity_bits as u64);
-        }
-
-        let _commands_guard = CommandGuard::enter(commands.clone());
-        let state = Rc::clone(&self.state_store);
-        let _state_guard = StateGuard::enter(&state);
-        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
-        let _entity_guard = EntityGuard::enter(entity_bits);
-        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
-
-        self.call_function_with_args(lua, "update", (entity_bits, dt))
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            self.call_function_with_args(lua, "update", (entity_bits, dt))
+        })
     }
 
     pub(crate) fn call_on_ui(
@@ -204,23 +176,9 @@ impl LuaScriptInstance {
         commands: Rc<RefCell<ScriptCommands>>,
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        // Pre-register self_entity in the registry to prevent collision with allocated handles
-        if entity_bits != 0 {
-            commands
-                .borrow_mut()
-                .registry
-                .borrow_mut()
-                .resolve_bits(entity_bits, entity_bits as u64);
-        }
-
-        let _commands_guard = CommandGuard::enter(commands.clone());
-        let state = Rc::clone(&self.state_store);
-        let _state_guard = StateGuard::enter(&state);
-        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
-        let _entity_guard = EntityGuard::enter(entity_bits);
-        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
-
-        self.call_function_with_args(lua, "on_ui", (entity_bits, ui_context))
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            self.call_function_with_args(lua, "on_ui", (entity_bits, ui_context))
+        })
     }
 
     // TODO: Implement in Phase 2 after we have proper event system with Lua value conversion
@@ -255,21 +213,10 @@ impl LuaScriptInstance {
         name: &str,
         arg: i64,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        // Get this instance's environment from the registry
-        let env: mlua::Table = lua.registry_value(&self.env_registry_key)?;
-
-        // Check if function exists in this instance's environment
-        if !env.contains_key(name)? {
+        let Some(func) = self.resolve_function(lua, name)? else {
             return Ok(FunctionCallOutcome::Missing);
-        }
-
-        // Try to get the function from the environment
-        let func: mlua::Function = match env.get(name) {
-            Ok(f) => f,
-            Err(_) => return Ok(FunctionCallOutcome::Missing),
         };
 
-        // Call the function
         match func.call::<()>(arg) {
             Ok(_) => Ok(FunctionCallOutcome::Executed),
             Err(e) => Err(LuaScriptingError::Lua(e)),
@@ -285,18 +232,8 @@ impl LuaScriptInstance {
     where
         A: mlua::IntoLuaMulti,
     {
-        // Get this instance's environment from the registry
-        let env: mlua::Table = lua.registry_value(&self.env_registry_key)?;
-
-        // Check if function exists in this instance's environment
-        if !env.contains_key(name)? {
+        let Some(func) = self.resolve_function(lua, name)? else {
             return Ok(FunctionCallOutcome::Missing);
-        }
-
-        // Try to get the function from the environment
-        let func: mlua::Function = match env.get(name) {
-            Ok(f) => f,
-            Err(_) => return Ok(FunctionCallOutcome::Missing),
         };
 
         // Call the function
@@ -304,6 +241,52 @@ impl LuaScriptInstance {
             Ok(_) => Ok(FunctionCallOutcome::Executed),
             Err(e) => Err(LuaScriptingError::Lua(e)),
         }
+    }
+
+    fn resolve_function(
+        &self,
+        lua: &Lua,
+        name: &str,
+    ) -> Result<Option<mlua::Function>, LuaScriptingError> {
+        let env: mlua::Table = lua.registry_value(&self.env_registry_key)?;
+
+        if !env.contains_key(name)? {
+            return Ok(None);
+        }
+
+        match env.get(name) {
+            Ok(func) => Ok(Some(func)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn with_script_context<F>(
+        &self,
+        entity_bits: i64,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+        call: F,
+    ) -> Result<FunctionCallOutcome, LuaScriptingError>
+    where
+        F: FnOnce() -> Result<FunctionCallOutcome, LuaScriptingError>,
+    {
+        // Pre-register self_entity in the registry to prevent collision with allocated handles
+        if entity_bits != 0 {
+            commands
+                .borrow_mut()
+                .registry
+                .borrow_mut()
+                .resolve_bits(entity_bits, entity_bits as u64);
+        }
+
+        let _commands_guard = CommandGuard::enter(commands.clone());
+        let state = Rc::clone(&self.state_store);
+        let _state_guard = StateGuard::enter(&state);
+        let _event_queue_guard = EventQueueGuard::enter(&event_queue);
+        let _entity_guard = EntityGuard::enter(entity_bits);
+        let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
+
+        call()
     }
 
     /// Process and resume coroutines that are ready to run.
