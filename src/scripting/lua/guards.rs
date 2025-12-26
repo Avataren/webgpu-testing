@@ -429,8 +429,6 @@ mod tests {
     }
 
     #[test]
-
-    #[test]
     fn test_entity_guard_lifecycle() {
         // Initially, getting active entity should fail
         let result = get_active_entity();
@@ -616,16 +614,6 @@ mod tests {
 
     #[test]
     fn test_guards_are_not_send() {
-        // Helper to check if a type is NOT Send
-        fn assert_not_send<T: ?Sized>() {
-            // This will only compile if T is NOT Send
-            // We use a trait that is only implemented for !Send types
-            trait NotSend {}
-            impl<T: ?Sized> NotSend for T where T: Send {}
-
-            // If this compiles, the guards are properly !Send
-        }
-
         // Verify all pointer-based guards are !Send
         const _: () = {
             // These assertions will cause compile errors if the guards become Send

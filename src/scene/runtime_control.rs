@@ -23,16 +23,6 @@ impl SceneRuntimeController {
         self.runtime.scripting_mut()
     }
 
-    pub(crate) fn lua_scripting(&self) -> &crate::scripting::lua::state::ScriptingState {
-        self.runtime.scripting()
-    }
-
-    pub(crate) fn lua_scripting_mut(
-        &mut self,
-    ) -> &mut crate::scripting::lua::state::ScriptingState {
-        self.runtime.scripting_mut()
-    }
-
     pub(crate) fn init_timer(&mut self) {
         self.runtime.init_timer();
     }
