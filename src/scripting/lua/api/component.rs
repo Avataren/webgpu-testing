@@ -17,13 +17,10 @@
 //!
 //! - `get_component()` is not yet fully implemented and returns `nil` (Phase 2)
 
-use hecs::Entity;
-use log::{error, warn};
+use log::warn;
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
-use crate::scripting::lua::guards::{
-    with_active_commands, with_active_world,
-};
+use crate::scripting::lua::guards::with_active_commands;
 
 /// Registers component API functions with the Lua runtime.
 ///

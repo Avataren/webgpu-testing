@@ -307,10 +307,9 @@ impl LuaScriptInstance {
         let _event_queue_guard = EventQueueGuard::enter(&event_queue);
         let _coroutine_guard = CoroutineGuard::enter(&self.coroutines);
 
-        // Collect IDs of coroutines that are ready to resume
-        let mut to_resume = Vec::new();
-        {
+        let to_resume = {
             let mut coroutines = self.coroutines.borrow_mut();
+            let mut to_resume = Vec::with_capacity(coroutines.len());
 
             // Update all coroutines' wait states
             for (id, coro_state) in coroutines.iter_mut() {
@@ -321,21 +320,20 @@ impl LuaScriptInstance {
                     to_resume.push(*id);
                 }
             }
-        }
+
+            to_resume
+        };
 
         // Resume ready coroutines
         for id in to_resume {
             // Set current coroutine ID before resuming
             set_current_coroutine_id(Some(id));
 
-            let result = {
+            {
                 let mut coroutines = self.coroutines.borrow_mut();
-                let coro_state = match coroutines.get_mut(&id) {
-                    Some(state) => state,
-                    None => {
-                        set_current_coroutine_id(None);
-                        continue;
-                    }
+                let Some(coro_state) = coroutines.get_mut(&id) else {
+                    set_current_coroutine_id(None);
+                    continue;
                 };
 
                 // Mark as running
@@ -344,28 +342,19 @@ impl LuaScriptInstance {
                 // Reset the wait state
                 coro_state.reset_wait();
 
-                // Resume the coroutine
-                coro_state.thread.resume::<()>(())
-            };
-
-            // Update status based on result
-            let mut coroutines = self.coroutines.borrow_mut();
-            if let Some(coro_state) = coroutines.get_mut(&id) {
-                match result {
-                    Ok(_) => {
-                        // Check if thread is finished or in error state
-                        match coro_state.thread.status() {
-                            mlua::ThreadStatus::Error => {
-                                coro_state.status = CoroutineStatus::Dead;
-                            }
-                            mlua::ThreadStatus::Resumable => {
-                                coro_state.status = CoroutineStatus::Suspended;
-                            }
-                            _ => {
-                                coro_state.status = CoroutineStatus::Suspended;
-                            }
+                // Resume the coroutine and update status
+                match coro_state.thread.resume::<()>(()) {
+                    Ok(_) => match coro_state.thread.status() {
+                        mlua::ThreadStatus::Error => {
+                            coro_state.status = CoroutineStatus::Dead;
                         }
-                    }
+                        mlua::ThreadStatus::Resumable => {
+                            coro_state.status = CoroutineStatus::Suspended;
+                        }
+                        _ => {
+                            coro_state.status = CoroutineStatus::Suspended;
+                        }
+                    },
                     Err(e) => {
                         coro_state.status = CoroutineStatus::Dead;
                         log::error!(target: "script", "Coroutine {} error: {}", id, e);
