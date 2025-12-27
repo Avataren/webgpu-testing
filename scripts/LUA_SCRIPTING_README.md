@@ -243,10 +243,30 @@ end
 
 ### Component API
 - `has_component(entity, component_name)` - Check if entity has component
-- `get_component(entity, component_name)` - Get component data (currently stubbed)
+- `get_component(entity, component_name)` - Get component data (returns table or nil)
 - `set_component(entity, component_name, value)` - Set component data
 - `add_component(entity, component_name, value)` - Add component to entity
 - `remove_component(entity, component_name)` - Remove component from entity
+
+#### Supported component names
+
+**Add/set-supported components**
+- `Name` (string)
+- `Visible` (boolean)
+- `CanCastShadow` (boolean)
+- `RotateAnimation` (`{ axis = {x, y, z}, speed = number }`)
+- `OrbitAnimation` (`{ center = {x, y, z}, radius = number, speed = number, offset = number }`)
+
+**Readable/removable components**
+- `Transform` or `TransformComponent` (`{ translation = {x, y, z}, rotation = {x, y, z, w}, scale = {x, y, z} }`)
+- `Camera` or `CameraComponent` (`{ projection = { kind = "perspective" | "orthographic", ... } }`)
+- `PointLight` (`{ color = {x, y, z}, intensity = number, range = number }`)
+- `DirectionalLight` (`{ color = {x, y, z}, intensity = number, shadow_size = number }`)
+- `SpotLight` (`{ color = {x, y, z}, intensity = number, inner_angle = number, outer_angle = number, range = number }`)
+- `Mesh` or `MeshComponent` (`{ index = number }`)
+- `Material` or `MaterialComponent` (`{ index = number }`)
+- `PrimitiveMeshComponent` (`{ descriptor = ... }`)
+- `ParticleEmitterComponent` (`{ spawn_rate = number, ... }`)
 
 ### Query API
 - `query_entities_with_component(component_name)` - Find all entities with component
@@ -408,9 +428,7 @@ Scripts can declare their mode using annotations:
 
 ## Known Limitations
 
-1. **get_component()** is currently stubbed and returns `nil`. This will be implemented when rune::Value → serde_json::Value conversion is added to the ComponentRegistry.
-
-2. **Script Access API** (metaprogramming) is not yet implemented.
+1. **Script Access API** (metaprogramming) is not yet implemented.
 
 ## Best Practices
 
