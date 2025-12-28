@@ -21,11 +21,10 @@
 
 use glam::Vec3;
 use hecs::Entity;
-use log::warn;
 use mlua::{Lua, Result as LuaResult, Table as LuaTable};
 
 use crate::scene::TransformComponent;
-use crate::scripting::lua::commands::entity_bits;
+use crate::scripting::lua::commands::{component_kind_from_name, component_matches, entity_bits};
 use crate::scripting::lua::guards::with_active_world;
 
 /// Registers query API functions with the Lua runtime.
@@ -62,13 +61,30 @@ pub(crate) fn register_query_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
     // query_entities_with_component(component_name: string) -> table
-    // NOTE: Not yet implemented - requires Lua-specific component system
     globals.set(
         "query_entities_with_component",
         lua.create_function(|lua, component_name: String| {
-            warn!(target: "script", "query_entities_with_component not yet fully implemented for Lua (component: {})", component_name);
-            // Return empty table - this will be implemented when we add a Lua-specific component system
-            lua.create_table()
+            with_active_world(|world| {
+                let kind = component_kind_from_name(&component_name).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "Unknown or unsupported component type: {}",
+                        component_name
+                    ))
+                })?;
+                let table = lua.create_table()?;
+                let mut index = 1;
+
+                for entity_ref in world.iter() {
+                    let entity = entity_ref.entity();
+                    if component_matches(world, entity, kind) {
+                        let handle = entity_bits(entity);
+                        table.raw_set(index, handle)?;
+                        index += 1;
+                    }
+                }
+
+                Ok(table)
+            })
         })?,
     )?;
 
@@ -171,15 +187,105 @@ pub(crate) fn register_query_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     // get_nearest_entity_with_component(x: number, y: number, z: number, component_name: string) -> number | nil
-    // NOTE: Not yet implemented - requires Lua-specific component system
     globals.set(
         "get_nearest_entity_with_component",
         lua.create_function(|_, (x, y, z, component_name): (f64, f64, f64, String)| {
-            warn!(target: "script", "get_nearest_entity_with_component not yet fully implemented for Lua (pos: {}, {}, {}, component: {})", x, y, z, component_name);
-            // Return nil - this will be implemented when we add a Lua-specific component system
-            Ok::<Option<i64>, mlua::Error>(None)
+            with_active_world(|world| {
+                let kind = component_kind_from_name(&component_name).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "Unknown or unsupported component type: {}",
+                        component_name
+                    ))
+                })?;
+                let pos = Vec3::new(x as f32, y as f32, z as f32);
+                let mut nearest: Option<(Entity, f32)> = None;
+
+                for entity_ref in world.iter() {
+                    let entity = entity_ref.entity();
+                    if !component_matches(world, entity, kind) {
+                        continue;
+                    }
+
+                    let Ok(transform) = world.get::<&TransformComponent>(entity) else {
+                        continue;
+                    };
+                    let entity_pos = transform.0.translation;
+                    let dist_sq = pos.distance_squared(entity_pos);
+
+                    match nearest {
+                        None => nearest = Some((entity, dist_sq)),
+                        Some((_, best_dist_sq)) => {
+                            if dist_sq < best_dist_sq {
+                                nearest = Some((entity, dist_sq));
+                            }
+                        }
+                    }
+                }
+
+                match nearest {
+                    Some((entity, _)) => Ok(Some(entity_bits(entity))),
+                    None => Ok(None),
+                }
+            })
         })?,
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{Name, Transform, TransformComponent, Visible};
+    use crate::scripting::lua::guards::WorldGuard;
+    use hecs::World;
+    use mlua::Lua;
+
+    #[test]
+    fn query_entities_with_component_returns_matching_entities() {
+        let lua = Lua::new();
+        register_query_api(&lua).unwrap();
+
+        let mut world = World::new();
+        let name_entity = world.spawn((Name::new("Alpha"),));
+        let _visible_entity = world.spawn((Visible(true),));
+
+        let _guard = WorldGuard::enter(&world);
+        let table: LuaTable = lua
+            .load("return query_entities_with_component('Name')")
+            .eval()
+            .unwrap();
+
+        let handles: Vec<i64> = table
+            .sequence_values()
+            .collect::<LuaResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(handles.len(), 1);
+        assert_eq!(handles[0], entity_bits(name_entity));
+    }
+
+    #[test]
+    fn get_nearest_entity_with_component_uses_transform_distance() {
+        let lua = Lua::new();
+        register_query_api(&lua).unwrap();
+
+        let mut world = World::new();
+        let nearest = world.spawn((
+            Name::new("Near"),
+            TransformComponent(Transform::from_translation(Vec3::new(0.0, 0.0, 0.0))),
+        ));
+        let _far = world.spawn((
+            Name::new("Far"),
+            TransformComponent(Transform::from_translation(Vec3::new(10.0, 0.0, 0.0))),
+        ));
+        let _no_transform = world.spawn((Name::new("NoTransform"),));
+
+        let _guard = WorldGuard::enter(&world);
+        let result: Option<i64> = lua
+            .load("return get_nearest_entity_with_component(1.0, 0.0, 0.0, 'Name')")
+            .eval()
+            .unwrap();
+
+        assert_eq!(result, Some(entity_bits(nearest)));
+    }
 }

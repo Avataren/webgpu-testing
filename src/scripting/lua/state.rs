@@ -139,7 +139,7 @@ impl ScriptingState {
         world: &World,
     ) -> Result<(), LuaScriptingError> {
         let mut to_compile = Vec::new();
-        let instances = self.instances.entry(world_id).or_insert_with(HashMap::new);
+        let instances = self.instances.entry(world_id).or_default();
 
         for (entity, script_comp) in world.query::<&LuaScriptComponent>().iter() {
             if !instances.contains_key(&entity) {
@@ -383,9 +383,7 @@ impl ScriptingState {
         world: &mut World,
         commands: Rc<RefCell<ScriptCommands>>,
     ) -> Result<(), LuaScriptingError> {
-        let result = commands
-            .borrow_mut()
-            .apply(world)?;
+        let result = commands.borrow_mut().apply(world)?;
 
         // Store pending glTF imports
         self.pending_gltf_imports.extend(result.gltf_imports);
@@ -394,7 +392,7 @@ impl ScriptingState {
         for sub in result.event_subscriptions {
             self.event_subscriptions
                 .entry(sub.event_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(EventSubscription {
                     entity_id: sub.entity,
                     callback_name: sub.callback_name,

@@ -275,6 +275,22 @@ end
 - `get_nearest_entity_with_component(x, y, z, component_name)` - Find nearest entity with component
 - `get_entities_in_box(min, max)` - Find entities in axis-aligned box
 
+**Supported component names for queries**
+- `Name`
+- `Visible`
+- `CanCastShadow`
+- `RotateAnimation`
+- `OrbitAnimation`
+- `Transform` or `TransformComponent`
+- `Camera` or `CameraComponent`
+- `PointLight`
+- `DirectionalLight`
+- `SpotLight`
+- `Mesh` or `MeshComponent`
+- `Material` or `MaterialComponent`
+- `PrimitiveMeshComponent`
+- `ParticleEmitterComponent`
+
 ### Events API
 - `emit_event(event_name, data)` - Emit custom event with data
 - `subscribe_event(event_name, callback_name)` - Subscribe to event
