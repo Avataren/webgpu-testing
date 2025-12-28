@@ -5,7 +5,7 @@
 //! ## Features
 //!
 //! - **Component queries** - Check if an entity has a component
-//! - **Component access** - Get component data (Phase 2 feature, currently stubbed)
+//! - **Component access** - Get component data
 //! - **Component modification** - Set, add, or remove components
 //!
 //! ## Component Data Format
@@ -13,14 +13,11 @@
 //! Component values are passed as Lua tables that match the component's structure.
 //! The system automatically serializes Lua values to JSON for component storage.
 //!
-//! ## Known Limitations
-//!
-//! - `get_component()` is not yet fully implemented and returns `nil` (Phase 2)
-
-use log::warn;
+use hecs::Entity;
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
-use crate::scripting::lua::guards::with_active_commands;
+use crate::scripting::lua::commands::ScriptCommands;
+use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 
 /// Registers component API functions with the Lua runtime.
 ///
@@ -29,7 +26,7 @@ use crate::scripting::lua::guards::with_active_commands;
 /// ## Available Functions
 ///
 /// - `has_component(entity, component_name)` - Returns true if entity has component
-/// - `get_component(entity, component_name)` - Get component data (not yet implemented)
+/// - `get_component(entity, component_name)` - Get component data
 /// - `set_component(entity, component_name, value)` - Set component data
 /// - `add_component(entity, component_name, value)` - Add new component
 /// - `remove_component(entity, component_name)` - Remove component from entity
@@ -57,10 +54,10 @@ use crate::scripting::lua::guards::with_active_commands;
 /// -- Remove a component
 /// remove_component(entity, "Health")
 ///
-/// -- Get component (Phase 2 - currently returns nil)
-/// local health = get_component(entity, "Health")
-/// if health then
-///     log_info("Health: " .. health.current .. "/" .. health.max)
+/// -- Get component data
+/// local transform = get_component(entity, "Transform")
+/// if transform then
+///     log_info("Position: " .. transform.translation[1] .. ", " .. transform.translation[2])
 /// end
 /// ```
 ///
@@ -75,26 +72,44 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
     // has_component(entity: number, component_name: string) -> boolean
-    // TODO: This feature is not yet fully implemented for Lua
-    // The rune-based component registry has been removed
     globals.set(
         "has_component",
         lua.create_function(|_, (entity_bits, component_name): (i64, String)| {
-            warn!(target: "script", "has_component not yet fully implemented for Lua (entity: {}, component: {})", entity_bits, component_name);
-            // Return false for now - this will be implemented when we add a Lua-specific component system
-            Ok(false)
+            with_active_world(|world| {
+                let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                    return Ok(false);
+                };
+
+                if world.entity(entity).is_err() {
+                    return Ok(false);
+                }
+
+                ScriptCommands::component_exists(world, entity, &component_name)
+                    .map_err(mlua::Error::RuntimeError)
+            })
         })?,
     )?;
 
     // get_component(entity: number, component_name: string) -> any | nil
-    // TODO: This requires rune::Value -> serde_json::Value conversion
-    // For Phase 2, we'll stub this out - it will be implemented in a future update
     globals.set(
         "get_component",
-        lua.create_function(|_lua, (_entity_bits, component_name): (i64, String)| {
-            warn!(target: "script", "get_component not yet fully implemented for Lua (component: {})", component_name);
-            // Return nil for now - this will be implemented when we add value conversion
-            Ok(mlua::Value::Nil)
+        lua.create_function(|lua, (entity_bits, component_name): (i64, String)| {
+            with_active_world(|world| {
+                let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                    return Ok(LuaValue::Nil);
+                };
+
+                if world.entity(entity).is_err() {
+                    return Ok(LuaValue::Nil);
+                }
+
+                match ScriptCommands::component_to_json(world, entity, &component_name)
+                    .map_err(mlua::Error::RuntimeError)?
+                {
+                    Some(value) => lua.to_value(&value),
+                    None => Ok(LuaValue::Nil),
+                }
+            })
         })?,
     )?;
 

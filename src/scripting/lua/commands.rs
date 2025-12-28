@@ -6,8 +6,13 @@ use std::rc::Rc;
 use glam::{Quat, Vec3};
 use hecs::{ComponentError, Entity, World};
 use log::warn;
+use serde_json::json;
 
-use crate::scene::{Name, Parent, Transform, TransformComponent};
+use crate::scene::{
+    CameraComponent, CanCastShadow, DirectionalLight, MaterialComponent, MeshComponent, Name,
+    OrbitAnimation, Parent, ParticleEmitterComponent, PointLight, PrimitiveMeshComponent,
+    RotateAnimation, SpotLight, Transform, TransformComponent, Visible,
+};
 
 use super::component::LuaScriptComponent;
 use super::entity_registry::{EntityHandleRegistry, ExistingCommand, PendingEntity};
@@ -312,10 +317,7 @@ impl ScriptCommands {
         self.pending.is_empty() && self.existing.is_empty()
     }
 
-    pub fn apply(
-        &mut self,
-        world: &mut World,
-    ) -> Result<ScriptApplyResult, LuaScriptingError> {
+    pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
         use log::error;
 
         let mut result = ScriptApplyResult::default();
@@ -689,6 +691,167 @@ impl ScriptCommands {
         Ok(())
     }
 
+    pub(crate) fn component_exists(
+        world: &World,
+        entity: Entity,
+        component_name: &str,
+    ) -> Result<bool, String> {
+        let kind = component_kind_from_name(component_name)
+            .ok_or_else(|| format!("Unknown or unsupported component type: {}", component_name))?;
+
+        let exists = match kind {
+            ComponentKind::Name => world.satisfies::<&Name>(entity),
+            ComponentKind::Visible => world.satisfies::<&Visible>(entity),
+            ComponentKind::CanCastShadow => world.satisfies::<&CanCastShadow>(entity),
+            ComponentKind::RotateAnimation => world.satisfies::<&RotateAnimation>(entity),
+            ComponentKind::OrbitAnimation => world.satisfies::<&OrbitAnimation>(entity),
+            ComponentKind::Transform => world.satisfies::<&TransformComponent>(entity),
+            ComponentKind::Camera => world.satisfies::<&CameraComponent>(entity),
+            ComponentKind::PointLight => world.satisfies::<&PointLight>(entity),
+            ComponentKind::DirectionalLight => world.satisfies::<&DirectionalLight>(entity),
+            ComponentKind::SpotLight => world.satisfies::<&SpotLight>(entity),
+            ComponentKind::Mesh => world.satisfies::<&MeshComponent>(entity),
+            ComponentKind::Material => world.satisfies::<&MaterialComponent>(entity),
+            ComponentKind::PrimitiveMesh => world.satisfies::<&PrimitiveMeshComponent>(entity),
+            ComponentKind::ParticleEmitter => world.satisfies::<&ParticleEmitterComponent>(entity),
+        }
+        .unwrap_or(false);
+
+        Ok(exists)
+    }
+
+    pub(crate) fn component_to_json(
+        world: &World,
+        entity: Entity,
+        component_name: &str,
+    ) -> Result<Option<serde_json::Value>, String> {
+        let kind = component_kind_from_name(component_name)
+            .ok_or_else(|| format!("Unknown or unsupported component type: {}", component_name))?;
+
+        match kind {
+            ComponentKind::Name => {
+                Self::component_value(world, entity, |value: &Name| json!(value.0))
+            }
+            ComponentKind::Visible => {
+                Self::component_value(world, entity, |value: &Visible| json!(value.0))
+            }
+            ComponentKind::CanCastShadow => {
+                Self::component_value(world, entity, |value: &CanCastShadow| json!(value.0))
+            }
+            ComponentKind::RotateAnimation => {
+                Self::component_value(world, entity, |value: &RotateAnimation| {
+                    json!({
+                        "axis": vec3_to_json(value.axis),
+                        "speed": value.speed
+                    })
+                })
+            }
+            ComponentKind::OrbitAnimation => {
+                Self::component_value(world, entity, |value: &OrbitAnimation| {
+                    json!({
+                        "center": vec3_to_json(value.center),
+                        "radius": value.radius,
+                        "speed": value.speed,
+                        "offset": value.offset
+                    })
+                })
+            }
+            ComponentKind::Transform => {
+                Self::component_value(world, entity, |value: &TransformComponent| {
+                    json!({
+                        "translation": vec3_to_json(value.0.translation),
+                        "rotation": quat_to_json(value.0.rotation),
+                        "scale": vec3_to_json(value.0.scale)
+                    })
+                })
+            }
+            ComponentKind::Camera => {
+                Self::component_value_fallible(world, entity, |value: &CameraComponent| {
+                    serde_json::to_value(value).map_err(|err| err.to_string())
+                })
+            }
+            ComponentKind::PointLight => {
+                Self::component_value(world, entity, |value: &PointLight| {
+                    json!({
+                        "color": vec3_to_json(value.color),
+                        "intensity": value.intensity,
+                        "range": value.range
+                    })
+                })
+            }
+            ComponentKind::DirectionalLight => {
+                Self::component_value(world, entity, |value: &DirectionalLight| {
+                    json!({
+                        "color": vec3_to_json(value.color),
+                        "intensity": value.intensity,
+                        "shadow_size": value.shadow_size
+                    })
+                })
+            }
+            ComponentKind::SpotLight => {
+                Self::component_value(world, entity, |value: &SpotLight| {
+                    json!({
+                        "color": vec3_to_json(value.color),
+                        "intensity": value.intensity,
+                        "inner_angle": value.inner_angle,
+                        "outer_angle": value.outer_angle,
+                        "range": value.range
+                    })
+                })
+            }
+            ComponentKind::Mesh => Self::component_value(
+                world,
+                entity,
+                |value: &MeshComponent| json!({ "index": value.0.index() }),
+            ),
+            ComponentKind::Material => Self::component_value(
+                world,
+                entity,
+                |value: &MaterialComponent| json!({ "index": value.0.index() }),
+            ),
+            ComponentKind::PrimitiveMesh => {
+                Self::component_value_fallible(world, entity, |value: &PrimitiveMeshComponent| {
+                    serde_json::to_value(value).map_err(|err| err.to_string())
+                })
+            }
+            ComponentKind::ParticleEmitter => {
+                Self::component_value_fallible(world, entity, |value: &ParticleEmitterComponent| {
+                    serde_json::to_value(value).map_err(|err| err.to_string())
+                })
+            }
+        }
+    }
+
+    fn component_value<T>(
+        world: &World,
+        entity: Entity,
+        f: impl FnOnce(&T) -> serde_json::Value,
+    ) -> Result<Option<serde_json::Value>, String>
+    where
+        T: hecs::Component,
+    {
+        match world.get::<&T>(entity) {
+            Ok(value) => Ok(Some(f(&value))),
+            Err(ComponentError::MissingComponent(_)) => Ok(None),
+            Err(ComponentError::NoSuchEntity) => Err("Entity does not exist".to_string()),
+        }
+    }
+
+    fn component_value_fallible<T>(
+        world: &World,
+        entity: Entity,
+        f: impl FnOnce(&T) -> Result<serde_json::Value, String>,
+    ) -> Result<Option<serde_json::Value>, String>
+    where
+        T: hecs::Component,
+    {
+        match world.get::<&T>(entity) {
+            Ok(value) => Ok(Some(f(&value)?)),
+            Err(ComponentError::MissingComponent(_)) => Ok(None),
+            Err(ComponentError::NoSuchEntity) => Err("Entity does not exist".to_string()),
+        }
+    }
+
     /// Add or set a component from a serde_json::Value
     fn add_component_from_json(
         world: &mut World,
@@ -698,8 +861,8 @@ impl ScriptCommands {
     ) -> Result<(), String> {
         use crate::scene::components::*;
 
-        match component_name {
-            "Name" => {
+        match component_kind_from_name(component_name) {
+            Some(ComponentKind::Name) => {
                 let name = value
                     .as_str()
                     .ok_or_else(|| "Name must be a string".to_string())?;
@@ -707,7 +870,7 @@ impl ScriptCommands {
                     .insert_one(entity, Name(name.to_string()))
                     .map_err(|e| e.to_string())?;
             }
-            "Visible" => {
+            Some(ComponentKind::Visible) => {
                 let visible = value
                     .as_bool()
                     .ok_or_else(|| "Visible must be a boolean".to_string())?;
@@ -715,7 +878,7 @@ impl ScriptCommands {
                     .insert_one(entity, Visible(visible))
                     .map_err(|e| e.to_string())?;
             }
-            "CanCastShadow" => {
+            Some(ComponentKind::CanCastShadow) => {
                 let can_cast = value
                     .as_bool()
                     .ok_or_else(|| "CanCastShadow must be a boolean".to_string())?;
@@ -723,7 +886,7 @@ impl ScriptCommands {
                     .insert_one(entity, CanCastShadow(can_cast))
                     .map_err(|e| e.to_string())?;
             }
-            "RotateAnimation" => {
+            Some(ComponentKind::RotateAnimation) => {
                 // Expect {axis: [x, y, z], speed: number}
                 let obj = value
                     .as_object()
@@ -757,7 +920,7 @@ impl ScriptCommands {
                     )
                     .map_err(|e| e.to_string())?;
             }
-            "OrbitAnimation" => {
+            Some(ComponentKind::OrbitAnimation) => {
                 // Expect {center: [x, y, z], radius: number, speed: number, offset: number}
                 let obj = value
                     .as_object()
@@ -798,7 +961,13 @@ impl ScriptCommands {
                     )
                     .map_err(|e| e.to_string())?;
             }
-            _ => {
+            Some(_) => {
+                return Err(format!(
+                    "Component type cannot be set from JSON: {}",
+                    component_name
+                ));
+            }
+            None => {
                 return Err(format!(
                     "Unknown or unsupported component type: {}",
                     component_name
@@ -817,78 +986,78 @@ impl ScriptCommands {
     ) -> Result<(), String> {
         use crate::scene::components::*;
 
-        match component_name {
-            "Name" => {
+        match component_kind_from_name(component_name) {
+            Some(ComponentKind::Name) => {
                 world
                     .remove_one::<Name>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "Visible" => {
+            Some(ComponentKind::Visible) => {
                 world
                     .remove_one::<Visible>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "CanCastShadow" => {
+            Some(ComponentKind::CanCastShadow) => {
                 world
                     .remove_one::<CanCastShadow>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "RotateAnimation" => {
+            Some(ComponentKind::RotateAnimation) => {
                 world
                     .remove_one::<RotateAnimation>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "OrbitAnimation" => {
+            Some(ComponentKind::OrbitAnimation) => {
                 world
                     .remove_one::<OrbitAnimation>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "TransformComponent" | "Transform" => {
+            Some(ComponentKind::Transform) => {
                 world
                     .remove_one::<TransformComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "CameraComponent" | "Camera" => {
+            Some(ComponentKind::Camera) => {
                 world
                     .remove_one::<CameraComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "PointLight" => {
+            Some(ComponentKind::PointLight) => {
                 world
                     .remove_one::<PointLight>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "DirectionalLight" => {
+            Some(ComponentKind::DirectionalLight) => {
                 world
                     .remove_one::<DirectionalLight>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "SpotLight" => {
+            Some(ComponentKind::SpotLight) => {
                 world
                     .remove_one::<SpotLight>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "MeshComponent" | "Mesh" => {
+            Some(ComponentKind::Mesh) => {
                 world
                     .remove_one::<MeshComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "MaterialComponent" | "Material" => {
+            Some(ComponentKind::Material) => {
                 world
                     .remove_one::<MaterialComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "PrimitiveMeshComponent" => {
+            Some(ComponentKind::PrimitiveMesh) => {
                 world
                     .remove_one::<PrimitiveMeshComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            "ParticleEmitterComponent" => {
+            Some(ComponentKind::ParticleEmitter) => {
                 world
                     .remove_one::<ParticleEmitterComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
-            _ => {
+            None => {
                 return Err(format!(
                     "Unknown or unsupported component type: {}",
                     component_name
@@ -897,6 +1066,133 @@ impl ScriptCommands {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComponentKind {
+    Name,
+    Visible,
+    CanCastShadow,
+    RotateAnimation,
+    OrbitAnimation,
+    Transform,
+    Camera,
+    PointLight,
+    DirectionalLight,
+    SpotLight,
+    Mesh,
+    Material,
+    PrimitiveMesh,
+    ParticleEmitter,
+}
+
+fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
+    match component_name {
+        "Name" => Some(ComponentKind::Name),
+        "Visible" => Some(ComponentKind::Visible),
+        "CanCastShadow" => Some(ComponentKind::CanCastShadow),
+        "RotateAnimation" => Some(ComponentKind::RotateAnimation),
+        "OrbitAnimation" => Some(ComponentKind::OrbitAnimation),
+        "TransformComponent" | "Transform" => Some(ComponentKind::Transform),
+        "CameraComponent" | "Camera" => Some(ComponentKind::Camera),
+        "PointLight" => Some(ComponentKind::PointLight),
+        "DirectionalLight" => Some(ComponentKind::DirectionalLight),
+        "SpotLight" => Some(ComponentKind::SpotLight),
+        "MeshComponent" | "Mesh" => Some(ComponentKind::Mesh),
+        "MaterialComponent" | "Material" => Some(ComponentKind::Material),
+        "PrimitiveMeshComponent" => Some(ComponentKind::PrimitiveMesh),
+        "ParticleEmitterComponent" => Some(ComponentKind::ParticleEmitter),
+        _ => None,
+    }
+}
+
+fn vec3_to_json(value: Vec3) -> serde_json::Value {
+    json!([value.x, value.y, value.z])
+}
+
+fn quat_to_json(value: Quat) -> serde_json::Value {
+    json!([value.x, value.y, value.z, value.w])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::Transform;
+    use serde_json::json;
+
+    #[test]
+    fn component_exists_recognizes_supported_components() {
+        let mut world = World::new();
+        let entity = world.spawn((Name::new("Test"),));
+
+        let has_name = ScriptCommands::component_exists(&world, entity, "Name").unwrap();
+        let has_visible = ScriptCommands::component_exists(&world, entity, "Visible").unwrap();
+
+        assert!(has_name);
+        assert!(!has_visible);
+    }
+
+    #[test]
+    fn component_exists_rejects_unknown_components() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+
+        let result = ScriptCommands::component_exists(&world, entity, "MysteryComponent");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn component_to_json_serializes_basic_components() {
+        let mut world = World::new();
+        let entity = world.spawn((
+            Name::new("Player"),
+            Visible(false),
+            TransformComponent(Transform::from_translation(Vec3::new(1.0, 2.0, 3.0))),
+        ));
+
+        let name = ScriptCommands::component_to_json(&world, entity, "Name")
+            .unwrap()
+            .unwrap();
+        let visible = ScriptCommands::component_to_json(&world, entity, "Visible")
+            .unwrap()
+            .unwrap();
+        let transform = ScriptCommands::component_to_json(&world, entity, "Transform")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(name, json!("Player"));
+        assert_eq!(visible, json!(false));
+        assert_eq!(
+            transform,
+            json!({
+                "translation": [1.0, 2.0, 3.0],
+                "rotation": [0.0, 0.0, 0.0, 1.0],
+                "scale": [1.0, 1.0, 1.0]
+            })
+        );
+    }
+
+    #[test]
+    fn component_to_json_handles_missing_components() {
+        let mut world = World::new();
+        let entity = world.spawn(());
+
+        let result = ScriptCommands::component_to_json(&world, entity, "Visible").unwrap();
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn component_to_json_errors_on_missing_entity() {
+        let mut world = World::new();
+        let entity = world.spawn((Name::new("Gone"),));
+        world.despawn(entity).unwrap();
+
+        let result = ScriptCommands::component_to_json(&world, entity, "Name");
+
+        assert!(result.is_err());
     }
 }
 
