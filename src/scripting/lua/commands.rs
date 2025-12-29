@@ -699,23 +699,7 @@ impl ScriptCommands {
         let kind = component_kind_from_name(component_name)
             .ok_or_else(|| format!("Unknown or unsupported component type: {}", component_name))?;
 
-        let exists = match kind {
-            ComponentKind::Name => world.satisfies::<&Name>(entity),
-            ComponentKind::Visible => world.satisfies::<&Visible>(entity),
-            ComponentKind::CanCastShadow => world.satisfies::<&CanCastShadow>(entity),
-            ComponentKind::RotateAnimation => world.satisfies::<&RotateAnimation>(entity),
-            ComponentKind::OrbitAnimation => world.satisfies::<&OrbitAnimation>(entity),
-            ComponentKind::Transform => world.satisfies::<&TransformComponent>(entity),
-            ComponentKind::Camera => world.satisfies::<&CameraComponent>(entity),
-            ComponentKind::PointLight => world.satisfies::<&PointLight>(entity),
-            ComponentKind::DirectionalLight => world.satisfies::<&DirectionalLight>(entity),
-            ComponentKind::SpotLight => world.satisfies::<&SpotLight>(entity),
-            ComponentKind::Mesh => world.satisfies::<&MeshComponent>(entity),
-            ComponentKind::Material => world.satisfies::<&MaterialComponent>(entity),
-            ComponentKind::PrimitiveMesh => world.satisfies::<&PrimitiveMeshComponent>(entity),
-            ComponentKind::ParticleEmitter => world.satisfies::<&ParticleEmitterComponent>(entity),
-        }
-        .unwrap_or(false);
+        let exists = component_matches(world, entity, kind);
 
         Ok(exists)
     }
@@ -1070,7 +1054,7 @@ impl ScriptCommands {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ComponentKind {
+pub(crate) enum ComponentKind {
     Name,
     Visible,
     CanCastShadow,
@@ -1087,7 +1071,7 @@ enum ComponentKind {
     ParticleEmitter,
 }
 
-fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
+pub(crate) fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
     match component_name {
         "Name" => Some(ComponentKind::Name),
         "Visible" => Some(ComponentKind::Visible),
@@ -1105,6 +1089,26 @@ fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
         "ParticleEmitterComponent" => Some(ComponentKind::ParticleEmitter),
         _ => None,
     }
+}
+
+pub(crate) fn component_matches(world: &World, entity: Entity, kind: ComponentKind) -> bool {
+    match kind {
+        ComponentKind::Name => world.satisfies::<&Name>(entity),
+        ComponentKind::Visible => world.satisfies::<&Visible>(entity),
+        ComponentKind::CanCastShadow => world.satisfies::<&CanCastShadow>(entity),
+        ComponentKind::RotateAnimation => world.satisfies::<&RotateAnimation>(entity),
+        ComponentKind::OrbitAnimation => world.satisfies::<&OrbitAnimation>(entity),
+        ComponentKind::Transform => world.satisfies::<&TransformComponent>(entity),
+        ComponentKind::Camera => world.satisfies::<&CameraComponent>(entity),
+        ComponentKind::PointLight => world.satisfies::<&PointLight>(entity),
+        ComponentKind::DirectionalLight => world.satisfies::<&DirectionalLight>(entity),
+        ComponentKind::SpotLight => world.satisfies::<&SpotLight>(entity),
+        ComponentKind::Mesh => world.satisfies::<&MeshComponent>(entity),
+        ComponentKind::Material => world.satisfies::<&MaterialComponent>(entity),
+        ComponentKind::PrimitiveMesh => world.satisfies::<&PrimitiveMeshComponent>(entity),
+        ComponentKind::ParticleEmitter => world.satisfies::<&ParticleEmitterComponent>(entity),
+    }
+    .unwrap_or(false)
 }
 
 fn vec3_to_json(value: Vec3) -> serde_json::Value {

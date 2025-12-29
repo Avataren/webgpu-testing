@@ -94,16 +94,16 @@ impl UiCommand {
                 });
             }
             UiCommand::Horizontal { items, wrap } => {
-                let mut render_children = |ui: &mut egui::Ui| {
+                let render_children = |ui: &mut egui::Ui| {
                     for item in items {
                         item.render_and_collect(ui, responses);
                     }
                 };
 
                 if *wrap {
-                    ui.horizontal_wrapped(|ui| render_children(ui));
+                    ui.horizontal_wrapped(render_children);
                 } else {
-                    ui.horizontal(|ui| render_children(ui));
+                    ui.horizontal(render_children);
                 }
             }
             UiCommand::CenteredArea { width, items } => {
@@ -303,9 +303,9 @@ impl UiCommand {
                 };
 
                 if *wrap {
-                    ui.horizontal_wrapped(|ui| render_children(ui));
+                    ui.horizontal_wrapped(render_children);
                 } else {
-                    ui.horizontal(|ui| render_children(ui));
+                    ui.horizontal(render_children);
                 }
                 None
             }
@@ -350,4 +350,3 @@ pub struct UiResponse {
     pub bool_value: Option<bool>,
     pub color_value: Option<(f32, f32, f32)>,
 }
-

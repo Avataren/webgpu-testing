@@ -290,7 +290,7 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     "Script attempted to list directory outside allowed directories: {}",
                     dir_path
                 );
-                return Ok(lua.create_table()?);
+                return lua.create_table();
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -317,14 +317,14 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     }
                     Err(err) => {
                         log::error!("Failed to list directory '{}': {}", dir_path, err);
-                        Ok(lua.create_table()?)
+                        lua.create_table()
                     }
                 }
             }
 
             #[cfg(target_arch = "wasm32")]
             {
-                Ok(lua.create_table()?)
+                lua.create_table()
             }
         })?,
     )?;
@@ -352,10 +352,8 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     // Add file filters if provided
                     if let Some(exts) = extensions {
                         let mut ext_vec = Vec::new();
-                        for pair in exts.pairs::<mlua::Value, String>() {
-                            if let Ok((_, ext)) = pair {
-                                ext_vec.push(ext);
-                            }
+                        for (_, ext) in exts.pairs::<mlua::Value, String>().flatten() {
+                            ext_vec.push(ext);
                         }
                         if !ext_vec.is_empty() {
                             dialog = dialog.add_filter("Files", &ext_vec);
@@ -411,10 +409,8 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     // Add file filters if provided
                     if let Some(exts) = extensions {
                         let mut ext_vec = Vec::new();
-                        for pair in exts.pairs::<mlua::Value, String>() {
-                            if let Ok((_, ext)) = pair {
-                                ext_vec.push(ext);
-                            }
+                        for (_, ext) in exts.pairs::<mlua::Value, String>().flatten() {
+                            ext_vec.push(ext);
                         }
                         if !ext_vec.is_empty() {
                             dialog = dialog.add_filter("Files", &ext_vec);

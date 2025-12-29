@@ -5,19 +5,14 @@ use std::path::{Path, PathBuf};
 use wgpu_cube::scripting::LuaScriptSource;
 
 /// Type of plugin - distinguishes between editor-provided and user-created plugins
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginType {
     /// Built-in editor plugin
     Editor,
     /// User-created plugin
+    #[default]
     User,
-}
-
-impl Default for PluginType {
-    fn default() -> Self {
-        PluginType::User
-    }
 }
 
 /// Plugin metadata from ui_plugins.toml

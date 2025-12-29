@@ -87,7 +87,7 @@ impl LuaScriptSource {
 
                 Ok(LoadedScript {
                     name: absolute.to_string_lossy().into_owned(),
-                    contents: contents,
+                    contents,
                     path: Some(absolute),
                 })
             }
@@ -144,8 +144,8 @@ impl Default for ScriptMode {
 pub(crate) fn parse_script_mode_annotation(source: &str) -> ScriptMode {
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("--") {
-            let comment = trimmed[2..].trim();
+        if let Some(comment) = trimmed.strip_prefix("--") {
+            let comment = comment.trim();
             if comment == "@tool" {
                 return ScriptMode::Both;
             } else if comment == "@editor" || comment == "@editor_tool" {

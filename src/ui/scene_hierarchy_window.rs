@@ -123,13 +123,11 @@ impl SceneHierarchyWorkspaceInfo {
             .filter_map(|handle| workspace.document_id_for_handle(handle).cloned())
             .collect();
 
-        let info = Self {
+        Self {
             active_document,
             open_documents,
             available_scenes: Vec::new(),
-        };
-
-        info
+        }
     }
 
     pub fn active_document_id(&self) -> Option<&SceneDocumentId> {

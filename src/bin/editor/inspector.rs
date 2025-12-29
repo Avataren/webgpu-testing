@@ -257,22 +257,18 @@ pub fn show_entity_inspector(
         ui.label("Add Component");
         ui.separator();
 
-        if data.components.camera.is_none() {
-            if ui.button("Camera").clicked() {
-                actions.push(InspectorAction::AddCamera {
-                    entity: data.entity,
-                });
-                ui.close();
-            }
+        if data.components.camera.is_none() && ui.button("Camera").clicked() {
+            actions.push(InspectorAction::AddCamera {
+                entity: data.entity,
+            });
+            ui.close();
         }
 
-        if data.components.mesh.is_none() {
-            if ui.button("Mesh").clicked() {
-                actions.push(InspectorAction::AddMesh {
-                    entity: data.entity,
-                });
-                ui.close();
-            }
+        if data.components.mesh.is_none() && ui.button("Mesh").clicked() {
+            actions.push(InspectorAction::AddMesh {
+                entity: data.entity,
+            });
+            ui.close();
         }
 
         let has_light = data.components.point_light.is_some()
@@ -301,31 +297,25 @@ pub fn show_entity_inspector(
             });
         }
 
-        if data.components.environment.is_none() {
-            if ui.button("Environment").clicked() {
-                actions.push(InspectorAction::AddEnvironment {
-                    entity: data.entity,
-                });
-                ui.close();
-            }
+        if data.components.environment.is_none() && ui.button("Environment").clicked() {
+            actions.push(InspectorAction::AddEnvironment {
+                entity: data.entity,
+            });
+            ui.close();
         }
 
-        if data.components.particle_system.is_none() {
-            if ui.button("Particle System").clicked() {
-                actions.push(InspectorAction::AddParticleSystem {
-                    entity: data.entity,
-                });
-                ui.close();
-            }
+        if data.components.particle_system.is_none() && ui.button("Particle System").clicked() {
+            actions.push(InspectorAction::AddParticleSystem {
+                entity: data.entity,
+            });
+            ui.close();
         }
 
-        if data.components.script.is_none() {
-            if ui.button("Script").clicked() {
-                actions.push(InspectorAction::AddScript {
-                    entity: data.entity,
-                });
-                ui.close();
-            }
+        if data.components.script.is_none() && ui.button("Script").clicked() {
+            actions.push(InspectorAction::AddScript {
+                entity: data.entity,
+            });
+            ui.close();
         }
     });
 

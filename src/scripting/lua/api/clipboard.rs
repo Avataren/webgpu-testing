@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use mlua::{Lua, Result as LuaResult};
 
 thread_local! {
-    static CLIPBOARD_CONTEXT: RefCell<Option<ClipboardAccess>> = RefCell::new(None);
+    static CLIPBOARD_CONTEXT: RefCell<Option<ClipboardAccess>> = const { RefCell::new(None) };
 }
 
 /// Internal struct to hold clipboard access
