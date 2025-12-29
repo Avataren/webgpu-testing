@@ -235,6 +235,37 @@ impl UiContext {
         Ok(())
     }
 
+    /// Render a block of UI anchored to a fixed position in the viewport.
+    ///
+    /// The position is specified in logical points relative to the top-left of the viewport.
+    pub fn anchored_panel(
+        &self,
+        id: String,
+        x: f64,
+        y: f64,
+        callback: mlua::Function,
+    ) -> mlua::Result<()> {
+        let temp_context = UiContext::new();
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        if vp_width > 0.0 && vp_height > 0.0 {
+            temp_context.set_viewport_info(vp_width, vp_height, ppp);
+        }
+
+        callback.call::<()>(temp_context.clone())?;
+        let commands = temp_context.take_commands();
+
+        self.commands.lock().unwrap().push(UiCommand::AnchoredPanel {
+            id,
+            x: x as f32,
+            y: y as f32,
+            items: commands,
+        });
+
+        Ok(())
+    }
+
     fn record_horizontal(&self, callback: mlua::Function, wrap: bool) -> mlua::Result<()> {
         let temp_context = UiContext::new();
         temp_context.set_responses(self.responses.lock().unwrap().clone());
@@ -329,5 +360,89 @@ impl UiContext {
 impl Default for UiContext {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UiContext;
+    use crate::scripting::lua::api::ui::UiCommand;
+    use mlua::Lua;
+
+    #[test]
+    fn anchored_panel_records_commands() {
+        let lua = Lua::new();
+        let ui_context = UiContext::new();
+        let callback = lua
+            .load(
+                r#"
+                return function(panel)
+                    panel:label("Hello HUD")
+                end
+                "#,
+            )
+            .eval::<mlua::Function>()
+            .expect("Failed to build Lua callback");
+
+        ui_context
+            .anchored_panel("hud_panel".to_string(), 12.0, 24.0, callback)
+            .expect("Anchored panel failed");
+
+        let commands = ui_context.take_commands();
+        assert_eq!(commands.len(), 1);
+
+        match &commands[0] {
+            UiCommand::AnchoredPanel { id, x, y, items } => {
+                assert_eq!(id, "hud_panel");
+                assert_eq!(*x, 12.0);
+                assert_eq!(*y, 24.0);
+                assert_eq!(items.len(), 1);
+                assert!(matches!(
+                    items[0],
+                    UiCommand::Label {
+                        ref text
+                    } if text == "Hello HUD"
+                ));
+            }
+            other => panic!("Expected anchored panel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anchored_panel_copies_viewport_info() {
+        let lua = Lua::new();
+        let ui_context = UiContext::new();
+        ui_context.set_viewport_info(320.0, 200.0, 2.0);
+
+        let callback = lua
+            .load(
+                r#"
+                return function(panel)
+                    local vp = panel:get_viewport_size()
+                    panel:label(string.format("w=%.1f h=%.1f", vp.width, vp.height))
+                end
+                "#,
+            )
+            .eval::<mlua::Function>()
+            .expect("Failed to build Lua callback");
+
+        ui_context
+            .anchored_panel("hud_panel".to_string(), 0.0, 0.0, callback)
+            .expect("Anchored panel failed");
+
+        let commands = ui_context.take_commands();
+        assert_eq!(commands.len(), 1);
+
+        match &commands[0] {
+            UiCommand::AnchoredPanel { items, .. } => {
+                assert!(matches!(
+                    items[0],
+                    UiCommand::Label {
+                        ref text
+                    } if text == "w=320.0 h=200.0"
+                ));
+            }
+            other => panic!("Expected anchored panel, got {other:?}"),
+        }
     }
 }

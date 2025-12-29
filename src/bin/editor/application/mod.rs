@@ -567,6 +567,7 @@ impl EditorApplication {
             hecs::Entity,
             HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
         > = HashMap::new();
+        let game_viewport_rect = self.shared.viewports.game_viewport.rect();
 
         // Render plugin manager window if we have plugins and it's open
         if let Some(ref mut manager) = self.shared.ui_plugin_manager {
@@ -769,13 +770,13 @@ impl EditorApplication {
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                     for command in commands {
-                                        command.render_and_collect(ui, &mut responses);
+                                        command.render_and_collect(ui, &mut responses, None);
                                     }
                                 });
                         } else {
                             // Regular rendering for other plugins
                             for command in commands {
-                                command.render_and_collect(ui, &mut responses);
+                                command.render_and_collect(ui, &mut responses, None);
                             }
                         }
                     });
@@ -832,7 +833,7 @@ impl EditorApplication {
                         .default_size([300.0, 200.0])
                         .show(ctx, |ui| {
                             for command in commands {
-                                command.render_and_collect(ui, &mut responses);
+                                command.render_and_collect(ui, &mut responses, game_viewport_rect);
                             }
                         });
 
@@ -851,7 +852,7 @@ impl EditorApplication {
                     .default_size([300.0, 200.0])
                     .show(ctx, |ui| {
                         for command in commands {
-                            command.render_and_collect(ui, &mut responses);
+                            command.render_and_collect(ui, &mut responses, game_viewport_rect);
                         }
                     });
 

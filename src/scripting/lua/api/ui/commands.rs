@@ -65,6 +65,12 @@ pub enum UiCommand {
         width: Option<f32>,
         items: Vec<UiCommand>,
     },
+    AnchoredPanel {
+        id: String,
+        x: f32,
+        y: f32,
+        items: Vec<UiCommand>,
+    },
 }
 
 impl UiCommand {
@@ -74,6 +80,7 @@ impl UiCommand {
         &self,
         ui: &mut egui::Ui,
         responses: &mut std::collections::HashMap<String, UiResponse>,
+        viewport_rect: Option<egui::Rect>,
     ) {
         // Special handling for MenuBar and Menu to avoid double rendering
         match self {
@@ -81,7 +88,7 @@ impl UiCommand {
                 println!("Rendering MenuBar with {} items", items.len());
                 egui::MenuBar::new().ui(ui, |ui| {
                     for item in items {
-                        item.render_and_collect(ui, responses);
+                        item.render_and_collect(ui, responses, viewport_rect);
                     }
                 });
             }
@@ -89,14 +96,14 @@ impl UiCommand {
                 println!("Rendering Menu '{}' with {} items", text, items.len());
                 ui.menu_button(text, |ui| {
                     for item in items {
-                        item.render_and_collect(ui, responses);
+                        item.render_and_collect(ui, responses, viewport_rect);
                     }
                 });
             }
             UiCommand::Horizontal { items, wrap } => {
                 let render_children = |ui: &mut egui::Ui| {
                     for item in items {
-                        item.render_and_collect(ui, responses);
+                        item.render_and_collect(ui, responses, viewport_rect);
                     }
                 };
 
@@ -116,22 +123,35 @@ impl UiCommand {
                     }
 
                     for item in items {
-                        item.render_and_collect(ui, responses);
+                        item.render_and_collect(ui, responses, viewport_rect);
                     }
                 });
             }
+            UiCommand::AnchoredPanel { id, x, y, items } => {
+                let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
+                let position = egui::pos2(base_rect.min.x + *x, base_rect.min.y + *y);
+                egui::Area::new(egui::Id::new(id))
+                    .fixed_pos(position)
+                    .constrain_to(base_rect)
+                    .interactable(true)
+                    .show(ui.ctx(), |ui| {
+                        for item in items {
+                            item.render_and_collect(ui, responses, viewport_rect);
+                        }
+                    });
+            }
             UiCommand::MenuItem { .. } => {
                 // For all other commands, use render_with_id
-                if let Some((id, response)) = self.render_with_id(ui) {
+                if let Some((id, response)) = self.render_with_id(ui, viewport_rect) {
                     responses.insert(id, response);
                 }
             }
             _ => {
                 // For all other commands, use render_with_id
-                if let Some((id, response)) = self.render_with_id(ui) {
+                if let Some((id, response)) = self.render_with_id(ui, viewport_rect) {
                     responses.insert(id, response);
                 } else {
-                    let _ = self.render(ui);
+                    let _ = self.render(ui, viewport_rect);
                 }
             }
         }
@@ -139,13 +159,18 @@ impl UiCommand {
 
     /// Render this command and return (id, response) if applicable.
     #[cfg(feature = "egui")]
-    fn render_with_id(&self, ui: &mut egui::Ui) -> Option<(String, UiResponse)> {
+    fn render_with_id(
+        &self,
+        ui: &mut egui::Ui,
+        viewport_rect: Option<egui::Rect>,
+    ) -> Option<(String, UiResponse)> {
         match self {
             UiCommand::MenuItem { id, .. } => {
-                self.render(ui).map(|response| (id.clone(), response))
+                self.render(ui, viewport_rect)
+                    .map(|response| (id.clone(), response))
             }
             UiCommand::Button { text } => self
-                .render(ui)
+                .render(ui, viewport_rect)
                 .map(|response| (format!("button_{}", text), response)),
             UiCommand::TextEdit { id, .. }
             | UiCommand::TextEditMultiline { id, .. }
@@ -153,7 +178,8 @@ impl UiCommand {
             | UiCommand::DragValue { id, .. }
             | UiCommand::Checkbox { id, .. }
             | UiCommand::ColorEdit { id, .. } => {
-                self.render(ui).map(|response| (id.clone(), response))
+                self.render(ui, viewport_rect)
+                    .map(|response| (id.clone(), response))
             }
             _ => None,
         }
@@ -161,7 +187,11 @@ impl UiCommand {
 
     /// Render this command using a real egui::Ui context.
     #[cfg(feature = "egui")]
-    pub fn render(&self, ui: &mut egui::Ui) -> Option<UiResponse> {
+    pub fn render(
+        &self,
+        ui: &mut egui::Ui,
+        viewport_rect: Option<egui::Rect>,
+    ) -> Option<UiResponse> {
         match self {
             UiCommand::Label { text } => {
                 ui.label(text);
@@ -282,7 +312,7 @@ impl UiCommand {
             UiCommand::MenuBar { items } => {
                 egui::MenuBar::new().ui(ui, |ui| {
                     for item in items {
-                        item.render(ui);
+                        item.render(ui, viewport_rect);
                     }
                 });
                 None
@@ -290,7 +320,7 @@ impl UiCommand {
             UiCommand::Menu { text, items } => {
                 ui.menu_button(text, |ui| {
                     for item in items {
-                        item.render(ui);
+                        item.render(ui, viewport_rect);
                     }
                 });
                 None
@@ -298,7 +328,7 @@ impl UiCommand {
             UiCommand::Horizontal { items, wrap } => {
                 let render_children = |ui: &mut egui::Ui| {
                     for item in items {
-                        item.render(ui);
+                        item.render(ui, viewport_rect);
                     }
                 };
 
@@ -330,9 +360,23 @@ impl UiCommand {
                     }
 
                     for item in items {
-                        item.render(ui);
+                        item.render(ui, viewport_rect);
                     }
                 });
+                None
+            }
+            UiCommand::AnchoredPanel { id, x, y, items } => {
+                let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
+                let position = egui::pos2(base_rect.min.x + *x, base_rect.min.y + *y);
+                egui::Area::new(egui::Id::new(id))
+                    .fixed_pos(position)
+                    .constrain_to(base_rect)
+                    .interactable(true)
+                    .show(ui.ctx(), |ui| {
+                        for item in items {
+                            item.render(ui, viewport_rect);
+                        }
+                    });
                 None
             }
         }
