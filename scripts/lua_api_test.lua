@@ -127,5 +127,24 @@ function update(self_entity, dt)
     local exists = file_exists("scripts/lua_test_output.txt")
     log_info(string.format("File exists check: %s", tostring(exists)))
 
+    -- Test 12: Script Access API
+    log_info("Testing script access API...")
+    local scripts = get_entity_scripts(self_entity)
+    log_info(string.format("Script count on self: %d", #scripts))
+    if #scripts > 0 then
+        local script = scripts[1]
+        log_info(string.format("Script kind: %s", script.kind))
+        if script.name then
+            log_info(string.format("Inline script name: %s", script.name))
+        end
+
+        local source = read_script_source(self_entity)
+        if source then
+            log_info(string.format("Script source length: %d", #source))
+        else
+            log_warn("Script source unavailable")
+        end
+    end
+
     log_info("=== All API Tests Complete ===")
 end

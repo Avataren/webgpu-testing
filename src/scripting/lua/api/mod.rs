@@ -13,6 +13,7 @@ mod hierarchy;
 mod input;
 mod logging;
 mod query;
+mod script_access;
 mod state;
 mod text_editor_bridge;
 mod transform;
@@ -36,6 +37,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     input::register_input_api(lua)?;
     component::register_component_api(lua)?;
     query::register_query_api(lua)?;
+    script_access::register_script_access_api(lua)?;
     events::register_events_api(lua)?;
     file_io::register_file_io_api(lua)?;
     clipboard::register_clipboard_api(lua)?;
