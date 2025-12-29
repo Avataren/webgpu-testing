@@ -288,4 +288,19 @@ mod tests {
 
         assert_eq!(result, Some(entity_bits(nearest)));
     }
+
+    #[test]
+    fn query_entities_with_component_rejects_unknown_component() {
+        let lua = Lua::new();
+        register_query_api(&lua).unwrap();
+
+        let world = World::new();
+        let _guard = WorldGuard::enter(&world);
+
+        let result: LuaResult<LuaTable> = lua
+            .load("return query_entities_with_component('MissingComponent')")
+            .eval();
+
+        assert!(result.is_err());
+    }
 }
