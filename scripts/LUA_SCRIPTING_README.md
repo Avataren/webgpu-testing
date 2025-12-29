@@ -215,6 +215,17 @@ end
 - `attach_script(entity, path)` - Attach script from file
 - `import_gltf(entity, path, scale)` - Import GLTF model
 
+### Script Access
+- `get_entity_scripts(entity)` - List script descriptors for an entity
+- `read_script_source(entity)` - Read script contents (inline or file-backed)
+- `reload_script(entity)` - Re-read script contents for change detection
+
+Script descriptors include:
+- `kind` (`"inline"` or `"file"`)
+- `name` (inline only)
+- `path` (file only)
+- `source` (inline only)
+
 ### Transform API
 - `translate(entity, x, y, z)` - Move entity by delta
 - `set_translation(entity, x, y, z)` - Set entity position
