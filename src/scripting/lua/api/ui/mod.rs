@@ -72,6 +72,7 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
 /// - `ui:horizontal(callback)` - Layout items horizontally (single row)
 /// - `ui:horizontal_wrapped(callback)` - Layout items horizontally with wrapping
+/// - `ui:anchored_panel(id, x, y, callback)` - Render a panel at a fixed viewport position
 /// - `ui:get_viewport_size()` - Get viewport dimensions as {width, height} table
 /// - `ui:get_pixels_per_point()` - Get DPI scaling factor
 ///
@@ -121,6 +122,14 @@ impl UserData for UiContext {
         methods.add_method(
             "centered_area",
             |_, this, (width, callback): (f64, mlua::Function)| this.centered_area(width, callback),
+        );
+
+        // Render a block of UI anchored to a fixed position in the viewport
+        methods.add_method(
+            "anchored_panel",
+            |_, this, (id, x, y, callback): (String, f64, f64, mlua::Function)| {
+                this.anchored_panel(id, x, y, callback)
+            },
         );
 
         // Layout items horizontally
