@@ -168,6 +168,18 @@ impl LuaScriptInstance {
         })
     }
 
+    pub(crate) fn call_on_destroyed(
+        &mut self,
+        lua: &Lua,
+        entity_bits: i64,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<FunctionCallOutcome, LuaScriptingError> {
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            self.call_function(lua, "on_destroyed", entity_bits)
+        })
+    }
+
     pub(crate) fn call_on_ui(
         &mut self,
         lua: &Lua,
