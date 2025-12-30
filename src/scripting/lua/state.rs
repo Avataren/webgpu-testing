@@ -503,9 +503,9 @@ impl ScriptingState {
             .get(callback_name)
             .map_err(|e| format!("Failed to get callback '{}': {}", callback_name, e))?;
 
-        // Call the callback with event_name and event_data
+        // Call the callback with event data
         callback
-            .call::<()>((event_name.to_string(), event_data_lua))
+            .call::<()>(event_data_lua)
             .map_err(|e| format!("Callback execution failed: {}", e))?;
 
         log::debug!(
@@ -571,6 +571,8 @@ impl ScriptingState {
                 }
             }
 
+            self.remove_event_subscriptions(entity);
+
             log::debug!(
                 target: "script",
                 "Removed script instance for entity {:?} (world {:?})",
@@ -582,6 +584,15 @@ impl ScriptingState {
         if should_remove_world {
             self.instances.remove(&world_id);
         }
+    }
+
+    fn remove_event_subscriptions(&mut self, entity: Entity) {
+        for subscriptions in self.event_subscriptions.values_mut() {
+            subscriptions.retain(|subscription| subscription.entity_id != entity);
+        }
+
+        self.event_subscriptions
+            .retain(|_, subscriptions| !subscriptions.is_empty());
     }
 
     /// Get pending glTF imports and clear the list.
@@ -742,5 +753,101 @@ impl ScriptingState {
 impl Default for ScriptingState {
     fn default() -> Self {
         Self::new().expect("Failed to create scripting state")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ScriptingState;
+    use crate::scene;
+    use crate::scripting::lua::component::LuaScriptComponent;
+    use crate::scripting::lua::types::LuaScriptSource;
+    use hecs::World;
+    use mlua::Value as LuaValue;
+
+    #[test]
+    fn event_callback_receives_payload_only() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+
+        let script = r#"
+            function on_created(self_entity)
+                subscribe_event("test_event", "on_test_event")
+            end
+
+            function update(self_entity, dt)
+                emit_event("test_event", { value = 42 })
+            end
+
+            function on_test_event(data)
+                last_payload = data
+            end
+        "#;
+
+        let entity = world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
+            "event_payload",
+            script,
+        )),));
+
+        state
+            .process_scripts(&mut world, 0.016, false)
+            .expect("Script processing failed");
+
+        let world_id = scene::world_id(&world);
+        let instance = state
+            .instances
+            .get(&world_id)
+            .and_then(|instances| instances.get(&entity))
+            .expect("Missing script instance");
+
+        let lua = state.runtime().lua();
+        let env: mlua::Table = lua
+            .registry_value(&instance.env_registry_key)
+            .expect("Missing environment table");
+
+        let payload: LuaValue = env.get("last_payload").expect("Missing payload");
+        let payload_table = payload.as_table().expect("Expected payload to be a table");
+        let value: i64 = payload_table.get("value").expect("Missing payload value");
+
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn removed_script_clears_event_subscriptions() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+
+        let script = r#"
+            function on_created(self_entity)
+                subscribe_event("cleanup_event", "on_cleanup_event")
+            end
+
+            function on_cleanup_event(data)
+            end
+        "#;
+
+        let entity = world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
+            "event_cleanup",
+            script,
+        )),));
+
+        state
+            .process_scripts(&mut world, 0.016, false)
+            .expect("Script processing failed");
+
+        assert!(state
+            .event_subscriptions
+            .values()
+            .any(|subs| subs.iter().any(|sub| sub.entity_id == entity)));
+
+        world
+            .remove_one::<LuaScriptComponent>(entity)
+            .expect("Failed to remove script component");
+
+        state
+            .process_scripts(&mut world, 0.016, false)
+            .expect("Script processing failed");
+
+        assert!(state.event_subscriptions.is_empty());
     }
 }

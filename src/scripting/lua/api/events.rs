@@ -16,8 +16,7 @@
 //!
 //! ## Known Limitations
 //!
-//! Event subscription callbacks are not yet fully implemented in the event
-//! dispatch system (handlers need to be invoked when events are processed).
+//! Event data must be JSON-serializable for serde conversion to work.
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
