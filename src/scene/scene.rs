@@ -18,7 +18,8 @@ use crate::scene::components::{
     CameraComponent, SelectedInEditor, TransformComponent, WorldTransform,
 };
 use crate::scene::transform::Transform;
-use crate::scene::Camera;
+use crate::scene::{Camera, InputState};
+use crate::scripting::lua::guards::InputStateGuard;
 use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use glam::Vec3;
@@ -31,6 +32,7 @@ pub struct Scene {
     pub assets: Assets,
     environment: SceneEnvironment,
     camera: SceneCamera,
+    input_state: InputState,
     nodes: SlotMap<SceneNodeId, SceneNode>,
     root: SceneNodeId,
     main_scene: SceneNodeId,
@@ -55,6 +57,7 @@ impl Scene {
             assets: Assets::default(),
             environment: SceneEnvironment::new(),
             camera: SceneCamera::new(),
+            input_state: InputState::new(),
             nodes,
             root: root_id,
             main_scene: root_id,
@@ -146,6 +149,7 @@ impl Scene {
         pixels_per_point: Option<f32>,
         per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
+        let _input_guard = InputStateGuard::enter(&self.input_state);
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance().world();
             self.runtime.process_script_ui(
@@ -174,6 +178,7 @@ impl Scene {
         pixels_per_point: Option<f32>,
         per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
     ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
+        let _input_guard = InputStateGuard::enter(&self.input_state);
         self.runtime.process_script_ui(
             world,
             editor_mode,
@@ -188,6 +193,7 @@ impl Scene {
     ///
     /// This executes update logic for scripts that are not part of the main scene.
     pub fn run_scripts_for_world(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
+        let _input_guard = InputStateGuard::enter(&self.input_state);
         self.runtime.run_scripts(world, dt, editor_mode);
     }
 
@@ -196,8 +202,7 @@ impl Scene {
         responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
     ) {
         let world_id = crate::scene::world_id(self.main_world());
-        self.runtime
-            .set_ui_responses_for_world(world_id, responses);
+        self.runtime.set_ui_responses_for_world(world_id, responses);
     }
 
     /// Set UI responses for a specific world (e.g., plugin worlds).
@@ -206,8 +211,7 @@ impl Scene {
         world_id: usize,
         responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
     ) {
-        self.runtime
-            .set_ui_responses_for_world(world_id, responses);
+        self.runtime.set_ui_responses_for_world(world_id, responses);
     }
 
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
@@ -666,6 +670,32 @@ impl Scene {
         self.main_world_mut()
     }
 
+    /// Returns the current input state for this scene.
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_cube::scene::Scene;
+    ///
+    /// let scene = Scene::new();
+    /// let _input = scene.input_state();
+    /// ```
+    pub fn input_state(&self) -> &InputState {
+        &self.input_state
+    }
+
+    /// Returns a mutable reference to the input state for this scene.
+    ///
+    /// # Example
+    /// ```
+    /// use wgpu_cube::scene::Scene;
+    ///
+    /// let mut scene = Scene::new();
+    /// scene.input_state_mut().reset();
+    /// ```
+    pub fn input_state_mut(&mut self) -> &mut InputState {
+        &mut self.input_state
+    }
+
     pub fn animations(&self) -> &[AnimationClip] {
         self.node_animations(self.main_scene)
     }
@@ -700,6 +730,7 @@ impl Scene {
 
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
+            let _input_guard = InputStateGuard::enter(&self.input_state);
             self.runtime.run_scripts(world, dt, editor_mode);
         } else {
             error!("Rune scripting error: main scene node is missing");

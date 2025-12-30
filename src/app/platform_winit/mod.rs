@@ -5,7 +5,7 @@ mod web;
 
 use winit::{
     application::ApplicationHandler,
-    event::{DeviceEvent, KeyEvent, WindowEvent},
+    event::{DeviceEvent, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{Key, NamedKey},
     window::{Window, WindowId},
@@ -14,6 +14,7 @@ use winit::{
 use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
 use crate::renderer::{CustomRenderCallback, CustomRenderStage, RenderRegion, Renderer};
 use crate::scene::SceneWorkspace;
+use glam::Vec2;
 
 #[cfg(feature = "egui")]
 use crate::app::editor::EditorState;
@@ -66,6 +67,56 @@ pub trait PlatformDriver {
         _state: &mut PlatformState<Self::WindowHandle>,
         _event_loop: &ActiveEventLoop,
     ) {
+    }
+}
+
+fn key_to_string(key: &Key) -> Option<String> {
+    match key {
+        Key::Character(text) => {
+            if text.len() == 1 {
+                Some(text.to_ascii_uppercase())
+            } else {
+                Some(text.to_string())
+            }
+        }
+        Key::Named(named) => {
+            let name = match named {
+                NamedKey::Space => "Space",
+                NamedKey::Escape => "Escape",
+                NamedKey::Enter => "Return",
+                NamedKey::Backspace => "Backspace",
+                NamedKey::Tab => "Tab",
+                NamedKey::ArrowUp => "ArrowUp",
+                NamedKey::ArrowDown => "ArrowDown",
+                NamedKey::ArrowLeft => "ArrowLeft",
+                NamedKey::ArrowRight => "ArrowRight",
+                NamedKey::Shift => "Shift",
+                NamedKey::Control => "Control",
+                NamedKey::Alt => "Alt",
+                NamedKey::Meta => "Meta",
+                _ => return Some(format!("{named:?}")),
+            };
+            Some(name.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn mouse_button_index(button: MouseButton) -> u32 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        MouseButton::Middle => 2,
+        MouseButton::Back => 3,
+        MouseButton::Forward => 4,
+        MouseButton::Other(value) => value as u32,
+    }
+}
+
+fn scroll_delta_vec(delta: MouseScrollDelta) -> Vec2 {
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => Vec2::new(x, y),
+        MouseScrollDelta::PixelDelta(position) => Vec2::new(position.x as f32, position.y as f32),
     }
 }
 
@@ -197,6 +248,46 @@ where
 
         #[cfg(not(feature = "egui"))]
         let _ = transition;
+    }
+
+    fn update_input_state<F>(&mut self, update: F)
+    where
+        F: FnOnce(&mut crate::scene::InputState),
+    {
+        let _ = self
+            .core
+            .workspace_mut()
+            .with_active_scene_mut(|scene| update(scene.input_state_mut()));
+    }
+
+    fn handle_keyboard_input(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        if let Some(key) = key_to_string(&event.logical_key) {
+            let key_name = key.clone();
+            self.update_input_state(|input| match event.state {
+                winit::event::ElementState::Pressed => input.press_key(key_name),
+                winit::event::ElementState::Released => input.release_key(&key),
+            });
+        }
+
+        if event.state != winit::event::ElementState::Pressed {
+            return;
+        }
+
+        match event.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                if self.core.exit_on_escape() {
+                    event_loop.exit();
+                }
+            }
+            Key::Character(ref c) if c.as_str().eq_ignore_ascii_case("g") => {
+                self.core.toggle_editor_gizmos();
+            }
+            Key::Character(ref c) if c.as_str() == "h" => {
+                #[cfg(feature = "egui")]
+                EditorState::debug_print_hierarchy(self.core.workspace());
+            }
+            _ => {}
+        }
     }
 
     fn handle_surface_error(
@@ -519,6 +610,8 @@ where
 
                     self.platform.put_renderer(renderer);
 
+                    self.update_input_state(|input| input.update());
+
                     if self.core.exit_requested() {
                         event_loop.exit();
                         return;
@@ -533,29 +626,31 @@ where
                     window_handle.as_ref().request_redraw();
                 }
             }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        logical_key,
-                        state: winit::event::ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => match logical_key {
-                Key::Named(NamedKey::Escape) => {
-                    if self.core.exit_on_escape() {
-                        event_loop.exit();
-                    }
-                }
-                Key::Character(c) if c.as_str().eq_ignore_ascii_case("g") => {
-                    self.core.toggle_editor_gizmos();
-                }
-                Key::Character(c) if c.as_str() == "h" => {
-                    #[cfg(feature = "egui")]
-                    EditorState::debug_print_hierarchy(self.core.workspace());
-                }
-                _ => {}
-            },
+            WindowEvent::Focused(false) => {
+                self.update_input_state(|input| input.reset());
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let position = Vec2::new(position.x as f32, position.y as f32);
+                self.update_input_state(|input| {
+                    let previous = input.mouse_position();
+                    input.add_mouse_delta(position - previous);
+                    input.set_mouse_position(position);
+                });
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let index = mouse_button_index(button);
+                self.update_input_state(|input| match state {
+                    winit::event::ElementState::Pressed => input.press_mouse_button(index),
+                    winit::event::ElementState::Released => input.release_mouse_button(index),
+                });
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let delta = scroll_delta_vec(delta);
+                self.update_input_state(|input| input.add_scroll_delta(delta));
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.handle_keyboard_input(event_loop, &event);
+            }
             _ => {}
         }
     }
@@ -570,5 +665,22 @@ where
         {
             self.editor.handle_device_event(&_event);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_to_string_normalizes_characters() {
+        let key = Key::Character("w".into());
+        assert_eq!(key_to_string(&key), Some("W".to_string()));
+    }
+
+    #[test]
+    fn key_to_string_maps_named_keys() {
+        let key = Key::Named(NamedKey::Escape);
+        assert_eq!(key_to_string(&key), Some("Escape".to_string()));
     }
 }
