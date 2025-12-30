@@ -154,7 +154,7 @@ impl EditorApplication {
         self.process_shader_file_changes(ctx);
 
         #[cfg(not(target_arch = "wasm32"))]
-        self.process_script_file_changes();
+        self.process_script_file_changes(ctx);
 
         let scene_changed = self.shared.active_scene_handle != Some(ctx.scene_handle);
 

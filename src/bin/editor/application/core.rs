@@ -9,10 +9,11 @@ use hecs::Entity;
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateContext};
 use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::renderer::RenderRegion;
+use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
-use wgpu_cube::scene::workspace::SceneDocumentId;
+use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
@@ -673,6 +674,35 @@ impl EditorApplication {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn canonicalize_script_path(path: &Path) -> Option<PathBuf> {
+        let canonical = match path.canonicalize() {
+            Ok(path) => path,
+            Err(err) => {
+                log::warn!("Failed to canonicalize script path {:?}: {}", path, err);
+                return None;
+            }
+        };
+
+        Some(normalize_absolute_path(canonical))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn collect_scene_script_paths(world: &hecs::World) -> HashMap<PathBuf, Vec<Entity>> {
+        let mut scripts = HashMap::new();
+        for (entity, component) in world.query::<&LuaScriptComponent>().iter() {
+            if let LuaScriptSource::File { path } = component.source() {
+                if let Some(canonical) = Self::canonicalize_script_path(path) {
+                    scripts
+                        .entry(canonical)
+                        .or_insert_with(Vec::new)
+                        .push(entity);
+                }
+            }
+        }
+        scripts
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn reload_shader_materials_from_path(
         &mut self,
         ctx: &mut GpuUpdateContext,
@@ -743,7 +773,7 @@ impl EditorApplication {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn process_script_file_changes(&mut self) {
+    pub(super) fn process_script_file_changes(&mut self, ctx: &mut GpuUpdateContext) {
         // Get script directories to watch
         let script_dirs = vec![PathBuf::from("examples/scripts"), PathBuf::from("scripts")];
 
@@ -762,6 +792,9 @@ impl EditorApplication {
         if changed_paths.is_empty() {
             return;
         }
+
+        let script_paths = Self::collect_scene_script_paths(ctx.scene.main_world());
+        let mut should_reload_scene_scripts = false;
 
         // Process each changed script file
         for path in changed_paths {
@@ -790,6 +823,21 @@ impl EditorApplication {
                     path
                 );
             }
+
+            if let Some(canonical_changed) = Self::canonicalize_script_path(&path) {
+                if let Some(entities) = script_paths.get(&canonical_changed) {
+                    should_reload_scene_scripts = true;
+                    log::info!(
+                        "Detected script change for {} scene entity(ies) at {:?}",
+                        entities.len(),
+                        canonical_changed
+                    );
+                }
+            }
+        }
+
+        if should_reload_scene_scripts {
+            ctx.scene.reset_script_runtime();
         }
     }
 
@@ -831,7 +879,9 @@ impl EditorApplication {
                 NewScene => self.shared.pending_new_scenes.push(NewSceneRequest),
                 RenameScene { old_id, new_name } => {
                     // Perform the rename (file, library, documents)
-                    if let Some(new_document_id) = self.perform_scene_rename_internal(&old_id, new_name) {
+                    if let Some(new_document_id) =
+                        self.perform_scene_rename_internal(&old_id, new_name)
+                    {
                         // Request workspace update
                         ctx.request_rename_scene(old_id, new_document_id);
                     }
@@ -1142,9 +1192,11 @@ impl EditorApplication {
             .join(format!("{}.json", new_document_id));
 
         // Update the SceneLibrary to move the cached asset to the new ID
-        self.project_system_mut()
-            .scene_library_mut()
-            .rename(old_document_id, new_document_id.clone(), new_relative_path.clone());
+        self.project_system_mut().scene_library_mut().rename(
+            old_document_id,
+            new_document_id.clone(),
+            new_relative_path.clone(),
+        );
 
         // Update scene document ID in the project controller
         let documents = self.project_system().scene_documents().to_vec();
@@ -1162,9 +1214,15 @@ impl EditorApplication {
             }
         }
 
-        self.project_system_mut().controller_mut().set_scene_documents(updated_documents);
+        self.project_system_mut()
+            .controller_mut()
+            .set_scene_documents(updated_documents);
 
-        log::info!("Renamed scene from '{}' to '{}'", old_document_id, new_document_id);
+        log::info!(
+            "Renamed scene from '{}' to '{}'",
+            old_document_id,
+            new_document_id
+        );
         Some(new_document_id)
     }
 
@@ -1188,6 +1246,41 @@ impl EditorApplication {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::EditorApplication;
+    use hecs::World;
+    use tempfile::tempdir;
+    use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
+
+    #[test]
+    fn collect_scene_script_paths_tracks_file_sources() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let script_path = temp_dir.path().join("script.lua");
+        std::fs::write(&script_path, "function update() end").expect("write script file");
+
+        let mut world = World::new();
+        let entity_a = world.spawn((LuaScriptComponent::new(LuaScriptSource::File {
+            path: script_path.clone(),
+        }),));
+        let entity_b = world.spawn((LuaScriptComponent::new(LuaScriptSource::File {
+            path: script_path.clone(),
+        }),));
+        world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
+            "inline",
+            "function update() end",
+        )),));
+
+        let script_paths = EditorApplication::collect_scene_script_paths(&world);
+        let canonical = EditorApplication::canonicalize_script_path(&script_path)
+            .expect("canonicalize script path");
+        let entities = script_paths.get(&canonical).expect("script path in map");
+
+        assert!(entities.contains(&entity_a));
+        assert!(entities.contains(&entity_b));
     }
 }
 
