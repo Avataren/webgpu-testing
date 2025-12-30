@@ -503,9 +503,9 @@ impl ScriptingState {
             .get(callback_name)
             .map_err(|e| format!("Failed to get callback '{}': {}", callback_name, e))?;
 
-        // Call the callback with event_name and event_data
+        // Call the callback with event data
         callback
-            .call::<()>((event_name.to_string(), event_data_lua))
+            .call::<()>(event_data_lua)
             .map_err(|e| format!("Callback execution failed: {}", e))?;
 
         log::debug!(
@@ -571,6 +571,8 @@ impl ScriptingState {
                 }
             }
 
+            self.remove_event_subscriptions(entity);
+
             log::debug!(
                 target: "script",
                 "Removed script instance for entity {:?} (world {:?})",
@@ -582,6 +584,15 @@ impl ScriptingState {
         if should_remove_world {
             self.instances.remove(&world_id);
         }
+    }
+
+    fn remove_event_subscriptions(&mut self, entity: Entity) {
+        for subscriptions in self.event_subscriptions.values_mut() {
+            subscriptions.retain(|subscription| subscription.entity_id != entity);
+        }
+
+        self.event_subscriptions
+            .retain(|_, subscriptions| !subscriptions.is_empty());
     }
 
     /// Get pending glTF imports and clear the list.
