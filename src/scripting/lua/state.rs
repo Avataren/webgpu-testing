@@ -521,21 +521,56 @@ impl ScriptingState {
     }
 
     /// Remove instances for entities that no longer have scripts.
-    fn cleanup_removed_scripts(&mut self, world_id: WorldId, world: &World) {
-        let Some(instances) = self.instances.get_mut(&world_id) else {
-            return;
+    fn cleanup_removed_scripts(&mut self, world_id: WorldId, world: &mut World) {
+        let (removed_instances, should_remove_world) = {
+            let Some(instances) = self.instances.get_mut(&world_id) else {
+                return;
+            };
+
+            let mut to_remove = Vec::new();
+
+            for entity in instances.keys() {
+                if world.get::<&LuaScriptComponent>(*entity).is_err() {
+                    to_remove.push(*entity);
+                }
+            }
+
+            let mut removed_instances = Vec::with_capacity(to_remove.len());
+
+            for entity in to_remove {
+                if let Some(instance) = instances.remove(&entity) {
+                    removed_instances.push((entity, instance));
+                }
+            }
+
+            (removed_instances, instances.is_empty())
         };
 
-        let mut to_remove = Vec::new();
+        for (entity, mut instance) in removed_instances {
+            let commands = instance.command_buffer();
+            let event_queue = Rc::new(RefCell::new(Vec::new()));
+            let entity_bits_val = entity_bits(entity);
 
-        for entity in instances.keys() {
-            if world.get::<&LuaScriptComponent>(*entity).is_err() {
-                to_remove.push(*entity);
+            match instance.call_on_destroyed(
+                self.runtime.lua(),
+                entity_bits_val,
+                commands.clone(),
+                event_queue.clone(),
+            ) {
+                Ok(FunctionCallOutcome::Executed) => {
+                    if let Err(e) = self.apply_commands(world, commands) {
+                        error!(target: "script", "Error applying on_destroyed commands for entity {:?}: {}", entity, e);
+                    }
+
+                    let events = event_queue.borrow().clone();
+                    self.queue_events(events);
+                }
+                Ok(FunctionCallOutcome::Missing) => {}
+                Err(e) => {
+                    error!(target: "script", "Error calling on_destroyed for entity {:?}: {}", entity, e);
+                }
             }
-        }
 
-        for entity in to_remove {
-            instances.remove(&entity);
             log::debug!(
                 target: "script",
                 "Removed script instance for entity {:?} (world {:?})",
@@ -544,7 +579,7 @@ impl ScriptingState {
             );
         }
 
-        if instances.is_empty() {
+        if should_remove_world {
             self.instances.remove(&world_id);
         }
     }
