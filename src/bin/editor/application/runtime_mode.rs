@@ -84,6 +84,10 @@ impl EditorApplication {
 
         self.ensure_viewport_tab_for_mode(RuntimeMode::Editor);
 
+        // Ensure welcome screen stays hidden when returning to editor from play mode
+        // since a project is loaded
+        self.shared.welcome_plugin_override = Some(false);
+
         info!("Editor scene fully restored");
     }
 
