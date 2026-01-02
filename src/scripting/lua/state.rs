@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use hecs::{Entity, World};
 use log::error;
-use mlua::LuaSerdeExt;
 
 use crate::scene;
 
@@ -245,7 +244,7 @@ impl ScriptingState {
 
                         // Process any emitted events
                         let events = event_queue.borrow().clone();
-                        self.queue_events(events);
+                        self.queue_events(world_id, world, events);
                     }
                     Ok(FunctionCallOutcome::Missing) => {
                         // Script doesn't have on_created - that's okay
@@ -315,7 +314,7 @@ impl ScriptingState {
 
                         // Process any emitted events
                         let events = event_queue.borrow().clone();
-                        self.queue_events(events);
+                        self.queue_events(world_id, world, events);
                     }
                     Ok(FunctionCallOutcome::Missing) => {
                         // Script doesn't have update - that's okay
@@ -370,7 +369,7 @@ impl ScriptingState {
 
                 // Process any events emitted by coroutines
                 let events = event_queue.borrow().clone();
-                self.queue_events(events);
+                self.queue_events(world_id, world, events);
             }
         }
 
@@ -410,14 +409,14 @@ impl ScriptingState {
     }
 
     /// Queue events for later dispatch.
-    fn queue_events(&mut self, events: Vec<ScriptEvent>) {
+    fn queue_events(&mut self, world_id: WorldId, world: &mut World, events: Vec<ScriptEvent>) {
         for event in events {
-            self.dispatch_event(event);
+            self.dispatch_event(world_id, world, event);
         }
     }
 
     /// Dispatch a single event to all subscribers.
-    fn dispatch_event(&mut self, event: ScriptEvent) {
+    fn dispatch_event(&mut self, world_id: WorldId, world: &mut World, event: ScriptEvent) {
         let subscribers = match self.event_subscriptions.get(&event.name) {
             Some(subs) if !subs.is_empty() => subs.clone(),
             _ => {
@@ -436,6 +435,8 @@ impl ScriptingState {
         // Dispatch to each subscriber
         for subscriber in subscribers {
             if let Err(e) = self.call_event_callback(
+                world_id,
+                world,
                 subscriber.entity_id,
                 &subscriber.callback_name,
                 &event.name,
@@ -455,58 +456,67 @@ impl ScriptingState {
     /// Call an event callback on a specific entity's script instance.
     fn call_event_callback(
         &mut self,
+        world_id: WorldId,
+        world: &mut World,
         entity: Entity,
         callback_name: &str,
         event_name: &str,
         event_data: &serde_json::Value,
     ) -> Result<(), String> {
-        // Find the instance for this entity across all worlds
-        let mut instance = None;
-        let mut world_id = 0;
-
-        for (wid, instances) in &mut self.instances {
-            if let Some(inst) = instances.get_mut(&entity) {
-                instance = Some(inst);
-                world_id = *wid;
-                break;
-            }
-        }
-
-        let instance = instance.ok_or_else(|| {
+        let instances = self.instances.get_mut(&world_id).ok_or_else(|| {
             format!(
-                "No script instance found for entity {:?} when dispatching event '{}'",
-                entity, event_name
+                "No script instances found for world {:?} when dispatching event '{}'",
+                world_id, event_name
             )
         })?;
 
-        // Convert event data to Lua value using mlua's serde integration
-        let lua = self.runtime.lua();
-        let event_data_lua: mlua::Value = lua
-            .to_value(event_data)
-            .map_err(|e| format!("Failed to convert event data to Lua: {}", e))?;
+        let (commands, event_queue, outcome) = {
+            let instance = instances.get_mut(&entity).ok_or_else(|| {
+                format!(
+                    "No script instance found for entity {:?} when dispatching event '{}'",
+                    entity, event_name
+                )
+            })?;
 
-        // Get the environment table from the registry
-        let env: mlua::Table = lua
-            .registry_value(&instance.env_registry_key)
-            .map_err(|e| format!("Failed to get environment table: {}", e))?;
+            let commands = instance.command_buffer();
+            let event_queue = Rc::new(RefCell::new(Vec::new()));
+            let outcome = instance.call_event(
+                self.runtime.lua(),
+                entity_bits(entity),
+                callback_name,
+                event_data.clone(),
+                commands.clone(),
+                event_queue.clone(),
+            );
 
-        // Check if callback exists in this instance's environment
-        if !env.contains_key(callback_name).unwrap_or(false) {
-            return Err(format!(
-                "Callback function '{}' not found in script for entity {:?}",
-                callback_name, entity
-            ));
+            (commands, event_queue, outcome)
+        };
+
+        match outcome {
+            Ok(FunctionCallOutcome::Executed) => {
+                if let Err(e) = self.apply_commands(world, commands) {
+                    return Err(format!(
+                        "Error applying commands for event '{}' on entity {:?}: {}",
+                        event_name, entity, e
+                    ));
+                }
+
+                let events = event_queue.borrow().clone();
+                self.queue_events(world_id, world, events);
+            }
+            Ok(FunctionCallOutcome::Missing) => {
+                return Err(format!(
+                    "Callback function '{}' not found in script for entity {:?}",
+                    callback_name, entity
+                ));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Callback execution failed for '{}' on entity {:?}: {}",
+                    callback_name, entity, e
+                ));
+            }
         }
-
-        // Get the callback function from the environment
-        let callback: mlua::Function = env
-            .get(callback_name)
-            .map_err(|e| format!("Failed to get callback '{}': {}", callback_name, e))?;
-
-        // Call the callback with event data
-        callback
-            .call::<()>(event_data_lua)
-            .map_err(|e| format!("Callback execution failed: {}", e))?;
 
         log::debug!(
             target: "script",
@@ -563,7 +573,7 @@ impl ScriptingState {
                     }
 
                     let events = event_queue.borrow().clone();
-                    self.queue_events(events);
+                    self.queue_events(world_id, world, events);
                 }
                 Ok(FunctionCallOutcome::Missing) => {}
                 Err(e) => {
@@ -811,6 +821,53 @@ mod tests {
         let value: i64 = payload_table.get("value").expect("Missing payload value");
 
         assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn event_callback_receives_payload_with_implicit_prefix() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+
+        let script = r#"
+            function on_created(self_entity)
+                subscribe_event("payload_event", "payload_handler")
+            end
+
+            function update(self_entity, dt)
+                emit_event("payload_event", { value = 7 })
+            end
+
+            function on_payload_handler(data)
+                last_payload = data
+            end
+        "#;
+
+        let entity = world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
+            "event_payload_prefix",
+            script,
+        )),));
+
+        state
+            .process_scripts(&mut world, 0.016, false)
+            .expect("Script processing failed");
+
+        let world_id = scene::world_id(&world);
+        let instance = state
+            .instances
+            .get(&world_id)
+            .and_then(|instances| instances.get(&entity))
+            .expect("Missing script instance");
+
+        let lua = state.runtime().lua();
+        let env: mlua::Table = lua
+            .registry_value(&instance.env_registry_key)
+            .expect("Missing environment table");
+
+        let payload: LuaValue = env.get("last_payload").expect("Missing payload");
+        let payload_table = payload.as_table().expect("Expected payload to be a table");
+        let value: i64 = payload_table.get("value").expect("Missing payload value");
+
+        assert_eq!(value, 7);
     }
 
     #[test]
