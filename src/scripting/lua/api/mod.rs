@@ -25,7 +25,7 @@ pub use clipboard::{ClipboardAccess, ClipboardGuard};
 pub(crate) use coroutine::{set_current_coroutine_id, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
 pub use text_editor_bridge::enqueue_text_editor_request;
-pub use ui::{UiCommand, UiContext, UiResponse};
+pub use ui::{Anchor, UiCommand, UiContext, UiResponse};
 
 /// Register all Lua API functions with the runtime.
 pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
