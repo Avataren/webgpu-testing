@@ -4,7 +4,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use mlua::Lua;
+use mlua::{Lua, LuaSerdeExt};
 
 use super::api::{set_current_coroutine_id, CoroutineGuard};
 use super::commands::ScriptCommands;
@@ -193,31 +193,27 @@ impl LuaScriptInstance {
         })
     }
 
-    // TODO: Implement in Phase 2 after we have proper event system with Lua value conversion
-    // pub fn call_event(
-    //     &mut self,
-    //     lua: &Lua,
-    //     entity_bits: i64,
-    //     event_name: &str,
-    //     data: serde_json::Value,
-    //     commands: Rc<RefCell<ScriptCommands>>,
-    //     event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
-    // ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-    //     // Pre-register self_entity in the registry to prevent collision with allocated handles
-    //     if entity_bits != 0 {
-    //         commands.borrow_mut().registry.borrow_mut().resolve_bits(entity_bits, entity_bits as u64);
-    //     }
-    //
-    //     let _commands_guard = CommandGuard::enter(commands.clone());
-    //     let state = Rc::clone(&self.state_store);
-    //     let _state_guard = StateGuard::enter(&state);
-    //     let _event_queue_guard = EventQueueGuard::enter(&event_queue);
-    //     let _entity_guard = EntityGuard::enter(entity_bits);
-    //
-    //     // Event handlers are named "on_<event_name>"
-    //     let handler_name = format!("on_{}", event_name);
-    //     self.call_function_with_args(lua, &handler_name, data)
-    // }
+    pub(crate) fn call_event(
+        &mut self,
+        lua: &Lua,
+        entity_bits: i64,
+        event_name: &str,
+        data: serde_json::Value,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<FunctionCallOutcome, LuaScriptingError> {
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            // Event handlers are named "on_<event_name>"
+            let handler_name = if event_name.starts_with("on_") {
+                event_name.to_string()
+            } else {
+                format!("on_{}", event_name)
+            };
+
+            let lua_data = lua.to_value(&data).map_err(LuaScriptingError::Lua)?;
+            self.call_function_with_args(lua, &handler_name, lua_data)
+        })
+    }
 
     fn call_function(
         &self,
