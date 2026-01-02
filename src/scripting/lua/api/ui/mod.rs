@@ -43,7 +43,7 @@
 mod commands;
 mod context;
 
-pub use commands::{UiCommand, UiResponse};
+pub use commands::{Anchor, UiCommand, UiResponse};
 pub use context::UiContext;
 
 use mlua::{Lua, UserData, UserDataMethods};
@@ -72,7 +72,7 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
 /// - `ui:horizontal(callback)` - Layout items horizontally (single row)
 /// - `ui:horizontal_wrapped(callback)` - Layout items horizontally with wrapping
-/// - `ui:anchored_panel(id, x, y, callback)` - Render a panel at a fixed viewport position
+/// - `ui:anchored_panel(id, anchor, offset_x, offset_y, width, height, callback)` - Render a panel at a fixed viewport position (`anchor` is one of `top_left`, `top_center`, `top_right`, `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
 /// - `ui:get_viewport_size()` - Get viewport dimensions as {width, height} table
 /// - `ui:get_pixels_per_point()` - Get DPI scaling factor
 ///
@@ -127,8 +127,19 @@ impl UserData for UiContext {
         // Render a block of UI anchored to a fixed position in the viewport
         methods.add_method(
             "anchored_panel",
-            |_, this, (id, x, y, callback): (String, f64, f64, mlua::Function)| {
-                this.anchored_panel(id, x, y, callback)
+            |_,
+             this,
+             (id, anchor, offset_x, offset_y, width, height, callback): (
+                String,
+                String,
+                f64,
+                f64,
+                Option<f64>,
+                Option<f64>,
+                mlua::Function,
+            )| {
+                let anchor = parse_anchor(&anchor)?;
+                this.anchored_panel(id, anchor, offset_x, offset_y, width, height, callback)
             },
         );
 
@@ -216,5 +227,24 @@ impl UserData for UiContext {
         methods.add_method("get_pixels_per_point", |_, this, ()| {
             Ok(this.get_pixels_per_point())
         });
+    }
+}
+
+fn parse_anchor(anchor: &str) -> mlua::Result<Anchor> {
+    let normalized = anchor.trim().to_lowercase();
+    match normalized.as_str() {
+        "top_left" => Ok(Anchor::TopLeft),
+        "top_center" => Ok(Anchor::TopCenter),
+        "top_right" => Ok(Anchor::TopRight),
+        "center_left" => Ok(Anchor::CenterLeft),
+        "center" => Ok(Anchor::Center),
+        "center_right" => Ok(Anchor::CenterRight),
+        "bottom_left" => Ok(Anchor::BottomLeft),
+        "bottom_center" => Ok(Anchor::BottomCenter),
+        "bottom_right" => Ok(Anchor::BottomRight),
+        _ => Err(mlua::Error::RuntimeError(format!(
+            "Invalid anchor '{anchor}'. Expected one of: top_left, top_center, top_right, \
+center_left, center, center_right, bottom_left, bottom_center, bottom_right.",
+        ))),
     }
 }

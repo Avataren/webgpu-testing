@@ -673,22 +673,23 @@ impl ScriptingState {
             };
 
             // Create a UI context for this script
-            let ui_context = UiContext::new();
-
-            // Set viewport information if available
-            if let Some(map) = per_entity_viewports {
+            let ui_context = if let Some(map) = per_entity_viewports {
                 if let Some((width, height, ppp)) = map.get(&entity) {
-                    ui_context.set_viewport_info(*width, *height, *ppp);
+                    UiContext::new_with_viewport_info(*width, *height, *ppp)
                 } else if let (Some(width), Some(height), Some(ppp)) =
                     (viewport_width, viewport_height, pixels_per_point)
                 {
-                    ui_context.set_viewport_info(width, height, ppp);
+                    UiContext::new_with_viewport_info(width, height, ppp)
+                } else {
+                    UiContext::new()
                 }
             } else if let (Some(width), Some(height), Some(ppp)) =
                 (viewport_width, viewport_height, pixels_per_point)
             {
-                ui_context.set_viewport_info(width, height, ppp);
-            }
+                UiContext::new_with_viewport_info(width, height, ppp)
+            } else {
+                UiContext::new()
+            };
 
             // Set responses from the previous frame
             if let Some(responses) = self

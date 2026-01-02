@@ -9,18 +9,17 @@ local function format_fps(dt)
 end
 
 function on_ui(self_entity, ui)
-    local viewport = ui:get_viewport_size()
-    local width = viewport.width or 0
-    local height = viewport.height or 0
-
-    ui:anchored_panel("hud_top_left", 16, 16, function(panel)
-        panel:heading("HUD")
-        panel:label(format_fps(get_f64("last_dt", 0.0)))
+    ui:anchored_panel("hud_health", "top_left", 16, 16, 200, 50, function(panel)
+        panel:heading("Health")
+        panel:label("HP: " .. tostring(get_i32("player_health", 100)))
     end)
 
-    ui:anchored_panel("hud_bottom_right", width - 220, height - 80, function(panel)
-        panel:label("Health: " .. tostring(get_i32("player_health", 100)))
-        panel:label("Ammo: " .. tostring(get_i32("player_ammo", 30)))
+    ui:anchored_panel("pause_menu", "center", 0, 0, 260, 160, function(panel)
+        panel:heading("Pause Menu")
+        panel:label(format_fps(get_f64("last_dt", 0.0)))
+        panel:separator()
+        panel:button("Resume")
+        panel:button("Quit")
     end)
 end
 

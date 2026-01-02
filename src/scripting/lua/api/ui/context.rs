@@ -1,4 +1,4 @@
-use super::commands::{UiCommand, UiResponse};
+use super::commands::{Anchor, UiCommand, UiResponse};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -23,12 +23,35 @@ pub struct UiContext {
 impl UiContext {
     /// Create a new UI context.
     pub fn new() -> Self {
+        Self::new_inner(None)
+    }
+
+    pub(crate) fn new_with_viewport_info(width: f32, height: f32, pixels_per_point: f32) -> Self {
+        Self::new_inner(Some((width, height, pixels_per_point)))
+    }
+
+    fn new_inner(viewport_info: Option<(f32, f32, f32)>) -> Self {
+        let (viewport_width, viewport_height, pixels_per_point) =
+            if let Some((width, height, pixels_per_point)) = viewport_info {
+                (
+                    Arc::new(Mutex::new(Some(width))),
+                    Arc::new(Mutex::new(Some(height))),
+                    Arc::new(Mutex::new(Some(pixels_per_point))),
+                )
+            } else {
+                (
+                    Arc::new(Mutex::new(None)),
+                    Arc::new(Mutex::new(None)),
+                    Arc::new(Mutex::new(None)),
+                )
+            };
+
         Self {
             commands: Arc::new(Mutex::new(Vec::new())),
             responses: Arc::new(Mutex::new(HashMap::new())),
-            viewport_width: Arc::new(Mutex::new(None)),
-            viewport_height: Arc::new(Mutex::new(None)),
-            pixels_per_point: Arc::new(Mutex::new(None)),
+            viewport_width,
+            viewport_height,
+            pixels_per_point,
         }
     }
 
@@ -211,14 +234,7 @@ impl UiContext {
 
     /// Render a block of UI centered horizontally with an optional fixed width.
     pub fn centered_area(&self, width: f64, callback: mlua::Function) -> mlua::Result<()> {
-        let temp_context = UiContext::new();
-        temp_context.set_responses(self.responses.lock().unwrap().clone());
-        // Copy viewport info to temporary context
-        let (vp_width, vp_height) = self.get_viewport_size();
-        let ppp = self.get_pixels_per_point();
-        if vp_width > 0.0 && vp_height > 0.0 {
-            temp_context.set_viewport_info(vp_width, vp_height, ppp);
-        }
+        let temp_context = self.new_child_context();
 
         callback.call::<()>(temp_context.clone())?;
         let commands = temp_context.take_commands();
@@ -237,43 +253,41 @@ impl UiContext {
 
     /// Render a block of UI anchored to a fixed position in the viewport.
     ///
-    /// The position is specified in logical points relative to the top-left of the viewport.
+    /// Offsets are specified in logical points and interpreted relative to the chosen anchor.
+    #[allow(clippy::too_many_arguments)]
     pub fn anchored_panel(
         &self,
         id: String,
-        x: f64,
-        y: f64,
+        anchor: Anchor,
+        offset_x: f64,
+        offset_y: f64,
+        width: Option<f64>,
+        height: Option<f64>,
         callback: mlua::Function,
     ) -> mlua::Result<()> {
-        let temp_context = UiContext::new();
-        temp_context.set_responses(self.responses.lock().unwrap().clone());
-        let (vp_width, vp_height) = self.get_viewport_size();
-        let ppp = self.get_pixels_per_point();
-        if vp_width > 0.0 && vp_height > 0.0 {
-            temp_context.set_viewport_info(vp_width, vp_height, ppp);
-        }
+        let temp_context = self.new_child_context();
 
         callback.call::<()>(temp_context.clone())?;
         let commands = temp_context.take_commands();
 
-        self.commands.lock().unwrap().push(UiCommand::AnchoredPanel {
-            id,
-            x: x as f32,
-            y: y as f32,
-            items: commands,
-        });
+        self.commands
+            .lock()
+            .unwrap()
+            .push(UiCommand::AnchoredPanel {
+                id,
+                anchor,
+                offset_x: offset_x as f32,
+                offset_y: offset_y as f32,
+                width: width.map(|value| value as f32),
+                height: height.map(|value| value as f32),
+                items: commands,
+            });
 
         Ok(())
     }
 
     fn record_horizontal(&self, callback: mlua::Function, wrap: bool) -> mlua::Result<()> {
-        let temp_context = UiContext::new();
-        temp_context.set_responses(self.responses.lock().unwrap().clone());
-        let (vp_width, vp_height) = self.get_viewport_size();
-        let ppp = self.get_pixels_per_point();
-        if vp_width > 0.0 && vp_height > 0.0 {
-            temp_context.set_viewport_info(vp_width, vp_height, ppp);
-        }
+        let temp_context = self.new_child_context();
 
         callback.call::<()>(temp_context.clone())?;
         let items = temp_context.take_commands();
@@ -299,16 +313,7 @@ impl UiContext {
     /// Display a menu bar. The callback function will be called to add menu items.
     pub fn menu_bar(&self, callback: mlua::Function) -> mlua::Result<()> {
         // Collect all commands from the callback
-        let temp_context = UiContext::new();
-
-        // Copy responses from parent context so menu items can check them!
-        temp_context.set_responses(self.responses.lock().unwrap().clone());
-        // Copy viewport info
-        let (vp_width, vp_height) = self.get_viewport_size();
-        let ppp = self.get_pixels_per_point();
-        if vp_width > 0.0 && vp_height > 0.0 {
-            temp_context.set_viewport_info(vp_width, vp_height, ppp);
-        }
+        let temp_context = self.new_child_context();
 
         callback.call::<()>(temp_context.clone())?;
         let menu_items = temp_context.take_commands();
@@ -324,16 +329,7 @@ impl UiContext {
     /// Display a menu with a title. The callback function will be called to add menu items.
     pub fn menu(&self, text: String, callback: mlua::Function) -> mlua::Result<()> {
         // Collect all commands from the callback
-        let temp_context = UiContext::new();
-
-        // Copy responses from parent context so menu items can check them!
-        temp_context.set_responses(self.responses.lock().unwrap().clone());
-        // Copy viewport info
-        let (vp_width, vp_height) = self.get_viewport_size();
-        let ppp = self.get_pixels_per_point();
-        if vp_width > 0.0 && vp_height > 0.0 {
-            temp_context.set_viewport_info(vp_width, vp_height, ppp);
-        }
+        let temp_context = self.new_child_context();
 
         callback.call::<()>(temp_context.clone())?;
         let menu_items = temp_context.take_commands();
@@ -355,6 +351,19 @@ impl UiContext {
 
         self.get_response(&id).map(|r| r.clicked).unwrap_or(false)
     }
+
+    fn new_child_context(&self) -> UiContext {
+        let (vp_width, vp_height) = self.get_viewport_size();
+        let ppp = self.get_pixels_per_point();
+        let temp_context = if vp_width > 0.0 && vp_height > 0.0 {
+            UiContext::new_with_viewport_info(vp_width, vp_height, ppp)
+        } else {
+            UiContext::new()
+        };
+
+        temp_context.set_responses(self.responses.lock().unwrap().clone());
+        temp_context
+    }
 }
 
 impl Default for UiContext {
@@ -366,7 +375,7 @@ impl Default for UiContext {
 #[cfg(test)]
 mod tests {
     use super::UiContext;
-    use crate::scripting::lua::api::ui::UiCommand;
+    use crate::scripting::lua::api::{Anchor, UiCommand};
     use mlua::Lua;
 
     #[test]
@@ -385,17 +394,36 @@ mod tests {
             .expect("Failed to build Lua callback");
 
         ui_context
-            .anchored_panel("hud_panel".to_string(), 12.0, 24.0, callback)
+            .anchored_panel(
+                "hud_panel".to_string(),
+                Anchor::TopLeft,
+                12.0,
+                24.0,
+                Some(200.0),
+                Some(50.0),
+                callback,
+            )
             .expect("Anchored panel failed");
 
         let commands = ui_context.take_commands();
         assert_eq!(commands.len(), 1);
 
         match &commands[0] {
-            UiCommand::AnchoredPanel { id, x, y, items } => {
+            UiCommand::AnchoredPanel {
+                id,
+                anchor,
+                offset_x,
+                offset_y,
+                width,
+                height,
+                items,
+            } => {
                 assert_eq!(id, "hud_panel");
-                assert_eq!(*x, 12.0);
-                assert_eq!(*y, 24.0);
+                assert_eq!(*anchor, Anchor::TopLeft);
+                assert_eq!(*offset_x, 12.0);
+                assert_eq!(*offset_y, 24.0);
+                assert_eq!(*width, Some(200.0));
+                assert_eq!(*height, Some(50.0));
                 assert_eq!(items.len(), 1);
                 assert!(matches!(
                     items[0],
@@ -427,7 +455,15 @@ mod tests {
             .expect("Failed to build Lua callback");
 
         ui_context
-            .anchored_panel("hud_panel".to_string(), 0.0, 0.0, callback)
+            .anchored_panel(
+                "hud_panel".to_string(),
+                Anchor::TopLeft,
+                0.0,
+                0.0,
+                None,
+                None,
+                callback,
+            )
             .expect("Anchored panel failed");
 
         let commands = ui_context.take_commands();

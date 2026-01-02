@@ -1,8 +1,30 @@
-/// UI commands that are recorded during Lua script execution and replayed with real egui::Ui.
-///
-/// This pattern solves the lifetime issues with egui::Ui by deferring actual rendering
-/// until after the Lua VM has completed execution.
+//! UI commands that are recorded during Lua script execution and replayed with real egui::Ui.
+//!
+//! This pattern solves the lifetime issues with egui::Ui by deferring actual rendering
+//! until after the Lua VM has completed execution.
 
+/// Defines anchor points for viewport-aligned panels.
+///
+/// # Examples
+/// ```
+/// use wgpu_cube::scripting::lua::api::ui::Anchor;
+///
+/// let anchor = Anchor::TopLeft;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// UI commands that are recorded during Lua script execution and replayed with real egui::Ui.
 #[derive(Debug, Clone)]
 pub enum UiCommand {
     Label {
@@ -67,8 +89,11 @@ pub enum UiCommand {
     },
     AnchoredPanel {
         id: String,
-        x: f32,
-        y: f32,
+        anchor: Anchor,
+        offset_x: f32,
+        offset_y: f32,
+        width: Option<f32>,
+        height: Option<f32>,
         items: Vec<UiCommand>,
     },
 }
@@ -127,14 +152,29 @@ impl UiCommand {
                     }
                 });
             }
-            UiCommand::AnchoredPanel { id, x, y, items } => {
+            UiCommand::AnchoredPanel {
+                id,
+                anchor,
+                offset_x,
+                offset_y,
+                width,
+                height,
+                items,
+            } => {
                 let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
-                let position = egui::pos2(base_rect.min.x + *x, base_rect.min.y + *y);
+                let position =
+                    anchored_position(base_rect, *anchor, *offset_x, *offset_y, *width, *height);
                 egui::Area::new(egui::Id::new(id))
                     .fixed_pos(position)
                     .constrain_to(base_rect)
                     .interactable(true)
                     .show(ui.ctx(), |ui| {
+                        if let Some(width) = width {
+                            ui.set_width(*width);
+                        }
+                        if let Some(height) = height {
+                            ui.set_height(*height);
+                        }
                         for item in items {
                             item.render_and_collect(ui, responses, viewport_rect);
                         }
@@ -165,10 +205,9 @@ impl UiCommand {
         viewport_rect: Option<egui::Rect>,
     ) -> Option<(String, UiResponse)> {
         match self {
-            UiCommand::MenuItem { id, .. } => {
-                self.render(ui, viewport_rect)
-                    .map(|response| (id.clone(), response))
-            }
+            UiCommand::MenuItem { id, .. } => self
+                .render(ui, viewport_rect)
+                .map(|response| (id.clone(), response)),
             UiCommand::Button { text } => self
                 .render(ui, viewport_rect)
                 .map(|response| (format!("button_{}", text), response)),
@@ -177,10 +216,9 @@ impl UiCommand {
             | UiCommand::Slider { id, .. }
             | UiCommand::DragValue { id, .. }
             | UiCommand::Checkbox { id, .. }
-            | UiCommand::ColorEdit { id, .. } => {
-                self.render(ui, viewport_rect)
-                    .map(|response| (id.clone(), response))
-            }
+            | UiCommand::ColorEdit { id, .. } => self
+                .render(ui, viewport_rect)
+                .map(|response| (id.clone(), response)),
             _ => None,
         }
     }
@@ -365,14 +403,29 @@ impl UiCommand {
                 });
                 None
             }
-            UiCommand::AnchoredPanel { id, x, y, items } => {
+            UiCommand::AnchoredPanel {
+                id,
+                anchor,
+                offset_x,
+                offset_y,
+                width,
+                height,
+                items,
+            } => {
                 let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
-                let position = egui::pos2(base_rect.min.x + *x, base_rect.min.y + *y);
+                let position =
+                    anchored_position(base_rect, *anchor, *offset_x, *offset_y, *width, *height);
                 egui::Area::new(egui::Id::new(id))
                     .fixed_pos(position)
                     .constrain_to(base_rect)
                     .interactable(true)
                     .show(ui.ctx(), |ui| {
+                        if let Some(width) = width {
+                            ui.set_width(*width);
+                        }
+                        if let Some(height) = height {
+                            ui.set_height(*height);
+                        }
                         for item in items {
                             item.render(ui, viewport_rect);
                         }
@@ -380,6 +433,95 @@ impl UiCommand {
                 None
             }
         }
+    }
+}
+
+#[cfg(feature = "egui")]
+fn anchored_position(
+    base_rect: egui::Rect,
+    anchor: Anchor,
+    offset_x: f32,
+    offset_y: f32,
+    width: Option<f32>,
+    height: Option<f32>,
+) -> egui::Pos2 {
+    let anchor_pos = match anchor {
+        Anchor::TopLeft => base_rect.left_top(),
+        Anchor::TopCenter => base_rect.center_top(),
+        Anchor::TopRight => base_rect.right_top(),
+        Anchor::CenterLeft => base_rect.left_center(),
+        Anchor::Center => base_rect.center(),
+        Anchor::CenterRight => base_rect.right_center(),
+        Anchor::BottomLeft => base_rect.left_bottom(),
+        Anchor::BottomCenter => base_rect.center_bottom(),
+        Anchor::BottomRight => base_rect.right_bottom(),
+    };
+
+    let x_sign = match anchor {
+        Anchor::TopRight | Anchor::CenterRight | Anchor::BottomRight => -1.0,
+        _ => 1.0,
+    };
+    let y_sign = match anchor {
+        Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => -1.0,
+        _ => 1.0,
+    };
+
+    let mut position = anchor_pos + egui::vec2(offset_x * x_sign, offset_y * y_sign);
+
+    if let Some(width) = width {
+        match anchor {
+            Anchor::TopRight | Anchor::CenterRight | Anchor::BottomRight => {
+                position.x -= width;
+            }
+            Anchor::TopCenter | Anchor::Center | Anchor::BottomCenter => {
+                position.x -= width * 0.5;
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(height) = height {
+        match anchor {
+            Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => {
+                position.y -= height;
+            }
+            Anchor::CenterLeft | Anchor::Center | Anchor::CenterRight => {
+                position.y -= height * 0.5;
+            }
+            _ => {}
+        }
+    }
+
+    position
+}
+
+#[cfg(all(test, feature = "egui"))]
+mod tests {
+    use super::{anchored_position, Anchor};
+
+    #[test]
+    fn anchored_position_top_left_applies_offsets() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 50.0));
+        let position = anchored_position(rect, Anchor::TopLeft, 10.0, 12.0, None, None);
+
+        assert_eq!(position, egui::pos2(10.0, 12.0));
+    }
+
+    #[test]
+    fn anchored_position_bottom_right_insets() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 100.0));
+        let position =
+            anchored_position(rect, Anchor::BottomRight, 10.0, 8.0, Some(40.0), Some(20.0));
+
+        assert_eq!(position, egui::pos2(150.0, 72.0));
+    }
+
+    #[test]
+    fn anchored_position_center_offsets_by_size() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 300.0));
+        let position = anchored_position(rect, Anchor::Center, 10.0, -5.0, Some(100.0), Some(50.0));
+
+        assert_eq!(position, egui::pos2(110.0, 120.0));
     }
 }
 
