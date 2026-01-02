@@ -5,6 +5,8 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+use crate::gpu_particles::particle::Particle;
+
 /// RAII guard that returns pooled object on drop
 pub struct PooledVec<T> {
     vec: Option<Vec<T>>,
@@ -76,7 +78,7 @@ impl<T> VecPool<T> {
             .pool
             .pop()
             .unwrap_or_else(|| Vec::with_capacity(self.default_capacity));
-        vec.clear(); // ← ADD THIS LINE
+        vec.clear();
         vec
     }
 
@@ -113,10 +115,6 @@ mod tests {
         assert!(vec2.capacity() >= 10);
     }
 }
-
-// Add to end of src/gpu_particles/pools.rs
-
-use crate::gpu_particles::particle::Particle;
 
 thread_local! {
     static PARTICLE_VEC_POOL: RefCell<VecPool<Particle>> = RefCell::new(
