@@ -1,78 +1,10 @@
 # Lua Scripting Guide
 
-This document describes the Lua scripting integration and provides examples of common patterns.
+This document describes the Lua scripting API and provides examples of common patterns.
 
 ## Overview
 
-The Lua scripting system provides the same functionality as Rune scripts with a more familiar, flexible syntax. All Rune API functions have been ported to Lua with equivalent behavior.
-
-## Key Differences from Rune
-
-### 1. **Array Indexing**
-- **Rune**: 0-indexed arrays `array[0]`
-- **Lua**: 1-indexed arrays `array[1]`
-
-```lua
--- Rune
-let axis = get_state("axis", [0.0, 1.0, 0.0]);
-let x = axis[0];  -- First element
-
--- Lua equivalent
-local axis = get_state("axis", {0.0, 1.0, 0.0})
-local x = axis[1]  -- First element (1-indexed!)
-```
-
-### 2. **Data Structures**
-- **Rune**: Uses structs `struct Point { x, y }`
-- **Lua**: Uses tables `{ x = 0, y = 0 }`
-
-```lua
--- Rune
-struct CubeState {
-    angle,
-    frameCount,
-}
-set_state("cube_state", CubeState { angle: 0.0, frameCount: 0.0 });
-
--- Lua equivalent
-local cube_state = {
-    angle = 0.0,
-    frameCount = 0.0
-}
-set_state("cube_state", cube_state)
-```
-
-### 3. **Function Declarations**
-- **Rune**: Uses `pub fn` keyword
-- **Lua**: Uses `function` keyword
-
-```lua
--- Rune
-pub fn update(self_entity, dt) {
-    // ...
-}
-
--- Lua equivalent
-function update(self_entity, dt)
-    -- ...
-end
-```
-
-### 4. **String Formatting**
-- **Rune**: Uses string interpolation `\`Value: ${value}\``
-- **Lua**: Uses `string.format()`
-
-```lua
--- Rune
-log_info(`Position: ${x}, ${y}, ${z}`);
-
--- Lua equivalent
-log_info(string.format("Position: %f, %f, %f", x, y, z))
-```
-
-### 5. **Comments**
-- **Rune**: Uses `//` for single-line comments
-- **Lua**: Uses `--` for single-line comments
+The Lua scripting system enables gameplay logic, entity behaviors, and editor tools through a comprehensive API covering entity management, transforms, input, events, and UI.
 
 ## Important Conventions
 
@@ -465,59 +397,3 @@ Scripts can declare their mode using annotations:
 4. **Test with `lua_api_test.lua`** to verify API functionality
 5. **Check for nil returns** when using functions that may fail (e.g., `find_entity_by_name`)
 
-## Migration from Rune
-
-To migrate existing Rune scripts to Lua:
-
-1. Change file extension from `.rn` to `.lua`
-2. Replace `pub fn` with `function`
-3. Change `//` comments to `--`
-4. Convert structs to tables
-5. Adjust array indices from 0-based to 1-based
-6. Replace string interpolation with `string.format()`
-7. Update variable declarations from `let` to `local`
-8. Update UI widget calls: change `.method()` to `:method()` syntax
-
-### UI Migration
-
-Rune and Lua UI APIs are functionally identical but use different calling conventions:
-
-```lua
--- Rune
-pub fn on_ui(self_entity, ui) {
-    ui.label("Hello");
-    if ui.button("Click") {
-        log_info("Clicked!");
-    }
-    let value = ui.slider("slider_id", 0.5, 0.0, 1.0);
-}
-
--- Lua (use colon syntax for method calls)
-function on_ui(self_entity, ui)
-    ui:label("Hello")
-    if ui:button("Click") then
-        log_info("Clicked!")
-    end
-    local value = ui:slider("slider_id", 0.5, 0.0, 1.0)
-end
-```
-
-Example migration:
-
-```lua
--- Rune
-pub fn update(self_entity, dt) {
-    let state = get_state("data", Data { value: 0.0 });
-    let new_value = state.value + dt;
-    set_state("data", Data { value: new_value });
-    log_info(`Value: ${new_value}`);
-}
-
--- Lua
-function update(self_entity, dt)
-    local state = get_state("data", { value = 0.0 })
-    local new_value = state.value + dt
-    set_state("data", { value = new_value })
-    log_info(string.format("Value: %f", new_value))
-end
-```

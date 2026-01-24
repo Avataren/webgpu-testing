@@ -275,6 +275,33 @@ Do **not** introduce large dependency changes or rewrite architecture without ex
 
 ---
 
+## Architecture Notes
+
+### Lua Scripting System
+
+The project uses **Lua** for gameplay scripting and editor tools:
+- Scripts live in `scripts/` and `examples/scripts/`
+- API covers entity management, transforms, input, events, and UI
+- See `scripts/LUA_SCRIPTING_README.md` for API reference
+
+### Inspector Action Handler Pattern
+
+Inspector actions use a **modular dispatch pattern** in `src/bin/editor/application/action_handlers/`:
+- `ActionContext` provides scene and app access
+- `ActionResult` tracks what changed (transforms, scene)
+- Handlers are organized by domain: transform, camera, lights, materials, particles, etc.
+- Add new actions by: creating handler in appropriate module → adding to `dispatch.rs`
+
+### UI Command Recording Pattern (Lua UI)
+
+The Lua UI system uses **deferred rendering** due to egui lifetime constraints:
+1. Lua scripts call `ui:button()`, `ui:slider()` etc. → records `UiCommand`
+2. After Lua VM completes → commands replayed with real `egui::Ui`
+3. Responses collected → fed back to Lua next frame
+- Location: `src/scripting/lua/api/ui/`
+
+---
+
 ## Definition of done (per task)
 
 A change is complete when:

@@ -516,6 +516,15 @@ impl Scheduler {
 
         if !close_requests.is_empty() {
             for document_id in close_requests {
+                // Prevent closing the last scene
+                if !workspace.can_close_scene() {
+                    log::warn!(
+                        "Cannot close scene '{}': at least one scene must remain open",
+                        document_id
+                    );
+                    continue;
+                }
+
                 let was_active = workspace
                     .active_document_id()
                     .is_some_and(|id| id == &document_id);

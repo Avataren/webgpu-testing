@@ -91,6 +91,16 @@ impl SceneWorkspace {
         self.active_scene
     }
 
+    /// Returns the number of open scenes in the workspace.
+    pub fn scene_count(&self) -> usize {
+        self.scenes.len()
+    }
+
+    /// Returns true if the scene can be closed (i.e., it's not the last scene).
+    pub fn can_close_scene(&self) -> bool {
+        self.scenes.len() > 1
+    }
+
     /// Returns the identifier for the currently active scene document, if any.
     pub fn active_document_id(&self) -> Option<&SceneDocumentId> {
         let handle = self.active_scene?;
@@ -517,5 +527,31 @@ mod tests {
         assert_eq!(workspace.active_scene_handle(), Some(first));
         assert!(workspace.set_active_scene(&second_id).is_ok());
         assert_eq!(workspace.active_scene_handle(), Some(second));
+    }
+
+    #[test]
+    fn can_close_scene_prevents_closing_last_scene() {
+        let mut workspace = SceneWorkspace::new();
+
+        // With no scenes, can_close_scene is false
+        assert_eq!(workspace.scene_count(), 0);
+        assert!(!workspace.can_close_scene());
+
+        // Add one scene - still can't close
+        let first_id = "scene_a".to_string();
+        workspace.open_scene(first_id.clone(), Scene::new());
+        assert_eq!(workspace.scene_count(), 1);
+        assert!(!workspace.can_close_scene());
+
+        // Add second scene - now we can close
+        let second_id = "scene_b".to_string();
+        workspace.open_scene(second_id.clone(), Scene::new());
+        assert_eq!(workspace.scene_count(), 2);
+        assert!(workspace.can_close_scene());
+
+        // Close one scene - back to 1, can't close anymore
+        workspace.close_scene(&first_id);
+        assert_eq!(workspace.scene_count(), 1);
+        assert!(!workspace.can_close_scene());
     }
 }

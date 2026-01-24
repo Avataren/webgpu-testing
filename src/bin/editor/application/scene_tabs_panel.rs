@@ -62,9 +62,12 @@ impl SceneTabsPanel {
                     tab_clicked = true;
                 }
 
-                let close = egui::Button::new("✕").small();
-                if ui.add(close).clicked() {
-                    close_clicked = true;
+                // Only show close button if this tab can be closed
+                if tab.can_close {
+                    let close = egui::Button::new("✕").small();
+                    if ui.add(close).clicked() {
+                        close_clicked = true;
+                    }
                 }
             });
         });

@@ -60,6 +60,10 @@ impl EditorApplication {
             snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
+        // Mark the scene hierarchy as dirty to refresh inspector data
+        // This ensures material handles and other component data are up-to-date
+        self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
+
         // NOTE: UI plugins are now in a separate world and persist across scene changes.
         // No need to reload them after scene restore.
         // Just re-initialize them to ensure they're in a good state.
