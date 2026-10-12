@@ -550,6 +550,21 @@ impl Renderer {
         self.context.config.format
     }
 
+    /// Format UI overlays (egui) should render with: the surface format without its
+    /// sRGB suffix. Use [`Self::ui_view`] to get a matching view of a surface texture.
+    pub fn ui_format(&self) -> wgpu::TextureFormat {
+        self.context.config.format.remove_srgb_suffix()
+    }
+
+    /// A view of `surface_texture` in [`Self::ui_format`].
+    pub fn ui_view(&self, surface_texture: &wgpu::Texture) -> wgpu::TextureView {
+        surface_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("ui_surface_view"),
+            format: Some(self.ui_format()),
+            ..Default::default()
+        })
+    }
+
     pub fn scene_texture_format(&self) -> wgpu::TextureFormat {
         self.context.scene_texture_format()
     }

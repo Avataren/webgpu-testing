@@ -243,7 +243,13 @@ impl RenderContext {
             height: size.height.max(1),
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
+            // Allow a linear view of the sRGB surface for UI: egui does its own gamma
+            // handling and looks washed out when rendered through an sRGB view.
+            view_formats: if format.is_srgb() {
+                vec![format.remove_srgb_suffix()]
+            } else {
+                vec![]
+            },
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);

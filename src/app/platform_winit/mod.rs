@@ -209,7 +209,7 @@ where
             if let Some(window) = self.platform.window() {
                 let egui = crate::ui::EguiContext::new(
                     renderer.get_device(),
-                    renderer.surface_format(),
+                    renderer.ui_format(),
                     renderer.sample_count(),
                     window.as_ref(),
                 );

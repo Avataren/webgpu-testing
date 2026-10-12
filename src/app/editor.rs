@@ -155,10 +155,7 @@ impl EditorState {
             return;
         };
 
-        let view = frame
-            .frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = renderer.ui_view(&frame.frame.texture);
 
         let mut encoder =
             renderer
