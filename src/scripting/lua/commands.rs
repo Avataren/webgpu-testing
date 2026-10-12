@@ -394,281 +394,320 @@ impl ScriptCommands {
         }
 
         for command in self.existing.drain(..) {
-            match command {
-                ExistingCommand::SetName { entity_bits, name } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    let mut pending_name = Some(name);
-                    match world.get::<&mut Name>(entity) {
-                        Ok(mut current) => {
-                            current.0 = pending_name
-                                .take()
-                                .expect("name should remain available to update");
-                        }
-                        Err(ComponentError::MissingComponent(_)) => {}
-                        Err(ComponentError::NoSuchEntity) => {
-                            return Err(ComponentError::NoSuchEntity.into());
-                        }
-                    }
-
-                    if let Some(name) = pending_name {
-                        world.insert_one(entity, Name(name))?;
-                    }
-                }
-                ExistingCommand::SetTranslation {
-                    entity_bits,
-                    position,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        transform.translation = position;
-                    })?;
-                }
-                ExistingCommand::SetRotation {
-                    entity_bits,
-                    rotation,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        transform.rotation = rotation;
-                    })?;
-                }
-                ExistingCommand::ImportGltf {
-                    entity_bits,
-                    path,
-                    scale,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    result.gltf_imports.push(PendingGltfImport {
-                        parent: entity,
-                        path: PathBuf::from(path),
-                        scale,
-                    });
-                }
-                ExistingCommand::AttachScript {
-                    entity_bits,
-                    source,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-                    world.insert_one(entity, LuaScriptComponent::new(source))?;
-                    result.scripts_added.push(entity);
-                }
-                ExistingCommand::SetComponent {
-                    entity_bits,
-                    component_name,
-                    value,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    if let Err(e) =
-                        Self::add_component_from_json(world, entity, &component_name, &value)
-                    {
-                        warn!(target: "script", "Failed to set component '{}': {}", component_name, e);
-                    }
-                }
-                ExistingCommand::AddComponent {
-                    entity_bits,
-                    component_name,
-                    value,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    if let Err(e) =
-                        Self::add_component_from_json(world, entity, &component_name, &value)
-                    {
-                        warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
-                    }
-                }
-                ExistingCommand::RemoveComponent {
-                    entity_bits,
-                    component_name,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    if let Err(e) = Self::remove_component_by_name(world, entity, &component_name) {
-                        warn!(target: "script", "Failed to remove component '{}': {}", component_name, e);
-                    }
-                }
-                ExistingCommand::Translate { entity_bits, delta } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        transform.translation += delta;
-                    })?;
-                }
-                ExistingCommand::Rotate {
-                    entity_bits,
-                    axis,
-                    angle,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        let rotation = glam::Quat::from_axis_angle(axis.normalize(), angle);
-                        transform.rotation = rotation * transform.rotation;
-                    })?;
-                }
-                ExistingCommand::SetScale { entity_bits, scale } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        transform.scale = scale;
-                    })?;
-                }
-                ExistingCommand::LookAt {
-                    entity_bits,
-                    target,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    Self::modify_transform(world, entity, |transform| {
-                        let direction = (target - transform.translation).normalize();
-                        if direction.length_squared() > 0.0 {
-                            transform.rotation =
-                                glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
-                        }
-                    })?;
-                }
-                ExistingCommand::SetParent {
-                    entity_bits,
-                    parent_bits,
-                } => {
-                    use crate::scene::components::{Children, Parent};
-
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    // Get old parent entity (if any) before any mutable borrows
-                    let old_parent_entity = world.get::<&Parent>(entity).ok().map(|p| p.0);
-
-                    // Remove from old parent's children list
-                    if let Some(old_parent) = old_parent_entity {
-                        if let Ok(mut children) = world.get::<&mut Children>(old_parent) {
-                            children.0.retain(|&child| child != entity);
-                        }
-                    }
-
-                    // Set new parent
-                    if let Some(parent_bits_val) = parent_bits {
-                        let Some(parent_entity) = Entity::from_bits(parent_bits_val) else {
-                            continue;
-                        };
-
-                        if world.entity(parent_entity).is_err() {
-                            return Err(ComponentError::NoSuchEntity.into());
-                        }
-
-                        // Set parent component
-                        world.insert_one(entity, Parent(parent_entity))?;
-
-                        // Add to parent's children
-                        // Check if parent has Children component first
-                        let has_children =
-                            world.satisfies::<&Children>(parent_entity).unwrap_or(false);
-
-                        if has_children {
-                            // Parent has Children, add this entity
-                            if let Ok(mut children) = world.get::<&mut Children>(parent_entity) {
-                                if !children.0.contains(&entity) {
-                                    children.0.push(entity);
-                                }
-                            }
-                        } else {
-                            // Parent doesn't have Children component yet
-                            world.insert_one(parent_entity, Children(vec![entity]))?;
-                        }
-                    } else {
-                        // Remove parent (unparent)
-                        let _ = world.remove_one::<Parent>(entity);
-                    }
-                }
-                ExistingCommand::SubscribeEvent {
-                    entity_bits,
-                    event_name,
-                    callback_name,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    result.event_subscriptions.push(PendingEventSubscription {
-                        entity,
-                        event_name,
-                        callback_name,
-                    });
-                }
-                ExistingCommand::UnsubscribeEvent {
-                    entity_bits,
-                    event_name,
-                } => {
-                    let Some(entity) = Entity::from_bits(entity_bits) else {
-                        continue;
-                    };
-
-                    if world.entity(entity).is_err() {
-                        return Err(ComponentError::NoSuchEntity.into());
-                    }
-
-                    result
-                        .event_unsubscriptions
-                        .push(PendingEventUnsubscription { entity, event_name });
-                }
+            if let Err(err) = Self::apply_existing(world, command, &mut result) {
+                warn!(target: "script", "Skipping script command: {err}");
             }
         }
 
         Ok(result)
+    }
+
+    /// Apply a single command that targets an existing entity.
+    ///
+    /// Errors are scoped to the command so one stale entity reference does not
+    /// discard the rest of the script's commands for the frame.
+    fn apply_existing(
+        world: &mut World,
+        command: ExistingCommand,
+        result: &mut ScriptApplyResult,
+    ) -> Result<(), LuaScriptingError> {
+        match command {
+            ExistingCommand::SetName { entity_bits, name } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                let mut pending_name = Some(name);
+                match world.get::<&mut Name>(entity) {
+                    Ok(mut current) => {
+                        current.0 = pending_name
+                            .take()
+                            .expect("name should remain available to update");
+                    }
+                    Err(ComponentError::MissingComponent(_)) => {}
+                    Err(ComponentError::NoSuchEntity) => {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+                }
+
+                if let Some(name) = pending_name {
+                    world.insert_one(entity, Name(name))?;
+                }
+            }
+            ExistingCommand::SetTranslation {
+                entity_bits,
+                position,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    transform.translation = position;
+                })?;
+            }
+            ExistingCommand::SetRotation {
+                entity_bits,
+                rotation,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    transform.rotation = rotation;
+                })?;
+            }
+            ExistingCommand::ImportGltf {
+                entity_bits,
+                path,
+                scale,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                result.gltf_imports.push(PendingGltfImport {
+                    parent: entity,
+                    path: PathBuf::from(path),
+                    scale,
+                });
+            }
+            ExistingCommand::AttachScript {
+                entity_bits,
+                source,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+                world.insert_one(entity, LuaScriptComponent::new(source))?;
+                result.scripts_added.push(entity);
+            }
+            ExistingCommand::SetComponent {
+                entity_bits,
+                component_name,
+                value,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                if let Err(e) =
+                    Self::add_component_from_json(world, entity, &component_name, &value)
+                {
+                    warn!(target: "script", "Failed to set component '{}': {}", component_name, e);
+                }
+            }
+            ExistingCommand::AddComponent {
+                entity_bits,
+                component_name,
+                value,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                if let Err(e) =
+                    Self::add_component_from_json(world, entity, &component_name, &value)
+                {
+                    warn!(target: "script", "Failed to add component '{}': {}", component_name, e);
+                }
+            }
+            ExistingCommand::RemoveComponent {
+                entity_bits,
+                component_name,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                if let Err(e) = Self::remove_component_by_name(world, entity, &component_name) {
+                    warn!(target: "script", "Failed to remove component '{}': {}", component_name, e);
+                }
+            }
+            ExistingCommand::Translate { entity_bits, delta } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    transform.translation += delta;
+                })?;
+            }
+            ExistingCommand::Rotate {
+                entity_bits,
+                axis,
+                angle,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    let rotation = glam::Quat::from_axis_angle(axis.normalize(), angle);
+                    transform.rotation = rotation * transform.rotation;
+                })?;
+            }
+            ExistingCommand::SetScale { entity_bits, scale } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    transform.scale = scale;
+                })?;
+            }
+            ExistingCommand::LookAt {
+                entity_bits,
+                target,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                Self::modify_transform(world, entity, |transform| {
+                    let direction = (target - transform.translation).normalize();
+                    if direction.length_squared() > 0.0 {
+                        transform.rotation =
+                            glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                    }
+                })?;
+            }
+            ExistingCommand::SetParent {
+                entity_bits,
+                parent_bits,
+            } => {
+                use crate::scene::components::{Children, Parent};
+
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                if let Some(parent) = parent_bits.and_then(Entity::from_bits) {
+                    if Self::is_self_or_ancestor(world, entity, parent) {
+                        warn!(
+                            target: "script",
+                            "Ignoring set_parent: {parent:?} is {entity:?} or one of its descendants"
+                        );
+                        return Ok(());
+                    }
+                }
+
+                // Get old parent entity (if any) before any mutable borrows
+                let old_parent_entity = world.get::<&Parent>(entity).ok().map(|p| p.0);
+
+                // Remove from old parent's children list
+                if let Some(old_parent) = old_parent_entity {
+                    if let Ok(mut children) = world.get::<&mut Children>(old_parent) {
+                        children.0.retain(|&child| child != entity);
+                    }
+                }
+
+                // Set new parent
+                if let Some(parent_bits_val) = parent_bits {
+                    let Some(parent_entity) = Entity::from_bits(parent_bits_val) else {
+                        return Ok(());
+                    };
+
+                    if world.entity(parent_entity).is_err() {
+                        return Err(ComponentError::NoSuchEntity.into());
+                    }
+
+                    // Set parent component
+                    world.insert_one(entity, Parent(parent_entity))?;
+
+                    // Add to parent's children
+                    // Check if parent has Children component first
+                    let has_children = world.satisfies::<&Children>(parent_entity).unwrap_or(false);
+
+                    if has_children {
+                        // Parent has Children, add this entity
+                        if let Ok(mut children) = world.get::<&mut Children>(parent_entity) {
+                            if !children.0.contains(&entity) {
+                                children.0.push(entity);
+                            }
+                        }
+                    } else {
+                        // Parent doesn't have Children component yet
+                        world.insert_one(parent_entity, Children(vec![entity]))?;
+                    }
+                } else {
+                    // Remove parent (unparent)
+                    let _ = world.remove_one::<Parent>(entity);
+                }
+            }
+            ExistingCommand::SubscribeEvent {
+                entity_bits,
+                event_name,
+                callback_name,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                result.event_subscriptions.push(PendingEventSubscription {
+                    entity,
+                    event_name,
+                    callback_name,
+                });
+            }
+            ExistingCommand::UnsubscribeEvent {
+                entity_bits,
+                event_name,
+            } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                if world.entity(entity).is_err() {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+
+                result
+                    .event_unsubscriptions
+                    .push(PendingEventUnsubscription { entity, event_name });
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns true if `candidate` is `entity` itself or sits below it in the hierarchy,
+    /// i.e. parenting `entity` to `candidate` would create a cycle.
+    fn is_self_or_ancestor(world: &World, entity: Entity, candidate: Entity) -> bool {
+        let mut current = Some(candidate);
+        // Bound the walk so a pre-existing corrupt hierarchy cannot hang us.
+        for _ in 0..4096 {
+            match current {
+                Some(node) if node == entity => return true,
+                Some(node) => current = world.get::<&Parent>(node).ok().map(|parent| parent.0),
+                None => return false,
+            }
+        }
+        true
     }
 
     fn modify_transform(

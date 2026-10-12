@@ -2,7 +2,9 @@ use hecs::Entity;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use wgpu_cube::scripting::LuaScriptSource;
+use wgpu_cube::scene::InputState;
+use wgpu_cube::scripting::lua::api::ui::{UiCommand, UiResponse};
+use wgpu_cube::scripting::{InputStateGuard, LuaScriptSource, ScriptingState, UiViewportInfo};
 
 /// Type of plugin - distinguishes between editor-provided and user-created plugins
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
@@ -60,6 +62,9 @@ pub struct UiPluginManager {
     base_path: PathBuf,
     /// Separate world for plugin entities (not part of the scene)
     world: hecs::World,
+    /// Lua runtime for plugin scripts. Plugins live independently of scenes, so they
+    /// keep their own VM and state across scene switches and play/stop.
+    scripting: ScriptingState,
 }
 
 impl UiPluginManager {
@@ -70,7 +75,46 @@ impl UiPluginManager {
             entity_to_plugin: HashMap::new(),
             base_path,
             world: hecs::World::new(),
+            scripting: ScriptingState::default(),
         }
+    }
+
+    /// Run plugin script lifecycle hooks (`on_created`, `update`, coroutines, events).
+    pub fn run_scripts(&mut self, dt: f64, editor_mode: bool, input: &InputState) {
+        let _input = InputStateGuard::enter(input);
+        if let Err(err) = self
+            .scripting
+            .process_scripts(&mut self.world, dt, editor_mode)
+        {
+            log::error!("Plugin scripting error: {err}");
+        }
+    }
+
+    /// Collect UI commands from plugin `on_ui` callbacks.
+    pub fn process_ui(
+        &mut self,
+        editor_mode: bool,
+        viewport: Option<UiViewportInfo>,
+        per_entity_viewports: &HashMap<Entity, UiViewportInfo>,
+        input: &InputState,
+    ) -> HashMap<Entity, Vec<UiCommand>> {
+        let _input = InputStateGuard::enter(input);
+        self.scripting.process_ui(
+            &self.world,
+            editor_mode,
+            viewport,
+            Some(per_entity_viewports),
+        )
+    }
+
+    /// Feed widget responses from the last UI pass back to plugin scripts.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, UiResponse>>) {
+        self.scripting.set_ui_responses(responses);
+    }
+
+    /// Most recent script error for a plugin, if any.
+    pub fn last_error(&self, entity: Entity) -> Option<&str> {
+        self.scripting.last_error(entity)
     }
 
     /// Load plugins from a manifest file
@@ -163,19 +207,9 @@ impl UiPluginManager {
         self.plugins.get_mut(index)
     }
 
-    /// Get the plugin world (read-only)
-    pub fn world(&self) -> &hecs::World {
-        &self.world
-    }
-
     /// Get mutable access to the plugin world
     pub fn world_mut(&mut self) -> &mut hecs::World {
         &mut self.world
-    }
-
-    /// unique identifier for the plugin world (used for scripting state separation)
-    pub fn world_id(&self) -> usize {
-        wgpu_cube::scene::world_id(self.world())
     }
 
     /// Resolve script path relative to base path
@@ -201,20 +235,10 @@ impl UiPluginManager {
         None
     }
 
-    /// Get the script path for a given entity
-    pub fn get_script_path(&self, entity: Entity) -> Option<PathBuf> {
-        self.get_plugin(entity)
-            .map(|plugin| self.resolve_script_path(&plugin.metadata.script))
-    }
-
-    /// Reload a plugin's script from disk
-    /// Returns Ok(plugin_name) on success, Err(message) on failure
-    pub fn reload_plugin(
-        &mut self,
-        entity: Entity,
-        path: &std::path::Path,
-    ) -> Result<String, String> {
-        // Find the plugin and clone the name to avoid borrow checker issues
+    /// Hot-reload a plugin's script from disk, preserving its script state.
+    ///
+    /// Returns the plugin name on success.
+    pub fn reload_plugin(&mut self, entity: Entity, path: &Path) -> Result<String, String> {
         let plugin_name = self
             .get_plugin(entity)
             .ok_or_else(|| format!("Plugin not found for entity {:?}", entity))?
@@ -222,40 +246,22 @@ impl UiPluginManager {
             .name
             .clone();
 
-        if let Some(expected_path) = self.get_script_path(entity) {
-            if expected_path != path {
-                log::warn!(
-                    "Reloading plugin '{}' with path {:?}, but manifest path is {:?}",
-                    plugin_name,
-                    path,
-                    expected_path
-                );
-            }
+        if !path.is_file() {
+            return Err(format!("Script {} does not exist", path.display()));
         }
 
-        // Read the new script source
-        let _source_code = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read script {}: {}", path.display(), e))?;
-
-        // Check if entity has the component
-        {
-            let _old_component = self
-                .world
-                .get::<&wgpu_cube::scripting::LuaScriptComponent>(entity)
-                .map_err(|_| format!("Entity {:?} has no LuaScriptComponent", entity))?;
-            // Drop the reference here
+        if self.scripting.reload_path(path) == 0 {
+            // The script was never instantiated (e.g. the plugin was added while its
+            // file was missing); attach a fresh component so it gets compiled.
+            self.world
+                .insert_one(
+                    entity,
+                    wgpu_cube::scripting::LuaScriptComponent::new(LuaScriptSource::File {
+                        path: path.to_path_buf(),
+                    }),
+                )
+                .map_err(|e| format!("Failed to update component: {}", e))?;
         }
-
-        // Create new component with the reloaded source
-        // Use File source so it stays editable
-        let new_component = wgpu_cube::scripting::LuaScriptComponent::new(LuaScriptSource::File {
-            path: path.to_path_buf(),
-        });
-
-        // Replace the component
-        self.world
-            .insert_one(entity, new_component)
-            .map_err(|e| format!("Failed to update component: {}", e))?;
 
         log::info!("Reloaded Lua plugin '{}' from {:?}", plugin_name, path);
         Ok(plugin_name)

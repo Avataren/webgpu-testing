@@ -142,11 +142,13 @@ pub(crate) fn with_active_state<R>(
 /// Uses generation counters to detect use-after-drop in debug builds.
 /// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
 /// it from being moved across thread boundaries (raw pointers are Send/Sync).
-pub(crate) struct WorldGuard {
-    _marker: PhantomData<Rc<()>>, // !Send + !Sync
+pub(crate) struct WorldGuard<'a> {
+    // Borrows the world for the guard's lifetime, so it cannot be mutated or dropped
+    // while scripts can observe it. The Rc makes the guard !Send + !Sync.
+    _marker: PhantomData<(&'a World, Rc<()>)>,
 }
 
-impl WorldGuard {
+impl<'a> WorldGuard<'a> {
     /// Creates a new WorldGuard, making the world available to scripts.
     ///
     /// # Safety Constraints
@@ -154,7 +156,7 @@ impl WorldGuard {
     /// - `world` remains valid for the entire lifetime of this guard
     /// - No other WorldGuard is active on this thread
     /// - Script execution will not be reentrant
-    pub fn enter(world: &World) -> Self {
+    pub fn enter(world: &'a World) -> Self {
         let ptr = world as *const World;
         let generation = WORLD_GENERATION.with(|gen| {
             let new_gen = gen.get().wrapping_add(1);
@@ -175,7 +177,7 @@ impl WorldGuard {
     }
 }
 
-impl Drop for WorldGuard {
+impl Drop for WorldGuard<'_> {
     fn drop(&mut self) {
         ACTIVE_WORLD.with(|cell| *cell.borrow_mut() = None);
 
@@ -196,12 +198,12 @@ impl Drop for WorldGuard {
 /// Uses generation counters to detect use-after-drop in debug builds.
 /// The PhantomData<Rc<()>> ensures the guard is !Send and !Sync, preventing
 /// it from being moved across thread boundaries (raw pointers are Send/Sync).
-#[allow(dead_code)]
-pub(crate) struct InputStateGuard {
-    _marker: PhantomData<Rc<()>>, // !Send + !Sync
+pub struct InputStateGuard<'a> {
+    // Borrows the input state for the guard's lifetime. The Rc makes the guard !Send + !Sync.
+    _marker: PhantomData<(&'a InputState, Rc<()>)>,
 }
 
-impl InputStateGuard {
+impl<'a> InputStateGuard<'a> {
     /// Creates a new InputStateGuard, making the input state available to scripts.
     ///
     /// # Safety Constraints
@@ -209,8 +211,7 @@ impl InputStateGuard {
     /// - `input_state` remains valid for the entire lifetime of this guard
     /// - No other InputStateGuard is active on this thread
     /// - Script execution will not be reentrant
-    #[allow(dead_code)]
-    pub fn enter(input_state: &InputState) -> Self {
+    pub fn enter(input_state: &'a InputState) -> Self {
         let ptr = input_state as *const InputState;
         let generation = INPUT_STATE_GENERATION.with(|gen| {
             let new_gen = gen.get().wrapping_add(1);
@@ -232,7 +233,7 @@ impl InputStateGuard {
     }
 }
 
-impl Drop for InputStateGuard {
+impl Drop for InputStateGuard<'_> {
     fn drop(&mut self) {
         ACTIVE_INPUT_STATE.with(|cell| *cell.borrow_mut() = None);
 

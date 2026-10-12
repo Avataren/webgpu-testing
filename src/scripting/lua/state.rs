@@ -1,32 +1,236 @@
+//! Script lifecycle management for a single ECS world.
+//!
+//! [`ScriptingState`] owns a Lua VM and one script instance per entity that carries a
+//! [`LuaScriptComponent`]. Each frame it:
+//!
+//! 1. applies commands that `on_ui` recorded during the previous UI pass,
+//! 2. compiles scripts for new or replaced components and tears down removed ones,
+//! 3. runs `on_created`, `update` and coroutines for scripts allowed in the current mode,
+//! 4. dispatches queued events with a per-frame budget.
+//!
+//! Script instances are tied to their component through the component's binding id, so
+//! replacing or cloning a component always produces a fresh instance. One state drives
+//! one world; use a separate state per world.
+
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use hecs::{Entity, World};
-use log::error;
+use log::{error, warn};
 
-use crate::scene;
-
-type WorldId = usize;
-
+use super::api::ui::{UiCommand, UiContext, UiResponse};
 use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
 use super::error::LuaScriptingError;
+use super::guards::WorldGuard;
 use super::runtime::LuaScriptingRuntime;
 use super::types::{
-    EventSubscription, EventSubscriptions, ScriptEvent, ScriptMode, ScriptStateMap,
+    EventSubscription, EventSubscriptions, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap,
 };
 
-/// State that owns the Lua runtime for a scene.
-pub struct ScriptingState {
-    runtime: LuaScriptingRuntime,
-    instances: HashMap<WorldId, HashMap<Entity, LuaScriptInstance>>,
+/// Maximum number of events dispatched in one frame. Anything beyond this is dropped,
+/// which stops event feedback loops (a handler re-emitting its own event) from hanging
+/// the engine.
+const MAX_EVENTS_PER_FRAME: usize = 4096;
+
+/// Distinct error messages remembered per script, used to avoid logging the same
+/// failure every frame.
+const MAX_REPORTED_ERRORS: usize = 32;
+
+/// Viewport information handed to `on_ui` as `(width, height, pixels_per_point)` in
+/// logical points.
+pub type UiViewportInfo = (f32, f32, f32);
+
+/// Returns whether a script with `mode` runs when the engine is in editor (or play) mode.
+fn runs_in_mode(mode: ScriptMode, editor_mode: bool) -> bool {
+    match mode {
+        ScriptMode::RuntimeOnly => !editor_mode,
+        ScriptMode::EditorOnly => editor_mode,
+        ScriptMode::Both => true,
+    }
+}
+
+/// A lifecycle hook invoked on a script instance.
+enum Hook<'a> {
+    Chunk,
+    Created,
+    Update(f64),
+    Destroyed,
+    Event {
+        callback: &'a str,
+        data: &'a serde_json::Value,
+    },
+    Coroutines(f64),
+}
+
+impl Hook<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Hook::Chunk => "load",
+            Hook::Created => "on_created",
+            Hook::Update(_) => "update",
+            Hook::Destroyed => "on_destroyed",
+            Hook::Event { callback, .. } => callback,
+            Hook::Coroutines(_) => "coroutine",
+        }
+    }
+}
+
+/// The runtime side of one entity's script.
+struct ScriptSlot {
+    /// Binding id of the component this slot was built for.
+    binding: u64,
+    source: LuaScriptSource,
+    /// `None` when the script failed to compile; it is retried after a reload.
+    instance: Option<LuaScriptInstance>,
+    created: bool,
+    /// Most recent error as `(context, message)`. Cleared once the failing hook
+    /// succeeds again; compile and load errors stay until the script is reloaded.
+    last_error: Option<(String, String)>,
+    reported_errors: HashSet<String>,
+}
+
+impl ScriptSlot {
+    fn report(&mut self, entity: Entity, context: &str, err: impl std::fmt::Display) {
+        let message = format!("{context}: {err}");
+        if self.reported_errors.len() < MAX_REPORTED_ERRORS
+            && self.reported_errors.insert(message.clone())
+        {
+            error!(target: "script", "[{}] entity {entity:?}: {message}", self.source.display_name());
+        }
+        self.last_error = Some((context.to_owned(), message));
+    }
+
+    fn clear_error(&mut self, context: &str) {
+        if self
+            .last_error
+            .as_ref()
+            .is_some_and(|(failed, _)| failed == context)
+        {
+            self.last_error = None;
+        }
+    }
+}
+
+/// Side effects produced by scripts that outlive a single hook invocation.
+#[derive(Default)]
+struct ScriptOutputs {
     pending_gltf_imports: Vec<PendingGltfImport>,
     event_subscriptions: EventSubscriptions,
-    /// Pending state restoration per world after script reload
-    pending_state_restoration: HashMap<WorldId, HashMap<Entity, ScriptStateMap>>,
-    /// UI responses from the previous frame (per world)
-    ui_responses: HashMap<WorldId, HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>>,
+    pending_events: VecDeque<ScriptEvent>,
+}
+
+impl ScriptOutputs {
+    /// Apply a script's command buffer to the world. Failures are reported per command
+    /// and never prevent other scripts from running.
+    fn apply_commands(&mut self, world: &mut World, commands: &RefCell<ScriptCommands>) {
+        let result = match commands.borrow_mut().apply(world) {
+            Ok(result) => result,
+            Err(err) => {
+                warn!(target: "script", "Failed to apply script commands: {err}");
+                return;
+            }
+        };
+
+        self.pending_gltf_imports.extend(result.gltf_imports);
+
+        for sub in result.event_subscriptions {
+            let subscribers = self.event_subscriptions.entry(sub.event_name).or_default();
+            let already_subscribed = subscribers
+                .iter()
+                .any(|s| s.entity_id == sub.entity && s.callback_name == sub.callback_name);
+            if !already_subscribed {
+                subscribers.push(EventSubscription {
+                    entity_id: sub.entity,
+                    callback_name: sub.callback_name,
+                });
+            }
+        }
+
+        for unsub in result.event_unsubscriptions {
+            if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
+                subs.retain(|s| s.entity_id != unsub.entity);
+            }
+        }
+    }
+
+    fn remove_subscriptions(&mut self, entity: Entity) {
+        for subscriptions in self.event_subscriptions.values_mut() {
+            subscriptions.retain(|subscription| subscription.entity_id != entity);
+        }
+        self.event_subscriptions
+            .retain(|_, subscriptions| !subscriptions.is_empty());
+    }
+}
+
+/// Invoke `hook` on the script in `slot`, then apply its commands and queue its events.
+///
+/// Returns `None` if the script is not loaded or the hook raised an error (which is
+/// reported on the slot).
+///
+/// Scripts get read access to `world` while they run; their mutations are recorded as
+/// commands and applied once the call returns.
+fn invoke(
+    runtime: &LuaScriptingRuntime,
+    outputs: &mut ScriptOutputs,
+    world: &mut World,
+    entity: Entity,
+    slot: &mut ScriptSlot,
+    hook: Hook<'_>,
+) -> Option<FunctionCallOutcome> {
+    let instance = slot.instance.as_mut()?;
+
+    let lua = runtime.lua();
+    let bits = entity_bits(entity);
+    let commands = instance.command_buffer();
+    let events = Rc::new(RefCell::new(Vec::new()));
+
+    let result = {
+        let _world_guard = WorldGuard::enter(world);
+        let (cmds, evts) = (commands.clone(), events.clone());
+        match &hook {
+            Hook::Chunk => instance.run_chunk(lua, bits, cmds, evts),
+            Hook::Created => instance.call_on_created(lua, bits, cmds, evts),
+            Hook::Update(dt) => instance.call_update(lua, bits, *dt, cmds, evts),
+            Hook::Destroyed => instance.call_on_destroyed(lua, bits, cmds, evts),
+            Hook::Event { callback, data } => {
+                instance.call_event(lua, bits, callback, (*data).clone(), cmds, evts)
+            }
+            Hook::Coroutines(dt) => instance
+                .process_coroutines(*dt, cmds, evts)
+                .map(|()| FunctionCallOutcome::Executed),
+        }
+    };
+
+    // Apply whatever the script recorded, even if it failed part way through.
+    outputs.apply_commands(world, &commands);
+    outputs.pending_events.extend(events.take());
+
+    match result {
+        Ok(outcome) => {
+            slot.clear_error(hook.name());
+            Some(outcome)
+        }
+        Err(err) => {
+            slot.report(entity, hook.name(), err);
+            None
+        }
+    }
+}
+
+/// Owns the Lua runtime and the script instances of one ECS world.
+pub struct ScriptingState {
+    runtime: LuaScriptingRuntime,
+    slots: HashMap<Entity, ScriptSlot>,
+    outputs: ScriptOutputs,
+    /// State to restore into scripts once they are re-created after a reload.
+    pending_state_restoration: HashMap<Entity, ScriptStateMap>,
+    /// Commands recorded by `on_ui`, applied at the start of the next update.
+    deferred_ui_commands: Vec<(Entity, Rc<RefCell<ScriptCommands>>)>,
+    /// UI responses from the previous frame.
+    ui_responses: HashMap<Entity, HashMap<String, UiResponse>>,
 }
 
 impl ScriptingState {
@@ -34,10 +238,10 @@ impl ScriptingState {
     pub fn new() -> Result<Self, LuaScriptingError> {
         Ok(Self {
             runtime: LuaScriptingRuntime::new()?,
-            instances: HashMap::new(),
-            pending_gltf_imports: Vec::new(),
-            event_subscriptions: HashMap::new(),
+            slots: HashMap::new(),
+            outputs: ScriptOutputs::default(),
             pending_state_restoration: HashMap::new(),
+            deferred_ui_commands: Vec::new(),
             ui_responses: HashMap::new(),
         })
     }
@@ -52,713 +256,426 @@ impl ScriptingState {
         &mut self.runtime
     }
 
-    /// Clear any cached script instances and pending work so that scripts
-    /// re-run their creation logic on the next update cycle.
+    /// Recompile every script and run `on_created` again on the next update.
+    ///
+    /// Values scripts stored with the state API (`set_f64`, `set_state`, ...) survive
+    /// the reset and are restored after `on_created` runs.
     pub fn reset_runtime(&mut self) {
-        self.instances.clear();
-        self.pending_gltf_imports.clear();
-        self.event_subscriptions.clear();
-        self.pending_state_restoration.clear();
+        let entities: Vec<Entity> = self.slots.keys().copied().collect();
+        for entity in entities {
+            self.unload(entity);
+        }
+        self.outputs = ScriptOutputs::default();
+        self.deferred_ui_commands.clear();
         self.ui_responses.clear();
     }
 
-    /// Extract script state for a specific world before reset.
-    pub fn extract_state_for_world(&self, world: &World) -> HashMap<Entity, ScriptStateMap> {
-        let world_id = scene::world_id(world);
-        let mut all_state = HashMap::new();
+    /// Hot-reload every script loaded from `path`, preserving script state.
+    ///
+    /// Returns the number of scripts scheduled for reload.
+    pub fn reload_path(&mut self, path: &Path) -> usize {
+        let target = canonical(path);
+        let script_root = self.runtime.script_root().map(Path::to_path_buf);
+        let entities: Vec<Entity> = self
+            .slots
+            .iter()
+            .filter(|(_, slot)| match &slot.source {
+                LuaScriptSource::File { path } => {
+                    let resolved = match &script_root {
+                        Some(root) if path.is_relative() => root.join(path),
+                        _ => path.clone(),
+                    };
+                    canonical(&resolved) == target
+                }
+                LuaScriptSource::Inline { .. } => false,
+            })
+            .map(|(entity, _)| *entity)
+            .collect();
 
-        if let Some(instances) = self.instances.get(&world_id) {
-            for (entity, instance) in instances {
+        for entity in &entities {
+            self.unload(*entity);
+            self.outputs.remove_subscriptions(*entity);
+        }
+        entities.len()
+    }
+
+    /// Recompile the script on `entity` and run `on_created` again, preserving its state.
+    ///
+    /// Returns false if the entity has no script loaded.
+    pub fn reload_entity(&mut self, entity: Entity) -> bool {
+        if !self.slots.contains_key(&entity) {
+            return false;
+        }
+        self.unload(entity);
+        self.outputs.remove_subscriptions(entity);
+        true
+    }
+
+    /// Drop the instance for `entity` without running `on_destroyed`, keeping its state
+    /// so it can be restored when the script is re-created.
+    fn unload(&mut self, entity: Entity) {
+        if let Some(slot) = self.slots.remove(&entity) {
+            if let Some(instance) = slot.instance {
                 let state = instance.state_store.borrow().clone();
                 if !state.is_empty() {
-                    all_state.insert(*entity, state);
+                    self.pending_state_restoration.insert(entity, state);
                 }
             }
         }
-
-        log::debug!(
-            "Extracted state from {} script instances for world {:?}",
-            all_state.len(),
-            world_id
-        );
-        all_state
     }
 
-    /// Restore state to script instances after they've been created.
-    pub fn restore_state(&mut self, world: &World, state: HashMap<Entity, ScriptStateMap>) {
-        if state.is_empty() {
-            return;
-        }
-
-        let world_id = scene::world_id(world);
-        self.pending_state_restoration.insert(world_id, state);
+    /// Most recent error raised by the script on `entity`, if any.
+    pub fn last_error(&self, entity: Entity) -> Option<&str> {
+        self.slots
+            .get(&entity)?
+            .last_error
+            .as_ref()
+            .map(|(_, message)| message.as_str())
     }
 
     /// Process a single frame of script execution.
     ///
-    /// This compiles any new scripts, calls lifecycle hooks, and applies commands.
+    /// Script errors are logged and recorded per script (see [`Self::last_error`]);
+    /// they never abort the frame for other scripts.
     pub fn process_scripts(
         &mut self,
         world: &mut World,
         dt: f64,
         editor_mode: bool,
     ) -> Result<(), LuaScriptingError> {
-        let world_id = scene::world_id(world);
-
-        // Ensure all entities with LuaScriptComponent have instances
-        self.ensure_instances(world_id, world)?;
-
-        // Call on_created for new scripts
-        self.call_on_created(world_id, world, editor_mode)?;
-
-        // Restore any pending state AFTER on_created has run
-        // This ensures default values from on_created() are overwritten by restored state
-        if let Some(state_map) = self.pending_state_restoration.remove(&world_id) {
-            self.apply_state_restoration(world_id, state_map);
+        for (_, commands) in std::mem::take(&mut self.deferred_ui_commands) {
+            self.outputs.apply_commands(world, &commands);
         }
 
-        // Call update for all scripts (if dt > 0 or editor_mode)
+        self.sync_instances(world);
+
+        let active = self.active_entities(world, editor_mode);
+
+        for &entity in &active {
+            let Some(slot) = self.slots.get_mut(&entity) else {
+                continue;
+            };
+            if slot.created || slot.instance.is_none() {
+                continue;
+            }
+            slot.created = true;
+            invoke(
+                &self.runtime,
+                &mut self.outputs,
+                world,
+                entity,
+                slot,
+                Hook::Created,
+            );
+        }
+
+        // Restore state after on_created so restored values win over its defaults.
+        self.pending_state_restoration.retain(|entity, state| {
+            match self
+                .slots
+                .get(entity)
+                .and_then(|slot| slot.instance.as_ref())
+            {
+                Some(instance) => {
+                    *instance.state_store.borrow_mut() = std::mem::take(state);
+                    false
+                }
+                None => true,
+            }
+        });
+
         if dt > 0.0 || editor_mode {
-            self.call_update(world_id, world, dt, editor_mode)?;
+            for &entity in &active {
+                if let Some(slot) = self.slots.get_mut(&entity) {
+                    invoke(
+                        &self.runtime,
+                        &mut self.outputs,
+                        world,
+                        entity,
+                        slot,
+                        Hook::Update(dt),
+                    );
+                }
+            }
         }
 
-        // Process coroutines for all script instances
-        self.process_coroutines(world_id, world, dt)?;
+        for &entity in &active {
+            if let Some(slot) = self.slots.get_mut(&entity) {
+                invoke(
+                    &self.runtime,
+                    &mut self.outputs,
+                    world,
+                    entity,
+                    slot,
+                    Hook::Coroutines(dt),
+                );
+            }
+        }
 
-        // Remove instances for entities that no longer have scripts
-        self.cleanup_removed_scripts(world_id, world);
+        self.dispatch_events(world);
 
         Ok(())
     }
 
-    /// Ensure all entities with LuaScriptComponent have compiled instances.
-    fn ensure_instances(
-        &mut self,
-        world_id: WorldId,
-        world: &World,
-    ) -> Result<(), LuaScriptingError> {
-        let mut to_compile = Vec::new();
-        let instances = self.instances.entry(world_id).or_default();
+    /// Entities whose scripts run in the current mode, in a stable order.
+    fn active_entities(&self, world: &World, editor_mode: bool) -> Vec<Entity> {
+        let mut active: Vec<Entity> = world
+            .query::<&LuaScriptComponent>()
+            .iter()
+            .filter(|(entity, component)| {
+                runs_in_mode(component.script_mode(), editor_mode)
+                    && self
+                        .slots
+                        .get(entity)
+                        .is_some_and(|slot| slot.binding == component.binding())
+            })
+            .map(|(entity, _)| entity)
+            .collect();
+        active.sort_unstable_by_key(|entity| entity.to_bits());
+        active
+    }
 
-        for (entity, script_comp) in world.query::<&LuaScriptComponent>().iter() {
-            if !instances.contains_key(&entity) {
-                to_compile.push((entity, script_comp.source().clone()));
+    /// Create instances for new or replaced components and tear down stale ones.
+    fn sync_instances(&mut self, world: &mut World) {
+        let mut wanted: Vec<(Entity, u64, LuaScriptSource)> = Vec::new();
+        let mut live: HashMap<Entity, u64> = HashMap::new();
+        for (entity, component) in world.query::<&LuaScriptComponent>().iter() {
+            live.insert(entity, component.binding());
+            let current = self.slots.get(&entity).map(|slot| slot.binding);
+            if current != Some(component.binding()) {
+                wanted.push((entity, component.binding(), component.source().clone()));
             }
         }
 
-        for (entity, source) in to_compile {
+        let mut stale: Vec<Entity> = self
+            .slots
+            .iter()
+            .filter(|(entity, slot)| live.get(entity) != Some(&slot.binding))
+            .map(|(entity, _)| *entity)
+            .collect();
+        stale.sort_unstable_by_key(|entity| entity.to_bits());
+
+        for entity in stale {
+            let Some(mut slot) = self.slots.remove(&entity) else {
+                continue;
+            };
+            if slot.created {
+                invoke(
+                    &self.runtime,
+                    &mut self.outputs,
+                    world,
+                    entity,
+                    &mut slot,
+                    Hook::Destroyed,
+                );
+            }
+            self.outputs.remove_subscriptions(entity);
+            self.ui_responses.remove(&entity);
+            log::debug!(target: "script", "Removed script instance for entity {entity:?}");
+        }
+
+        wanted.sort_unstable_by_key(|(entity, ..)| entity.to_bits());
+        for (entity, binding, source) in wanted {
+            let mut slot = ScriptSlot {
+                binding,
+                source: source.clone(),
+                instance: None,
+                created: false,
+                last_error: None,
+                reported_errors: HashSet::new(),
+            };
+
             match self.runtime.compile(&source) {
                 Ok((script, mode)) => {
-                    match LuaScriptInstance::new(self.runtime.lua(), script.clone(), source.clone())
-                    {
-                        Ok(instance) => {
-                            instances.insert(entity, instance);
-
-                            if let Ok(mut comp) = world.get::<&mut LuaScriptComponent>(entity) {
-                                comp.set_script_mode(mode);
-                            }
-                        }
-                        Err(e) => {
-                            error!(target: "script", "Failed to create instance for entity {:?}: {}", entity, e);
-                        }
+                    if let Ok(mut component) = world.get::<&mut LuaScriptComponent>(entity) {
+                        component.set_script_mode(mode);
+                    }
+                    match LuaScriptInstance::new(self.runtime.lua(), script, source) {
+                        Ok(instance) => slot.instance = Some(instance),
+                        Err(err) => slot.report(entity, "instantiate", err),
                     }
                 }
-                Err(e) => {
-                    error!(target: "script", "Failed to compile script for entity {:?}: {}", entity, e);
+                Err(err) => slot.report(entity, "compile", err),
+            }
+
+            if slot.instance.is_some() {
+                let loaded = invoke(
+                    &self.runtime,
+                    &mut self.outputs,
+                    world,
+                    entity,
+                    &mut slot,
+                    Hook::Chunk,
+                );
+                // A script whose top-level code fails is unusable until it is reloaded.
+                if loaded.is_none() {
+                    slot.instance = None;
                 }
             }
-        }
 
-        Ok(())
+            self.slots.insert(entity, slot);
+        }
     }
 
-    /// Apply restored state to script instances.
-    fn apply_state_restoration(
-        &mut self,
-        world_id: WorldId,
-        state_map: HashMap<Entity, ScriptStateMap>,
-    ) {
-        if let Some(instances) = self.instances.get_mut(&world_id) {
-            for (entity, state) in state_map {
-                if let Some(instance) = instances.get_mut(&entity) {
-                    *instance.state_store.borrow_mut() = state;
-                    log::debug!(
-                        "Restored state for entity {:?} (world {:?})",
+    /// Deliver queued events to their subscribers, including events emitted by handlers.
+    fn dispatch_events(&mut self, world: &mut World) {
+        let mut dispatched = 0usize;
+        while let Some(event) = self.outputs.pending_events.pop_front() {
+            if dispatched == MAX_EVENTS_PER_FRAME {
+                let dropped = self.outputs.pending_events.len() + 1;
+                self.outputs.pending_events.clear();
+                warn!(
+                    target: "script",
+                    "Dropped {dropped} script event(s) after dispatching {MAX_EVENTS_PER_FRAME} \
+                     this frame; check for handlers that re-emit their own event"
+                );
+                break;
+            }
+            dispatched += 1;
+
+            let Some(subscribers) = self.outputs.event_subscriptions.get(&event.name).cloned()
+            else {
+                log::debug!(target: "script", "Event '{}' has no subscribers", event.name);
+                continue;
+            };
+
+            for subscriber in subscribers {
+                let entity = subscriber.entity_id;
+                let Some(slot) = self.slots.get_mut(&entity) else {
+                    continue;
+                };
+                let outcome = invoke(
+                    &self.runtime,
+                    &mut self.outputs,
+                    world,
+                    entity,
+                    slot,
+                    Hook::Event {
+                        callback: &subscriber.callback_name,
+                        data: &event.data,
+                    },
+                );
+                if outcome == Some(FunctionCallOutcome::Missing) {
+                    slot.report(
                         entity,
-                        world_id
+                        "event",
+                        format!(
+                            "handler '{}' for event '{}' is not defined",
+                            subscriber.callback_name, event.name
+                        ),
                     );
                 }
             }
         }
     }
 
-    /// Call on_created for scripts that haven't had it called yet.
-    fn call_on_created(
-        &mut self,
-        world_id: WorldId,
-        world: &mut World,
-        editor_mode: bool,
-    ) -> Result<(), LuaScriptingError> {
-        let mut to_call = Vec::new();
-
-        // Find scripts that need on_created and should run in the current mode
-        for (entity, script_comp) in world.query::<&mut LuaScriptComponent>().iter() {
-            if !script_comp.created_called() {
-                let script_mode = script_comp.script_mode();
-
-                // Check if this script should run in the current mode
-                let should_run = match script_mode {
-                    ScriptMode::RuntimeOnly => !editor_mode,
-                    ScriptMode::EditorOnly => editor_mode,
-                    ScriptMode::Both => true,
-                };
-
-                if should_run {
-                    to_call.push(entity);
-                    script_comp.mark_created();
-                }
-            }
-        }
-
-        // Call on_created for each
-        for entity in to_call {
-            if let Some(instance) = self
-                .instances
-                .get_mut(&world_id)
-                .and_then(|instances| instances.get_mut(&entity))
-            {
-                let commands = instance.command_buffer();
-                let event_queue = Rc::new(RefCell::new(Vec::new()));
-
-                let entity_bits_val = entity_bits(entity);
-
-                match instance.call_on_created(
-                    self.runtime.lua(),
-                    entity_bits_val,
-                    commands.clone(),
-                    event_queue.clone(),
-                ) {
-                    Ok(FunctionCallOutcome::Executed) => {
-                        // Apply commands
-                        self.apply_commands(world, commands)?;
-
-                        // Process any emitted events
-                        let events = event_queue.borrow().clone();
-                        self.queue_events(world_id, world, events);
-                    }
-                    Ok(FunctionCallOutcome::Missing) => {
-                        // Script doesn't have on_created - that's okay
-                    }
-                    Err(e) => {
-                        error!(target: "script", "Error calling on_created for entity {:?}: {}", entity, e);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Call update for all active scripts.
-    fn call_update(
-        &mut self,
-        world_id: WorldId,
-        world: &mut World,
-        dt: f64,
-        editor_mode: bool,
-    ) -> Result<(), LuaScriptingError> {
-        let entities: Vec<Entity> = self
-            .instances
-            .get(&world_id)
-            .map(|map| map.keys().copied().collect())
-            .unwrap_or_default();
-
-        for entity in entities {
-            // Check if entity still exists and has the component
-            let script_mode = match world.get::<&LuaScriptComponent>(entity) {
-                Ok(comp) => comp.script_mode(),
-                Err(_) => continue,
-            };
-
-            // Check if this script should run in the current mode
-            let should_run = match script_mode {
-                ScriptMode::RuntimeOnly => !editor_mode,
-                ScriptMode::EditorOnly => editor_mode,
-                ScriptMode::Both => true,
-            };
-
-            if !should_run {
-                continue;
-            }
-
-            if let Some(instance) = self
-                .instances
-                .get_mut(&world_id)
-                .and_then(|map| map.get_mut(&entity))
-            {
-                let commands = instance.command_buffer();
-                let event_queue = Rc::new(RefCell::new(Vec::new()));
-
-                let entity_bits_val = entity_bits(entity);
-
-                match instance.call_update(
-                    self.runtime.lua(),
-                    entity_bits_val,
-                    dt,
-                    commands.clone(),
-                    event_queue.clone(),
-                ) {
-                    Ok(FunctionCallOutcome::Executed) => {
-                        // Apply commands
-                        self.apply_commands(world, commands)?;
-
-                        // Process any emitted events
-                        let events = event_queue.borrow().clone();
-                        self.queue_events(world_id, world, events);
-                    }
-                    Ok(FunctionCallOutcome::Missing) => {
-                        // Script doesn't have update - that's okay
-                    }
-                    Err(e) => {
-                        error!(target: "script", "Error calling update for entity {:?}: {}", entity, e);
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process coroutines for all active script instances.
-    fn process_coroutines(
-        &mut self,
-        world_id: WorldId,
-        world: &mut World,
-        dt: f64,
-    ) -> Result<(), LuaScriptingError> {
-        let entities: Vec<Entity> = self
-            .instances
-            .get(&world_id)
-            .map(|map| map.keys().copied().collect())
-            .unwrap_or_default();
-
-        for entity in entities {
-            if let Some(instance) = self
-                .instances
-                .get_mut(&world_id)
-                .and_then(|map| map.get_mut(&entity))
-            {
-                let commands = instance.command_buffer();
-                let event_queue = Rc::new(RefCell::new(Vec::new()));
-
-                // Process coroutines for this instance
-                if let Err(e) = instance.process_coroutines(
-                    self.runtime.lua(),
-                    dt,
-                    commands.clone(),
-                    event_queue.clone(),
-                ) {
-                    error!(target: "script", "Error processing coroutines for entity {:?}: {}", entity, e);
-                    continue;
-                }
-
-                // Apply any commands generated by coroutines
-                if let Err(e) = self.apply_commands(world, commands) {
-                    error!(target: "script", "Error applying coroutine commands for entity {:?}: {}", entity, e);
-                }
-
-                // Process any events emitted by coroutines
-                let events = event_queue.borrow().clone();
-                self.queue_events(world_id, world, events);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Apply script commands to the world.
-    fn apply_commands(
-        &mut self,
-        world: &mut World,
-        commands: Rc<RefCell<ScriptCommands>>,
-    ) -> Result<(), LuaScriptingError> {
-        let result = commands.borrow_mut().apply(world)?;
-
-        // Store pending glTF imports
-        self.pending_gltf_imports.extend(result.gltf_imports);
-
-        // Update event subscriptions
-        for sub in result.event_subscriptions {
-            self.event_subscriptions
-                .entry(sub.event_name.clone())
-                .or_default()
-                .push(EventSubscription {
-                    entity_id: sub.entity,
-                    callback_name: sub.callback_name,
-                });
-        }
-
-        // Handle unsubscriptions
-        for unsub in result.event_unsubscriptions {
-            if let Some(subs) = self.event_subscriptions.get_mut(&unsub.event_name) {
-                subs.retain(|s| s.entity_id != unsub.entity);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Queue events for later dispatch.
-    fn queue_events(&mut self, world_id: WorldId, world: &mut World, events: Vec<ScriptEvent>) {
-        for event in events {
-            self.dispatch_event(world_id, world, event);
-        }
-    }
-
-    /// Dispatch a single event to all subscribers.
-    fn dispatch_event(&mut self, world_id: WorldId, world: &mut World, event: ScriptEvent) {
-        let subscribers = match self.event_subscriptions.get(&event.name) {
-            Some(subs) if !subs.is_empty() => subs.clone(),
-            _ => {
-                log::debug!(target: "script", "Event '{}' emitted but has no subscribers", event.name);
-                return;
-            }
-        };
-
-        log::debug!(
-            target: "script",
-            "Dispatching event '{}' to {} subscriber(s)",
-            event.name,
-            subscribers.len()
-        );
-
-        // Dispatch to each subscriber
-        for subscriber in subscribers {
-            if let Err(e) = self.call_event_callback(
-                world_id,
-                world,
-                subscriber.entity_id,
-                &subscriber.callback_name,
-                &event.name,
-                &event.data,
-            ) {
-                log::error!(
-                    target: "script",
-                    "Error calling event callback '{}' on entity {:?}: {}",
-                    subscriber.callback_name,
-                    subscriber.entity_id,
-                    e
-                );
-            }
-        }
-    }
-
-    /// Call an event callback on a specific entity's script instance.
-    fn call_event_callback(
-        &mut self,
-        world_id: WorldId,
-        world: &mut World,
-        entity: Entity,
-        callback_name: &str,
-        event_name: &str,
-        event_data: &serde_json::Value,
-    ) -> Result<(), String> {
-        let instances = self.instances.get_mut(&world_id).ok_or_else(|| {
-            format!(
-                "No script instances found for world {:?} when dispatching event '{}'",
-                world_id, event_name
-            )
-        })?;
-
-        let (commands, event_queue, outcome) = {
-            let instance = instances.get_mut(&entity).ok_or_else(|| {
-                format!(
-                    "No script instance found for entity {:?} when dispatching event '{}'",
-                    entity, event_name
-                )
-            })?;
-
-            let commands = instance.command_buffer();
-            let event_queue = Rc::new(RefCell::new(Vec::new()));
-            let outcome = instance.call_event(
-                self.runtime.lua(),
-                entity_bits(entity),
-                callback_name,
-                event_data.clone(),
-                commands.clone(),
-                event_queue.clone(),
-            );
-
-            (commands, event_queue, outcome)
-        };
-
-        match outcome {
-            Ok(FunctionCallOutcome::Executed) => {
-                if let Err(e) = self.apply_commands(world, commands) {
-                    return Err(format!(
-                        "Error applying commands for event '{}' on entity {:?}: {}",
-                        event_name, entity, e
-                    ));
-                }
-
-                let events = event_queue.borrow().clone();
-                self.queue_events(world_id, world, events);
-            }
-            Ok(FunctionCallOutcome::Missing) => {
-                return Err(format!(
-                    "Callback function '{}' not found in script for entity {:?}",
-                    callback_name, entity
-                ));
-            }
-            Err(e) => {
-                return Err(format!(
-                    "Callback execution failed for '{}' on entity {:?}: {}",
-                    callback_name, entity, e
-                ));
-            }
-        }
-
-        log::debug!(
-            target: "script",
-            "Successfully called callback '{}' on entity {:?} (world {:?}) for event '{}'",
-            callback_name,
-            entity,
-            world_id,
-            event_name
-        );
-
-        Ok(())
-    }
-
-    /// Remove instances for entities that no longer have scripts.
-    fn cleanup_removed_scripts(&mut self, world_id: WorldId, world: &mut World) {
-        let (removed_instances, should_remove_world) = {
-            let Some(instances) = self.instances.get_mut(&world_id) else {
-                return;
-            };
-
-            let mut to_remove = Vec::new();
-
-            for entity in instances.keys() {
-                if world.get::<&LuaScriptComponent>(*entity).is_err() {
-                    to_remove.push(*entity);
-                }
-            }
-
-            let mut removed_instances = Vec::with_capacity(to_remove.len());
-
-            for entity in to_remove {
-                if let Some(instance) = instances.remove(&entity) {
-                    removed_instances.push((entity, instance));
-                }
-            }
-
-            (removed_instances, instances.is_empty())
-        };
-
-        for (entity, mut instance) in removed_instances {
-            let commands = instance.command_buffer();
-            let event_queue = Rc::new(RefCell::new(Vec::new()));
-            let entity_bits_val = entity_bits(entity);
-
-            match instance.call_on_destroyed(
-                self.runtime.lua(),
-                entity_bits_val,
-                commands.clone(),
-                event_queue.clone(),
-            ) {
-                Ok(FunctionCallOutcome::Executed) => {
-                    if let Err(e) = self.apply_commands(world, commands) {
-                        error!(target: "script", "Error applying on_destroyed commands for entity {:?}: {}", entity, e);
-                    }
-
-                    let events = event_queue.borrow().clone();
-                    self.queue_events(world_id, world, events);
-                }
-                Ok(FunctionCallOutcome::Missing) => {}
-                Err(e) => {
-                    error!(target: "script", "Error calling on_destroyed for entity {:?}: {}", entity, e);
-                }
-            }
-
-            self.remove_event_subscriptions(entity);
-
-            log::debug!(
-                target: "script",
-                "Removed script instance for entity {:?} (world {:?})",
-                entity,
-                world_id
-            );
-        }
-
-        if should_remove_world {
-            self.instances.remove(&world_id);
-        }
-    }
-
-    fn remove_event_subscriptions(&mut self, entity: Entity) {
-        for subscriptions in self.event_subscriptions.values_mut() {
-            subscriptions.retain(|subscription| subscription.entity_id != entity);
-        }
-
-        self.event_subscriptions
-            .retain(|_, subscriptions| !subscriptions.is_empty());
-    }
-
     /// Get pending glTF imports and clear the list.
     pub fn take_pending_gltf_imports(&mut self) -> Vec<PendingGltfImport> {
-        std::mem::take(&mut self.pending_gltf_imports)
+        std::mem::take(&mut self.outputs.pending_gltf_imports)
     }
 
-    /// Call on_ui() for all scripts and collect their UI commands.
+    /// Call `on_ui()` for all scripts and collect their UI commands.
     ///
-    /// Returns a map of Entity -> Vec<UiCommand> for scripts that implemented on_ui().
+    /// Returns a map of entity to recorded UI commands for scripts that implement
+    /// `on_ui()`. Commands and events that `on_ui` produces are applied on the next
+    /// [`Self::process_scripts`].
     ///
-    /// # Parameters
-    /// - `viewport_width`: Optional viewport width in logical points
-    /// - `viewport_height`: Optional viewport height in logical points
-    /// - `pixels_per_point`: Optional DPI scaling factor
+    /// `default_viewport` is used unless `per_entity_viewports` has an entry for the
+    /// entity.
     pub fn process_ui(
         &mut self,
         world: &World,
         editor_mode: bool,
-        viewport_width: Option<f32>,
-        viewport_height: Option<f32>,
-        pixels_per_point: Option<f32>,
-        per_entity_viewports: Option<&HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<super::api::ui::UiCommand>> {
-        use super::api::ui::UiContext;
-        use super::guards::WorldGuard;
-
-        log::debug!(target: "script_ui", "Lua process_ui called with editor_mode={}", editor_mode);
-
-        let world_id = scene::world_id(world);
-
+        default_viewport: Option<UiViewportInfo>,
+        per_entity_viewports: Option<&HashMap<Entity, UiViewportInfo>>,
+    ) -> HashMap<Entity, Vec<UiCommand>> {
         let mut ui_commands = HashMap::new();
-        let event_queue = Rc::new(RefCell::new(Vec::new()));
-
-        // Set up guard for World access
+        let lua = self.runtime.lua();
         let _world_guard = WorldGuard::enter(world);
 
-        let mut query = world.query::<&LuaScriptComponent>();
-        for (entity, component) in query.iter() {
-            if !component.created_called() {
-                log::debug!(target: "script_ui", "Skipping entity {:?} - created not called", entity);
+        let mut entities: Vec<Entity> = world
+            .query::<&LuaScriptComponent>()
+            .iter()
+            .filter(|(entity, component)| {
+                runs_in_mode(component.script_mode(), editor_mode)
+                    && self
+                        .slots
+                        .get(entity)
+                        .is_some_and(|slot| slot.created && slot.binding == component.binding())
+            })
+            .map(|(entity, _)| entity)
+            .collect();
+        entities.sort_unstable_by_key(|entity| entity.to_bits());
+
+        for entity in entities {
+            let Some(slot) = self.slots.get_mut(&entity) else {
                 continue;
-            }
-
-            // Filter UI scripts based on mode:
-            // - EditorOnly (@editor): UI only in editor mode
-            // - RuntimeOnly (no annotation): UI only in play mode
-            // - Both (@tool): UI in both modes
-            let script_mode = component.script_mode();
-            log::debug!(target: "script_ui", "Entity {:?} script_mode={:?}, editor_mode={}",
-                entity, script_mode, editor_mode);
-
-            if editor_mode {
-                // In editor mode - skip RuntimeOnly scripts
-                if script_mode == ScriptMode::RuntimeOnly {
-                    log::debug!(target: "script_ui", "Skipping RuntimeOnly script in editor mode");
-                    continue;
-                }
-            } else {
-                // In play mode - skip EditorOnly scripts
-                if script_mode == ScriptMode::EditorOnly {
-                    log::debug!(target: "script_ui", "Skipping EditorOnly script in play mode");
-                    continue;
-                }
-            }
-
-            // Get the script instance
-            let instance = match self
-                .instances
-                .get_mut(&world_id)
-                .and_then(|map| map.get_mut(&entity))
-            {
-                Some(inst) => inst,
-                None => {
-                    log::debug!(target: "script_ui", "No instance found for entity {:?}", entity);
-                    continue;
-                }
+            };
+            let Some(instance) = slot.instance.as_mut() else {
+                continue;
             };
 
-            // Create a UI context for this script
-            let ui_context = if let Some(map) = per_entity_viewports {
-                if let Some((width, height, ppp)) = map.get(&entity) {
-                    UiContext::new_with_viewport_info(*width, *height, *ppp)
-                } else if let (Some(width), Some(height), Some(ppp)) =
-                    (viewport_width, viewport_height, pixels_per_point)
-                {
-                    UiContext::new_with_viewport_info(width, height, ppp)
-                } else {
-                    UiContext::new()
-                }
-            } else if let (Some(width), Some(height), Some(ppp)) =
-                (viewport_width, viewport_height, pixels_per_point)
-            {
-                UiContext::new_with_viewport_info(width, height, ppp)
-            } else {
-                UiContext::new()
+            let viewport = per_entity_viewports
+                .and_then(|map| map.get(&entity).copied())
+                .or(default_viewport);
+            let ui_context = match viewport {
+                Some((width, height, ppp)) => UiContext::new_with_viewport_info(width, height, ppp),
+                None => UiContext::new(),
             };
-
-            // Set responses from the previous frame
-            if let Some(responses) = self
-                .ui_responses
-                .get(&world_id)
-                .and_then(|map| map.get(&entity))
-            {
+            if let Some(responses) = self.ui_responses.get(&entity) {
                 ui_context.set_responses(responses.clone());
             }
 
-            let commands = instance.command_buffer();
+            let userdata = match lua.create_userdata(ui_context.clone()) {
+                Ok(userdata) => mlua::Value::UserData(userdata),
+                Err(err) => {
+                    slot.report(entity, "on_ui", err);
+                    continue;
+                }
+            };
 
-            // Call the on_ui function (if it exists)
-            let lua_context = mlua::Value::UserData(
-                self.runtime
-                    .lua()
-                    .create_userdata(ui_context.clone())
-                    .expect("Failed to create UI context"),
+            let commands = instance.command_buffer();
+            let events = Rc::new(RefCell::new(Vec::new()));
+            let result = instance.call_on_ui(
+                lua,
+                entity_bits(entity),
+                userdata,
+                commands.clone(),
+                events.clone(),
             );
 
-            match instance.call_on_ui(
-                self.runtime.lua(),
-                entity_bits(entity),
-                lua_context,
-                commands,
-                event_queue.clone(),
-            ) {
+            if !commands.borrow().is_empty() {
+                self.deferred_ui_commands.push((entity, commands));
+            }
+            self.outputs.pending_events.extend(events.take());
+
+            match result {
                 Ok(FunctionCallOutcome::Executed) => {
-                    // Collect the UI commands from the context
+                    slot.clear_error("on_ui");
                     let cmds = ui_context.take_commands();
                     if !cmds.is_empty() {
                         ui_commands.insert(entity, cmds);
                     }
                 }
-                Ok(FunctionCallOutcome::Missing) => {
-                    // Script doesn't have on_ui() - that's fine
-                }
-                Err(e) => {
-                    error!(target: "script", "Error calling on_ui for entity {:?}: {}", entity, e);
-                }
+                Ok(FunctionCallOutcome::Missing) => {}
+                Err(err) => slot.report(entity, "on_ui", err),
             }
         }
 
         ui_commands
     }
 
-    /// Set UI responses for scripts. This should be called after rendering UI
-    /// so that the next frame can access the responses.
-    pub fn set_ui_responses(
-        &mut self,
-        world_id: WorldId,
-        responses: HashMap<Entity, HashMap<String, super::api::ui::UiResponse>>,
-    ) {
-        if responses.is_empty() {
-            self.ui_responses.remove(&world_id);
-        } else {
-            self.ui_responses.insert(world_id, responses);
-        }
+    /// Set the UI responses scripts will see during the next [`Self::process_ui`].
+    ///
+    /// Call this every frame after rendering script UI, even when `responses` is
+    /// empty, so stale clicks are not replayed.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, UiResponse>>) {
+        self.ui_responses = responses;
     }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 impl Default for ScriptingState {
@@ -768,13 +685,45 @@ impl Default for ScriptingState {
 }
 
 #[cfg(test)]
+impl ScriptingState {
+    /// Read a global from the script environment attached to `entity`.
+    pub(crate) fn script_global(
+        &self,
+        _world: &World,
+        entity: Entity,
+        name: &str,
+    ) -> Option<mlua::Value> {
+        let instance = self.slots.get(&entity)?.instance.as_ref()?;
+        let env: mlua::Table = self
+            .runtime
+            .lua()
+            .registry_value(&instance.env_registry_key)
+            .ok()?;
+        env.get(name).ok()
+    }
+
+    pub(crate) fn has_subscriptions(&self) -> bool {
+        !self.outputs.event_subscriptions.is_empty()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::ScriptingState;
-    use crate::scene;
     use crate::scripting::lua::component::LuaScriptComponent;
     use crate::scripting::lua::types::LuaScriptSource;
     use hecs::World;
     use mlua::Value as LuaValue;
+
+    fn payload_value(state: &ScriptingState, world: &World, entity: hecs::Entity) -> i64 {
+        let payload = state
+            .script_global(world, entity, "last_payload")
+            .expect("Missing payload");
+        let LuaValue::Table(table) = payload else {
+            panic!("Expected payload to be a table");
+        };
+        table.get("value").expect("Missing payload value")
+    }
 
     #[test]
     fn event_callback_receives_payload_only() {
@@ -804,23 +753,7 @@ mod tests {
             .process_scripts(&mut world, 0.016, false)
             .expect("Script processing failed");
 
-        let world_id = scene::world_id(&world);
-        let instance = state
-            .instances
-            .get(&world_id)
-            .and_then(|instances| instances.get(&entity))
-            .expect("Missing script instance");
-
-        let lua = state.runtime().lua();
-        let env: mlua::Table = lua
-            .registry_value(&instance.env_registry_key)
-            .expect("Missing environment table");
-
-        let payload: LuaValue = env.get("last_payload").expect("Missing payload");
-        let payload_table = payload.as_table().expect("Expected payload to be a table");
-        let value: i64 = payload_table.get("value").expect("Missing payload value");
-
-        assert_eq!(value, 42);
+        assert_eq!(payload_value(&state, &world, entity), 42);
     }
 
     #[test]
@@ -851,23 +784,7 @@ mod tests {
             .process_scripts(&mut world, 0.016, false)
             .expect("Script processing failed");
 
-        let world_id = scene::world_id(&world);
-        let instance = state
-            .instances
-            .get(&world_id)
-            .and_then(|instances| instances.get(&entity))
-            .expect("Missing script instance");
-
-        let lua = state.runtime().lua();
-        let env: mlua::Table = lua
-            .registry_value(&instance.env_registry_key)
-            .expect("Missing environment table");
-
-        let payload: LuaValue = env.get("last_payload").expect("Missing payload");
-        let payload_table = payload.as_table().expect("Expected payload to be a table");
-        let value: i64 = payload_table.get("value").expect("Missing payload value");
-
-        assert_eq!(value, 7);
+        assert_eq!(payload_value(&state, &world, entity), 7);
     }
 
     #[test]
@@ -893,10 +810,7 @@ mod tests {
             .process_scripts(&mut world, 0.016, false)
             .expect("Script processing failed");
 
-        assert!(state
-            .event_subscriptions
-            .values()
-            .any(|subs| subs.iter().any(|sub| sub.entity_id == entity)));
+        assert!(state.has_subscriptions());
 
         world
             .remove_one::<LuaScriptComponent>(entity)
@@ -906,6 +820,6 @@ mod tests {
             .process_scripts(&mut world, 0.016, false)
             .expect("Script processing failed");
 
-        assert!(state.event_subscriptions.is_empty());
+        assert!(!state.has_subscriptions());
     }
 }

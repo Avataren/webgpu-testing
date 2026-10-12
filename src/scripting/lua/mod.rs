@@ -132,12 +132,15 @@ pub mod types;
 
 #[cfg(test)]
 mod integration_tests;
+#[cfg(test)]
+mod regression_tests;
 
 // Public exports
 pub use commands::PendingGltfImport;
 pub use component::{FunctionCallOutcome, LuaScriptComponent};
 pub use error::LuaScriptingError;
+pub use guards::InputStateGuard;
 pub use plugin::LuaScriptingPlugin;
 pub use runtime::LuaScriptingRuntime;
-pub use state::ScriptingState;
+pub use state::{ScriptingState, UiViewportInfo};
 pub use types::{LuaScriptSource, ScriptMode};

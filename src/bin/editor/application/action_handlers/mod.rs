@@ -23,9 +23,9 @@ use crate::application::EditorApplication;
 use wgpu_cube::scene::SceneWorkspaceSceneMut;
 
 /// Context passed to action handlers
-pub struct ActionContext<'scene, 'app> {
-    pub scene: &'scene mut SceneWorkspaceSceneMut<'scene>,
-    pub app: &'app mut EditorApplication,
+pub struct ActionContext<'a, 'w> {
+    pub scene: &'a mut SceneWorkspaceSceneMut<'w>,
+    pub app: &'a mut EditorApplication,
 }
 
 /// Result from an action handler indicating what changed

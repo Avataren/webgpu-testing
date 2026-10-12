@@ -1,3 +1,5 @@
+use crate::scripting::lua::api::ui::{UiCommand, UiResponse};
+use crate::scripting::lua::state::UiViewportInfo;
 use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use hecs::{Entity, World};
@@ -52,20 +54,9 @@ impl SceneRuntime {
         &mut self.scripting
     }
 
-    pub(crate) fn reset_script_runtime(&mut self, world: &mut World) {
-        // Extract all state before reset for Lua scripts
-        let saved_state = self.scripting.extract_state_for_world(world);
-
-        {
-            use crate::scripting::LuaScriptComponent;
-            let mut query = world.query::<&mut LuaScriptComponent>();
-            for (_, component) in query.iter() {
-                component.set_created_called(false);
-            }
-        }
-
+    /// Recompile all scripts and re-run `on_created`, preserving script state.
+    pub(crate) fn reset_script_runtime(&mut self) {
         self.scripting.reset_runtime();
-        self.scripting.restore_state(world, saved_state);
     }
 
     pub(crate) fn advance_time(&mut self, dt: f64) -> f64 {
@@ -85,29 +76,18 @@ impl SceneRuntime {
         &mut self,
         world: &World,
         editor_mode: bool,
-        viewport_width: Option<f32>,
-        viewport_height: Option<f32>,
-        pixels_per_point: Option<f32>,
-        per_entity_viewports: Option<&HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
-        // Collect Lua UI commands
-        self.scripting.process_ui(
-            world,
-            editor_mode,
-            viewport_width,
-            viewport_height,
-            pixels_per_point,
-            per_entity_viewports,
-        )
+        viewport: Option<UiViewportInfo>,
+    ) -> HashMap<Entity, Vec<UiCommand>> {
+        self.scripting
+            .process_ui(world, editor_mode, viewport, None)
     }
 
     /// Set UI responses from the previous frame to feed back to scripts.
-    pub(crate) fn set_ui_responses_for_world(
+    pub(crate) fn set_ui_responses(
         &mut self,
-        world_id: usize,
-        responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
+        responses: HashMap<Entity, HashMap<String, UiResponse>>,
     ) {
-        self.scripting.set_ui_responses(world_id, responses);
+        self.scripting.set_ui_responses(responses);
     }
 }
 

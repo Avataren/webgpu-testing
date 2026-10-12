@@ -35,8 +35,8 @@ use wgpu_cube::scene::SceneWorkspaceSceneMut;
 /// This function routes each action to its specific handler function.
 /// Handlers are organized by concern (transform, camera, lights, etc.)
 /// and return ActionResult indicating what changed.
-pub fn dispatch_action<'a>(
-    scene: &'a mut SceneWorkspaceSceneMut<'a>,
+pub fn dispatch_action(
+    scene: &mut SceneWorkspaceSceneMut<'_>,
     app: &mut EditorApplication,
     action: InspectorAction,
 ) -> ActionResult {

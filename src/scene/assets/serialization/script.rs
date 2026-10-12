@@ -34,6 +34,9 @@ impl From<SerializedLuaScriptSource> for LuaScriptSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedLuaScript {
     pub source: SerializedLuaScriptSource,
+    /// Legacy runtime flag from older save files. It is ignored on load: whether
+    /// `on_created` has run is runtime state, so a loaded script always starts fresh.
+    #[serde(default, skip_serializing)]
     pub created_called: bool,
 }
 
@@ -41,16 +44,14 @@ impl From<&LuaScriptComponent> for SerializedLuaScript {
     fn from(component: &LuaScriptComponent) -> Self {
         Self {
             source: SerializedLuaScriptSource::from(component.source()),
-            created_called: component.created_called(),
+            created_called: false,
         }
     }
 }
 
 impl SerializedLuaScript {
     pub(crate) fn into_component(self) -> LuaScriptComponent {
-        let mut component = LuaScriptComponent::new(self.source.into());
-        component.set_created_called(self.created_called);
-        component
+        LuaScriptComponent::new(self.source.into())
     }
 }
 

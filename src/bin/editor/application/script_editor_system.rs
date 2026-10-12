@@ -93,7 +93,6 @@ impl ScriptEditorSystem {
             return;
         }
 
-        let mut reload_runtime = false;
         let mut notifications = Vec::new();
 
         for action in actions {
@@ -126,24 +125,24 @@ impl ScriptEditorSystem {
                         self.notify_error(entity, message);
                     }
 
+                    // Replacing the component recompiles just this script.
                     if updated {
-                        reload_runtime = true;
                         notifications.push((entity, message));
                         app.record_scene_change(scene);
                     }
                 }
                 PendingScriptAction::ReloadRuntime { entity, message } => {
-                    reload_runtime = true;
-                    notifications.push((entity, message));
+                    if scene.reload_entity_script(entity) {
+                        notifications.push((entity, message));
+                    } else {
+                        self.notify_error(entity, "Script is not loaded");
+                    }
                 }
             }
         }
 
-        if reload_runtime {
-            scene.reset_script_runtime();
-            for (entity, message) in notifications {
-                self.notify_saved(entity, message);
-            }
+        for (entity, message) in notifications {
+            self.notify_saved(entity, message);
         }
     }
 }

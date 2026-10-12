@@ -60,6 +60,17 @@ impl LuaScriptSource {
         Self::File { path: path.into() }
     }
 
+    /// Short human-readable name used in logs and editor UI.
+    pub fn display_name(&self) -> String {
+        match self {
+            Self::Inline { name, .. } => name.clone(),
+            Self::File { path } => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+
     pub(crate) fn load(
         &self,
         script_root: Option<&Path>,
@@ -279,7 +290,7 @@ impl CoroutineState {
     }
 
     /// Check if this coroutine is ready to resume based on its wait state.
-    pub fn is_ready(&self, _dt: f64) -> bool {
+    pub fn is_ready(&self) -> bool {
         match self.wait_state {
             WaitState::None => true,
             WaitState::Seconds(duration) => self.accumulated_time >= duration,

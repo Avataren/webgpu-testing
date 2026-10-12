@@ -60,16 +60,8 @@ impl EditorApplication {
             snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
-        // NOTE: UI plugins are now in a separate world and persist across scene changes.
-        // No need to reload them after scene restore.
-        // Just re-initialize them to ensure they're in a good state.
-        if self.shared.ui_plugins_loaded {
-            if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-                info!("Re-initializing UI plugins after scene restore");
-                ctx.scene
-                    .run_scripts_for_world(manager.world_mut(), 0.0, true);
-            }
-        }
+        // UI plugins own their world and Lua runtime, so they are unaffected by the
+        // scene restore and keep their state.
 
         // Reinitialize editor state
         {
@@ -83,10 +75,6 @@ impl EditorApplication {
         selection.request_override(None);
 
         self.ensure_viewport_tab_for_mode(RuntimeMode::Editor);
-
-        // Ensure welcome screen stays hidden when returning to editor from play mode
-        // since a project is loaded
-        self.shared.welcome_plugin_override = Some(false);
 
         info!("Editor scene fully restored");
     }

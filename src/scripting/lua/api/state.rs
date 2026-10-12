@@ -30,7 +30,9 @@ use crate::scripting::lua::guards::{with_active_entity, with_active_state};
 /// - `get_state(key, default)` - Retrieve with default fallback
 /// - `try_get_state(key)` - Return nil if not found
 /// - `set_f64(key, number)` - Optimized number storage
-/// - `get_f64(key)` - Retrieve number (panics if missing)
+/// - `get_f64(key, default)` - Retrieve number (errors if missing and no default)
+/// - `set_i32(key, integer)` - Store integer
+/// - `get_i32(key, default)` - Retrieve integer with default
 /// - `set_bool(key, boolean)` - Store boolean
 /// - `get_bool(key, default)` - Retrieve boolean with default
 /// - `set_string(key, string)` - Store string
@@ -53,7 +55,7 @@ use crate::scripting::lua::guards::{with_active_entity, with_active_state};
 /// set_state("config", {x = 10, y = 20})
 ///
 /// -- Retrieve with defaults
-/// local speed = get_f64("speed")
+/// local speed = get_f64("speed", 1.0)
 /// local enabled = get_bool("enabled", false)
 /// local config = get_state("config", {x = 0, y = 0})
 ///
@@ -146,28 +148,55 @@ pub(crate) fn register_state_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
-    // get_f64(key: string) -> number
+    // get_f64(key: string, default?: number) -> number
+    // Returns `default` when the key is missing or not a number; errors if no default.
     globals.set(
         "get_f64",
-        lua.create_function(|_lua, key: String| {
+        lua.create_function(|_lua, (key, default): (String, Option<f64>)| {
+            let stored = with_active_entity(|entity| {
+                with_active_state(|state| {
+                    Ok(state
+                        .get(&(entity, key.clone()))
+                        .map(serde_json::Value::as_f64))
+                })
+            })?;
+            match (stored, default) {
+                (Some(Some(value)), _) => Ok(value),
+                (_, Some(default)) => Ok(default),
+                (Some(None), None) => Err(mlua::Error::RuntimeError(format!(
+                    "State key '{key}' is not a number"
+                ))),
+                (None, None) => Err(mlua::Error::RuntimeError(format!(
+                    "State key not found: {key} (pass a default: get_f64(key, 0))"
+                ))),
+            }
+        })?,
+    )?;
+
+    // set_i32(key: string, value: integer)
+    globals.set(
+        "set_i32",
+        lua.create_function(|_lua, (key, value): (String, i32)| {
             with_active_entity(|entity| {
-                with_active_state(|state| match state.get(&(entity, key.clone())) {
-                    Some(serde_json::Value::Number(n)) => {
-                        if let Some(f) = n.as_f64() {
-                            Ok(f)
-                        } else {
-                            Err(mlua::Error::RuntimeError(
-                                "Value is not a number".to_string(),
-                            ))
-                        }
-                    }
-                    Some(_) => Err(mlua::Error::RuntimeError(
-                        "Value is not a number".to_string(),
-                    )),
-                    None => Err(mlua::Error::RuntimeError(format!(
-                        "State key not found: {}",
-                        key
-                    ))),
+                with_active_state(|state| {
+                    state.insert((entity, key), serde_json::Value::from(value));
+                    Ok(())
+                })
+            })
+        })?,
+    )?;
+
+    // get_i32(key: string, default: integer) -> integer
+    globals.set(
+        "get_i32",
+        lua.create_function(|_lua, (key, default): (String, i32)| {
+            with_active_entity(|entity| {
+                with_active_state(|state| {
+                    Ok(state
+                        .get(&(entity, key))
+                        .and_then(serde_json::Value::as_i64)
+                        .and_then(|value| i32::try_from(value).ok())
+                        .unwrap_or(default))
                 })
             })
         })?,

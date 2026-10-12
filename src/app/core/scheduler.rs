@@ -62,8 +62,13 @@ impl<'a> UpdateContext<'a> {
         self.close_scene_requests.push(document_id);
     }
 
-    pub fn request_rename_scene(&mut self, old_document_id: SceneDocumentId, new_document_id: SceneDocumentId) {
-        self.rename_scene_requests.push((old_document_id, new_document_id));
+    pub fn request_rename_scene(
+        &mut self,
+        old_document_id: SceneDocumentId,
+        new_document_id: SceneDocumentId,
+    ) {
+        self.rename_scene_requests
+            .push((old_document_id, new_document_id));
     }
 
     fn take_active_scene_request(&mut self) -> Option<SceneDocumentId> {
@@ -111,8 +116,13 @@ impl<'a> GpuUpdateContext<'a> {
         self.open_scene_requests.push((document_id, scene));
     }
 
-    pub fn request_rename_scene(&mut self, old_document_id: SceneDocumentId, new_document_id: SceneDocumentId) {
-        self.rename_scene_requests.push((old_document_id, new_document_id));
+    pub fn request_rename_scene(
+        &mut self,
+        old_document_id: SceneDocumentId,
+        new_document_id: SceneDocumentId,
+    ) {
+        self.rename_scene_requests
+            .push((old_document_id, new_document_id));
     }
 
     fn take_workspace_swap(&mut self) -> Option<WorkspaceSwapRequest> {
@@ -349,16 +359,17 @@ impl Scheduler {
     ) -> Option<SceneHandle> {
         let mut active_handle = handle;
 
-        if runtime == RuntimeMode::Playing {
-            if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
-                scene.update(dt);
-            } else {
-                log::warn!(
-                    "Update skipped: active scene handle {:?} is unavailable",
-                    active_handle
-                );
-                return None;
+        if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
+            match runtime {
+                RuntimeMode::Playing => scene.update(dt),
+                RuntimeMode::Editor => scene.run_editor_scripts(dt),
             }
+        } else {
+            log::warn!(
+                "Update skipped: active scene handle {:?} is unavailable",
+                active_handle
+            );
+            return None;
         }
 
         for system in &mut self.update_systems {

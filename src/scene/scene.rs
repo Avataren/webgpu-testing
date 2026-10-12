@@ -19,7 +19,9 @@ use crate::scene::components::{
 };
 use crate::scene::transform::Transform;
 use crate::scene::{Camera, InputState};
+use crate::scripting::lua::api::ui::{UiCommand, UiResponse};
 use crate::scripting::lua::guards::InputStateGuard;
+use crate::scripting::lua::state::UiViewportInfo;
 use crate::scripting::ScriptingState;
 use crate::time::Instant;
 use glam::Vec3;
@@ -140,78 +142,28 @@ impl Scene {
     /// Process UI for all scripts in the main scene and return their UI commands.
     ///
     /// This should be called during the UI phase to collect UI commands from scripts
-    /// that implement on_ui().
+    /// that implement on_ui(). `viewport` is `(width, height, pixels_per_point)` of the
+    /// area the UI is drawn into, in logical points.
     pub fn process_script_ui(
         &mut self,
         editor_mode: bool,
-        viewport_width: Option<f32>,
-        viewport_height: Option<f32>,
-        pixels_per_point: Option<f32>,
-        per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
+        viewport: Option<UiViewportInfo>,
+    ) -> HashMap<Entity, Vec<UiCommand>> {
         let _input_guard = InputStateGuard::enter(&self.input_state);
-        if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
-            let world = main_node.instance().world();
-            self.runtime.process_script_ui(
-                world,
-                editor_mode,
-                viewport_width,
-                viewport_height,
-                pixels_per_point,
-                per_entity_viewports,
-            )
-        } else {
-            HashMap::new()
+        match self.nodes.get(self.main_scene) {
+            Some(main_node) => {
+                let world = main_node.instance().world();
+                self.runtime.process_script_ui(world, editor_mode, viewport)
+            }
+            None => HashMap::new(),
         }
     }
 
-    /// Process UI for scripts in a custom world (e.g., UI plugins).
+    /// Feed widget responses from the last UI pass back to scene scripts.
     ///
-    /// This allows processing scripts that are not part of the main scene,
-    /// such as editor UI plugins managed separately.
-    pub fn process_script_ui_for_world(
-        &mut self,
-        world: &World,
-        editor_mode: bool,
-        viewport_width: Option<f32>,
-        viewport_height: Option<f32>,
-        pixels_per_point: Option<f32>,
-        per_entity_viewports: Option<&std::collections::HashMap<Entity, (f32, f32, f32)>>,
-    ) -> HashMap<Entity, Vec<crate::scripting::lua::api::ui::UiCommand>> {
-        let _input_guard = InputStateGuard::enter(&self.input_state);
-        self.runtime.process_script_ui(
-            world,
-            editor_mode,
-            viewport_width,
-            viewport_height,
-            pixels_per_point,
-            per_entity_viewports,
-        )
-    }
-
-    /// Run scripts in a custom world (e.g., UI plugins).
-    ///
-    /// This executes update logic for scripts that are not part of the main scene.
-    pub fn run_scripts_for_world(&mut self, world: &mut World, dt: f64, editor_mode: bool) {
-        let _input_guard = InputStateGuard::enter(&self.input_state);
-        self.runtime.run_scripts(world, dt, editor_mode);
-    }
-
-    pub fn set_ui_responses(
-        &mut self,
-        responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
-    ) {
-        let world_id = crate::scene::world_id(self.main_world());
-        self.runtime.set_ui_responses_for_world(world_id, responses);
-    }
-
-    /// Set UI responses for a specific world (e.g., plugin worlds).
-    pub fn set_ui_responses_for_world_id(
-        &mut self,
-        world_id: usize,
-        responses: HashMap<Entity, HashMap<String, crate::scripting::lua::api::ui::UiResponse>>,
-    ) {
-        self.runtime.set_ui_responses_for_world(world_id, responses);
+    /// Call once per frame after rendering script UI, even with an empty map.
+    pub fn set_ui_responses(&mut self, responses: HashMap<Entity, HashMap<String, UiResponse>>) {
+        self.runtime.set_ui_responses(responses);
     }
 
     pub fn transform_gizmo_mode(&self) -> TransformGizmoMode {
@@ -416,9 +368,19 @@ impl Scene {
     }
 
     pub fn reset_script_runtime(&mut self) {
-        let mut runtime = std::mem::take(&mut self.runtime);
-        runtime.reset_script_runtime(self.main_world_mut());
-        self.runtime = runtime;
+        self.runtime.reset_script_runtime();
+    }
+
+    /// Recompile the script attached to `entity`, keeping its state.
+    pub fn reload_entity_script(&mut self, entity: Entity) -> bool {
+        self.runtime.scripting_mut().reload_entity(entity)
+    }
+
+    /// Hot-reload scene scripts loaded from `path`, keeping their state.
+    ///
+    /// Returns how many scripts were scheduled for reload.
+    pub fn reload_script_path(&mut self, path: &std::path::Path) -> usize {
+        self.runtime.scripting_mut().reload_path(path)
     }
 
     pub fn set_animation_playback(&mut self, playing: bool) {
@@ -718,6 +680,18 @@ impl Scene {
         self.update_with_mode(dt, editor_mode);
     }
 
+    /// Run `@editor` and `@tool` scripts for one editor frame.
+    ///
+    /// Unlike [`Self::update`], this does not advance scene time or animations; it only
+    /// gives editor-mode scripts their `update(self_entity, dt)` tick.
+    pub fn run_editor_scripts(&mut self, dt: f64) {
+        if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
+            let world = main_node.instance_mut().world_mut();
+            let _input_guard = InputStateGuard::enter(&self.input_state);
+            self.runtime.run_scripts(world, dt, true);
+        }
+    }
+
     pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);
@@ -733,7 +707,7 @@ impl Scene {
             let _input_guard = InputStateGuard::enter(&self.input_state);
             self.runtime.run_scripts(world, dt, editor_mode);
         } else {
-            error!("Rune scripting error: main scene node is missing");
+            error!("Cannot run scripts: main scene node is missing");
         }
     }
 
@@ -1272,7 +1246,7 @@ mod tests {
     };
     use super::*;
     use crate::scene::SceneSnapshot;
-    use crate::scripting::{LuaScriptComponent, LuaScriptSource};
+    use crate::scripting::LuaScriptSource;
     use glam::{Quat, Vec3};
 
     #[test]
@@ -1529,14 +1503,6 @@ mod tests {
         scene.set_time(0.0);
         scene.update(0.0);
         scene.update(0.016);
-
-        {
-            let world = scene.main_world();
-            let mut query = world.query::<&LuaScriptComponent>();
-            for (_, component) in query.iter() {
-                assert!(component.created_called(), "on_created was not re-run");
-            }
-        }
 
         let mut rotated_again = false;
         {

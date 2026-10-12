@@ -13,7 +13,6 @@ use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
 };
-use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
@@ -124,6 +123,8 @@ pub struct EditorSharedState {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) script_watcher: Option<ScriptWatcher>,
     /// UI commands from scene scripts collected during gpu_update
+    /// Window titles for scene scripts that produced UI this frame.
+    pub(super) script_ui_titles: HashMap<Entity, String>,
     pub(super) script_ui_commands:
         std::collections::HashMap<Entity, Vec<wgpu_cube::scripting::lua::api::ui::UiCommand>>,
     /// UI commands from plugin scripts collected during gpu_update
@@ -394,6 +395,7 @@ impl EditorApplicationBuilder {
             shader_watcher: None,
             #[cfg(not(target_arch = "wasm32"))]
             script_watcher: None,
+            script_ui_titles: HashMap::new(),
             script_ui_commands: std::collections::HashMap::new(),
             plugin_ui_commands: std::collections::HashMap::new(),
             script_ui_responses: std::collections::HashMap::new(),
@@ -674,35 +676,6 @@ impl EditorApplication {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn canonicalize_script_path(path: &Path) -> Option<PathBuf> {
-        let canonical = match path.canonicalize() {
-            Ok(path) => path,
-            Err(err) => {
-                log::warn!("Failed to canonicalize script path {:?}: {}", path, err);
-                return None;
-            }
-        };
-
-        Some(normalize_absolute_path(canonical))
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn collect_scene_script_paths(world: &hecs::World) -> HashMap<PathBuf, Vec<Entity>> {
-        let mut scripts = HashMap::new();
-        for (entity, component) in world.query::<&LuaScriptComponent>().iter() {
-            if let LuaScriptSource::File { path } = component.source() {
-                if let Some(canonical) = Self::canonicalize_script_path(path) {
-                    scripts
-                        .entry(canonical)
-                        .or_insert_with(Vec::new)
-                        .push(entity);
-                }
-            }
-        }
-        scripts
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn reload_shader_materials_from_path(
         &mut self,
         ctx: &mut GpuUpdateContext,
@@ -774,70 +747,48 @@ impl EditorApplication {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn process_script_file_changes(&mut self, ctx: &mut GpuUpdateContext) {
-        // Get script directories to watch
-        let script_dirs = vec![PathBuf::from("examples/scripts"), PathBuf::from("scripts")];
+        // Built-in plugin scripts plus the open project's own scripts.
+        let mut script_dirs = vec![PathBuf::from("examples/scripts"), PathBuf::from("scripts")];
+        script_dirs.extend(self.project_system().content_root());
 
         let Some(watcher) = self.shared.script_watcher.as_mut() else {
             return;
         };
 
-        // Watch the directories
         if let Err(err) = watcher.watch_roots(&script_dirs) {
             log::warn!("Failed to watch script directories: {}", err);
             return;
         }
 
-        // Poll for changed files
-        let changed_paths = watcher.poll();
-        if changed_paths.is_empty() {
-            return;
-        }
-
-        let script_paths = Self::collect_scene_script_paths(ctx.scene.main_world());
-        let mut should_reload_scene_scripts = false;
-
-        // Process each changed script file
-        for path in changed_paths {
+        for path in watcher.poll() {
             log::info!("Script file changed: {:?}", path);
 
-            // Find the entity associated with this script path
-            let Some(manager) = self.shared.ui_plugin_manager.as_ref() else {
-                continue;
-            };
-
-            if let Some((entity, metadata)) = manager.find_entity_by_path(&path) {
-                log::info!(
-                    "Queuing reload for plugin '{}' (entity {:?})",
-                    metadata.name,
-                    entity
-                );
-
-                // Queue reload command
+            let plugin = self
+                .shared
+                .ui_plugin_manager
+                .as_ref()
+                .and_then(|manager| manager.find_entity_by_path(&path));
+            if let Some((entity, metadata)) = plugin {
+                log::info!("Queuing reload for plugin '{}'", metadata.name);
                 self.shared.commands.push_back(EditorCommand::ReloadPlugin {
                     entity,
                     path: path.clone(),
                 });
-            } else {
-                log::debug!(
-                    "Changed script {:?} not associated with any loaded plugin",
-                    path
-                );
             }
 
-            if let Some(canonical_changed) = Self::canonicalize_script_path(&path) {
-                if let Some(entities) = script_paths.get(&canonical_changed) {
-                    should_reload_scene_scripts = true;
-                    log::info!(
-                        "Detected script change for {} scene entity(ies) at {:?}",
-                        entities.len(),
-                        canonical_changed
-                    );
-                }
+            let reloaded = ctx.scene.reload_script_path(&path);
+            if reloaded > 0 {
+                log::info!("Hot-reloaded {reloaded} scene script(s) from {:?}", path);
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::success(format!(
+                        "Reloaded {}",
+                        path.file_name().map_or_else(
+                            || path.display().to_string(),
+                            |name| { name.to_string_lossy().into_owned() }
+                        )
+                    )));
             }
-        }
-
-        if should_reload_scene_scripts {
-            ctx.scene.reset_script_runtime();
         }
     }
 
@@ -907,7 +858,7 @@ impl EditorApplication {
         }
 
         if !pending_plugin_reloads.is_empty() {
-            self.process_pending_plugin_reloads(ctx, pending_plugin_reloads);
+            self.process_pending_plugin_reloads(pending_plugin_reloads);
         }
 
         if !pending_project_loads.is_empty() {
@@ -977,11 +928,7 @@ impl EditorApplication {
             .process_pending_imports(&mut editor_ctx, pending);
     }
 
-    pub(super) fn process_pending_plugin_reloads(
-        &mut self,
-        ctx: &mut UpdateContext,
-        pending: Vec<(Entity, PathBuf)>,
-    ) {
+    pub(super) fn process_pending_plugin_reloads(&mut self, pending: Vec<(Entity, PathBuf)>) {
         if pending.is_empty() {
             return;
         }
@@ -1015,12 +962,6 @@ impl EditorApplication {
         }
 
         if reload_count > 0 {
-            // Reset the script runtime to recompile and re-initialize all scripts
-            ctx.scene.reset_script_runtime();
-
-            // Mark scene as changed
-            self.record_scene_change(&mut ctx.scene);
-
             // Add success notification
             if reload_count == 1 {
                 self.shared
@@ -1246,41 +1187,6 @@ impl EditorApplication {
                 }
             }
         }
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::EditorApplication;
-    use hecs::World;
-    use tempfile::tempdir;
-    use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
-
-    #[test]
-    fn collect_scene_script_paths_tracks_file_sources() {
-        let temp_dir = tempdir().expect("create temp dir");
-        let script_path = temp_dir.path().join("script.lua");
-        std::fs::write(&script_path, "function update() end").expect("write script file");
-
-        let mut world = World::new();
-        let entity_a = world.spawn((LuaScriptComponent::new(LuaScriptSource::File {
-            path: script_path.clone(),
-        }),));
-        let entity_b = world.spawn((LuaScriptComponent::new(LuaScriptSource::File {
-            path: script_path.clone(),
-        }),));
-        world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
-            "inline",
-            "function update() end",
-        )),));
-
-        let script_paths = EditorApplication::collect_scene_script_paths(&world);
-        let canonical = EditorApplication::canonicalize_script_path(&script_path)
-            .expect("canonicalize script path");
-        let entities = script_paths.get(&canonical).expect("script path in map");
-
-        assert!(entities.contains(&entity_a));
-        assert!(entities.contains(&entity_b));
     }
 }
 

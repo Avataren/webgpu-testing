@@ -45,6 +45,11 @@ impl LuaScriptingRuntime {
         self.script_root = Some(root.into());
     }
 
+    /// Base directory used to resolve relative script paths, if configured.
+    pub fn script_root(&self) -> Option<&std::path::Path> {
+        self.script_root.as_deref()
+    }
+
     /// Get a reference to the Lua VM for registering API functions.
     pub fn lua(&self) -> &Lua {
         &self.lua

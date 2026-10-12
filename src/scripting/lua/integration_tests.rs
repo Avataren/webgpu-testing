@@ -70,19 +70,6 @@ mod tests {
         Ok(())
     }
 
-    /// Test state extraction and restoration.
-    #[test]
-    fn test_state_extraction() -> Result<(), LuaScriptingError> {
-        let state = ScriptingState::new()?;
-        let world = World::new();
-
-        // Extract state from empty world
-        let extracted = state.extract_state_for_world(&world);
-        assert!(extracted.is_empty());
-
-        Ok(())
-    }
-
     /// Test multiple script sources.
     #[test]
     fn test_multiple_script_sources() {

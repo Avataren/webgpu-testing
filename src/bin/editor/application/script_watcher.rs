@@ -41,8 +41,7 @@ impl ScriptWatcher {
         })
     }
 
-    /// Ensures the watcher is monitoring the provided root directories.
-    /// Typically called with both "examples/scripts/" and "scripts/" (if exists).
+    /// Ensures the watcher is monitoring the provided root directories (recursively).
     pub(super) fn watch_roots(&mut self, roots: &[PathBuf]) -> notify::Result<()> {
         // Check if roots have changed
         if self.watched_roots.len() == roots.len()
@@ -62,7 +61,7 @@ impl ScriptWatcher {
         for root in roots {
             if root.exists() {
                 let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
-                match self.watcher.watch(&canonical, RecursiveMode::NonRecursive) {
+                match self.watcher.watch(&canonical, RecursiveMode::Recursive) {
                     Ok(_) => {
                         self.watched_roots.push(canonical);
                     }

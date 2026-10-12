@@ -1,7 +1,10 @@
 use super::runtime_state::SceneRuntime;
+use crate::scripting::lua::api::ui::{UiCommand, UiResponse};
+use crate::scripting::lua::state::UiViewportInfo;
 use crate::scripting::ScriptingState;
 use crate::time::Instant;
-use hecs::World;
+use hecs::{Entity, World};
+use std::collections::HashMap;
 
 /// Coordinates time-keeping and script execution for a [`Scene`](super::Scene).
 pub(crate) struct SceneRuntimeController {
@@ -27,8 +30,8 @@ impl SceneRuntimeController {
         self.runtime.init_timer();
     }
 
-    pub(crate) fn reset_script_runtime(&mut self, world: &mut World) {
-        self.runtime.reset_script_runtime(world);
+    pub(crate) fn reset_script_runtime(&mut self) {
+        self.runtime.reset_script_runtime();
     }
 
     pub(crate) fn time(&self) -> f64 {
@@ -63,31 +66,16 @@ impl SceneRuntimeController {
         &mut self,
         world: &World,
         editor_mode: bool,
-        viewport_width: Option<f32>,
-        viewport_height: Option<f32>,
-        pixels_per_point: Option<f32>,
-        per_entity_viewports: Option<&std::collections::HashMap<hecs::Entity, (f32, f32, f32)>>,
-    ) -> std::collections::HashMap<hecs::Entity, Vec<crate::scripting::lua::api::ui::UiCommand>>
-    {
-        self.runtime.process_script_ui(
-            world,
-            editor_mode,
-            viewport_width,
-            viewport_height,
-            pixels_per_point,
-            per_entity_viewports,
-        )
+        viewport: Option<UiViewportInfo>,
+    ) -> HashMap<Entity, Vec<UiCommand>> {
+        self.runtime.process_script_ui(world, editor_mode, viewport)
     }
 
-    pub(crate) fn set_ui_responses_for_world(
+    pub(crate) fn set_ui_responses(
         &mut self,
-        world_id: usize,
-        responses: std::collections::HashMap<
-            hecs::Entity,
-            std::collections::HashMap<String, crate::scripting::lua::api::ui::UiResponse>,
-        >,
+        responses: HashMap<Entity, HashMap<String, UiResponse>>,
     ) {
-        self.runtime.set_ui_responses_for_world(world_id, responses);
+        self.runtime.set_ui_responses(responses);
     }
 }
 

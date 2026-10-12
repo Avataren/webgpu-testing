@@ -633,7 +633,7 @@ mod native {
     use std::thread;
 
     use gltf::{buffer::Source as BufferSource, image::Source as ImageSource, Gltf};
-    use log::{error, info, warn};
+    use log::{info, warn};
     use thiserror::Error;
     use wgpu_cube::asset::MaterialTextureSlot;
     use wgpu_cube::io::percent_decode_uri;

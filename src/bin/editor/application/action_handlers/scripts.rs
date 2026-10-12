@@ -61,8 +61,7 @@ pub fn handle_change_script_source(
     };
 
     if updated {
-        // Reload the script runtime to pick up the new script
-        ctx.scene.reset_script_runtime();
+        // The new component is compiled on the next update.
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()

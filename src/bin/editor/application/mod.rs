@@ -34,7 +34,16 @@ use self::scene_tabs_panel::SceneTabAction;
 use crate::asset_browser::AssetBrowserState;
 use glam::{Quat, Vec3};
 use hecs::Entity;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Manifest name of the built-in welcome screen plugin.
+const WELCOME_SCREEN_PLUGIN: &str = "Welcome Screen";
+/// Manifest name of the built-in text editor plugin.
+const TEXT_EDITOR_PLUGIN: &str = "Text Editor";
+
+/// Widget responses for one script, keyed by widget id.
+type ScriptUiResponses = HashMap<String, UiResponse>;
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
@@ -53,6 +62,7 @@ use wgpu_cube::scene::{
     SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
 use wgpu_cube::scripting::lua::api::enqueue_text_editor_request;
+use wgpu_cube::scripting::lua::api::ui::{UiCommand, UiResponse};
 use wgpu_cube::scripting::LuaScriptingPlugin;
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
@@ -169,20 +179,9 @@ impl EditorApplication {
 
         // Load UI plugins on first update (no project required - welcome screen needs this)
         if !self.shared.ui_plugins_loaded {
+            // Plugin scripts are started by the regular per-frame update.
             Self::load_ui_plugins(&mut self.shared, &mut ctx.scene);
             self.shared.ui_plugins_loaded = true;
-
-            // Initialize the newly loaded plugin scripts by running them in the plugin world
-            // This ensures on_created() is called and script instances are created
-            let is_editor_mode =
-                matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor);
-            if is_editor_mode {
-                log::info!("Initializing UI plugin scripts in editor mode");
-                if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-                    ctx.scene
-                        .run_scripts_for_world(manager.world_mut(), 0.0, true);
-                }
-            }
         }
 
         self.process_pending_mode_transition(ctx);
@@ -266,70 +265,46 @@ impl EditorApplication {
         log::debug!(target: "editor_app", "Calling process_script_ui with editor_mode={}, runtime={:?}",
             editor_mode, ctx.runtime);
 
-        // Merge scene and plugin UI responses from the previous frame
-        // This is critical for widgets like text inputs to work properly
-        let scene_responses = self.shared.script_ui_responses.clone();
-        ctx.scene.set_ui_responses(scene_responses);
+        // Feed last frame's widget responses back to scripts. Always replace them,
+        // even when empty, so a click is only ever seen once.
+        ctx.scene
+            .set_ui_responses(std::mem::take(&mut self.shared.script_ui_responses));
 
-        if let Some(manager) = self.shared.ui_plugin_manager.as_ref() {
-            if !self.shared.plugin_ui_responses.is_empty() {
-                let plugin_world_id = manager.world_id();
-                ctx.scene.set_ui_responses_for_world_id(
-                    plugin_world_id,
-                    self.shared.plugin_ui_responses.clone(),
-                );
-            }
-        }
+        // Viewport information for in-game UI positioning
+        let viewport = self.shared.viewports.game_viewport.rect().map(|rect| {
+            (
+                rect.width(),
+                rect.height(),
+                self.shared.last_pixels_per_point.unwrap_or(1.0),
+            )
+        });
 
-        // Get viewport information for in-game UI positioning
-        let (viewport_width, viewport_height, pixels_per_point) =
-            if let Some(rect) = self.shared.viewports.game_viewport.rect() {
-                (
-                    Some(rect.width()),
-                    Some(rect.height()),
-                    self.shared.last_pixels_per_point,
-                )
-            } else {
-                (None, None, None)
-            };
+        self.shared.script_ui_commands = ctx.scene.process_script_ui(editor_mode, viewport);
+        self.shared.script_ui_titles = self
+            .shared
+            .script_ui_commands
+            .keys()
+            .map(|&entity| {
+                let title = ctx
+                    .scene
+                    .main_world()
+                    .get::<&wgpu_cube::scene::Name>(entity)
+                    .map(|name| name.0.clone())
+                    .unwrap_or_else(|_| format!("Entity {}", entity.id()));
+                (entity, title)
+            })
+            .collect();
 
-        // Process scene scripts
-        self.shared.script_ui_commands = ctx.scene.process_script_ui(
-            editor_mode,
-            viewport_width,
-            viewport_height,
-            pixels_per_point,
-            None,
-        );
-
-        // Process UI plugin scripts (from separate world)
-        // Keep them separate to avoid Entity ID collisions between worlds
-        if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            {
-                let world = manager.world_mut();
-                ctx.scene.run_scripts_for_world(world, 0.0, editor_mode);
-            }
-
-            self.shared.plugin_ui_commands = ctx.scene.process_script_ui_for_world(
-                manager.world(),
+        // UI plugins run in their own world and Lua runtime, independent of the scene.
+        if let Some(manager) = self.shared.ui_plugin_manager.as_mut() {
+            manager.set_ui_responses(std::mem::take(&mut self.shared.plugin_ui_responses));
+            manager.run_scripts(ctx.dt, editor_mode, ctx.scene.input_state());
+            self.shared.plugin_ui_commands = manager.process_ui(
                 editor_mode,
-                viewport_width,
-                viewport_height,
-                pixels_per_point,
-                Some(&self.shared.plugin_window_sizes),
+                viewport,
+                &self.shared.plugin_window_sizes,
+                ctx.scene.input_state(),
             );
-
-            if self.shared.plugin_ui_commands.is_empty() {
-                log::debug!(
-                    "No plugin UI commands collected from {} plugins (all scripts idle this frame)",
-                    manager.plugins().len()
-                );
-            } else {
-                log::debug!(
-                    "Collected UI commands from {} plugins",
-                    self.shared.plugin_ui_commands.len()
-                );
-            }
         } else {
             self.shared.plugin_ui_commands.clear();
         }
@@ -552,322 +527,289 @@ impl EditorApplication {
 impl EditorApplication {
     /// Render UI from scripts that implement on_ui()
     fn render_script_ui(&mut self, ctx: &egui::Context) {
-        use std::collections::HashMap;
-
         let project_loaded = self.project_system().controller().current_dir().is_some();
 
         self.apply_welcome_screen_visibility(project_loaded);
         let mut welcome_override = self.shared.welcome_plugin_override;
 
-        let mut plugin_responses: HashMap<
-            hecs::Entity,
-            HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
-        > = HashMap::new();
-        let mut scene_responses: HashMap<
-            hecs::Entity,
-            HashMap<String, wgpu_cube::scripting::lua::api::ui::UiResponse>,
-        > = HashMap::new();
-        let game_viewport_rect = self.shared.viewports.game_viewport.rect();
+        let welcome_screen_visible =
+            self.render_plugin_ui(ctx, project_loaded, &mut welcome_override);
 
-        // Render plugin manager window if we have plugins and it's open
-        if let Some(ref mut manager) = self.shared.ui_plugin_manager {
-            egui::Window::new("Plugin Manager")
-                .open(&mut self.shared.windows.plugin_manager)
-                .resizable(true)
-                .default_size([350.0, 500.0])
-                .show(ctx, |ui| {
-                    use ui_plugin_manager::PluginType;
-
-                    // Separate plugins by type
-                    let plugins = manager.plugins_mut();
-                    let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) = plugins
-                        .iter_mut()
-                        .partition(|p| p.metadata.plugin_type == PluginType::Editor);
-
-                    // Show Editor Plugins section
-                    ui.heading("Editor Plugins");
-                    ui.label(
-                        egui::RichText::new("Built-in editor functionality")
-                            .small()
-                            .italics(),
-                    );
-                    ui.separator();
-
-                    if editor_plugins.is_empty() {
-                        ui.label(egui::RichText::new("No editor plugins installed").weak());
-                    } else {
-                        for plugin in &mut editor_plugins {
-                            if !plugin.metadata.enabled {
-                                continue;
-                            }
-
-                            ui.horizontal(|ui| {
-                                let was_visible = plugin.visible;
-                                if ui
-                                    .checkbox(&mut plugin.visible, &plugin.metadata.name)
-                                    .changed()
-                                {
-                                    log::info!(
-                                        "Plugin '{}' visibility changed: {} -> {}",
-                                        plugin.metadata.name,
-                                        was_visible,
-                                        plugin.visible
-                                    );
-
-                                    if plugin.metadata.name == "Welcome Screen" {
-                                        let default_visible = !project_loaded;
-                                        if plugin.visible == default_visible {
-                                            welcome_override = None;
-                                        } else {
-                                            welcome_override = Some(plugin.visible);
-                                        }
-                                    }
-                                }
-                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
-                            });
-
-                            ui.label(
-                                egui::RichText::new(format!("  {}", plugin.metadata.description))
-                                    .small(),
-                            );
-                            ui.add_space(4.0);
-                        }
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Show User Plugins section
-                    ui.heading("User Plugins");
-                    ui.label(
-                        egui::RichText::new("Custom user-created plugins")
-                            .small()
-                            .italics(),
-                    );
-                    ui.separator();
-
-                    if user_plugins.is_empty() {
-                        ui.label(egui::RichText::new("No user plugins installed").weak());
-                    } else {
-                        for plugin in &mut user_plugins {
-                            if !plugin.metadata.enabled {
-                                continue;
-                            }
-
-                            ui.horizontal(|ui| {
-                                let was_visible = plugin.visible;
-                                if ui
-                                    .checkbox(&mut plugin.visible, &plugin.metadata.name)
-                                    .changed()
-                                {
-                                    log::info!(
-                                        "Plugin '{}' visibility changed: {} -> {}",
-                                        plugin.metadata.name,
-                                        was_visible,
-                                        plugin.visible
-                                    );
-
-                                    if plugin.metadata.name == "Welcome Screen" {
-                                        let default_visible = !project_loaded;
-                                        if plugin.visible == default_visible {
-                                            welcome_override = None;
-                                        } else {
-                                            welcome_override = Some(plugin.visible);
-                                        }
-                                    }
-                                }
-                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
-                            });
-
-                            ui.label(
-                                egui::RichText::new(format!("  {}", plugin.metadata.description))
-                                    .small(),
-                            );
-                            ui.add_space(4.0);
-                        }
-                    }
-                });
-
-            // Check if Welcome Screen is visible (for modality)
-            // Check both that plugin is visible AND that it has UI commands (it may hide itself via Lua)
-            let welcome_screen_visible =
-                self.shared
-                    .plugin_ui_commands
-                    .iter()
-                    .any(|(entity, commands)| {
-                        !commands.is_empty()
-                            && manager
-                                .get_plugin(*entity)
-                                .map(|p| p.visible && p.metadata.name == "Welcome Screen")
-                                .unwrap_or(false)
-                    });
-
-            // Render modal overlay if Welcome Screen is visible
-            if welcome_screen_visible {
-                egui::Area::new("welcome_modal_overlay".into())
-                    .fixed_pos(egui::pos2(0.0, 0.0))
-                    .interactable(false) // Don't capture input events
-                    .show(ctx, |ui| {
-                        let screen_rect = ctx.viewport_rect();
-                        let painter = ui.painter();
-                        painter.rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(180));
-                    });
-                ctx.set_cursor_icon(egui::CursorIcon::Default);
-            }
-
-            // Render each plugin's UI in a separate window (only if visible)
-            for (entity, commands) in &self.shared.plugin_ui_commands {
-                // Check if this plugin is visible
-                if let Some(plugin) = manager.get_plugin_mut(*entity) {
-                    if !plugin.visible {
-                        self.shared.plugin_window_sizes.remove(entity);
-                        continue;
-                    }
-
-                    let mut responses = HashMap::new();
-                    let window_title = plugin.metadata.name.clone();
-                    let is_welcome_screen = plugin.metadata.name == "Welcome Screen";
-                    let is_text_editor = plugin.metadata.name == "Text Editor";
-
-                    // Skip non-welcome windows when welcome modal is active
-                    if welcome_screen_visible && !is_welcome_screen && !is_text_editor {
-                        continue;
-                    }
-
-                    let mut open_flag = plugin.visible;
-                    let default_size = if is_text_editor {
-                        [800.0, 800.0]
-                    } else {
-                        [500.0, 400.0]
-                    };
-                    let mut window = egui::Window::new(window_title)
-                        .resizable(true)
-                        .default_size(default_size)
-                        .collapsible(true)
-                        .open(&mut open_flag);
-
-                    // Configure Welcome Screen as modal
-                    if is_welcome_screen {
-                        // Make the window take up 80% of the screen for a spacious layout
-                        let screen_rect = ctx.viewport_rect();
-                        let window_width = screen_rect.width() * 0.8;
-                        let window_height = screen_rect.height() * 0.8;
-
-                        window = window
-                            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                            .collapsible(false)
-                            .resizable(false)
-                            .title_bar(false)
-                            .fixed_size([window_width, window_height]) // Force size every frame
-                            .interactable(true); // Ensure it always accepts input
-                    } else if is_text_editor {
-                        window = window.vscroll(true).hscroll(true);
-                    }
-
-                    let window_response = window.show(ctx, |ui| {
-                        if is_welcome_screen {
-                            // Enable scrolling for welcome screen content
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    for command in commands {
-                                        command.render_and_collect(ui, &mut responses, None);
-                                    }
-                                });
-                        } else {
-                            // Regular rendering for other plugins
-                            for command in commands {
-                                command.render_and_collect(ui, &mut responses, None);
-                            }
-                        }
-                    });
-
-                    // For Welcome Screen, refocus on clicks outside to prevent UI lock
-                    if is_welcome_screen {
-                        if let Some(ref response) = window_response {
-                            let clicked_outside = ctx.input(|input| {
-                                if input.pointer.any_click() {
-                                    if let Some(pos) = input.pointer.interact_pos() {
-                                        return !response.response.rect.contains(pos);
-                                    }
-                                }
-                                false
-                            });
-                            let nothing_focused = ctx.memory(|mem| mem.focused().is_none());
-
-                            if clicked_outside || nothing_focused {
-                                response.response.request_focus();
-                            }
-                        }
-                    }
-
-                    if let Some(window_response) = &window_response {
-                        let rect = window_response.response.rect;
-                        let logical_width = rect.width() / ctx.pixels_per_point();
-                        let logical_height = rect.height() / ctx.pixels_per_point();
-                        self.shared.plugin_window_sizes.insert(
-                            *entity,
-                            (logical_width, logical_height, ctx.pixels_per_point()),
-                        );
-                    }
-
-                    if !open_flag {
-                        self.shared.plugin_window_sizes.remove(entity);
-                    }
-
-                    if !responses.is_empty() {
-                        plugin_responses.insert(*entity, responses);
-                    }
-
-                    plugin.visible = open_flag;
-                }
-            }
-
-            // Render scene scripts (non-plugins) with default titles
-            // Skip when welcome modal is active
-            if !welcome_screen_visible {
-                for (entity, commands) in &self.shared.script_ui_commands {
-                    let mut responses = HashMap::new();
-
-                    egui::Window::new(format!("Script UI - Entity {:?}", entity))
-                        .resizable(true)
-                        .default_size([300.0, 200.0])
-                        .show(ctx, |ui| {
-                            for command in commands {
-                                command.render_and_collect(ui, &mut responses, game_viewport_rect);
-                            }
-                        });
-
-                    if !responses.is_empty() {
-                        scene_responses.insert(*entity, responses);
-                    }
-                }
-            }
+        // Scene scripts are hidden while the welcome modal is active.
+        let scene_responses = if welcome_screen_visible {
+            HashMap::new()
         } else {
-            // No plugin manager, render all script UIs with default titles
-            for (entity, commands) in &self.shared.script_ui_commands {
-                let mut responses = HashMap::new();
+            self.render_scene_script_ui(ctx)
+        };
 
-                egui::Window::new(format!("Script UI - Entity {:?}", entity))
+        self.shared.welcome_plugin_override = welcome_override;
+        self.shared.script_ui_responses = scene_responses;
+    }
+
+    /// Render UI for scene scripts.
+    ///
+    /// Top-level anchored panels are HUD overlays positioned inside the game viewport;
+    /// all other widgets go into a window titled after the entity.
+    fn render_scene_script_ui(&self, ctx: &egui::Context) -> HashMap<Entity, ScriptUiResponses> {
+        let game_viewport_rect = self.shared.viewports.game_viewport.rect();
+        let mut scene_responses = HashMap::new();
+
+        for (entity, commands) in &self.shared.script_ui_commands {
+            let mut responses = HashMap::new();
+            let (overlays, widgets): (Vec<&UiCommand>, Vec<&UiCommand>) = commands
+                .iter()
+                .partition(|command| matches!(command, UiCommand::AnchoredPanel { .. }));
+
+            if let (Some(rect), false) = (game_viewport_rect, overlays.is_empty()) {
+                // Host area for the panels; each anchored panel creates its own layer.
+                egui::Area::new(egui::Id::new(("script_hud", *entity)))
+                    .fixed_pos(rect.min)
+                    .interactable(false)
+                    .show(ctx, |ui| {
+                        for command in &overlays {
+                            command.render_and_collect(ui, &mut responses, Some(rect));
+                        }
+                    });
+            }
+
+            if !widgets.is_empty() {
+                let title = self
+                    .shared
+                    .script_ui_titles
+                    .get(entity)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Entity {}", entity.id()));
+                egui::Window::new(title)
+                    .id(egui::Id::new(("script_ui", *entity)))
                     .resizable(true)
                     .default_size([300.0, 200.0])
                     .show(ctx, |ui| {
-                        for command in commands {
+                        for command in &widgets {
                             command.render_and_collect(ui, &mut responses, game_viewport_rect);
                         }
                     });
-
-                if !responses.is_empty() {
-                    scene_responses.insert(*entity, responses);
-                }
             }
-            self.shared.plugin_window_sizes.clear();
+
+            if !responses.is_empty() {
+                scene_responses.insert(*entity, responses);
+            }
         }
 
-        self.shared.welcome_plugin_override = welcome_override;
+        scene_responses
+    }
 
-        // Store responses for the next frame (kept separate to avoid Entity ID collisions)
-        self.shared.script_ui_responses = scene_responses;
-        self.shared.plugin_ui_responses = plugin_responses;
+    /// Render the plugin manager and plugin windows. Returns whether the welcome
+    /// screen is showing as a modal.
+    fn render_plugin_ui(
+        &mut self,
+        ctx: &egui::Context,
+        project_loaded: bool,
+        welcome_override: &mut Option<bool>,
+    ) -> bool {
+        let shared = &mut self.shared;
+        let Some(manager) = shared.ui_plugin_manager.as_mut() else {
+            shared.plugin_window_sizes.clear();
+            shared.plugin_ui_responses.clear();
+            return false;
+        };
+
+        egui::Window::new("Plugin Manager")
+            .open(&mut shared.windows.plugin_manager)
+            .resizable(true)
+            .default_size([350.0, 500.0])
+            .show(ctx, |ui| {
+                use ui_plugin_manager::PluginType;
+
+                let (mut editor_plugins, mut user_plugins): (Vec<_>, Vec<_>) = manager
+                    .plugins_mut()
+                    .iter_mut()
+                    .filter(|plugin| plugin.metadata.enabled)
+                    .partition(|plugin| plugin.metadata.plugin_type == PluginType::Editor);
+
+                let mut section =
+                    |ui: &mut egui::Ui,
+                     heading: &str,
+                     subtitle: &str,
+                     empty: &str,
+                     plugins: &mut [&mut ui_plugin_manager::LoadedPlugin]| {
+                        ui.heading(heading);
+                        ui.label(egui::RichText::new(subtitle).small().italics());
+                        ui.separator();
+                        if plugins.is_empty() {
+                            ui.label(egui::RichText::new(empty).weak());
+                        }
+                        for plugin in plugins.iter_mut() {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .checkbox(&mut plugin.visible, &plugin.metadata.name)
+                                    .changed()
+                                    && plugin.metadata.name == WELCOME_SCREEN_PLUGIN
+                                {
+                                    // Only override while the choice differs from the default.
+                                    let default_visible = !project_loaded;
+                                    *welcome_override = (plugin.visible != default_visible)
+                                        .then_some(plugin.visible);
+                                }
+                                ui.label(egui::RichText::new(&plugin.metadata.category).weak());
+                            });
+                            ui.label(
+                                egui::RichText::new(format!("  {}", plugin.metadata.description))
+                                    .small(),
+                            );
+                            ui.add_space(4.0);
+                        }
+                    };
+
+                section(
+                    ui,
+                    "Editor Plugins",
+                    "Built-in editor functionality",
+                    "No editor plugins installed",
+                    &mut editor_plugins,
+                );
+                ui.add_space(8.0);
+                section(
+                    ui,
+                    "User Plugins",
+                    "Custom user-created plugins",
+                    "No user plugins installed",
+                    &mut user_plugins,
+                );
+            });
+
+        // The welcome screen may hide itself from Lua, so it only counts as visible
+        // while it is enabled and actually producing UI.
+        let welcome_screen_visible = shared.plugin_ui_commands.iter().any(|(entity, commands)| {
+            !commands.is_empty()
+                && manager
+                    .get_plugin(*entity)
+                    .is_some_and(|p| p.visible && p.metadata.name == WELCOME_SCREEN_PLUGIN)
+        });
+
+        if welcome_screen_visible {
+            egui::Area::new("welcome_modal_overlay".into())
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .interactable(false)
+                .show(ctx, |ui| {
+                    ui.painter().rect_filled(
+                        ctx.viewport_rect(),
+                        0.0,
+                        egui::Color32::from_black_alpha(180),
+                    );
+                });
+            ctx.set_cursor_icon(egui::CursorIcon::Default);
+        }
+
+        let mut plugin_responses = HashMap::new();
+        let entities: Vec<Entity> = manager
+            .plugins()
+            .iter()
+            .filter(|plugin| plugin.metadata.enabled)
+            .map(|plugin| plugin.entity)
+            .collect();
+
+        for entity in entities {
+            let Some(plugin) = manager.get_plugin(entity) else {
+                continue;
+            };
+            let commands = shared
+                .plugin_ui_commands
+                .get(&entity)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let error = manager.last_error(entity).map(str::to_owned);
+            let is_welcome_screen = plugin.metadata.name == WELCOME_SCREEN_PLUGIN;
+            let is_text_editor = plugin.metadata.name == TEXT_EDITOR_PLUGIN;
+
+            let hidden_by_modal = welcome_screen_visible && !is_welcome_screen && !is_text_editor;
+            if !plugin.visible || hidden_by_modal || (commands.is_empty() && error.is_none()) {
+                shared.plugin_window_sizes.remove(&entity);
+                continue;
+            }
+
+            let mut open_flag = true;
+            let mut window = egui::Window::new(&plugin.metadata.name)
+                .id(egui::Id::new(("plugin_window", entity)))
+                .resizable(true)
+                .default_size(if is_text_editor {
+                    [800.0, 800.0]
+                } else {
+                    [500.0, 400.0]
+                })
+                .collapsible(true)
+                .open(&mut open_flag);
+
+            if is_welcome_screen {
+                let screen_rect = ctx.viewport_rect();
+                window = window
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .collapsible(false)
+                    .resizable(false)
+                    .title_bar(false)
+                    .fixed_size([screen_rect.width() * 0.8, screen_rect.height() * 0.8])
+                    .interactable(true);
+            } else if is_text_editor {
+                window = window.vscroll(true).hscroll(true);
+            }
+
+            let mut responses = HashMap::new();
+            let window_response = window.show(ctx, |ui| {
+                if let Some(error) = &error {
+                    ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {error}"));
+                    ui.separator();
+                }
+                if is_welcome_screen {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for command in commands {
+                                command.render_and_collect(ui, &mut responses, None);
+                            }
+                        });
+                } else {
+                    for command in commands {
+                        command.render_and_collect(ui, &mut responses, None);
+                    }
+                }
+            });
+
+            if let Some(window_response) = &window_response {
+                // Keep the modal welcome screen focused so it cannot lose input.
+                if is_welcome_screen {
+                    let clicked_outside = ctx.input(|input| {
+                        input.pointer.any_click()
+                            && input
+                                .pointer
+                                .interact_pos()
+                                .is_some_and(|pos| !window_response.response.rect.contains(pos))
+                    });
+                    let nothing_focused = ctx.memory(|mem| mem.focused().is_none());
+                    if clicked_outside || nothing_focused {
+                        window_response.response.request_focus();
+                    }
+                }
+
+                let rect = window_response.response.rect;
+                let ppp = ctx.pixels_per_point();
+                shared
+                    .plugin_window_sizes
+                    .insert(entity, (rect.width() / ppp, rect.height() / ppp, ppp));
+            }
+
+            if !open_flag {
+                shared.plugin_window_sizes.remove(&entity);
+                if let Some(plugin) = manager.get_plugin_mut(entity) {
+                    plugin.visible = false;
+                }
+            }
+
+            if !responses.is_empty() {
+                plugin_responses.insert(entity, responses);
+            }
+        }
+
+        shared.plugin_ui_responses = plugin_responses;
+        welcome_screen_visible
     }
 
     pub(super) fn open_text_editor_with_path(&mut self, path: &Path) -> bool {
@@ -881,7 +823,7 @@ impl EditorApplication {
 
         let mut plugin_found = false;
         for plugin in manager.plugins_mut() {
-            if plugin.metadata.name == "Text Editor" {
+            if plugin.metadata.name == TEXT_EDITOR_PLUGIN {
                 plugin.visible = true;
                 plugin_found = true;
                 break;
@@ -912,10 +854,8 @@ impl EditorApplication {
             .unwrap_or(!project_loaded);
 
         for plugin in manager.plugins_mut() {
-            if plugin.metadata.name == "Welcome Screen" {
-                if plugin.visible != target_visible {
-                    plugin.visible = target_visible;
-                }
+            if plugin.metadata.name == WELCOME_SCREEN_PLUGIN {
+                plugin.visible = target_visible;
                 break;
             }
         }
@@ -1044,17 +984,7 @@ impl EditorApplication {
         use action_handlers::dispatch_action;
 
         for action in actions {
-            // SAFETY: We need to use unsafe here to work around a limitation in the borrow checker.
-            // The borrow checker thinks that the mutable borrow of ctx.scene from the previous
-            // iteration is still active, but in reality each iteration's borrows are completely
-            // independent and don't overlap. We use raw pointers to explicitly control the borrow
-            // lifetime and make it clear to the compiler that each call to dispatch_action is
-            // independent.
-            let result = unsafe {
-                let scene_ptr: *mut SceneWorkspaceSceneMut = &mut ctx.scene;
-                let app_ptr: *mut EditorApplication = self as *mut _;
-                dispatch_action(&mut *scene_ptr, &mut *app_ptr, action)
-            };
+            let result = dispatch_action(&mut ctx.scene, self, action);
 
             if result.transforms_changed {
                 transforms_changed = true;
@@ -1064,940 +994,6 @@ impl EditorApplication {
             }
         }
 
-        /* OLD IMPLEMENTATION REMOVED - kept for reference during transition
-                for action in actions {
-                    match action {
-                        InspectorAction::UpdateTransform { entity, transform } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut TransformComponent>(entity) {
-                                    Ok(mut component) => {
-                                        component.0 = transform;
-                                        updated = true;
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to update transform for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                transforms_changed = true;
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateCamera { entity, component } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut CameraComponent>(entity) {
-                                    Ok(mut existing) => {
-                                        if *existing != component {
-                                            *existing = component;
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to update camera for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                if self.shared.active_camera_entity.is_none()
-                                    || self.shared.active_camera_entity == Some(entity)
-                                {
-                                    ctx.scene.set_active_camera_entity(Some(entity));
-                                    self.shared.active_camera_entity = ctx.scene.active_camera_entity();
-                                }
-
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateMaterial {
-                            entity,
-                            handle,
-                            material,
-                        } => {
-                            let mut can_update = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&MaterialComponent>(entity) {
-                                    Ok(component) => {
-                                        if component.0 == handle {
-                                            can_update = true;
-                                        } else {
-                                            log::warn!(
-                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                                entity,
-                                                component.0.index(),
-                                                handle.index()
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if can_update {
-                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                                    *asset.material_mut() = material;
-                                    self.record_scene_change(&mut ctx.scene);
-                                } else {
-                                    log::warn!(
-                                        "Inspector material asset missing for handle {:?}",
-                                        handle.index()
-                                    );
-                                }
-                            }
-                        }
-                        InspectorAction::SetMaterialKind {
-                            entity,
-                            handle,
-                            kind,
-                        } => {
-                            let mut can_update = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&MaterialComponent>(entity) {
-                                    Ok(component) => {
-                                        if component.0 == handle {
-                                            can_update = true;
-                                        } else {
-                                            log::warn!(
-                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                                entity,
-                                                component.0.index(),
-                                                handle.index()
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if !can_update {
-                                continue;
-                            }
-
-                            if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                                asset.set_kind(kind.clone());
-                                match kind {
-                                    MaterialKind::Shader(_) => {
-                                        asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                                    }
-                                    MaterialKind::Pbr => {
-                                        asset.set_asset_type(AssetTypeTag::default());
-                                    }
-                                }
-                                self.record_scene_change(&mut ctx.scene);
-                            } else {
-                                log::warn!(
-                                    "Inspector material asset missing for handle {:?}",
-                                    handle.index()
-                                );
-                            }
-                        }
-                        InspectorAction::AssignShaderSource {
-                            entity,
-                            handle,
-                            shader_path,
-                        } => {
-                            let mut can_update = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&MaterialComponent>(entity) {
-                                    Ok(component) => {
-                                        if component.0 == handle {
-                                            can_update = true;
-                                        } else {
-                                            log::warn!(
-                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                                entity,
-                                                component.0.index(),
-                                                handle.index()
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if !can_update {
-                                continue;
-                            }
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                let Some(content_root) = self.project_system().content_root() else {
-                                    log::warn!(
-                                        "Cannot assign shader without an open project for handle {:?}",
-                                        handle.index()
-                                    );
-                                    continue;
-                                };
-
-                                let canonical = shader_path.canonicalize().unwrap_or(shader_path.clone());
-
-                                if !canonical.starts_with(&content_root) {
-                                    log::warn!(
-                                        "Shader {:?} is outside of the project content directory",
-                                        canonical
-                                    );
-                                    continue;
-                                }
-
-                                let source = match fs::read_to_string(&canonical) {
-                                    Ok(contents) => contents,
-                                    Err(err) => {
-                                        log::warn!("Failed to read shader source {:?}: {}", canonical, err);
-                                        continue;
-                                    }
-                                };
-
-                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                                    let mut metadata = match asset.kind().clone() {
-                                        MaterialKind::Shader(existing) => existing,
-                                        MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
-                                    };
-                                    metadata.set_wgsl_source(source);
-                                    metadata.set_source_path(Some(canonical));
-                                    asset.set_kind(MaterialKind::Shader(metadata));
-                                    asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                                    self.record_scene_change(&mut ctx.scene);
-                                } else {
-                                    log::warn!(
-                                        "Inspector material asset missing for handle {:?}",
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                let _ = (entity, handle, shader_path);
-                                log::warn!("Assigning shader files is unavailable on WebAssembly builds.");
-                            }
-                        }
-                        InspectorAction::CreateShaderSource {
-                            entity,
-                            handle,
-                            suggested_stem,
-                        } => {
-                            let mut can_update = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&MaterialComponent>(entity) {
-                                    Ok(component) => {
-                                        if component.0 == handle {
-                                            can_update = true;
-                                        } else {
-                                            log::warn!(
-                                                "Inspector material handle mismatch for {:?}: {:?} != {:?}",
-                                                entity,
-                                                component.0.index(),
-                                                handle.index()
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to access material for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if !can_update {
-                                continue;
-                            }
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                let Some(content_root) = self.project_system().content_root() else {
-                                    log::warn!(
-                                        "Cannot create shader without an open project for handle {:?}",
-                                        handle.index()
-                                    );
-                                    continue;
-                                };
-
-                                let shader_dir = content_root.join("shaders");
-                                if let Err(err) = fs::create_dir_all(&shader_dir) {
-                                    log::warn!(
-                                        "Failed to create shader directory {:?}: {}",
-                                        shader_dir,
-                                        err
-                                    );
-                                    continue;
-                                }
-
-                                let base_stem = if suggested_stem.trim().is_empty() {
-                                    format!("material_{}", handle.index())
-                                } else {
-                                    suggested_stem.clone()
-                                };
-
-                                let mut candidate = shader_dir.join(format!("{base_stem}.wgsl"));
-                                let mut counter = 1usize;
-                                while candidate.exists() {
-                                    candidate = shader_dir.join(format!("{base_stem}_{counter:02}.wgsl"));
-                                    counter += 1;
-                                }
-
-                                if let Err(err) =
-                                    fs::write(&candidate, ShaderMaterialMetadata::DEFAULT_TEMPLATE)
-                                {
-                                    log::warn!("Failed to write shader template {:?}: {}", candidate, err);
-                                    continue;
-                                }
-
-                                let canonical = candidate.canonicalize().unwrap_or(candidate.clone());
-
-                                if let Some(asset) = ctx.scene.assets.material_mut(handle) {
-                                    let mut metadata = match asset.kind().clone() {
-                                        MaterialKind::Shader(existing) => existing,
-                                        MaterialKind::Pbr => ShaderMaterialMetadata::default_template(),
-                                    };
-                                    metadata.set_wgsl_source(ShaderMaterialMetadata::DEFAULT_TEMPLATE);
-                                    metadata.set_source_path(Some(canonical));
-                                    asset.set_kind(MaterialKind::Shader(metadata));
-                                    asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                                    self.record_scene_change(&mut ctx.scene);
-                                } else {
-                                    log::warn!(
-                                        "Inspector material asset missing for handle {:?}",
-                                        handle.index()
-                                    );
-                                }
-                            }
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                let _ = (entity, handle, suggested_stem);
-                                log::warn!("Creating shader files is unavailable on WebAssembly builds.");
-                            }
-                        }
-                        InspectorAction::CreateShaderMaterial { entity, source } => {
-                            let Some(source_asset) = ctx.scene.assets.material(source).cloned() else {
-                                log::warn!(
-                                    "Inspector shader material source missing for handle {:?}",
-                                    source.index()
-                                );
-                                continue;
-                            };
-
-                            let mut shader_asset = source_asset;
-                            shader_asset.set_kind(MaterialKind::Shader(
-                                ShaderMaterialMetadata::default_template(),
-                            ));
-                            shader_asset.set_asset_type(AssetTypeTag::new("shader_material"));
-                            shader_asset.set_canonical_path(PathBuf::new());
-
-                            let new_handle = ctx.scene.assets.insert_material_asset(shader_asset);
-
-                            match ctx
-                                .scene
-                                .main_world_mut()
-                                .insert_one(entity, MaterialComponent(new_handle))
-                            {
-                                Ok(_) => {
-                                    self.record_scene_change(&mut ctx.scene);
-                                }
-                                Err(err) => {
-                                    log::warn!("Failed to assign shader material to {:?}: {}", entity, err);
-                                }
-                            }
-                        }
-                        InspectorAction::UpdatePointLight { entity, light } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut PointLight>(entity) {
-                                    Ok(mut component) => {
-                                        *component = light;
-                                        updated = true;
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update point light for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateDirectionalLight { entity, light } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut DirectionalLight>(entity) {
-                                    Ok(mut component) => {
-                                        *component = light;
-                                        updated = true;
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update directional light for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateSpotLight { entity, light } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut SpotLight>(entity) {
-                                    Ok(mut component) => {
-                                        *component = light;
-                                        updated = true;
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to update spot light for {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateEnvironment { entity, component } => {
-                            let previous = ctx
-                                .scene
-                                .main_world()
-                                .get::<&EnvironmentComponent>(entity)
-                                .ok()
-                                .map(|existing| EnvironmentComponent::clone(&*existing));
-
-                            let mut component = component;
-                            let should_enable_hdr = {
-                                let new_path = component
-                                    .hdr
-                                    .as_ref()
-                                    .and_then(|hdr| hdr.path.as_ref())
-                                    .map(|path| path.as_path());
-                                let previous_path = previous
-                                    .as_ref()
-                                    .and_then(|prev| prev.hdr.as_ref())
-                                    .and_then(|hdr| hdr.path.as_ref())
-                                    .map(|path| path.as_path());
-
-                                match (previous_path, new_path) {
-                                    (Some(prev), Some(new)) => prev != new,
-                                    (None, Some(_)) => true,
-                                    _ => false,
-                                }
-                            };
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                if let Err(err) =
-                                    self.copy_environment_asset_if_needed(&mut component, previous.as_ref())
-                                {
-                                    log::warn!("{err}");
-                                    self.asset_browser_state_mut().report_error(err);
-                                }
-                            }
-
-                            if let Some(hdr) = component.hdr.as_mut() {
-                                if should_enable_hdr && hdr.path.is_some() {
-                                    hdr.enabled = true;
-                                }
-                            }
-
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut EnvironmentComponent>(entity) {
-                                    Ok(mut existing) => {
-                                        if *existing != component {
-                                            *existing = component.clone();
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update environment for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                ctx.scene.set_environment(component.to_environment());
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateParticleSystem { entity, component } => {
-                            let mut updated = false;
-                            let new_spawn_rate = component.spawn_rate;
-                            let mut spawn_rate_changed = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut ParticleSystemComponent>(entity) {
-                                    Ok(mut existing) => {
-                                        spawn_rate_changed =
-                                            (existing.spawn_rate - new_spawn_rate).abs() > f32::EPSILON;
-                                        if *existing != component {
-                                            *existing = component;
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update particle system for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-
-                                if spawn_rate_changed {
-                                    match world.get::<&mut ParticleEmitterComponent>(entity) {
-                                        Ok(mut emitter) => {
-                                            if (emitter.spawn_rate - new_spawn_rate).abs() > f32::EPSILON {
-                                                emitter.spawn_rate = new_spawn_rate;
-                                                updated = true;
-                                            }
-                                        }
-                                        Err(err) => {
-                                            log::warn!(
-                                                "Failed to update particle emitter spawn rate for {:?}: {}",
-                                                entity,
-                                                err
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateParticleEmitter { entity, component } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut ParticleEmitterComponent>(entity) {
-                                    Ok(mut existing) => {
-                                        if *existing != component {
-                                            *existing = component;
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update particle emitter for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::UpdateParticleBehavior {
-                            entity,
-                            behavior,
-                            config,
-                        } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match world.get::<&mut ParticleSystemComponent>(entity) {
-                                    Ok(mut existing) => {
-                                        let config = config.ensure_variant(behavior);
-                                        if existing.behavior != behavior
-                                            || existing.behavior_config != config
-                                        {
-                                            existing.behavior = behavior;
-                                            existing.behavior_config = config;
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::warn!(
-                                            "Failed to update particle behavior for {:?}: {}",
-                                            entity,
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::SetBillboard { entity, billboard } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                match billboard {
-                                    Some(component) => {
-                                        let mut needs_insert = false;
-                                        match world.get::<&mut Billboard>(entity) {
-                                            Ok(mut existing) => {
-                                                *existing = component;
-                                                updated = true;
-                                            }
-                                            Err(err) => {
-                                                log::debug!(
-                                                    "Billboard missing for {:?} while enabling: {}",
-                                                    entity,
-                                                    err
-                                                );
-                                                needs_insert = true;
-                                            }
-                                        }
-
-                                        if needs_insert {
-                                            match world.insert(entity, (component,)) {
-                                                Ok(_) => {
-                                                    updated = true;
-                                                }
-                                                Err(insert_err) => {
-                                                    log::warn!(
-                                                        "Failed to add Billboard to {:?}: {}",
-                                                        entity,
-                                                        insert_err
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-                                    None => match world.remove_one::<Billboard>(entity) {
-                                        Ok(_) => {
-                                            updated = true;
-                                        }
-                                        Err(err) => {
-                                            log::debug!(
-                                                "Billboard missing for {:?} while disabling: {}",
-                                                entity,
-                                                err
-                                            );
-                                        }
-                                    },
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::SetCanCastShadow {
-                            entity,
-                            casts_shadow,
-                        } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                let mut needs_insert = false;
-                                match world.get::<&mut CanCastShadow>(entity) {
-                                    Ok(mut component) => {
-                                        if component.0 != casts_shadow {
-                                            component.0 = casts_shadow;
-                                            updated = true;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        if casts_shadow {
-                                            needs_insert = true;
-                                        } else {
-                                            log::debug!(
-                                                "CanCastShadow missing for {:?} while disabling shadows: {}",
-                                                entity,
-                                                err
-                                            );
-                                        }
-                                    }
-                                }
-
-                                if needs_insert {
-                                    match world.insert(entity, (CanCastShadow(true),)) {
-                                        Ok(_) => {
-                                            updated = true;
-                                        }
-                                        Err(insert_err) => {
-                                            log::warn!(
-                                                "Failed to add CanCastShadow to {:?}: {}",
-                                                entity,
-                                                insert_err
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::AddScript { entity } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                // Check if entity already has a script component
-                                if world.get::<&LuaScriptComponent>(entity).is_ok() {
-                                    log::warn!("Entity {:?} already has a script component", entity);
-                                } else {
-                                    // Create a default inline script
-                                    let default_script = LuaScriptComponent::new(LuaScriptSource::inline(
-                                        "new_script",
-                                        "-- New script
-
-        function update(self_entity, dt)
-            -- Your code here
-        end
-        ",
-                                    ));
-                                    match world.insert(entity, (default_script,)) {
-                                        Ok(_) => {
-                                            updated = true;
-                                            log::info!("Added script component to entity {:?}", entity);
-                                        }
-                                        Err(err) => {
-                                            log::warn!(
-                                                "Failed to add script component to {:?}: {}",
-                                                entity,
-                                                err
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::ChangeScriptSource {
-                            entity,
-                            script_path,
-                        } => {
-                            let mut updated = false;
-                            {
-                                let world = ctx.scene.main_world_mut();
-                                // Check if entity has a script component
-                                if let Ok(mut script) = world.get::<&mut LuaScriptComponent>(entity) {
-                                    // Create new script source from file
-                                    let new_source = LuaScriptSource::File { path: script_path.clone() };
-                                    *script = LuaScriptComponent::new(new_source);
-                                    updated = true;
-                                    log::info!(
-                                        "Changed script source for entity {:?} to {:?}",
-                                        entity,
-                                        script_path
-                                    );
-                                } else {
-                                    log::warn!("Entity {:?} does not have a script component", entity);
-                                }
-                            }
-
-                            if updated {
-                                self.record_scene_change(&mut ctx.scene);
-                                // Reload the script runtime to pick up the new script
-                                ctx.scene.reset_script_runtime();
-                            }
-                        }
-                        InspectorAction::AddCamera { entity } => {
-                            let world = ctx.scene.main_world_mut();
-                            if world.get::<&CameraComponent>(entity).is_ok() {
-                                log::warn!("Entity {:?} already has a camera component", entity);
-                            } else {
-                                let camera = CameraComponent::default();
-                                match world.insert(entity, (camera,)) {
-                                    Ok(_) => {
-                                        log::info!("Added camera component to entity {:?}", entity);
-                                        self.record_scene_change(&mut ctx.scene);
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to add camera component to {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-                        }
-                        InspectorAction::AddMesh { entity } => {
-                            // Check if entity already has a mesh component
-                            let has_mesh = {
-                                let world = ctx.scene.main_world_mut();
-                                world.get::<&MeshComponent>(entity).is_ok()
-                            };
-
-                            if has_mesh {
-                                log::warn!("Entity {:?} already has a mesh component", entity);
-                            } else {
-                                // Try to use existing cube mesh (created during setup or previous usage)
-                                let descriptor = PrimitiveMeshDescriptor::from(ScenePrimitivePreset::Cube);
-                                if let Some(mesh_handle) = ctx.scene.assets.primitive_mesh_handle(descriptor) {
-                                    let material_handle = ctx
-                                        .scene
-                                        .assets
-                                        .materials
-                                        .insert(MaterialAsset::from_material(
-                                            Material::pbr(),
-                                            PathBuf::new(),
-                                        ));
-                                    let world = ctx.scene.main_world_mut();
-                                    match world.insert(entity, (MeshComponent(mesh_handle), MaterialComponent(material_handle))) {
-                                        Ok(_) => {
-                                            log::info!("Added mesh component to entity {:?}", entity);
-                                            self.record_scene_change(&mut ctx.scene);
-                                        }
-                                        Err(err) => {
-                                            log::warn!("Failed to add mesh component to {:?}: {}", entity, err);
-                                        }
-                                    }
-                                } else {
-                                    log::warn!("Cannot add mesh component: cube primitive not yet created. Try creating a cube primitive first.");
-                                }
-                            }
-                        }
-                        InspectorAction::AddPointLight { entity } => {
-                            let world = ctx.scene.main_world_mut();
-                            if world.get::<&PointLight>(entity).is_ok() {
-                                log::warn!("Entity {:?} already has a point light component", entity);
-                            } else {
-                                let light = PointLight::default();
-                                match world.insert(entity, (light,)) {
-                                    Ok(_) => {
-                                        log::info!("Added point light component to entity {:?}", entity);
-                                        self.record_scene_change(&mut ctx.scene);
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to add point light component to {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-                        }
-                        InspectorAction::AddDirectionalLight { entity } => {
-                            let world = ctx.scene.main_world_mut();
-                            if world.get::<&DirectionalLight>(entity).is_ok() {
-                                log::warn!("Entity {:?} already has a directional light component", entity);
-                            } else {
-                                let light = DirectionalLight::default();
-                                match world.insert(entity, (light,)) {
-                                    Ok(_) => {
-                                        log::info!("Added directional light component to entity {:?}", entity);
-                                        self.record_scene_change(&mut ctx.scene);
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to add directional light component to {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-                        }
-                        InspectorAction::AddSpotLight { entity } => {
-                            let world = ctx.scene.main_world_mut();
-                            if world.get::<&SpotLight>(entity).is_ok() {
-                                log::warn!("Entity {:?} already has a spot light component", entity);
-                            } else {
-                                let light = SpotLight::default();
-                                match world.insert(entity, (light,)) {
-                                    Ok(_) => {
-                                        log::info!("Added spot light component to entity {:?}", entity);
-                                        self.record_scene_change(&mut ctx.scene);
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to add spot light component to {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-                        }
-                        InspectorAction::AddEnvironment { entity } => {
-                            // Check if entity already has an environment component
-                            let has_environment = {
-                                let world = ctx.scene.main_world_mut();
-                                world.get::<&EnvironmentComponent>(entity).is_ok()
-                            };
-
-                            if has_environment {
-                                log::warn!("Entity {:?} already has an environment component", entity);
-                            } else {
-                                let component = EnvironmentComponent::from_environment(ctx.scene.environment());
-                                {
-                                    let world = ctx.scene.main_world_mut();
-                                    match world.insert(entity, (component.clone(),)) {
-                                        Ok(_) => {
-                                            log::info!("Added environment component to entity {:?}", entity);
-                                        }
-                                        Err(err) => {
-                                            log::warn!("Failed to add environment component to {:?}: {}", entity, err);
-                                            return;
-                                        }
-                                    }
-                                }
-                                ctx.scene.set_environment(component.to_environment());
-                                self.record_scene_change(&mut ctx.scene);
-                            }
-                        }
-                        InspectorAction::AddParticleSystem { entity } => {
-                            let world = ctx.scene.main_world_mut();
-                            if world.get::<&ParticleSystemComponent>(entity).is_ok() {
-                                log::warn!("Entity {:?} already has a particle system component", entity);
-                            } else {
-                                let component = ParticleSystemComponent::default();
-                                let emitter = ParticleEmitterComponent::default();
-                                match world.insert(entity, (component, emitter)) {
-                                    Ok(_) => {
-                                        log::info!("Added particle system component to entity {:?}", entity);
-                                        self.record_scene_change(&mut ctx.scene);
-                                    }
-                                    Err(err) => {
-                                        log::warn!("Failed to add particle system component to {:?}: {}", entity, err);
-                                    }
-                                }
-                            }
-                        }
-                        InspectorAction::RenameEntity { entity, new_name } => {
-                            let renamed = {
-                                let world = ctx.scene.main_world_mut();
-                                if let Ok(mut name) = world.get::<&mut wgpu_cube::scene::Name>(entity) {
-                                    name.0 = new_name;
-                                    true
-                                } else {
-                                    false
-                                }
-                            };
-
-                            if renamed {
-                                log::info!("Renamed entity {:?}", entity);
-                                self.record_scene_change(&mut ctx.scene);
-                            } else {
-                                log::warn!("Entity {:?} does not have a Name component", entity);
-                            }
-                        }
-                        InspectorAction::EditScript { .. } => {
-                            // Script edits are handled immediately in the UI stage.
-                        }
-                        InspectorAction::EditShader { .. } => {
-                            // Shader edits are handled immediately in the UI stage.
-                        }
-                    }
-                }
-                */
         // END OF OLD IMPLEMENTATION
 
         if transforms_changed {
