@@ -246,7 +246,11 @@ impl SceneWorkspace {
     }
 
     /// Renames a scene document, updating the document index.
-    pub fn rename_scene(&mut self, old_document_id: &SceneDocumentId, new_document_id: SceneDocumentId) {
+    pub fn rename_scene(
+        &mut self,
+        old_document_id: &SceneDocumentId,
+        new_document_id: SceneDocumentId,
+    ) {
         // Find the handle for the old document ID
         let handle = match self.document_index.get(old_document_id).copied() {
             Some(h) => h,

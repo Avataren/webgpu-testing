@@ -491,8 +491,9 @@ impl StartupDialogState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BuildPlatform {
+    #[default]
     Desktop,
     Web,
 }
@@ -505,12 +506,6 @@ impl BuildPlatform {
             Self::Desktop => "Desktop",
             Self::Web => "Web",
         }
-    }
-}
-
-impl Default for BuildPlatform {
-    fn default() -> Self {
-        Self::Desktop
     }
 }
 

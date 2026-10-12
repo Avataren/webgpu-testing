@@ -41,18 +41,13 @@ impl MaterialParameterMetadata {
 }
 
 /// Describes the high level kind of a material asset.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum MaterialKind {
     /// A built-in physically based rendering (PBR) material.
+    #[default]
     Pbr,
     /// A user-authored shader material with custom WGSL source code.
     Shader(ShaderMaterialMetadata),
-}
-
-impl Default for MaterialKind {
-    fn default() -> Self {
-        Self::Pbr
-    }
 }
 
 /// Metadata for a shader material, including its WGSL source and compatibility flags.

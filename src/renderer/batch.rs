@@ -48,17 +48,12 @@ impl RenderPass {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CullMode {
+    #[default]
     Back,
     Front,
     None,
-}
-
-impl Default for CullMode {
-    fn default() -> Self {
-        Self::Back
-    }
 }
 
 /// A single renderable object instance
@@ -85,16 +80,11 @@ pub struct InstanceData {
     pub pick_id: PickId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum InstanceSource {
+    #[default]
     Cpu,
     Gpu,
-}
-
-impl Default for InstanceSource {
-    fn default() -> Self {
-        Self::Cpu
-    }
 }
 
 pub struct Batch<'a> {

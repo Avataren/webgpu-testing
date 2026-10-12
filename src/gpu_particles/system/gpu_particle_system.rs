@@ -20,8 +20,9 @@ use super::{
 
 const WORKGROUP_SIZE: u32 = 256;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ParticleRenderMode {
+    #[default]
     Opaque,
     AlphaBlend,
     Additive,
@@ -53,12 +54,6 @@ impl ParticleRenderMode {
                 },
             }),
         }
-    }
-}
-
-impl Default for ParticleRenderMode {
-    fn default() -> Self {
-        Self::Opaque
     }
 }
 

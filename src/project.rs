@@ -571,10 +571,7 @@ impl ProjectManifest {
                 let file_name = match entry.file_name().into_string() {
                     Ok(name) => name,
                     Err(name) => {
-                        warn!(
-                            "Skipping scene file with invalid UTF-8 name: {:?}",
-                            name
-                        );
+                        warn!("Skipping scene file with invalid UTF-8 name: {:?}", name);
                         continue;
                     }
                 };

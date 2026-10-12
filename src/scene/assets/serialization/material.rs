@@ -213,7 +213,9 @@ impl From<&MaterialAsset> for SerializedMaterial {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SerializedMaterialKind {
+    #[default]
     Pbr,
     Shader {
         wgsl_source: String,
@@ -222,12 +224,6 @@ pub enum SerializedMaterialKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shader_path: Option<String>,
     },
-}
-
-impl Default for SerializedMaterialKind {
-    fn default() -> Self {
-        Self::Pbr
-    }
 }
 
 impl SerializedMaterialKind {

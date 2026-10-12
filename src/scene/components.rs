@@ -264,19 +264,14 @@ pub enum BillboardOrientation {
     FaceCameraYAxis,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum BillboardSpace {
     /// Use the transform's translation directly in world space.
+    #[default]
     World,
     /// Treat the transform's translation as an offset in view space
     /// (x = right, y = up, z = forward).
     View { offset: Vec3 },
-}
-
-impl Default for BillboardSpace {
-    fn default() -> Self {
-        Self::World
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -479,17 +474,13 @@ impl ParticleBehaviorPreset {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ParticleRenderBlendMode {
+    #[default]
     Auto,
     Opaque,
     AlphaBlend,
     Additive,
-}
-
-impl Default for ParticleRenderBlendMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl ParticleRenderBlendMode {
@@ -694,20 +685,28 @@ impl From<ParticleSizeCurve> for SizeCurve {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ParticleEmissionShape {
+    #[default]
     Point,
-    Sphere { radius: f32 },
-    Box { half_extents: [f32; 3] },
-    Cone { angle: f32, radius: f32 },
-    Disc { radius: f32 },
-    Ring { radius: f32, thickness: f32 },
+    Sphere {
+        radius: f32,
+    },
+    Box {
+        half_extents: [f32; 3],
+    },
+    Cone {
+        angle: f32,
+        radius: f32,
+    },
+    Disc {
+        radius: f32,
+    },
+    Ring {
+        radius: f32,
+        thickness: f32,
+    },
     RadialBurst,
-}
-
-impl Default for ParticleEmissionShape {
-    fn default() -> Self {
-        Self::Point
-    }
 }
 
 impl From<EmissionShape> for ParticleEmissionShape {

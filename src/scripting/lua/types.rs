@@ -134,20 +134,15 @@ pub(crate) struct LoadedScript {
 ///     end
 /// end
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ScriptMode {
     /// No annotation - runs only in play/runtime mode
+    #[default]
     RuntimeOnly,
     /// `@editor` annotation - runs only in editor mode
     EditorOnly,
     /// `@tool` annotation - runs in both editor and play modes
     Both,
-}
-
-impl Default for ScriptMode {
-    fn default() -> Self {
-        Self::RuntimeOnly
-    }
 }
 
 /// Parse metadata annotations from script source to determine execution mode.

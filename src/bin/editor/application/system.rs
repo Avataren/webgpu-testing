@@ -36,13 +36,22 @@ pub(super) enum EditorCommand {
     ActivateScene(SceneDocumentId),
     CloseScene(SceneDocumentId),
     NewScene,
-    RenameScene { old_id: SceneDocumentId, new_name: String },
+    RenameScene {
+        old_id: SceneDocumentId,
+        new_name: String,
+    },
     HistoryUndo,
     HistoryRedo,
     HistoryCommitTransforms,
-    ReloadPlugin { entity: Entity, path: PathBuf },
+    ReloadPlugin {
+        entity: Entity,
+        path: PathBuf,
+    },
     LoadProject(PathBuf),
-    CreateProject { name: String, location: PathBuf },
+    CreateProject {
+        name: String,
+        location: PathBuf,
+    },
 }
 
 #[derive(Debug)]
