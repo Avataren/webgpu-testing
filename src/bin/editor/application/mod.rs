@@ -44,6 +44,22 @@ const TEXT_EDITOR_PLUGIN: &str = "Text Editor";
 
 /// Widget responses for one script, keyed by widget id.
 type ScriptUiResponses = HashMap<String, UiResponse>;
+
+/// Store this pass's script UI responses for the next frame.
+///
+/// egui can run several passes per frame but only the first receives input, so later
+/// passes are merged in rather than overwriting clicks from the first.
+fn store_ui_responses(
+    ctx: &egui::Context,
+    target: &mut HashMap<Entity, ScriptUiResponses>,
+    responses: HashMap<Entity, ScriptUiResponses>,
+) {
+    if ctx.current_pass_index() == 0 {
+        *target = responses;
+    } else {
+        merge_ui_responses(target, responses);
+    }
+}
 use wgpu_cube::app::{
     AppBuilder, GpuUpdateContext, RuntimeMode, RuntimeStateHandle, StartupContext, UpdateContext,
 };
@@ -62,7 +78,7 @@ use wgpu_cube::scene::{
     SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
 use wgpu_cube::scripting::lua::api::enqueue_text_editor_request;
-use wgpu_cube::scripting::lua::api::ui::{UiCommand, UiResponse};
+use wgpu_cube::scripting::lua::api::ui::{merge_ui_responses, UiCommand, UiResponse};
 use wgpu_cube::scripting::LuaScriptingPlugin;
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
@@ -543,7 +559,7 @@ impl EditorApplication {
         };
 
         self.shared.welcome_plugin_override = welcome_override;
-        self.shared.script_ui_responses = scene_responses;
+        store_ui_responses(ctx, &mut self.shared.script_ui_responses, scene_responses);
     }
 
     /// Render UI for scene scripts.
@@ -808,7 +824,7 @@ impl EditorApplication {
             }
         }
 
-        shared.plugin_ui_responses = plugin_responses;
+        store_ui_responses(ctx, &mut shared.plugin_ui_responses, plugin_responses);
         welcome_screen_visible
     }
 

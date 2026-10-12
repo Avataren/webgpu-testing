@@ -31,6 +31,7 @@ pub enum UiCommand {
         text: String,
     },
     Button {
+        id: String,
         text: String,
     },
     Heading {
@@ -99,7 +100,10 @@ pub enum UiCommand {
 }
 
 impl UiCommand {
-    /// Render this command using a real egui::Ui context and collect responses.
+    /// Render this command with a real egui::Ui and record widget responses by id.
+    ///
+    /// `viewport_rect` is the area anchored panels are positioned in; it defaults to
+    /// the available rect of `ui`.
     #[cfg(feature = "egui")]
     pub fn render_and_collect(
         &self,
@@ -107,49 +111,32 @@ impl UiCommand {
         responses: &mut std::collections::HashMap<String, UiResponse>,
         viewport_rect: Option<egui::Rect>,
     ) {
-        // Special handling for MenuBar and Menu to avoid double rendering
+        let mut render_children = |ui: &mut egui::Ui, items: &[UiCommand]| {
+            for item in items {
+                item.render_and_collect(ui, responses, viewport_rect);
+            }
+        };
+
         match self {
             UiCommand::MenuBar { items } => {
-                // println!("Rendering MenuBar with {} items", items.len());
-                egui::MenuBar::new().ui(ui, |ui| {
-                    for item in items {
-                        item.render_and_collect(ui, responses, viewport_rect);
-                    }
-                });
+                egui::MenuBar::new().ui(ui, |ui| render_children(ui, items));
             }
             UiCommand::Menu { text, items } => {
-                // println!("Rendering Menu '{}' with {} items", text, items.len());
-                ui.menu_button(text, |ui| {
-                    for item in items {
-                        item.render_and_collect(ui, responses, viewport_rect);
-                    }
-                });
+                ui.menu_button(text, |ui| render_children(ui, items));
             }
             UiCommand::Horizontal { items, wrap } => {
-                let render_children = |ui: &mut egui::Ui| {
-                    for item in items {
-                        item.render_and_collect(ui, responses, viewport_rect);
-                    }
-                };
-
                 if *wrap {
-                    ui.horizontal_wrapped(render_children);
+                    ui.horizontal_wrapped(|ui| render_children(ui, items));
                 } else {
-                    ui.horizontal(render_children);
+                    ui.horizontal(|ui| render_children(ui, items));
                 }
             }
             UiCommand::CenteredArea { width, items } => {
                 ui.vertical_centered(|ui| {
-                    if let Some(w) = width {
-                        ui.set_width(*w);
-                    } else {
-                        let target = (ui.available_width() * 0.6_f32).clamp(320.0, 760.0);
-                        ui.set_width(target);
-                    }
-
-                    for item in items {
-                        item.render_and_collect(ui, responses, viewport_rect);
-                    }
+                    let width = width
+                        .unwrap_or_else(|| (ui.available_width() * 0.6_f32).clamp(320.0, 760.0));
+                    ui.set_width(width);
+                    render_children(ui, items);
                 });
             }
             UiCommand::AnchoredPanel {
@@ -175,73 +162,39 @@ impl UiCommand {
                         if let Some(height) = height {
                             ui.set_height(*height);
                         }
-                        for item in items {
-                            item.render_and_collect(ui, responses, viewport_rect);
-                        }
+                        render_children(ui, items);
                     });
             }
-            UiCommand::MenuItem { .. } => {
-                // For all other commands, use render_with_id
-                if let Some((id, response)) = self.render_with_id(ui, viewport_rect) {
-                    responses.insert(id, response);
-                }
-            }
-            _ => {
-                // For all other commands, use render_with_id
-                if let Some((id, response)) = self.render_with_id(ui, viewport_rect) {
-                    responses.insert(id, response);
-                } else {
-                    let _ = self.render(ui, viewport_rect);
+            leaf => {
+                if let Some((id, response)) = leaf.render_leaf(ui) {
+                    match responses.get_mut(id) {
+                        Some(existing) => existing.merge(response),
+                        None => {
+                            responses.insert(id.to_owned(), response);
+                        }
+                    }
                 }
             }
         }
     }
 
-    /// Render this command and return (id, response) if applicable.
+    /// Render a non-container command, returning its id and response if it is
+    /// interactive. Value fields are only reported when the user changed the value.
     #[cfg(feature = "egui")]
-    fn render_with_id(
-        &self,
-        ui: &mut egui::Ui,
-        viewport_rect: Option<egui::Rect>,
-    ) -> Option<(String, UiResponse)> {
-        match self {
-            UiCommand::MenuItem { id, .. } => self
-                .render(ui, viewport_rect)
-                .map(|response| (id.clone(), response)),
-            UiCommand::Button { text } => self
-                .render(ui, viewport_rect)
-                .map(|response| (format!("button_{}", text), response)),
-            UiCommand::TextEdit { id, .. }
-            | UiCommand::TextEditMultiline { id, .. }
-            | UiCommand::Slider { id, .. }
-            | UiCommand::DragValue { id, .. }
-            | UiCommand::Checkbox { id, .. }
-            | UiCommand::ColorEdit { id, .. } => self
-                .render(ui, viewport_rect)
-                .map(|response| (id.clone(), response)),
-            _ => None,
+    fn render_leaf(&self, ui: &mut egui::Ui) -> Option<(&str, UiResponse)> {
+        fn interaction(response: &egui::Response) -> UiResponse {
+            UiResponse {
+                clicked: response.clicked(),
+                hovered: response.hovered(),
+                changed: response.changed(),
+                ..Default::default()
+            }
         }
-    }
 
-    /// Render this command using a real egui::Ui context.
-    #[cfg(feature = "egui")]
-    pub fn render(
-        &self,
-        ui: &mut egui::Ui,
-        viewport_rect: Option<egui::Rect>,
-    ) -> Option<UiResponse> {
         match self {
             UiCommand::Label { text } => {
                 ui.label(text);
                 None
-            }
-            UiCommand::Button { text } => {
-                let response = ui.button(text);
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    ..Default::default()
-                })
             }
             UiCommand::Heading { text } => {
                 ui.heading(text);
@@ -251,212 +204,123 @@ impl UiCommand {
                 ui.separator();
                 None
             }
-            UiCommand::TextEdit {
-                id: _,
-                current_value,
-            } => {
+            UiCommand::Button { id, text } => Some((id, interaction(&ui.button(text)))),
+            UiCommand::MenuItem { id, text } => Some((id, interaction(&ui.button(text)))),
+            UiCommand::TextEdit { id, current_value } => {
                 let mut text = current_value.clone();
-                let response = ui.text_edit_singleline(&mut text);
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    text_value: Some(text),
-                    ..Default::default()
-                })
+                let response = ui.add(egui::TextEdit::singleline(&mut text).id_salt(id));
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        text_value: changed.then_some(text),
+                        ..interaction(&response)
+                    },
+                ))
             }
             UiCommand::TextEditMultiline {
-                id: _,
+                id,
                 current_value,
                 width,
                 height,
             } => {
                 let mut text = current_value.clone();
-                let width = *width;
-                let height = *height;
-                let add_text_editor =
-                    |target_ui: &mut egui::Ui, size: egui::Vec2, text: &mut String| {
-                        target_ui.add_sized(size, egui::TextEdit::multiline(text).code_editor())
-                    };
+                fn editor<'t>(text: &'t mut String, id: &str) -> egui::TextEdit<'t> {
+                    egui::TextEdit::multiline(text).id_salt(id).code_editor()
+                }
 
-                let response = if let Some(target_height) = height {
+                let response = if let Some(target_height) = *height {
                     let target_width = width.unwrap_or_else(|| ui.available_width());
-                    let mut inner_response = None;
-
                     egui::ScrollArea::both()
+                        .id_salt(id.as_str())
                         .auto_shrink([false, false])
                         .max_width(target_width)
                         .max_height(target_height)
-                        .show(ui, |scroll_ui| {
-                            scroll_ui.set_min_size(egui::vec2(target_width, target_height));
-                            let resp = add_text_editor(
-                                scroll_ui,
-                                egui::vec2(target_width, target_height),
-                                &mut text,
-                            );
-                            inner_response = Some(resp);
-                        });
-
-                    inner_response.expect("ScrollArea should always render text editor")
+                        .show(ui, |ui| {
+                            let size = egui::vec2(target_width, target_height);
+                            ui.set_min_size(size);
+                            ui.add_sized(size, editor(&mut text, id))
+                        })
+                        .inner
                 } else {
-                    let size = match (width, height) {
-                        (Some(w), None) => egui::vec2(w, ui.available_height()),
-                        (None, Some(h)) => egui::vec2(ui.available_width(), h),
-                        (Some(w), Some(h)) => egui::vec2(w, h),
-                        (None, None) => ui.available_size(),
-                    };
-                    add_text_editor(ui, size, &mut text)
+                    let size = egui::vec2(
+                        width.unwrap_or_else(|| ui.available_width()),
+                        ui.available_height(),
+                    );
+                    ui.add_sized(size, editor(&mut text, id))
                 };
 
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    text_value: Some(text),
-                    ..Default::default()
-                })
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        text_value: changed.then_some(text),
+                        ..interaction(&response)
+                    },
+                ))
             }
             UiCommand::Slider {
-                id: _,
+                id,
                 current_value,
                 min,
                 max,
             } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::Slider::new(&mut value, *min..=*max));
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    float_value: Some(value),
-                    ..Default::default()
-                })
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        float_value: changed.then_some(value),
+                        ..interaction(&response)
+                    },
+                ))
             }
-            UiCommand::DragValue {
-                id: _,
-                current_value,
-            } => {
+            UiCommand::DragValue { id, current_value } => {
                 let mut value = *current_value;
                 let response = ui.add(egui::DragValue::new(&mut value));
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    float_value: Some(value),
-                    ..Default::default()
-                })
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        float_value: changed.then_some(value),
+                        ..interaction(&response)
+                    },
+                ))
             }
             UiCommand::Checkbox {
-                id: _,
+                id,
                 current_value,
                 label,
             } => {
                 let mut checked = *current_value;
                 let response = ui.checkbox(&mut checked, label);
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    bool_value: Some(checked),
-                    ..Default::default()
-                })
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        bool_value: changed.then_some(checked),
+                        ..interaction(&response)
+                    },
+                ))
             }
-            UiCommand::ColorEdit { id: _, r, g, b } => {
+            UiCommand::ColorEdit { id, r, g, b } => {
                 let mut color = [*r, *g, *b];
                 let response = ui.color_edit_button_rgb(&mut color);
-                Some(UiResponse {
-                    clicked: response.clicked(),
-                    hovered: response.hovered(),
-                    changed: response.changed(),
-                    color_value: Some((color[0], color[1], color[2])),
-                    ..Default::default()
-                })
+                let changed = response.changed();
+                Some((
+                    id,
+                    UiResponse {
+                        color_value: changed.then_some((color[0], color[1], color[2])),
+                        ..interaction(&response)
+                    },
+                ))
             }
-            UiCommand::MenuBar { items } => {
-                egui::MenuBar::new().ui(ui, |ui| {
-                    for item in items {
-                        item.render(ui, viewport_rect);
-                    }
-                });
-                None
-            }
-            UiCommand::Menu { text, items } => {
-                ui.menu_button(text, |ui| {
-                    for item in items {
-                        item.render(ui, viewport_rect);
-                    }
-                });
-                None
-            }
-            UiCommand::Horizontal { items, wrap } => {
-                let render_children = |ui: &mut egui::Ui| {
-                    for item in items {
-                        item.render(ui, viewport_rect);
-                    }
-                };
-
-                if *wrap {
-                    ui.horizontal_wrapped(render_children);
-                } else {
-                    ui.horizontal(render_children);
-                }
-                None
-            }
-            UiCommand::MenuItem { id: _, text } => {
-                let clicked = ui.button(text).clicked();
-                if clicked {
-                    Some(UiResponse {
-                        clicked: true,
-                        ..Default::default()
-                    })
-                } else {
-                    None
-                }
-            }
-            UiCommand::CenteredArea { width, items } => {
-                ui.vertical_centered(|ui| {
-                    if let Some(w) = width {
-                        ui.set_width(*w);
-                    } else {
-                        let target = (ui.available_width() * 0.6_f32).clamp(320.0, 760.0);
-                        ui.set_width(target);
-                    }
-
-                    for item in items {
-                        item.render(ui, viewport_rect);
-                    }
-                });
-                None
-            }
-            UiCommand::AnchoredPanel {
-                id,
-                anchor,
-                offset_x,
-                offset_y,
-                width,
-                height,
-                items,
-            } => {
-                let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
-                let position =
-                    anchored_position(base_rect, *anchor, *offset_x, *offset_y, *width, *height);
-                egui::Area::new(egui::Id::new(id))
-                    .fixed_pos(position)
-                    .constrain_to(base_rect)
-                    .interactable(true)
-                    .show(ui.ctx(), |ui| {
-                        if let Some(width) = width {
-                            ui.set_width(*width);
-                        }
-                        if let Some(height) = height {
-                            ui.set_height(*height);
-                        }
-                        for item in items {
-                            item.render(ui, viewport_rect);
-                        }
-                    });
-                None
-            }
+            UiCommand::MenuBar { .. }
+            | UiCommand::Menu { .. }
+            | UiCommand::Horizontal { .. }
+            | UiCommand::CenteredArea { .. }
+            | UiCommand::AnchoredPanel { .. } => None,
         }
     }
 }
@@ -551,6 +415,8 @@ mod tests {
 }
 
 /// Response from a UI widget.
+///
+/// Value fields (`text_value`, `float_value`, ...) are only set when `changed` is true.
 #[derive(Debug, Clone, Default)]
 pub struct UiResponse {
     pub clicked: bool,
@@ -560,4 +426,69 @@ pub struct UiResponse {
     pub float_value: Option<f64>,
     pub bool_value: Option<bool>,
     pub color_value: Option<(f32, f32, f32)>,
+}
+
+impl UiResponse {
+    /// Combine with a response for the same widget from a later UI pass in the same
+    /// frame. Clicks and changes from any pass are kept; values come from the latest
+    /// pass that changed them.
+    pub fn merge(&mut self, later: UiResponse) {
+        self.clicked |= later.clicked;
+        self.hovered = later.hovered;
+        if later.changed {
+            self.changed = true;
+            self.text_value = later.text_value;
+            self.float_value = later.float_value;
+            self.bool_value = later.bool_value;
+            self.color_value = later.color_value;
+        }
+    }
+}
+
+/// Merge per-entity widget responses from a later UI pass into `target`.
+///
+/// egui may run the UI more than once per frame and only the first pass sees input
+/// events, so overwriting responses from a later pass would lose clicks.
+pub fn merge_ui_responses<K: Eq + std::hash::Hash>(
+    target: &mut std::collections::HashMap<K, std::collections::HashMap<String, UiResponse>>,
+    later: std::collections::HashMap<K, std::collections::HashMap<String, UiResponse>>,
+) {
+    for (key, responses) in later {
+        let entry = target.entry(key).or_default();
+        for (id, response) in responses {
+            match entry.get_mut(&id) {
+                Some(existing) => existing.merge(response),
+                None => {
+                    entry.insert(id, response);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::{merge_ui_responses, UiResponse};
+    use std::collections::HashMap;
+
+    #[test]
+    fn later_pass_does_not_erase_click() {
+        let mut target: HashMap<u32, HashMap<String, UiResponse>> = [(
+            1,
+            [(
+                "button:Go".to_owned(),
+                UiResponse {
+                    clicked: true,
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        )]
+        .into();
+        let later = [(1, [("button:Go".to_owned(), UiResponse::default())].into())].into();
+
+        merge_ui_responses(&mut target, later);
+
+        assert!(target[&1]["button:Go"].clicked);
+    }
 }

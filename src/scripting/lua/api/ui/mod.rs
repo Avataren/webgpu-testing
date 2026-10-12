@@ -43,7 +43,7 @@
 mod commands;
 mod context;
 
-pub use commands::{Anchor, UiCommand, UiResponse};
+pub use commands::{merge_ui_responses, Anchor, UiCommand, UiResponse};
 pub use context::UiContext;
 
 use mlua::{Lua, UserData, UserDataMethods};
@@ -60,7 +60,8 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:label(text)` - Display text label
 /// - `ui:heading(text)` - Display heading
 /// - `ui:separator()` - Display horizontal line
-/// - `ui:button(text)` - Display button, returns true if clicked
+/// - `ui:button(text, [id])` - Display button, returns true if clicked. Buttons are
+///   identified by label (plus occurrence order); pass `id` to make it explicit
 /// - `ui:checkbox(id, value, label)` - Display checkbox, returns new value
 /// - `ui:text_edit(id, value)` - Single-line text input, returns new value
 /// - `ui:text_edit_multiline(id, value, width, height)` - Multi-line text, returns new value
@@ -103,8 +104,11 @@ impl UserData for UiContext {
             Ok(())
         });
 
-        // Display a button and return whether it was clicked
-        methods.add_method("button", |_, this, text: String| Ok(this.button(text)));
+        // Display a button and return whether it was clicked. An optional id
+        // distinguishes buttons that share a label.
+        methods.add_method("button", |_, this, (text, id): (String, Option<String>)| {
+            Ok(this.button(text, id))
+        });
 
         // Display a heading
         methods.add_method("heading", |_, this, text: String| {
