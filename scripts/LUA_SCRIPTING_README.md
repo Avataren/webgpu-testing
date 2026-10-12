@@ -4,75 +4,11 @@ This document describes the Lua scripting integration and provides examples of c
 
 ## Overview
 
-The Lua scripting system provides the same functionality as Rune scripts with a more familiar, flexible syntax. All Rune API functions have been ported to Lua with equivalent behavior.
-
-## Key Differences from Rune
-
-### 1. **Array Indexing**
-- **Rune**: 0-indexed arrays `array[0]`
-- **Lua**: 1-indexed arrays `array[1]`
-
-```lua
--- Rune
-let axis = get_state("axis", [0.0, 1.0, 0.0]);
-let x = axis[0];  -- First element
-
--- Lua equivalent
-local axis = get_state("axis", {0.0, 1.0, 0.0})
-local x = axis[1]  -- First element (1-indexed!)
-```
-
-### 2. **Data Structures**
-- **Rune**: Uses structs `struct Point { x, y }`
-- **Lua**: Uses tables `{ x = 0, y = 0 }`
-
-```lua
--- Rune
-struct CubeState {
-    angle,
-    frameCount,
-}
-set_state("cube_state", CubeState { angle: 0.0, frameCount: 0.0 });
-
--- Lua equivalent
-local cube_state = {
-    angle = 0.0,
-    frameCount = 0.0
-}
-set_state("cube_state", cube_state)
-```
-
-### 3. **Function Declarations**
-- **Rune**: Uses `pub fn` keyword
-- **Lua**: Uses `function` keyword
-
-```lua
--- Rune
-pub fn update(self_entity, dt) {
-    // ...
-}
-
--- Lua equivalent
-function update(self_entity, dt)
-    -- ...
-end
-```
-
-### 4. **String Formatting**
-- **Rune**: Uses string interpolation `\`Value: ${value}\``
-- **Lua**: Uses `string.format()`
-
-```lua
--- Rune
-log_info(`Position: ${x}, ${y}, ${z}`);
-
--- Lua equivalent
-log_info(string.format("Position: %f, %f, %f", x, y, z))
-```
-
-### 5. **Comments**
-- **Rune**: Uses `//` for single-line comments
-- **Lua**: Uses `--` for single-line comments
+Scripts are Lua 5.4 files (or inline sources) attached to entities through a
+`LuaScriptComponent`. Each component gets its own script instance with a private
+environment, so two scripts can both define `update` without clashing. Scripts read the
+world directly (transforms, queries, components) and change it through commands that are
+applied right after each hook returns.
 
 ## Important Conventions
 
@@ -200,7 +136,9 @@ end
 - `get_state(key, default)` - Retrieve value with default
 - `try_get_state(key)` - Retrieve value or nil
 - `set_f64(key, number)` - Store number
-- `get_f64(key)` - Retrieve number (panics if not found)
+- `get_f64(key, default)` - Retrieve number (errors if missing and no default given)
+- `set_i32(key, integer)` - Store integer
+- `get_i32(key, default)` - Retrieve integer with default
 - `set_bool(key, boolean)` - Store boolean
 - `get_bool(key, default)` - Retrieve boolean with default
 - `set_string(key, string)` - Store string
@@ -331,7 +269,8 @@ The UI API provides egui widgets for creating editor interfaces. UI is only avai
 
 #### Interactive Widgets
 
-- `ui:button(text)` → `boolean` - Display button, returns true if clicked
+- `ui:button(text, [id])` → `boolean` - Display button, returns true if clicked.
+  Buttons are identified by their label; pass `id` when the label is not unique or changes
 - `ui:checkbox(id, current_value, label)` → `boolean` - Display checkbox, returns new value
 - `ui:text_edit(id, current_value)` → `string` - Single-line text input, returns new value
 - `ui:text_edit_multiline(id, current_value, width, height)` → `string` - Multi-line text editor, returns new value
@@ -339,23 +278,23 @@ The UI API provides egui widgets for creating editor interfaces. UI is only avai
 - `ui:drag_value(id, current_value)` → `number` - Draggable number widget, returns new value
 - `ui:color_edit(id, r, g, b)` → `table{r, g, b}` - Color picker, returns table with RGB values (0.0-1.0)
 
-#### Widget ID Requirements
+#### Widget IDs and Values
 
-Most interactive widgets require a unique `id` parameter. This ID is used to:
-- Track widget state between frames
-- Store responses from user interactions
-- Prevent conflicts between widgets
+Interactive widgets are identified by their `id` (or label, for buttons). If the same id
+appears more than once in a frame, later occurrences are numbered automatically, so ids
+stay unique as long as the UI is built in the same order each frame.
 
-**Best Practice**: Use descriptive IDs that reflect the widget's purpose.
+Clicks and edits are reported on the **next** frame. Value widgets return the user's
+edit on the frame after it happens and otherwise return the value you passed in, so your
+script owns the value and can change it at any time:
 
 ```lua
--- Good IDs
-local new_value = ui:slider("player_health", health, 0, 100)
-local new_text = ui:text_edit("player_name", name)
-
--- Avoid generic IDs that might conflict
-local value1 = ui:slider("slider1", val1, 0, 100)  -- Could conflict!
-local value2 = ui:slider("slider2", val2, 0, 100)
+local name = get_string("name", "")
+name = ui:text_edit("player_name", name)
+if ui:button("Clear") then
+    name = ""
+end
+set_string("name", name)
 ```
 
 #### UI Example
@@ -415,7 +354,10 @@ See `fractal_cube_rotate.lua` for complex rotation with axis control.
 - `event_listener.lua` - Demonstrates event subscription and handling
 
 ### Comprehensive API Test
-See `lua_api_test.lua` for a comprehensive test of all API categories.
+See `lua_api_test.lua` for a test of all API categories.
+
+### Widget Showcase
+See `ui_example_comprehensive.lua` for every available UI widget.
 
 ## Lifecycle Hooks
 
@@ -423,35 +365,61 @@ Scripts can implement these lifecycle functions:
 
 ```lua
 function on_created(self_entity)
-    -- Called once when entity is created
+    -- Called once when the script starts (and again after a hot reload)
 end
 
 function update(self_entity, dt)
-    -- Called every frame
-    -- dt is delta time in seconds
+    -- Called every frame; dt is delta time in seconds
 end
 
 function on_ui(self_entity, ui)
-    -- Called for editor UI rendering (if script is @editor or @tool)
+    -- Called every frame to build UI
+end
+
+function on_destroyed(self_entity)
+    -- Called when the script component or its entity is removed
 end
 ```
 
-## Script Modes
+Top-level code runs once when the script is loaded, with the full API available.
 
-Scripts can declare their mode using annotations:
+When a script file changes on disk it is hot-reloaded: the new code is compiled,
+`on_created` runs again, and values stored with the state API (`set_f64`, `set_state`, ...)
+are restored afterwards. Errors are logged once per distinct message and shown in the
+editor; one failing script never stops the others.
+
+### Coroutines
 
 ```lua
--- @editor
--- This script only runs in the editor
-
--- OR
-
--- @tool
--- This script only runs in the editor (same as @editor)
-
--- OR (default)
--- Scripts without annotations run in both editor and runtime
+function on_created(self_entity)
+    coroutine_create(function()
+        wait(2.0)        -- resume after two seconds
+        wait_frames(10)  -- resume after ten frames
+        log_info("done")
+    end)
+end
 ```
+
+Coroutines are started and resumed by the engine. `wait` and `wait_frames` raise an error
+when called outside a coroutine.
+
+### Events
+
+Event handlers run after the hook that emitted the event, in the same frame. At most 4096
+events are dispatched per frame; anything beyond that is dropped with a warning, which stops
+handlers that re-emit their own event from hanging the engine.
+
+## Script Modes
+
+Scripts declare where they run with an annotation in their leading comments:
+
+| Annotation | Runs in |
+|------------|---------|
+| *(none)*   | Play mode only |
+| `-- @editor` | Editor mode only |
+| `-- @tool` | Editor and play mode |
+
+`@editor` and `@tool` scripts receive `update` every frame while editing.
 
 ## Known Limitations
 
@@ -462,62 +430,4 @@ Scripts can declare their mode using annotations:
 1. **Always provide default values** when using `get_state()` to handle first-time access
 2. **Use typed state functions** (`set_f64`, `set_bool`, etc.) for better performance with simple types
 3. **Clean up subscriptions** using `unsubscribe_event()` when no longer needed
-4. **Test with `lua_api_test.lua`** to verify API functionality
-5. **Check for nil returns** when using functions that may fail (e.g., `find_entity_by_name`)
-
-## Migration from Rune
-
-To migrate existing Rune scripts to Lua:
-
-1. Change file extension from `.rn` to `.lua`
-2. Replace `pub fn` with `function`
-3. Change `//` comments to `--`
-4. Convert structs to tables
-5. Adjust array indices from 0-based to 1-based
-6. Replace string interpolation with `string.format()`
-7. Update variable declarations from `let` to `local`
-8. Update UI widget calls: change `.method()` to `:method()` syntax
-
-### UI Migration
-
-Rune and Lua UI APIs are functionally identical but use different calling conventions:
-
-```lua
--- Rune
-pub fn on_ui(self_entity, ui) {
-    ui.label("Hello");
-    if ui.button("Click") {
-        log_info("Clicked!");
-    }
-    let value = ui.slider("slider_id", 0.5, 0.0, 1.0);
-}
-
--- Lua (use colon syntax for method calls)
-function on_ui(self_entity, ui)
-    ui:label("Hello")
-    if ui:button("Click") then
-        log_info("Clicked!")
-    end
-    local value = ui:slider("slider_id", 0.5, 0.0, 1.0)
-end
-```
-
-Example migration:
-
-```lua
--- Rune
-pub fn update(self_entity, dt) {
-    let state = get_state("data", Data { value: 0.0 });
-    let new_value = state.value + dt;
-    set_state("data", Data { value: new_value });
-    log_info(`Value: ${new_value}`);
-}
-
--- Lua
-function update(self_entity, dt)
-    local state = get_state("data", { value = 0.0 })
-    local new_value = state.value + dt
-    set_state("data", { value = new_value })
-    log_info(string.format("Value: %f", new_value))
-end
-```
+4. **Check for nil returns** when using functions that may fail (e.g., `find_entity_by_name`)

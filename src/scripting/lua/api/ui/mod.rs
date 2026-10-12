@@ -19,7 +19,7 @@
 //! ## Script Modes
 //!
 //! - **`@editor`** - Script runs only in editor mode, has access to UI
-//! - **`@tool`** - Script runs in editor and play modes (currently same as @editor)
+//! - **`@tool`** - Script runs in editor and play modes
 //! - **No annotation** - Script runs only in play mode, no UI access
 //!
 //! ## Example

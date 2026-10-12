@@ -1,25 +1,17 @@
 //! # Lua Scripting Integration
 //!
-//! This module provides a comprehensive Lua-based scripting system for the game engine,
-//! offering an alternative to the Rune scripting language.
+//! This module provides the Lua-based scripting system for the game engine.
 //!
 //! ## Features
 //!
 //! - **Full ECS Integration** - Direct access to entities, components, and queries
 //! - **Lifecycle Hooks** - `on_created`, `update`, `on_ui`, `on_destroyed` callbacks
-//! - **State Persistence** - Script state survives reloads and serialization
-//! - **Event System** - Inter-script communication via typed events
+//! - **State Persistence** - Script state survives hot reloads
+//! - **Event System** - Inter-script communication via named events
+//! - **Coroutines** - `wait(seconds)` / `wait_frames(n)` driven by the engine
 //! - **Command Buffer** - Deferred operations for safe mutation
 //! - **Editor Integration** - UI tools with egui via `@editor` scripts
 //! - **Safe Sandboxing** - Restricted file I/O and disabled dangerous functions
-//!
-//! ## Key Advantages Over Rune
-//!
-//! - **No complex ownership** - No move semantics or borrow checker in scripts
-//! - **Natural iteration** - Simple loops over tables and arrays
-//! - **Mature ecosystem** - Extensive documentation and community resources
-//! - **Better string handling** - No lifetime or ownership issues
-//! - **Familiar syntax** - Widely known language with abundant learning materials
 //!
 //! ## Architecture
 //!
@@ -32,7 +24,7 @@
 //! - [`types`] - Core types like [`LuaScriptSource`] and [`ScriptMode`]
 //! - [`commands`] - Command buffer for deferred operations
 //! - [`guards`] - Thread-local guards for safe context access
-//! - [`plugin`] - Bevy plugin for integration
+//! - [`plugin`] - App plugin that configures the script root
 //!
 //! ## Conventions
 //!
@@ -66,13 +58,18 @@
 //!
 //! Scripts attached to entities go through the following lifecycle:
 //!
-//! 1. **Creation** - Script is compiled and `on_created(self_entity)` is called once
+//! 1. **Creation** - Script is compiled, its top-level code runs and
+//!    `on_created(self_entity)` is called once
 //! 2. **Update Loop** - `update(self_entity, dt)` called every frame
-//! 3. **UI Rendering** - `on_ui(self_entity, ui)` called for @editor/@tool scripts
-//! 4. **Destruction** - `on_destroyed(self_entity)` called when entity is removed
+//! 3. **UI Rendering** - `on_ui(self_entity, ui)` called every frame for scripts that
+//!    define it
+//! 4. **Destruction** - `on_destroyed(self_entity)` called when the component or
+//!    entity is removed
 //!
-//! State is automatically restored after compilation, so `on_created` sees
-//! previously saved state values.
+//! Each component gets its own script instance and Lua environment. Replacing or
+//! cloning a component starts a fresh instance. On hot reload the script is
+//! recompiled and `on_created` runs again; values stored with the state API are
+//! restored afterwards, so they win over the defaults `on_created` sets.
 //!
 //! ## Script Modes
 //!

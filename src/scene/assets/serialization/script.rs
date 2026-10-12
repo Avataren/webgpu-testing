@@ -54,12 +54,3 @@ impl SerializedLuaScript {
         LuaScriptComponent::new(self.source.into())
     }
 }
-
-// Legacy type aliases for backward compatibility with old save files
-#[deprecated(note = "Use SerializedLuaScriptSource instead")]
-#[allow(dead_code)]
-pub type SerializedRuneScriptSource = SerializedLuaScriptSource;
-
-#[deprecated(note = "Use SerializedLuaScript instead")]
-#[allow(dead_code)]
-pub type SerializedRuneScript = SerializedLuaScript;

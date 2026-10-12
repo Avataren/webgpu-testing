@@ -1,3 +1,0 @@
-pub fn on_created(self_entity) {
-    import_gltf(self_entity, __GLTF_PATH__, 1.0);
-}
