@@ -64,6 +64,8 @@ impl ProjectController {
     }
 
     pub fn set_current_dir(&mut self, dir: PathBuf) {
+        // Project scripts may read and write files inside their own project.
+        wgpu_cube::scripting::lua::api::grant_path_access(&dir);
         self.current_dir = Some(dir);
         self.startup_dialog.on_project_loaded();
     }

@@ -15,17 +15,22 @@ pub(crate) fn register_text_editor_bridge_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "fetch_text_editor_request",
         lua.create_function(|_, ()| {
-            let mut queue = queue().lock().unwrap();
+            let mut queue = queue()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Ok(queue.pop_front())
         })?,
     )?;
     Ok(())
 }
 
-/// Enqueue a file path for the text editor plugin to open.
+/// Enqueue a file path for the text editor plugin to open, granting scripts access to it.
 pub fn enqueue_text_editor_request(path: impl AsRef<Path>) {
     let path = path.as_ref();
+    super::file_io::grant_path_access(path);
     let display_path = path.to_string_lossy().into_owned();
-    let mut queue = queue().lock().unwrap();
+    let mut queue = queue()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     queue.push_back(display_path);
 }

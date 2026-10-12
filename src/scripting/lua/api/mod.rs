@@ -24,6 +24,7 @@ use mlua::{Lua, Result as LuaResult};
 pub use clipboard::{ClipboardAccess, ClipboardGuard};
 pub(crate) use coroutine::{resume_coroutine, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
+pub use file_io::grant_path_access;
 pub use text_editor_bridge::enqueue_text_editor_request;
 pub use ui::{Anchor, UiCommand, UiContext, UiResponse};
 

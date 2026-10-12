@@ -7,9 +7,11 @@
 //! For security, scripts can only access files within allowed directories:
 //! - `scripts/`
 //! - `examples/scripts/`
+//! - paths the user picked in a file dialog during this session
+//! - paths the host granted with [`grant_path_access`] (e.g. the open project)
 //!
-//! Path traversal attacks (using `..`) are automatically blocked.
-//! Absolute paths selected via file dialogs are allowed.
+//! Paths are resolved (including `..` and symlinks) before the check, so traversal
+//! out of an allowed directory is blocked.
 //!
 //! ## Features
 //!
@@ -24,6 +26,7 @@
 //! - **WASM** - File I/O operations return errors (not supported)
 
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use mlua::{Lua, Result as LuaResult};
 
@@ -34,77 +37,90 @@ use mlua::{Lua, Result as LuaResult};
 /// to system files.
 const ALLOWED_DIRS: &[&str] = &["examples/scripts", "scripts"];
 
-/// Normalize a path by resolving . and .. components without requiring the file to exist.
-/// This prevents path traversal attacks.
-fn normalize_path(path: &Path) -> Option<PathBuf> {
-    let mut normalized = PathBuf::new();
+/// Paths (files or directories) the user or host explicitly granted access to.
+/// Stored fully resolved.
+static GRANTED_PATHS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
+/// Allow scripts to access `path`: a file, or a directory and everything below it.
+///
+/// File dialogs grant their result automatically. Hosts call this for locations
+/// scripts legitimately need, such as the open project's directory.
+pub fn grant_path_access(path: impl AsRef<Path>) {
+    let Some(resolved) = resolve_path(path.as_ref()) else {
+        return;
+    };
+    let mut granted = GRANTED_PATHS.lock().unwrap_or_else(PoisonError::into_inner);
+    if !granted.contains(&resolved) {
+        granted.push(resolved);
+    }
+}
+
+/// Resolve `.` and `..` lexically. Returns `None` if `..` would climb above the start.
+fn normalize_components(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
-            Component::CurDir => {
-                // Skip "." components
-            }
+            Component::CurDir => {}
             Component::ParentDir => {
-                // For "..", pop the last component if possible
-                // If we can't pop (we're at root), the path is trying to escape - reject it
                 if !normalized.pop() {
                     return None;
                 }
             }
-            Component::Normal(part) => {
-                normalized.push(part);
-            }
-            Component::RootDir => {
-                // Absolute paths are not allowed in our sandboxed environment
-                return None;
-            }
-            Component::Prefix(_) => {
-                // Windows prefixes (C:\, \\server\, etc.) are not allowed
-                return None;
-            }
+            Component::Normal(part) => normalized.push(part),
+            Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-
     Some(normalized)
 }
 
-/// Check if a path is within allowed directories
-fn is_path_allowed(path: &Path) -> bool {
-    // If the path is absolute, allow it (user selected it via file dialog)
-    if path.is_absolute() {
-        return true;
-    }
-
-    // First, get the current directory
-    let Some(base) = std::env::current_dir().ok() else {
-        return false;
+/// Resolve `path` to an absolute path with symlinks resolved, even if it does not
+/// exist yet: the nearest existing ancestor is canonicalized and the remaining
+/// components are appended. Relative paths are taken relative to the working directory.
+fn resolve_path(path: &Path) -> Option<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
     };
 
-    // Normalize the input path to resolve . and .. without requiring file existence
-    let Some(normalized_relative) = normalize_path(path) else {
-        log::warn!("Rejected path with invalid traversal: {:?}", path);
-        return false;
-    };
-
-    // Construct the full path
-    let full_path = base.join(&normalized_relative);
-
-    // Now try to canonicalize (this will work if the file exists)
-    let canonical = full_path.canonicalize().unwrap_or(full_path);
-
-    // Check if the canonical path starts with any allowed directory
-    for allowed in ALLOWED_DIRS {
-        let allowed_path = base.join(allowed);
-
-        // Try to canonicalize the allowed path
-        let allowed_canonical = allowed_path.canonicalize().unwrap_or(allowed_path);
-
-        if canonical.starts_with(&allowed_canonical) {
-            return true;
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    let canonical = loop {
+        match existing.canonicalize() {
+            Ok(canonical) => break canonical,
+            Err(_) => {
+                missing.push(existing.file_name()?);
+                existing = existing.parent()?;
+            }
         }
-    }
+    };
 
-    false
+    let rest: PathBuf = missing.into_iter().rev().collect();
+    let rest = normalize_components(&rest)?;
+    Some(canonical.join(rest))
+}
+
+/// Check if a path is within an allowed directory or an explicitly granted path.
+fn is_path_allowed(path: &Path) -> bool {
+    let Some(target) = resolve_path(path) else {
+        log::warn!("Rejected unresolvable script path: {:?}", path);
+        return false;
+    };
+
+    let in_allowed_dir = ALLOWED_DIRS
+        .iter()
+        .filter_map(|dir| resolve_path(Path::new(dir)))
+        .any(|root| target.starts_with(root));
+    let granted = GRANTED_PATHS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .any(|root| target.starts_with(root));
+
+    if !(in_allowed_dir || granted) {
+        log::warn!("Script file access denied: {}", target.display());
+    }
+    in_allowed_dir || granted
 }
 
 /// Registers file I/O API functions with the Lua runtime.
@@ -361,7 +377,10 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     }
 
                     match dialog.pick_file() {
-                        Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                        Some(path) => {
+                            grant_path_access(&path);
+                            Ok(Some(path.to_string_lossy().to_string()))
+                        }
                         None => Ok(None),
                     }
                 }
@@ -418,7 +437,10 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                     }
 
                     match dialog.save_file() {
-                        Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                        Some(path) => {
+                            grant_path_access(&path);
+                            Ok(Some(path.to_string_lossy().to_string()))
+                        }
                         None => Ok(None),
                     }
                 }
@@ -451,7 +473,10 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                 }
 
                 match dialog.pick_folder() {
-                    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+                    Some(path) => {
+                        grant_path_access(&path);
+                        Ok(Some(path.to_string_lossy().to_string()))
+                    }
                     None => Ok(None),
                 }
             }
@@ -465,4 +490,40 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{grant_path_access, is_path_allowed};
+
+    #[test]
+    fn absolute_paths_outside_sandbox_are_denied() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = dir.path().join("secret.txt");
+        std::fs::write(&secret, "x").unwrap();
+
+        assert!(!is_path_allowed(&secret));
+        assert!(!is_path_allowed(std::path::Path::new("/etc/passwd")));
+    }
+
+    #[test]
+    fn granted_paths_are_allowed_but_siblings_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        grant_path_access(&project);
+
+        assert!(is_path_allowed(&project.join("data/new_file.json")));
+        assert!(!is_path_allowed(&dir.path().join("other.txt")));
+        assert!(!is_path_allowed(&project.join("../other.txt")));
+    }
+
+    #[test]
+    fn relative_traversal_out_of_allowed_dirs_is_denied() {
+        assert!(is_path_allowed(std::path::Path::new("scripts/notes.txt")));
+        assert!(!is_path_allowed(std::path::Path::new(
+            "scripts/../Cargo.toml"
+        )));
+        assert!(!is_path_allowed(std::path::Path::new("../outside.txt")));
+    }
 }
