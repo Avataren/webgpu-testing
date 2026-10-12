@@ -61,9 +61,17 @@ impl SceneCamera {
             let forward = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
             let up = safe_normalize(transform.rotation * Vec3::Y, Vec3::Y);
 
-            camera.eye = eye;
-            camera.target = eye + forward;
-            camera.up = up;
+            // Only re-derive the camera when the entity actually moved. Rebuilding an
+            // unchanged view would reset the focus distance (the orbit pivot) to 1.
+            let current_forward = (camera.target - camera.eye).try_normalize();
+            let unchanged = camera.eye.abs_diff_eq(eye, 1e-5)
+                && current_forward.is_some_and(|current| current.dot(forward) > 1.0 - 1e-6);
+
+            if !unchanged {
+                camera.eye = eye;
+                camera.target = eye + forward;
+                camera.up = up;
+            }
         }
 
         self.camera = camera;
