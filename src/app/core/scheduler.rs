@@ -361,7 +361,7 @@ impl Scheduler {
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             match runtime {
-                RuntimeMode::Playing => scene.update(dt),
+                RuntimeMode::Playing => scene.update_with_mode(dt, false),
                 RuntimeMode::Editor => scene.run_editor_scripts(dt),
             }
         } else {

@@ -406,4 +406,59 @@ mod tests {
             default_material
         );
     }
+
+    #[test]
+    fn runtime_mode_selects_which_scripts_update() {
+        use crate::scene::{Transform, TransformComponent};
+        use crate::scripting::LuaScriptComponent;
+
+        let mut core = AppBuilder::new().build();
+        let (game, tool) = {
+            let mut scene = core.scene_mut();
+            let world = scene.main_world_mut();
+            let game = world.spawn((
+                TransformComponent(Transform::default()),
+                LuaScriptComponent::new_inline(
+                    "game",
+                    "function update(e, dt) translate(e, 1, 0, 0) end",
+                ),
+            ));
+            let tool = world.spawn((
+                TransformComponent(Transform::default()),
+                LuaScriptComponent::new_inline(
+                    "tool",
+                    "-- @tool\nfunction update(e, dt) translate(e, 0, 1, 0) end",
+                ),
+            ));
+            (game, tool)
+        };
+        let translation = |core: &mut AppCore, entity| {
+            let scene = core.scene_mut();
+            let translation = scene
+                .main_world()
+                .get::<&TransformComponent>(entity)
+                .unwrap()
+                .0
+                .translation;
+            translation
+        };
+
+        // Editor mode: only the @tool script ticks.
+        let frame = core.begin_frame().unwrap();
+        core.run_update_stage(&frame);
+        assert_eq!(translation(&mut core, game).x, 0.0);
+        assert_eq!(translation(&mut core, tool).y, 1.0);
+
+        // Play mode: gameplay scripts run too.
+        core.runtime_state_handle()
+            .request_mode(RuntimeMode::Playing);
+        assert_eq!(
+            core.sync_runtime_state(),
+            Some(RuntimeTransition::EnteredPlaying)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let frame = core.begin_frame().unwrap();
+        core.run_update_stage(&frame);
+        assert_eq!(translation(&mut core, game).x, 1.0);
+    }
 }

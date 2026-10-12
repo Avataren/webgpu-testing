@@ -90,6 +90,10 @@ use crate::layout::{EditorBehavior, EditorPane};
 use crate::postprocess::ViewportGrid;
 
 impl RenderApplication for EditorApplication {
+    fn initial_runtime_mode(&self) -> RuntimeMode {
+        RuntimeMode::Editor
+    }
+
     fn name(&self) -> &str {
         "Engine Editor"
     }

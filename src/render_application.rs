@@ -3,7 +3,9 @@
 
 #[cfg(feature = "egui")]
 use crate::app::RuntimeStateHandle;
-use crate::app::{AppBuilder, GpuUpdateContext, StartupContext, UpdateContext, WinitApp};
+use crate::app::{
+    AppBuilder, GpuUpdateContext, RuntimeMode, StartupContext, UpdateContext, WinitApp,
+};
 #[cfg(feature = "egui")]
 use crate::scene::SceneHandle;
 use crate::scene::SceneWorkspace;
@@ -37,6 +39,15 @@ pub trait RenderApplication: Sized + 'static {
 
     fn configure(&self, builder: &mut AppBuilder) {
         let _ = builder;
+    }
+
+    /// Runtime mode the application starts in.
+    ///
+    /// Games and demos start in [`RuntimeMode::Playing`] so scene time advances and
+    /// gameplay scripts run. Editors return [`RuntimeMode::Editor`] and switch to
+    /// playing on demand.
+    fn initial_runtime_mode(&self) -> RuntimeMode {
+        RuntimeMode::Playing
     }
 
     fn custom_render(&mut self, _ctx: &mut CustomRenderContext) {}
@@ -234,6 +245,8 @@ where
 
     let core = builder.build();
     let mut app = WinitApp::from_core(core);
+    app.runtime_state_handle()
+        .request_mode(app_rc.borrow().initial_runtime_mode());
 
     #[cfg(feature = "egui")]
     {
