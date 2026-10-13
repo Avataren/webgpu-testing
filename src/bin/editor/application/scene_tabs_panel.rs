@@ -13,16 +13,12 @@ pub(super) enum SceneTabAction {
 pub(super) struct SceneTabsPanel;
 
 impl SceneTabsPanel {
-    pub fn show(
-        &mut self,
-        tabs: &[SceneTabDescriptor],
-        ctx: &egui::Context,
-    ) -> Vec<SceneTabAction> {
+    pub fn show(&mut self, tabs: &[SceneTabDescriptor], ui: &mut egui::Ui) -> Vec<SceneTabAction> {
         let mut actions = Vec::new();
 
-        egui::TopBottomPanel::top("scene_tabs_panel")
-            .frame(egui::Frame::side_top_panel(&ctx.style()))
-            .show(ctx, |ui| {
+        egui::Panel::top("scene_tabs_panel")
+            .frame(egui::Frame::side_top_panel(ui.style()))
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     for tab in tabs {
                         actions.extend(Self::show_tab(ui, tab));

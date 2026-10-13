@@ -7,8 +7,8 @@ pub struct ComputePipelineBuilder<'a> {
     label: Option<&'a str>,
     shader: Option<&'a wgpu::ShaderModule>,
     entry_point: &'a str,
-    bind_group_layouts: Vec<&'a wgpu::BindGroupLayout>,
-    push_constant_ranges: Vec<wgpu::PushConstantRange>,
+    bind_group_layouts: Vec<Option<&'a wgpu::BindGroupLayout>>,
+    immediate_size: u32,
 }
 
 impl<'a> ComputePipelineBuilder<'a> {
@@ -19,7 +19,7 @@ impl<'a> ComputePipelineBuilder<'a> {
             shader: None,
             entry_point: "main",
             bind_group_layouts: Vec::new(),
-            push_constant_ranges: Vec::new(),
+            immediate_size: 0,
         }
     }
 
@@ -43,19 +43,21 @@ impl<'a> ComputePipelineBuilder<'a> {
 
     /// Add a bind group layout
     pub fn with_bind_group_layout(mut self, layout: &'a wgpu::BindGroupLayout) -> Self {
-        self.bind_group_layouts.push(layout);
+        self.bind_group_layouts.push(Some(layout));
         self
     }
 
     /// Add multiple bind group layouts
     pub fn with_bind_group_layouts(mut self, layouts: &[&'a wgpu::BindGroupLayout]) -> Self {
-        self.bind_group_layouts.extend_from_slice(layouts);
+        self.bind_group_layouts
+            .extend(layouts.iter().copied().map(Some));
         self
     }
 
-    /// Add a push constant range
-    pub fn with_push_constant_range(mut self, range: wgpu::PushConstantRange) -> Self {
-        self.push_constant_ranges.push(range);
+    /// Reserve `size` bytes of immediate data (formerly push constants).
+    /// Requires [`wgpu::Features::IMMEDIATES`].
+    pub fn with_immediate_size(mut self, size: u32) -> Self {
+        self.immediate_size = size;
         self
     }
 
@@ -70,7 +72,7 @@ impl<'a> ComputePipelineBuilder<'a> {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: layout_label.as_deref(),
             bind_group_layouts: &self.bind_group_layouts,
-            push_constant_ranges: &self.push_constant_ranges,
+            immediate_size: self.immediate_size,
         });
 
         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

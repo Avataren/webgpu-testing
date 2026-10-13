@@ -162,7 +162,7 @@ impl Texture {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear, // Enable trilinear filtering
+            mipmap_filter: wgpu::MipmapFilterMode::Linear, // Enable trilinear filtering
             ..Default::default()
         });
 
@@ -209,7 +209,7 @@ impl Texture {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -264,8 +264,8 @@ impl Texture {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Blit Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -293,7 +293,7 @@ impl Texture {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -304,7 +304,7 @@ impl Texture {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -368,6 +368,7 @@ impl Texture {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             rpass.set_pipeline(&pipeline);
@@ -587,9 +588,9 @@ mod tests {
     #[ignore] // Ignore by default since it requires GPU
     fn test_texture_creation_with_mipmaps() {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
-                ..Default::default()
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
             });
 
             let adapter = instance
@@ -631,9 +632,9 @@ mod tests {
     #[ignore]
     fn test_default_textures_no_mipmaps() {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
-                ..Default::default()
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
             });
 
             let adapter = instance
@@ -662,9 +663,9 @@ mod tests {
     #[ignore]
     fn test_larger_texture_has_more_mips() {
         pollster::block_on(async {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
-                ..Default::default()
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
             });
 
             let adapter = instance

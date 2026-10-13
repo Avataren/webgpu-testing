@@ -67,8 +67,8 @@ impl BloomStage {
         let prefilter_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomPrefilterPipelineLayout"),
-                bind_group_layouts: &[uniform_layout, &prefilter_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(uniform_layout), Some(&prefilter_layout)],
+                immediate_size: 0,
             });
 
         let prefilter_pipeline = PipelineBuilder::new(device, &prefilter_pipeline_layout, shader)
@@ -105,8 +105,8 @@ impl BloomStage {
         let downsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomDownsamplePipelineLayout"),
-                bind_group_layouts: &[uniform_layout, &downsample_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(uniform_layout), Some(&downsample_layout)],
+                immediate_size: 0,
             });
 
         let downsample_pipeline = PipelineBuilder::new(device, &downsample_pipeline_layout, shader)
@@ -153,8 +153,8 @@ impl BloomStage {
         let upsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BloomUpsamplePipelineLayout"),
-                bind_group_layouts: &[uniform_layout, &upsample_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(uniform_layout), Some(&upsample_layout)],
+                immediate_size: 0,
             });
 
         let upsample_pipeline = PipelineBuilder::new(device, &upsample_pipeline_layout, shader)

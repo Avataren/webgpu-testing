@@ -109,7 +109,7 @@ impl DynamicObjectsBuffer {
         context: &RenderContext,
         batches: &[OrderedBatch],
         materials: &[Material],
-    ) -> Result<(), wgpu::SurfaceError> {
+    ) -> Result<(), crate::renderer::SurfaceError> {
         self.object_scratch.clear();
         self.cpu_segments.clear();
 

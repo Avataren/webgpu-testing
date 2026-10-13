@@ -88,8 +88,8 @@ impl SsaoStage {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("SsaoPipelineLayout"),
-            bind_group_layouts: &[uniform_layout, &layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(uniform_layout), Some(&layout)],
+            immediate_size: 0,
         });
 
         let pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
@@ -125,8 +125,8 @@ impl SsaoStage {
 
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("SsaoBlurPipelineLayout"),
-            bind_group_layouts: &[uniform_layout, &blur_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(uniform_layout), Some(&blur_layout)],
+            immediate_size: 0,
         });
 
         let blur_horizontal_pipeline = PipelineBuilder::new(device, &blur_pipeline_layout, shader)

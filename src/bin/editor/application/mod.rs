@@ -148,8 +148,8 @@ impl RenderApplication for EditorApplication {
         self.particle_system().has_shadow_casters()
     }
 
-    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        self.run_ui_impl(ctx, default_ui);
+    fn ui(&mut self, ui: &mut egui::Ui, default_ui: &mut DefaultUI) {
+        self.run_ui_impl(ui, default_ui);
     }
 
     fn show_default_ui(&self) -> bool {
@@ -330,7 +330,8 @@ impl EditorApplication {
         }
     }
 
-    fn run_ui_impl(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+    fn run_ui_impl(&mut self, ui: &mut egui::Ui, default_ui: &mut DefaultUI) {
+        let ctx = &ui.ctx().clone();
         if let Some(handle) = self.shared.active_scene_handle {
             self.selection_system_mut().set_active_scene(handle);
         }
@@ -345,7 +346,7 @@ impl EditorApplication {
             return;
         }
 
-        self.show_menu_bar(ctx);
+        self.show_menu_bar(ui);
         self.show_rename_scene_dialog(ctx);
 
         let active_mode = self.shared.runtime_state.active_mode();
@@ -389,7 +390,7 @@ impl EditorApplication {
             .collect();
 
         let mut scene_tab_actions = if !show_fullscreen_game {
-            self.scene_tabs_panel.show(&tabs, ctx)
+            self.scene_tabs_panel.show(&tabs, ui)
         } else {
             Vec::new()
         };
@@ -414,7 +415,7 @@ impl EditorApplication {
         let mut inspector_actions = Vec::new();
         let mut hierarchy_events = Vec::new();
         let transparent_frame =
-            egui::Frame::central_panel(&ctx.style()).fill(egui::Color32::TRANSPARENT);
+            egui::Frame::central_panel(ui.style()).fill(egui::Color32::TRANSPARENT);
         {
             let (shared, asset_browser_state) = self.shared_and_asset_browser_state_mut();
             let dock_tree = &mut shared.dock_tree;
@@ -422,9 +423,9 @@ impl EditorApplication {
             let game_viewport = &mut shared.viewports.game_viewport;
             let workspace_info = scene_hierarchy_window.workspace_info();
 
-            egui::CentralPanel::default()
+            egui::CentralPanel::default_margins()
                 .frame(transparent_frame)
-                .show(ctx, |ui| {
+                .show(ui, |ui| {
                     if show_fullscreen_game {
                         crate::layout::show_fullscreen_viewport(ui, game_viewport);
                     } else {

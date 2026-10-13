@@ -130,6 +130,7 @@ impl<'a> CustomRenderContext<'a> {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         if let Some(region) = self.render_region {
@@ -158,6 +159,7 @@ impl<'a> CustomRenderContext<'a> {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         if let Some(region) = self.render_region {
@@ -192,6 +194,7 @@ impl<'a> CustomRenderContext<'a> {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         if let Some(region) = self.render_region {

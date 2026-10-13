@@ -177,6 +177,7 @@ impl<'a> FrameGraph<'a> {
             depth_stencil_attachment: plan.depth_attachment,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         if let Some(region) = region {

@@ -1,4 +1,4 @@
-// egui_integration.rs — fixed for egui release-0.33.0 + wgpu 0.27 'static pass
+// egui_integration.rs — winit input, egui frame lifecycle and wgpu rendering for egui
 
 use egui_wgpu::ScreenDescriptor;
 use winit::event::{DeviceEvent, WindowEvent};
@@ -6,13 +6,18 @@ use winit::window::{CursorGrabMode, Window};
 
 pub use egui;
 
-pub type EguiUiCallback = Box<dyn FnMut(&egui::Context) + 'static>;
+/// Builds the UI for one frame. Receives egui's root [`egui::Ui`], which covers the
+/// whole viewport; use `ui.ctx()` for windows and other context-level APIs.
+pub type EguiUiCallback = Box<dyn FnMut(&mut egui::Ui) + 'static>;
 
 pub struct EguiContext {
     ctx: egui::Context,
     state: egui_winit::State,
     pub renderer: egui_wgpu::Renderer,
     ui_callback: Option<EguiUiCallback>,
+    /// Output of a frame that has not been rendered yet. Kept (and merged with later
+    /// frames) so texture uploads are never lost when a frame is skipped.
+    pending_output: Option<egui::FullOutput>,
     pointer_locked: bool,
     pending_mouse_motion: egui::Vec2,
     should_close: bool,
@@ -35,9 +40,11 @@ impl EguiContext {
         window: &Window,
     ) -> Self {
         let ctx = egui::Context::default();
+        // Run the UI callback once per frame: the editor's UI code has side effects
+        // (actions, script UI) that must not repeat in a discarded pass.
+        ctx.options_mut(|options| options.max_passes = std::num::NonZeroUsize::MIN);
         let viewport_id = ctx.viewport_id();
 
-        // egui-winit 0.33
         let state = egui_winit::State::new(
             ctx.clone(),
             viewport_id,
@@ -47,7 +54,6 @@ impl EguiContext {
             Some(2048), // max_texture_side
         );
 
-        // egui-wgpu 0.33
         let renderer = egui_wgpu::Renderer::new(
             device,
             output_format,
@@ -67,6 +73,7 @@ impl EguiContext {
             state,
             renderer,
             ui_callback: None,
+            pending_output: None,
             pointer_locked: false,
             pending_mouse_motion: egui::Vec2::ZERO,
             should_close: false,
@@ -75,7 +82,7 @@ impl EguiContext {
 
     pub fn set_ui<F>(&mut self, callback: F)
     where
-        F: FnMut(&egui::Context) + 'static,
+        F: FnMut(&mut egui::Ui) + 'static,
     {
         self.ui_callback = Some(Box::new(callback));
     }
@@ -89,7 +96,8 @@ impl EguiContext {
         response.consumed
     }
 
-    pub fn begin_frame(&mut self, window: &Window) {
+    /// Gathers input and runs the UI callback for one frame.
+    pub fn run_frame(&mut self, window: &Window) {
         let mut raw_input = self.state.take_egui_input(window);
         if self.pointer_locked {
             // When the cursor is locked we only want to feed relative motion into egui.
@@ -110,14 +118,25 @@ impl EguiContext {
             }
         }
         self.pending_mouse_motion = egui::Vec2::ZERO;
-        self.ctx.begin_pass(raw_input);
-    }
 
-    pub fn end_frame(&mut self, window: &Window) -> egui::FullOutput {
-        let output = self.ctx.end_pass();
+        let callback = &mut self.ui_callback;
+        let output = self.ctx.run_ui(raw_input, |ui| {
+            if let Some(callback) = callback {
+                callback(ui);
+            }
+        });
         self.state
             .handle_platform_output(window, output.platform_output.clone());
-        output
+
+        match &mut self.pending_output {
+            Some(pending) => pending.append(output),
+            None => self.pending_output = Some(output),
+        }
+    }
+
+    /// Takes the output of the frames run since the last call.
+    pub fn take_output(&mut self) -> Option<egui::FullOutput> {
+        self.pending_output.take()
     }
 
     pub fn render(&mut self, target: &mut EguiRenderTarget<'_>, output: egui::FullOutput) {
@@ -167,6 +186,7 @@ impl EguiContext {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
         // Convert to 'static (consumes `pass`)
@@ -181,12 +201,6 @@ impl EguiContext {
         // Free any textures egui wants to drop
         for id in &output.textures_delta.free {
             self.renderer.free_texture(id);
-        }
-    }
-
-    pub fn run_ui(&mut self) {
-        if let Some(callback) = &mut self.ui_callback {
-            callback(&self.ctx);
         }
     }
 

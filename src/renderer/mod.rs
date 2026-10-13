@@ -44,7 +44,7 @@ pub use render_context::{
     ShadowPassStage,
 };
 pub use render_region::RenderRegion;
-pub use renderer_core::{RenderFrame, Renderer, RendererStats};
+pub use renderer_core::{RenderFrame, Renderer, RendererStats, SurfaceError};
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;

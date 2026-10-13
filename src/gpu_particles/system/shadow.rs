@@ -60,8 +60,8 @@ impl ParticleShadowResources {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ParticleShadowPipelineLayout"),
-            bind_group_layouts: &[&uniform_bind_group_layout, particle_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&uniform_bind_group_layout), Some(particle_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)

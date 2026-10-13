@@ -5,8 +5,9 @@ use super::core::{EditorApplication, GameViewDisplayMode};
 use super::EditorCommand;
 
 impl EditorApplication {
-    pub(super) fn show_menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("editor_top_bar").show(ctx, |ui| {
+    pub(super) fn show_menu_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        egui::Panel::top("editor_top_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     self.project_system_mut().menu_contents(ui);

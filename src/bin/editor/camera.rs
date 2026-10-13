@@ -52,7 +52,7 @@ impl EditorCameraController {
 
     pub fn capture_input(&mut self, ctx: &egui::Context) {
         let viewport_rect = self.viewport_rect;
-        let wants_keyboard = ctx.wants_keyboard_input();
+        let wants_keyboard = ctx.egui_wants_keyboard_input();
         let was_looking = self.looking;
         self.look_delta = Vec2::ZERO;
 

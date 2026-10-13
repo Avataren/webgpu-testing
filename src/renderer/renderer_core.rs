@@ -108,6 +108,35 @@ impl PendingPickReadback {
         })
     }
 }
+/// Why a frame could not be acquired from the surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceError {
+    /// Acquiring the next frame timed out; try again next frame.
+    Timeout,
+    /// The window is occluded (e.g. minimized); skip rendering until it is visible.
+    Occluded,
+    /// The surface configuration no longer matches; reconfigure and retry.
+    Outdated,
+    /// The surface was lost; reconfigure (or recreate) and retry.
+    Lost,
+    /// A validation error was raised while acquiring the frame.
+    Validation,
+}
+
+impl std::fmt::Display for SurfaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::Timeout => "timed out acquiring the next surface texture",
+            Self::Occluded => "the surface is occluded",
+            Self::Outdated => "the surface configuration is outdated",
+            Self::Lost => "the surface was lost",
+            Self::Validation => "validation error acquiring the surface texture",
+        };
+        f.write_str(message)
+    }
+}
+
+impl std::error::Error for SurfaceError {}
 
 impl Drop for PendingPickReadback {
     fn drop(&mut self) {
@@ -495,11 +524,20 @@ impl Renderer {
         lights: LightsData,
         environment: &'scene Environment,
         custom_render: Option<&'custom mut CustomRenderRequest<'custom>>,
-    ) -> Result<RenderFrame, wgpu::SurfaceError>
+    ) -> Result<RenderFrame, SurfaceError>
     where
         'scene: 'custom,
     {
-        let frame = self.context.surface.get_current_texture()?;
+        let frame = match self.context.surface.get_current_texture() {
+            // A suboptimal frame is still presentable; the next resize reconfigures.
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Timeout => return Err(SurfaceError::Timeout),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err(SurfaceError::Occluded),
+            wgpu::CurrentSurfaceTexture::Outdated => return Err(SurfaceError::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost => return Err(SurfaceError::Lost),
+            wgpu::CurrentSurfaceTexture::Validation => return Err(SurfaceError::Validation),
+        };
         let surface_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -705,7 +743,7 @@ impl Renderer {
         environment: &Environment,
         lights: &LightsData,
         surface_view: wgpu::TextureView,
-    ) -> Result<FrameState, wgpu::SurfaceError> {
+    ) -> Result<FrameState, SurfaceError> {
         let encoder = self
             .context
             .device

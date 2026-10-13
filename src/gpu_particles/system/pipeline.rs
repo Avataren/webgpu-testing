@@ -27,12 +27,12 @@ pub(crate) fn create_render_pipeline(
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("ParticleRenderPipelineLayout"),
         bind_group_layouts: &[
-            camera_layout,
-            particle_layout,
-            lights_layout,
-            textures_layout,
+            Some(camera_layout),
+            Some(particle_layout),
+            Some(lights_layout),
+            Some(textures_layout),
         ],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     PipelineBuilder::new(device, &pipeline_layout, &render_shader)

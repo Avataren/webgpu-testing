@@ -107,10 +107,12 @@ impl RenderContext {
             wgpu::Backends::all()
         };
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = backends;
+        // The GL backend needs the display connection (e.g. on Wayland).
+        #[cfg(not(target_arch = "wasm32"))]
+        let descriptor = descriptor.with_display_handle(Box::new(window_handle.window.clone()));
+        let instance = wgpu::Instance::new(descriptor);
         let surface = instance
             .create_surface(window_handle)
             .expect("Failed to create surface");

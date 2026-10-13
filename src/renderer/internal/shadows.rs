@@ -148,7 +148,7 @@ impl ShadowResources {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             compare: Some(wgpu::CompareFunction::LessEqual),
             lod_min_clamp: 0.0,
             lod_max_clamp: 1.0,
@@ -225,8 +225,8 @@ impl ShadowResources {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ShadowPipelineLayout"),
-            bind_group_layouts: &[&uniform_layout, &objects.bind_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&uniform_layout), Some(&objects.bind_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
@@ -505,6 +505,7 @@ impl ShadowResources {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         pass.set_pipeline(&self.pipeline);

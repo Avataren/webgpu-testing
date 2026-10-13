@@ -796,7 +796,7 @@ impl Scene {
         batcher: &mut RenderBatcher,
         custom_render: Option<&'a mut CustomRenderRequest<'a>>,
         gizmos_enabled: bool,
-    ) -> Result<crate::renderer::RenderFrame, wgpu::SurfaceError> {
+    ) -> Result<crate::renderer::RenderFrame, crate::renderer::SurfaceError> {
         RenderBridge::render(self, renderer, batcher, custom_render, gizmos_enabled)
     }
 

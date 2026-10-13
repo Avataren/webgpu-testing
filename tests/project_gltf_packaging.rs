@@ -31,9 +31,9 @@ struct HeadlessDevice {
 
 impl HeadlessDevice {
     fn new(label: &str) -> Option<Self> {
-        let instance = Instance::new(&InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: Backends::all(),
-            ..Default::default()
+            ..InstanceDescriptor::new_without_display_handle()
         });
         let adapter = match block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::LowPower,

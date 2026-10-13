@@ -324,7 +324,7 @@ impl AppCore {
         frame: &FrameStep,
         params: &RenderParams,
         handle: SceneHandle,
-    ) -> Result<RenderResult, wgpu::SurfaceError> {
+    ) -> Result<RenderResult, crate::renderer::SurfaceError> {
         if !frame.should_render() {
             return Ok(RenderResult::Skipped);
         }

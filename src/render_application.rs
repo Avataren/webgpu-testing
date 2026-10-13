@@ -65,8 +65,10 @@ pub trait RenderApplication: Sized + 'static {
     }
 
     #[cfg(feature = "egui")]
-    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
-        let _ = ctx;
+    /// Builds this application's UI. `ui` is egui's root [`egui::Ui`]; show panels
+    /// in it and use `ui.ctx()` for windows.
+    fn ui(&mut self, ui: &mut egui::Ui, default_ui: &mut DefaultUI) {
+        let _ = ui;
         let _ = default_ui;
     }
 
@@ -131,12 +133,14 @@ impl DefaultUI {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) {
-        self.show_menu_bar(ctx);
+    pub fn show(&mut self, ui: &mut egui::Ui) {
+        self.show_menu_bar(ui);
 
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         let workspace_info = self.scene_hierarchy_window.workspace_info();
         let _ = self.scene_hierarchy_window.show(
-            ctx,
+            ui,
             &workspace_info,
             Some(&mut self.scene_hierarchy_open),
         );
@@ -148,8 +152,9 @@ impl DefaultUI {
         self.log_window.show(ctx, Some(&mut self.log_open));
     }
 
-    fn show_menu_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("default_ui_menu_bar").show(ctx, |ui| {
+    fn show_menu_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        egui::Panel::top("default_ui_menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Exit").clicked() {
@@ -305,10 +310,10 @@ where
             );
             let app_ref = app_rc.clone();
 
-            app.set_egui_ui(move |ctx| {
-                ui_style.apply(ctx);
-                default_ui.show(ctx);
-                app_ref.borrow_mut().ui(ctx, &mut default_ui);
+            app.set_egui_ui(move |ui| {
+                ui_style.apply(ui.ctx());
+                default_ui.show(ui);
+                app_ref.borrow_mut().ui(ui, &mut default_ui);
             });
         } else {
             let mut default_ui = DefaultUI::new(
@@ -322,9 +327,9 @@ where
             );
             let app_ref = app_rc.clone();
 
-            app.set_egui_ui(move |ctx| {
-                ui_style.apply(ctx);
-                app_ref.borrow_mut().ui(ctx, &mut default_ui);
+            app.set_egui_ui(move |ui| {
+                ui_style.apply(ui.ctx());
+                app_ref.borrow_mut().ui(ui, &mut default_ui);
             });
         }
     }

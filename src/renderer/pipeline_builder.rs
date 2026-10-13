@@ -112,8 +112,8 @@ impl<'a> PipelineBuilder<'a> {
     ) -> Self {
         self.depth_stencil = Some(wgpu::DepthStencilState {
             format,
-            depth_write_enabled: depth_write,
-            depth_compare,
+            depth_write_enabled: Some(depth_write),
+            depth_compare: Some(depth_compare),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         });
@@ -131,8 +131,8 @@ impl<'a> PipelineBuilder<'a> {
     ) -> Self {
         self.depth_stencil = Some(wgpu::DepthStencilState {
             format,
-            depth_write_enabled: depth_write,
-            depth_compare,
+            depth_write_enabled: Some(depth_write),
+            depth_compare: Some(depth_compare),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState {
                 constant: constant_bias,
@@ -193,7 +193,7 @@ impl<'a> PipelineBuilder<'a> {
                 primitive: self.primitive,
                 depth_stencil: self.depth_stencil,
                 multisample: self.multisample,
-                multiview: None,
+                multiview_mask: None,
                 cache: None,
             })
     }

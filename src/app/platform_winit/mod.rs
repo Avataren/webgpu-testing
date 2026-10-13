@@ -292,30 +292,22 @@ where
 
     fn handle_surface_error(
         &mut self,
-        event_loop: &ActiveEventLoop,
         renderer: &mut Renderer,
-        error: wgpu::SurfaceError,
-    ) -> bool {
+        error: crate::renderer::SurfaceError,
+    ) {
+        use crate::renderer::SurfaceError;
         match error {
-            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                log::warn!("Surface lost/outdated; resizing swapchain");
+            SurfaceError::Lost | SurfaceError::Outdated => {
+                log::warn!("Surface {error}; reconfiguring swapchain");
                 if let Some(window) = self.platform.window() {
                     renderer.resize(window.as_ref().inner_size());
                 }
-                true
             }
-            wgpu::SurfaceError::Timeout => {
-                log::warn!("Surface timeout; will retry next frame");
-                true
+            SurfaceError::Timeout | SurfaceError::Occluded => {
+                log::debug!("Skipping frame: {error}");
             }
-            wgpu::SurfaceError::OutOfMemory => {
-                log::error!("Surface out of memory; shutting down");
-                event_loop.exit();
-                false
-            }
-            err @ wgpu::SurfaceError::Other => {
-                log::error!("Unexpected surface error: {err:?}");
-                true
+            SurfaceError::Validation => {
+                log::error!("Skipping frame: {error}");
             }
         }
     }
@@ -406,7 +398,7 @@ where
     #[cfg(feature = "egui")]
     pub fn set_egui_ui<F>(&mut self, callback: F)
     where
-        F: FnMut(&crate::ui::egui::Context) + 'static,
+        F: FnMut(&mut crate::ui::egui::Ui) + 'static,
     {
         self.editor.set_egui_ui(callback);
     }
@@ -546,7 +538,7 @@ where
                 if let Some(mut renderer) = self.platform.take_renderer() {
                     #[cfg(feature = "egui")]
                     if let Some(window_handle) = self.platform.window().cloned() {
-                        self.editor.begin_ui_frame(window_handle.as_ref());
+                        self.editor.run_ui_frame(window_handle.as_ref());
                     }
 
                     active_handle = self
@@ -574,8 +566,6 @@ where
                         self.core
                             .render_scene(&mut renderer, &frame, &params, active_handle);
 
-                    let mut should_continue = true;
-
                     match result {
                         Ok(RenderResult::Rendered(render_frame)) => {
                             #[allow(unused_mut)]
@@ -583,7 +573,7 @@ where
                             #[cfg(feature = "egui")]
                             if let Some(window_handle) = self.platform.window().cloned() {
                                 let window = window_handle.as_ref();
-                                if let Some(output) = self.editor.end_ui_frame(window) {
+                                if let Some(output) = self.editor.take_ui_output() {
                                     self.editor.render_ui(
                                         &mut renderer,
                                         window,
@@ -600,8 +590,7 @@ where
                         }
                         Ok(RenderResult::Skipped) => {}
                         Err(err) => {
-                            should_continue =
-                                self.handle_surface_error(event_loop, &mut renderer, err);
+                            self.handle_surface_error(&mut renderer, err);
                         }
                     }
 
@@ -614,10 +603,6 @@ where
 
                     if self.core.exit_requested() {
                         event_loop.exit();
-                        return;
-                    }
-
-                    if !should_continue {
                         return;
                     }
                 }

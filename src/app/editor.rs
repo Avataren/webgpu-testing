@@ -62,7 +62,7 @@ impl EditorState {
 
     pub fn set_egui_ui<F>(&mut self, callback: F)
     where
-        F: FnMut(&egui::Context) + 'static,
+        F: FnMut(&mut egui::Ui) + 'static,
     {
         if let Some(ctx) = &mut self.egui_context {
             ctx.set_ui(callback);
@@ -130,16 +130,15 @@ impl EditorState {
         }
     }
 
-    pub fn begin_ui_frame(&mut self, window: &Window) {
+    pub fn run_ui_frame(&mut self, window: &Window) {
         if let Some(egui) = &mut self.egui_context {
-            egui.begin_frame(window);
-            egui.run_ui();
+            egui.run_frame(window);
         }
     }
 
-    pub fn end_ui_frame(&mut self, window: &Window) -> Option<egui::FullOutput> {
+    pub fn take_ui_output(&mut self) -> Option<egui::FullOutput> {
         let egui = self.egui_context.as_mut()?;
-        let output = egui.end_frame(window);
+        let output = egui.take_output()?;
         self.exit_requested = egui.take_should_close();
         Some(output)
     }

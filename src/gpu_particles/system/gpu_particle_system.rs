@@ -1,5 +1,4 @@
 // src/gpu_particles/system/gpu_particle_system.rs - Non-blocking particle sorting
-// Fixed for wgpu 0.27.0+ API
 
 use super::super::pools::{acquire_particle_vec, acquire_spawn_request_vec};
 use crate::asset::Mesh;
@@ -229,8 +228,8 @@ impl GpuParticleSystem {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ParticleComputePipelineLayout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
 
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -528,6 +527,7 @@ impl GpuParticleSystem {
                     }),
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
 
                 if let Some(region) = render_region {
@@ -598,6 +598,7 @@ impl GpuParticleSystem {
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
 
         pass.set_pipeline(resources.pipeline());

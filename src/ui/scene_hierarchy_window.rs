@@ -515,7 +515,7 @@ impl SceneHierarchyWindow {
 
     pub fn show(
         &mut self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         workspace: &SceneHierarchyWorkspaceInfo,
         open: Option<&mut bool>,
     ) -> Vec<SceneHierarchyEvent> {
@@ -526,10 +526,10 @@ impl SceneHierarchyWindow {
         }
 
         let mut events = Vec::new();
-        egui::SidePanel::left("scene_hierarchy_panel")
+        egui::Panel::left("scene_hierarchy_panel")
             .resizable(true)
-            .frame(egui::Frame::side_top_panel(&ctx.style()))
-            .show(ctx, |ui| {
+            .frame(egui::Frame::side_top_panel(ui.style()))
+            .show(ui, |ui| {
                 events = self.panel_contents(ui, workspace);
             });
 

@@ -34,7 +34,8 @@ impl RenderApplication for ExampleApp {
         false
     }
 
-    fn ui(&mut self, ctx: &egui::Context, default_ui: &mut DefaultUI) {
+    fn ui(&mut self, ui: &mut egui::Ui, default_ui: &mut DefaultUI) {
+        let ctx = ui.ctx();
         default_ui
             .stats_window_mut()
             .show(ctx, Some(&mut self.stats_open));

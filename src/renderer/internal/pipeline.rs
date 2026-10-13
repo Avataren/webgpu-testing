@@ -223,12 +223,12 @@ impl RenderPipeline {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("PipelineLayout"),
                     bind_group_layouts: &[
-                        &camera.bind_layout,
-                        &objects.bind_layout,
-                        &lights.bind_layout,
-                        &texture_bind_layout,
+                        Some(&camera.bind_layout),
+                        Some(&objects.bind_layout),
+                        Some(&lights.bind_layout),
+                        Some(&texture_bind_layout),
                     ],
-                    push_constant_ranges: &[],
+                    immediate_size: 0,
                 });
 
         let depth_pipeline_layout =
@@ -236,8 +236,8 @@ impl RenderPipeline {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("DepthPipelineLayout"),
-                    bind_group_layouts: &[&camera.bind_layout, &objects.bind_layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&camera.bind_layout), Some(&objects.bind_layout)],
+                    immediate_size: 0,
                 });
 
         let depth_shader_source = ShaderBuilder::new()
@@ -256,8 +256,8 @@ impl RenderPipeline {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("EnvironmentBackgroundPipelineLayout"),
-                    bind_group_layouts: &[&camera.bind_layout, &lights.bind_layout],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&camera.bind_layout), Some(&lights.bind_layout)],
+                    immediate_size: 0,
                 });
 
         let background_shader_source = ShaderBuilder::background()
@@ -683,10 +683,10 @@ pub(crate) struct BindlessTextureBinder {
 
 impl BindlessTextureBinder {
     fn create_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
-        let filter = if linear {
-            wgpu::FilterMode::Linear
+        let (filter, mipmap_filter) = if linear {
+            (wgpu::FilterMode::Linear, wgpu::MipmapFilterMode::Linear)
         } else {
-            wgpu::FilterMode::Nearest
+            (wgpu::FilterMode::Nearest, wgpu::MipmapFilterMode::Nearest)
         };
         let label = if linear {
             "BindlessSamplerLinear"
@@ -700,7 +700,7 @@ impl BindlessTextureBinder {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: filter,
             min_filter: filter,
-            mipmap_filter: filter,
+            mipmap_filter,
             ..Default::default()
         })
     }
@@ -812,10 +812,10 @@ pub(crate) struct TraditionalTextureBinder {
 
 impl TraditionalTextureBinder {
     fn create_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
-        let filter = if linear {
-            wgpu::FilterMode::Linear
+        let (filter, mipmap_filter) = if linear {
+            (wgpu::FilterMode::Linear, wgpu::MipmapFilterMode::Linear)
         } else {
-            wgpu::FilterMode::Nearest
+            (wgpu::FilterMode::Nearest, wgpu::MipmapFilterMode::Nearest)
         };
         let label = if linear {
             "TraditionalSamplerLinear"
@@ -829,7 +829,7 @@ impl TraditionalTextureBinder {
             address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: filter,
             min_filter: filter,
-            mipmap_filter: filter,
+            mipmap_filter,
             ..Default::default()
         })
     }

@@ -21,7 +21,7 @@ impl RenderBridge {
         batcher: &mut RenderBatcher,
         custom_render: Option<&'a mut CustomRenderRequest<'a>>,
         gizmos_enabled: bool,
-    ) -> Result<RenderFrame, wgpu::SurfaceError> {
+    ) -> Result<RenderFrame, crate::renderer::SurfaceError> {
         scene.refresh_environment_state();
         batcher.clear();
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);
