@@ -17,6 +17,14 @@ Checked in the editor and the player, partly through a fresh MCP server binary. 
 ends with a **Resolution** (bugs), **Done** / **Partly done** / **Open** (pain points) or a
 ✅ / ⬜ mark (wish list).
 
+Third round (2026-10-13): a second game, `games/neon-rift` (a top-down arena shooter with an
+attract mode, driven by one Lua controller that spawns its own entity pools). The new
+findings are marked **Open** below (B9 is fixed): one bug (B10), the pain points from "Lua cannot delete
+entities" onward, and the wish-list items marked ⬜. What worked well: `lua_eval` with a
+global `GAME` table, `runtime_set {time_scale: 16}` soak tests (300 s of game time in about
+20), `batch`, `entity_duplicate` and bulk `entity_update` for the arena, accurate Lua error
+line numbers, and `input_send` down/up events for human-control tests.
+
 MCP-server changes (new tool parameters, blocking project tools) only take effect after the
 MCP server is restarted; engine changes take effect after `engine_launch` rebuilds.
 
@@ -136,6 +144,39 @@ How to read the sections:
   backdrop and grow to fit their text (the old ones were plain grey text, nearly invisible
   over a scene). Verified in the player.
 
+### B9. `set_component` (and `remove_component`) reject entities spawned in the same hook (fixed, engine)
+
+- Repro: `local e = spawn_primitive("cube", "X"); set_component(e, "Visible", false)` in
+  `on_created`. It raises `entity handle is not yet available` and aborts the hook, while
+  `set_material`, `set_scale`, `set_translation`, `look_at`, `add_component` and `set_parent`
+  work on the same handle in the same hook.
+- Cause: `src/scripting/lua/commands.rs`. Those commands check `self.pending` first;
+  `set_component` (line 178) and `remove_component` (line 216) go straight to
+  `resolve_entity_bits`, which errors for a registered-but-unresolved handle. Same class of
+  bug as the `look_at`/`translate`/`rotate` fix in the lights and cameras commit.
+- Workaround: `add_component(e, "Visible", false)` works on the pending entity (Visible and
+  CanCastShadow are add-supported), or finish the entity on the first `update`.
+- Fix idea: make `set_component` write into `entry.components` for a pending entity, as
+  `add_component` does, and make `remove_component` drop the key. Document which commands
+  accept a just-spawned handle.
+- **Resolution:** done as suggested. `set_component` (setting and adding are the same
+  operation) stores the value with the pending entity, and `remove_component` drops a
+  component queued for it earlier in the chunk, so a set followed by a remove never adds it.
+  Unit test `set_and_remove_component_accept_entities_spawned_in_the_same_frame`; all 72
+  scripting tests pass. Checked in the editor: `spawn_primitive` followed by
+  `set_component(e, "Visible", false)` and `set_component(e, "CanCastShadow", false)` in one
+  `lua_eval` chunk leaves the entity with `visible: false` and `cast_shadow: false`, and Neon
+  Rift's pool creation now uses `set_component` directly (the deferred-finish workaround is
+  gone). Still undocumented: the Lua guide does not list which commands accept a handle
+  spawned in the same chunk.
+
+### B10. `screenshot {camera: "game"}` returns the whole editor window by default (observed, open, MCP)
+
+- With `camera: "game"` and no `target`, the result was the full editor window with the
+  free-camera viewport inside it. Adding `target: "viewport"` gives just the game view. The
+  tool description says the viewport is the default. Not investigated. The editor's ground
+  grid also showed outside the arena in game-camera renders.
+
 ## Pain points
 
 - **No bulk creation.** A grid of 72 bricks costs 72 `entity_spawn`/`entity_duplicate`
@@ -203,6 +244,41 @@ How to read the sections:
   **Done:** `lua_api_reference` documents keeping test-visible state in a global table or
   the state API.
 
+- **Lua cannot delete entities, and `on_created` re-runs on every hot reload.** The API
+  has `spawn_entity` and `spawn_primitive` but no despawn, so short-lived objects (bullets,
+  sparks, enemies) need fixed pools of hidden entities, and a script that spawns its own
+  pool leaks a full set per saved edit. Neon Rift names every pooled entity and reuses it
+  with `find_entity_by_name`. **Open.**
+- **No screen/world conversion in Lua, and the viewport size exists only in `on_ui`.**
+  Mouse aiming on a ground plane needs the camera ray, which means re-deriving the
+  projection in Lua. It is also unclear what `get_mouse_position()` is relative to inside
+  the editor viewport. Neon Rift is keyboard-only because of this. **Open.**
+- **`camera_set` also moves the game camera entity.** In the editor the view camera drives
+  the active camera entity, so looking closer at something silently overwrote the
+  GameCamera's transform. **Open.**
+- **`playtest` and `audio_status` return every sound that played.** A 5 second demo run
+  gave about 65 entries (id, path, pitch, volume, time), thousands of tokens that say
+  "shoot.wav many times". **Open.**
+- **The cone's orientation is undocumented.** "cylinder and cone lie along the Z axis" does
+  not say which way. The cone's tip is at local +Z (bounds z in -1..0, base at -1), the
+  opposite of the engine's -Z forward, so ships and arrows need a 180 degree yaw. **Open**
+  (docs).
+- **Emissive is capped at 1.0 and not HDR.** A lit material with `emissive: 1` and a
+  saturated base color rendered dimmer than the same color `unlit`, and only the unlit ones
+  bloomed strongly at threshold 0.7. Neon looks want emissive above 1. **Open.**
+- **`ui:label`/`ui:heading` cannot be sized or colored.** Neon Rift draws its big title, wave
+  and game-over banners with `ui:world_label` (which takes `size`/`color` and centers on the
+  point), which works but is a trick. **Open.**
+- **The player target does not hot-reload script edits** (observed). The editor does; the
+  running player kept the old code after an edit until `engine_launch {restart: true}`.
+  **Open.**
+- **The MCP server binary can be older than the repo without any sign.** The `lua_eval`
+  description I was shown still said "Lua cannot create lights or cameras", but the source
+  no longer does: the server binary was built before the lights and cameras commit.
+  `engine_launch` rebuilds the engine, not the MCP server. **Open.**
+- **Framing is eyeballed across aspect ratios.** The editor viewport is about 1.5:1 and the
+  player window 16:9, so a camera that fits one can crop the other. **Open.**
+
 ## Wish list
 
 - ✅ `entity_duplicate {count, step}` for a linear/grid array, or a generic `batch` tool that
@@ -234,6 +310,27 @@ How to read the sections:
 - ✅ `screenshot {entity}` or `camera: "game"` to render through the scene's active camera
   while editing.
 - ✅ Return `{"discarded_on_stop": true}` on mutating calls made during play.
+
+- ⬜ Lua `despawn_entity(e)`, plus a cleanup hook that also runs before a hot reload, so
+  scripts can own their pools without leaking.
+- ⬜ Lua `screen_to_world_ray(x, y)` and `world_to_screen(x, y, z)`, and the viewport size
+  outside `on_ui`, with the mouse position documented as viewport-relative.
+- ⬜ Lua `get_time()` / `elapsed()`, and `get_forward(entity)` (yaw 0 faces -Z, so
+  `forward = (-sin(yaw), 0, -cos(yaw))` has to be derived by hand).
+- ⬜ A `sounds: false | "summary"` option on `playtest` (counts per path with first and last
+  time), and the same grouping in `audio_status`.
+- ⬜ `camera_set {view_only: true}` as the default (or a one-off `position`/`target` on
+  `screenshot`), so looking around never edits scene data.
+- ⬜ `screenshot {aspect}` or `{size}` to preview the game camera at 16:9 and 4:3.
+- ⬜ HDR emissive (`emissive` above 1) for bloom without losing shading.
+- ⬜ `ui:label_at(anchor, x, y, text, {size, color})`, or size and color on `ui:label`.
+- ⬜ `lua_api_reference {section}` or `{search}` (it is one ~6k-token blob), and a note in the
+  skill on which MCP tools to load up front (they are all deferred).
+- ⬜ A version or commit field in `engine_info` (MCP server build vs. repo HEAD).
+- ⬜ A `since_play_start` filter on `logs`: an error fixed minutes ago still tops
+  `logs {min_level: "warn"}`.
+- ⬜ A starter game scene (environment, bloom, camera, light, floor) for `project_create`,
+  and a lean `playtest` mode (no screenshot, diff or sound list) for long AI soak tests.
 
 ## Open: Lua scripting on the web
 
