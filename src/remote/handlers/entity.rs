@@ -789,36 +789,9 @@ fn apply_patch(
                         .update_texture_bind_group(&ctx.gpu.scene.assets);
                 }
             }
-            "point_light" => patch_component(ctx, entity, value, |light: &mut PointLight, v| {
-                patch_light_common(&mut light.color, &mut light.intensity, v)?;
-                if let Some(range) = opt_f64(v, "range") {
-                    light.range = range as f32;
-                }
-                Ok(())
-            })?,
-            "directional_light" => {
-                patch_component(ctx, entity, value, |light: &mut DirectionalLight, v| {
-                    patch_light_common(&mut light.color, &mut light.intensity, v)?;
-                    if let Some(size) = opt_f64(v, "shadow_size") {
-                        light.shadow_size = size as f32;
-                    }
-                    Ok(())
-                })?
+            "point_light" | "directional_light" | "spot_light" | "camera" => {
+                patch_light_or_camera(ctx.gpu.scene.main_world_mut(), entity, key, value)?
             }
-            "spot_light" => patch_component(ctx, entity, value, |light: &mut SpotLight, v| {
-                patch_light_common(&mut light.color, &mut light.intensity, v)?;
-                if let Some(range) = opt_f64(v, "range") {
-                    light.range = range as f32;
-                }
-                if let Some(angle) = opt_f64(v, "inner_angle_deg") {
-                    light.inner_angle = (angle as f32).to_radians();
-                }
-                if let Some(angle) = opt_f64(v, "outer_angle_deg") {
-                    light.outer_angle = (angle as f32).to_radians();
-                }
-                Ok(())
-            })?,
-            "camera" => patch_component(ctx, entity, value, patch_camera)?,
             "active_camera" => {
                 if value.as_bool() == Some(true) {
                     if !has_component(ctx.gpu.scene.main_world(), entity, "camera") {
@@ -830,7 +803,7 @@ fn apply_patch(
             "script" => set_script(ctx, entity, value)?,
             "particle_system" => patch_particle_system(ctx, entity, value)?,
             "particle_emitter" => patch_component(
-                ctx,
+                ctx.gpu.scene.main_world_mut(),
                 entity,
                 value,
                 |emitter: &mut ParticleEmitterComponent, v| {
@@ -840,7 +813,7 @@ fn apply_patch(
             )?,
             "environment" => {
                 patch_component(
-                    ctx,
+                    ctx.gpu.scene.main_world_mut(),
                     entity,
                     value,
                     |environment: &mut EnvironmentComponent, v| {
@@ -850,8 +823,11 @@ fn apply_patch(
                 )?;
                 sync_environment_from_entity(ctx, entity);
             }
-            "rotate_animation" => {
-                patch_component(ctx, entity, value, |animation: &mut RotateAnimation, v| {
+            "rotate_animation" => patch_component(
+                ctx.gpu.scene.main_world_mut(),
+                entity,
+                value,
+                |animation: &mut RotateAnimation, v| {
                     if let Some(axis) = v.get("axis") {
                         animation.axis = vec3_from_json(axis)?.normalize_or_zero();
                     }
@@ -859,10 +835,13 @@ fn apply_patch(
                         animation.speed = speed as f32;
                     }
                     Ok(())
-                })?
-            }
-            "orbit_animation" => {
-                patch_component(ctx, entity, value, |animation: &mut OrbitAnimation, v| {
+                },
+            )?,
+            "orbit_animation" => patch_component(
+                ctx.gpu.scene.main_world_mut(),
+                entity,
+                value,
+                |animation: &mut OrbitAnimation, v| {
                     if let Some(center) = v.get("center") {
                         animation.center = vec3_from_json(center)?;
                     }
@@ -876,26 +855,33 @@ fn apply_patch(
                         animation.offset = offset as f32;
                     }
                     Ok(())
-                })?
-            }
-            "billboard" => patch_component(ctx, entity, value, |billboard: &mut Billboard, v| {
-                match opt_str(v, "orientation") {
-                    Some("face_camera") => billboard.orientation = BillboardOrientation::FaceCamera,
-                    Some("face_camera_y_axis") => {
-                        billboard.orientation = BillboardOrientation::FaceCameraYAxis
-                    }
-                    Some(other) => {
-                        return Err(format!(
+                },
+            )?,
+            "billboard" => patch_component(
+                ctx.gpu.scene.main_world_mut(),
+                entity,
+                value,
+                |billboard: &mut Billboard, v| {
+                    match opt_str(v, "orientation") {
+                        Some("face_camera") => {
+                            billboard.orientation = BillboardOrientation::FaceCamera
+                        }
+                        Some("face_camera_y_axis") => {
+                            billboard.orientation = BillboardOrientation::FaceCameraYAxis
+                        }
+                        Some(other) => {
+                            return Err(format!(
                             "unknown orientation {other:?}; use face_camera or face_camera_y_axis"
                         ))
+                        }
+                        None => {}
                     }
-                    None => {}
-                }
-                if let Some(lit) = opt_bool(v, "lit") {
-                    billboard.lit = lit;
-                }
-                Ok(())
-            })?,
+                    if let Some(lit) = opt_bool(v, "lit") {
+                        billboard.lit = lit;
+                    }
+                    Ok(())
+                },
+            )?,
             other => {
                 return Err(format!(
                     "unknown field {other:?}; see the entity_update tool description for the fields"
@@ -921,7 +907,7 @@ fn insert<T: hecs::Component>(
 
 /// Insert or patch a component that has a `Default`, or remove it when `value` is null.
 fn patch_component<T, F>(
-    ctx: &mut RemoteContext<'_, '_>,
+    world: &mut World,
     entity: Entity,
     value: &Value,
     apply: F,
@@ -930,7 +916,6 @@ where
     T: hecs::Component + Clone + DefaultForRemote,
     F: FnOnce(&mut T, &Value) -> Result<(), String>,
 {
-    let world = ctx.gpu.scene.main_world_mut();
     if value.is_null() {
         world
             .remove_one::<T>(entity)
@@ -948,6 +933,139 @@ where
     apply(&mut component, value)?;
     world
         .insert_one(entity, component)
+        .map_err(|err| err.to_string())
+}
+
+/// Add, change or (with `null`) remove a light or camera component. `field` names it:
+/// `point_light`, `directional_light`, `spot_light` or `camera`.
+pub(crate) fn patch_light_or_camera(
+    world: &mut World,
+    entity: Entity,
+    field: &str,
+    value: &Value,
+) -> Result<(), String> {
+    match field {
+        "point_light" => patch_component(world, entity, value, |light: &mut PointLight, v| {
+            patch_light_common(&mut light.color, &mut light.intensity, v)?;
+            if let Some(range) = opt_f64(v, "range") {
+                light.range = range as f32;
+            }
+            Ok(())
+        })?,
+        "directional_light" => {
+            patch_component(world, entity, value, |light: &mut DirectionalLight, v| {
+                patch_light_common(&mut light.color, &mut light.intensity, v)?;
+                if let Some(size) = opt_f64(v, "shadow_size") {
+                    light.shadow_size = size as f32;
+                }
+                Ok(())
+            })?
+        }
+        "spot_light" => patch_component(world, entity, value, |light: &mut SpotLight, v| {
+            patch_light_common(&mut light.color, &mut light.intensity, v)?;
+            if let Some(range) = opt_f64(v, "range") {
+                light.range = range as f32;
+            }
+            if let Some(angle) = opt_f64(v, "inner_angle_deg") {
+                light.inner_angle = (angle as f32).to_radians();
+            }
+            if let Some(angle) = opt_f64(v, "outer_angle_deg") {
+                light.outer_angle = (angle as f32).to_radians();
+            }
+            Ok(())
+        })?,
+        "camera" => patch_component(world, entity, value, patch_camera)?,
+        other => return Err(format!("{other:?} is not a light or camera")),
+    }
+    Ok(())
+}
+
+/// Light kinds as scripts name them, and the component field of each.
+const LIGHT_KINDS: [(&str, &str); 3] = [
+    ("point", "point_light"),
+    ("directional", "directional_light"),
+    ("spot", "spot_light"),
+];
+
+/// Change `entity`'s light (for scripts). `patch` holds light fields plus optional
+/// `kind` (point, directional or spot), which adds that light or replaces another
+/// kind, and `cast_shadow`.
+pub(crate) fn set_light(world: &mut World, entity: Entity, patch: &Value) -> Result<(), String> {
+    let mut fields = patch
+        .as_object()
+        .cloned()
+        .ok_or("expected a table of light fields")?;
+    let kind = fields.remove("kind");
+    let cast_shadow = fields.remove("cast_shadow");
+    let field = match kind {
+        Some(kind) => {
+            let kind = kind.as_str().ok_or("light kind must be a string")?;
+            let (_, field) = LIGHT_KINDS
+                .iter()
+                .find(|(name, _)| *name == kind)
+                .ok_or_else(|| {
+                    format!("unknown light kind {kind:?}; use point, directional or spot")
+                })?;
+            for (_, other) in LIGHT_KINDS {
+                if other != *field && has_component(world, entity, other) {
+                    patch_light_or_camera(world, entity, other, &Value::Null)?;
+                }
+            }
+            *field
+        }
+        None => LIGHT_KINDS
+            .iter()
+            .map(|(_, field)| *field)
+            .find(|field| has_component(world, entity, field))
+            .ok_or("the entity has no light; pass a kind to add one")?,
+    };
+    patch_light_or_camera(world, entity, field, &Value::Object(fields))?;
+    if let Some(cast) = cast_shadow {
+        let cast = cast.as_bool().ok_or("cast_shadow must be true or false")?;
+        world
+            .insert_one(entity, CanCastShadow(cast))
+            .map_err(|err| err.to_string())?;
+    }
+    ensure_transform(world, entity)
+}
+
+/// Give `entity` a camera or change it (for scripts). `active: true` also makes it the
+/// camera the game is viewed through.
+pub(crate) fn set_camera(scene: &mut Scene, entity: Entity, patch: &Value) -> Result<(), String> {
+    let mut fields = patch
+        .as_object()
+        .cloned()
+        .ok_or("expected a table of camera fields")?;
+    let active = match fields.remove("active") {
+        Some(active) => active.as_bool().ok_or("active must be true or false")?,
+        None => false,
+    };
+    let world = scene.main_world_mut();
+    patch_light_or_camera(world, entity, "camera", &Value::Object(fields))?;
+    ensure_transform(world, entity)?;
+    if active {
+        scene.set_active_camera_entity(Some(entity));
+    }
+    Ok(())
+}
+
+/// View the game through `entity`'s camera.
+pub(crate) fn set_active_camera(scene: &mut Scene, entity: Entity) -> Result<(), String> {
+    if !has_component(scene.main_world(), entity, "camera") {
+        return Err("the entity has no camera".into());
+    }
+    scene.set_active_camera_entity(Some(entity));
+    Ok(())
+}
+
+/// Lights and cameras are placed by their transform; entities spawned bare by a script
+/// have none.
+fn ensure_transform(world: &mut World, entity: Entity) -> Result<(), String> {
+    if has_component(world, entity, "transform") {
+        return Ok(());
+    }
+    world
+        .insert_one(entity, TransformComponent(Transform::default()))
         .map_err(|err| err.to_string())
 }
 
@@ -1748,4 +1866,69 @@ pub(super) fn world_to_local(world_matrix: Mat4, parent_world: Option<&Transform
     };
     let (scale, rotation, translation) = local.to_scale_rotation_translation();
     Transform::from_trs(translation, rotation, scale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_light_adds_switches_and_patches_lights() {
+        let mut world = World::new();
+        let entity = world.spawn((Name::new("Flash"),));
+
+        let err = set_light(&mut world, entity, &json!({ "intensity": 2.0 })).unwrap_err();
+        assert!(err.contains("no light"), "{err}");
+
+        set_light(
+            &mut world,
+            entity,
+            &json!({ "kind": "point", "color": [1.0, 0.5, 0.0], "range": 7.0, "cast_shadow": true }),
+        )
+        .unwrap();
+        let light = *world.get::<&PointLight>(entity).unwrap();
+        assert_eq!(light.color, Vec3::new(1.0, 0.5, 0.0));
+        assert_eq!(light.range, 7.0);
+        assert!(world.get::<&CanCastShadow>(entity).unwrap().0);
+        assert!(has_component(&world, entity, "transform"));
+
+        // Without a kind, the existing light is changed.
+        set_light(&mut world, entity, &json!({ "intensity": 9.0 })).unwrap();
+        assert_eq!(world.get::<&PointLight>(entity).unwrap().intensity, 9.0);
+
+        set_light(
+            &mut world,
+            entity,
+            &json!({ "kind": "spot", "outer_angle_deg": 30.0 }),
+        )
+        .unwrap();
+        assert!(!has_component(&world, entity, "point_light"));
+        let spot = *world.get::<&SpotLight>(entity).unwrap();
+        assert!((spot.outer_angle - 30f32.to_radians()).abs() < 1e-6);
+
+        assert!(set_light(&mut world, entity, &json!({ "kind": "area" })).is_err());
+    }
+
+    #[test]
+    fn set_camera_adds_a_camera_and_activates_it() {
+        let mut scene = Scene::new();
+        let entity = scene.main_world_mut().spawn((Name::new("Cut"),));
+
+        assert!(set_active_camera(&mut scene, entity).is_err());
+
+        set_camera(
+            &mut scene,
+            entity,
+            &json!({ "fov_deg": 40.0, "active": true }),
+        )
+        .unwrap();
+        let camera = *scene.main_world().get::<&CameraComponent>(entity).unwrap();
+        match camera.projection {
+            CameraProjection::Perspective { fov_y_radians, .. } => {
+                assert!((fov_y_radians - 40f32.to_radians()).abs() < 1e-6)
+            }
+            other => panic!("expected a perspective camera, got {other:?}"),
+        }
+        assert_eq!(scene.active_camera_entity(), Some(entity));
+    }
 }

@@ -9,9 +9,10 @@ First round of fixes: commit `7f0fd5f` (branch `fix/engine-mcp-feedback`, 2026-1
 Every bug is fixed and was checked against a running editor and player.
 
 Second round (branch `feat/engine-mcp-feedback-2`, 2026-10-13): every remaining pain
-point and wish-list item is done (audio, Lua meshes/materials, world-space text,
-non-glTF import, texture reload, game-camera screenshots, bulk delete, scene diff,
-playtest, time scale, batch). Breakout now plays its sounds and shows score popups.
+point and wish-list item is done (audio, Lua meshes/materials/lights/cameras,
+world-space text, non-glTF import, texture reload, game-camera screenshots, bulk delete,
+scene diff, playtest, time scale, batch), and web builds run Lua and play audio.
+Breakout now plays its sounds and shows score popups.
 Checked in the editor and the player, partly through a fresh MCP server binary. Each entry below
 ends with a **Resolution** (bugs), **Done** / **Partly done** / **Open** (pain points) or a
 ✅ / ⬜ mark (wish list).
@@ -150,8 +151,13 @@ How to read the sections:
 - **Lua cannot add or change meshes, materials or lights.** Anything that varies at
   runtime (brick colours, damage states) needs one pre-made entity per variant. **Done**
   for meshes and materials: `spawn_primitive`, `set_mesh`, `set_material_color`,
-  `set_material` (copy-on-write for shared materials). Lights and cameras still need the
-  editor or the tools.
+  `set_material` (copy-on-write for shared materials). Lights and cameras since
+  2026-10-13: `spawn_light`, `set_light`, `spawn_camera`, `set_camera`,
+  `set_active_camera`, sharing the field parsing of `entity_update`. `look_at`,
+  `translate` and `rotate` now also work on entities spawned in the same chunk, which
+  is how a new light or camera gets aimed (they used to fail with "entity handle is not
+  yet available"). Checked in the editor: lights, shadows, camera switching, and stop
+  removing play-mode lights and cameras and restoring the camera.
 - **HUD text exists only in the editor.** `on_ui` needs egui, so the standalone `player`
   shows no score, and there is no world-space text. **Done:** HUDs work in the player,
   and `ui:world_label(x, y, z, text, opts)` draws text at a world position (projected
@@ -295,7 +301,13 @@ HTTP-backed reads for scenes, materials and scripts (`io::read_to_string`), no
 `exists()` checks for materials and sounds on the web, and a web-safe wall clock
 (`time::unix_millis`). The canvas now fills the window below the toolbar.
 
-Related web gaps: file hot-reload is native only.
+Related web gap: file hot-reload is native only. Not planned: a web build has no editor
+and no filesystem to watch, so it would mean polling the server.
+
+Found while testing lights (documented, not changed): the `plane` primitive is a quad
+in the XY plane facing +Z, so `set_scale(floor, 10, 1, 10)` gives a 10x1 wall, not a
+floor. Changing it would move the planes in existing scenes; the Lua guide now says to
+rotate it -90° about X.
 
 Web audio (2026-10-13, done): web builds play sounds through the Web Audio API
 (`src/audio.rs`, `mod web`) rather than rodio, which would have needed cpal's WebAudio

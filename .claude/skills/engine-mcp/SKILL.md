@@ -95,8 +95,9 @@ Facts that change how you write scripts:
   editor-only ones.
 - Lua can spawn entities with primitive meshes (`spawn_primitive`), change meshes and
   materials (`set_mesh`, `set_material_color`, `set_material`), play sounds
-  (`play_sound`) and draw text at world positions (`ui:world_label` in `on_ui`). It
-  cannot create lights or cameras. Pools of pre-placed, hidden entities are still the
+  (`play_sound`), create and change lights and cameras (`spawn_light`, `set_light`,
+  `spawn_camera`, `set_camera`, `set_active_camera`) and draw text at world positions
+  (`ui:world_label` in `on_ui`). Pools of pre-placed, hidden entities are still the
   cheapest way to show many short-lived objects.
 - Mutations from a hook are queued and applied after it returns, so reading back a
   value you just set in the same hook gives the old value.

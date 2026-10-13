@@ -159,7 +159,8 @@ end
 
 ### Meshes and Materials
 - `spawn_primitive(kind[, name])` → `entity` - Spawn a visible entity with a primitive mesh
-  (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and its own material
+  (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and its own material. `plane`
+  is a 1x1 quad in the XY plane facing +Z; rotate it -90° about X for a floor.
 - `set_mesh(entity, kind)` - Replace the geometry with a primitive, or `nil` to remove it
 - `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
 - `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
@@ -169,13 +170,38 @@ end
 
 Changes apply before the frame is drawn. An entity that shares its material with others
 gets its own copy on the first change, so recoloring one brick leaves the rest alone.
-Lights and cameras are still created in the editor or through the engine tools.
 
 ```lua
 local spark = spawn_primitive("sphere", "Spark")
 set_translation(spark, 0, 2, 0)
 set_material(spark, { color = {1, 0.6, 0.1}, emissive = 1, unlit = true })
 set_material_color(hit_brick, 1, 1, 1) -- flash
+```
+
+### Lights and Cameras
+- `spawn_light(kind[, fields][, name])` → `entity` - Spawn a `"point"`, `"directional"`
+  or `"spot"` light
+- `set_light(entity, fields)` - Change a light. Fields: `color` ({r, g, b} in 0..1 or
+  `"#rrggbb"`), `intensity`, `range` (point, spot), `shadow_size` (directional),
+  `inner_angle_deg`/`outer_angle_deg` (spot), `cast_shadow` (default false for lights
+  scripts spawn). `kind` adds a light or switches its kind.
+- `spawn_camera([fields][, name])` → `entity` - Spawn a camera
+- `set_camera(entity, fields)` - Change a camera, adding one if needed. Fields:
+  `projection` (`"perspective"`/`"orthographic"`), `fov_deg`, `near`, `far`, `left`,
+  `right`, `bottom`, `top`, and `active = true` to view the game through it
+- `set_active_camera(entity)` - View the game through the entity's camera
+
+Lights and cameras sit at their entity's position and point along its -Z, so
+`set_translation` and `look_at` place and aim them (also right after spawning).
+Unknown field names are an error. Like other changes, they apply before the frame is
+drawn and are undone when play mode stops.
+
+```lua
+local flash = spawn_light("point", { color = {1, 0.6, 0.2}, intensity = 40, range = 6 })
+set_translation(flash, x, y, z)
+local cam = spawn_camera({ fov_deg = 50, active = true }, "Cutscene")
+set_translation(cam, 0, 4, 8)
+look_at(cam, 0, 0, 0)
 ```
 
 ### Audio
@@ -497,12 +523,11 @@ Scripts declare where they run with an annotation in their leading comments:
 
 ## Known Limitations
 
-1. Scripts cannot create lights or cameras, or load glTF meshes other than through
-   `import_gltf`; create those in the editor (or through the engine tools). Meshes are
-   limited to the built-in primitives.
+1. Scripts cannot load glTF meshes other than through `import_gltf`; create those in
+   the editor (or through the engine tools). Meshes are limited to the built-in
+   primitives.
 2. Scripts cannot read material values back; keep the colors you set in script state.
 3. `ui:world_label` text is drawn on top of the scene, not occluded by it.
-4. Audio is not available in web builds yet.
 
 ## Best Practices
 

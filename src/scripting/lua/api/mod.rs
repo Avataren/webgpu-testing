@@ -12,6 +12,7 @@ mod events;
 mod file_io;
 mod hierarchy;
 mod input;
+mod light_camera;
 mod logging;
 mod material;
 mod query;
@@ -45,6 +46,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     input::register_input_api(lua)?;
     component::register_component_api(lua)?;
     material::register_material_api(lua)?;
+    light_camera::register_light_camera_api(lua)?;
     audio::register_audio_api(lua)?;
     query::register_query_api(lua)?;
     script_access::register_script_access_api(lua)?;

@@ -23,8 +23,8 @@ pub(crate) struct ScriptCommands {
     pub registry: Rc<RefCell<EntityHandleRegistry>>,
     pub pending: HashMap<i64, PendingEntity>,
     pub existing: Vec<ExistingCommand>,
-    /// Mesh and material changes by entity handle; they need the renderer, so they are
-    /// handed to the scene rather than applied to the world.
+    /// Mesh, material, light and camera changes by entity handle; they need the scene
+    /// or the renderer, so they are handed to the scene rather than applied to the world.
     pub assets: Vec<(i64, AssetCommand)>,
 }
 
@@ -38,7 +38,8 @@ impl ScriptCommands {
         }
     }
 
-    /// Queue a mesh or material change. Works for entities spawned this frame too.
+    /// Queue a mesh, material, light or camera change. Works for entities spawned this
+    /// frame too.
     pub fn asset_command(&mut self, handle: i64, command: AssetCommand) -> Result<(), mlua::Error> {
         if !self.pending.contains_key(&handle) {
             self.resolve_entity_bits(handle)?;
@@ -227,6 +228,11 @@ impl ScriptCommands {
     }
 
     pub fn translate(&mut self, handle: i64, delta: Vec3) -> Result<(), mlua::Error> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.translation = Some(entry.translation.unwrap_or(Vec3::ZERO) + delta);
+            return Ok(());
+        }
+
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing
@@ -235,6 +241,12 @@ impl ScriptCommands {
     }
 
     pub fn rotate(&mut self, handle: i64, axis: Vec3, angle: f32) -> Result<(), mlua::Error> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            let rotation = Quat::from_axis_angle(axis.normalize(), angle);
+            entry.rotation = Some(rotation * entry.rotation.unwrap_or(Quat::IDENTITY));
+            return Ok(());
+        }
+
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::Rotate {
@@ -260,6 +272,14 @@ impl ScriptCommands {
     }
 
     pub fn look_at(&mut self, handle: i64, target: Vec3) -> Result<(), mlua::Error> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            let direction = target - entry.translation.unwrap_or(Vec3::ZERO);
+            if direction.length_squared() > 0.0 {
+                entry.rotation = Some(Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize()));
+            }
+            return Ok(());
+        }
+
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::LookAt {
@@ -423,7 +443,7 @@ impl ScriptCommands {
                     .asset_commands
                     .push(PendingAssetCommand { entity, command }),
                 None => {
-                    warn!(target: "script", "Skipping mesh/material change for invalid entity {handle}")
+                    warn!(target: "script", "Skipping mesh/material/light/camera change for invalid entity {handle}")
                 }
             }
         }
@@ -1194,6 +1214,29 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn look_at_aims_entities_spawned_in_the_same_frame() {
+        let mut commands =
+            ScriptCommands::new(Rc::new(RefCell::new(EntityHandleRegistry::default())));
+        let handle = commands.spawn_entity(Some("Spot".into()));
+        commands
+            .set_translation(handle, Vec3::new(0.0, 6.0, 0.0))
+            .unwrap();
+        commands.look_at(handle, Vec3::ZERO).unwrap();
+        commands.translate(handle, Vec3::X).unwrap();
+
+        let mut world = World::new();
+        commands.apply(&mut world).unwrap();
+        let (_, transform) = world
+            .query_mut::<&TransformComponent>()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(transform.0.translation, Vec3::new(1.0, 6.0, 0.0));
+        let forward = transform.0.rotation * Vec3::NEG_Z;
+        assert!(forward.abs_diff_eq(Vec3::NEG_Y, 1e-5), "{forward}");
+    }
+
+    #[test]
     fn component_exists_recognizes_supported_components() {
         let mut world = World::new();
         let entity = world.spawn((Name::new("Test"),));
@@ -1294,6 +1337,9 @@ pub struct PendingEventUnsubscription {
 pub enum AssetCommand {
     Material(serde_json::Value),
     Mesh(serde_json::Value),
+    Light(serde_json::Value),
+    Camera(serde_json::Value),
+    ActiveCamera,
 }
 
 /// An [`AssetCommand`] resolved to its entity, waiting for the renderer.

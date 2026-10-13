@@ -17,7 +17,7 @@ use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
 use super::hub::RemoteHub;
 
 pub(crate) use diff::SceneBaseline;
-pub(crate) use entity::{patch_material, set_mesh};
+pub(crate) use entity::{patch_material, set_active_camera, set_camera, set_light, set_mesh};
 
 /// Outcome of a remote method: a JSON result or an error message.
 pub type RemoteResult = Result<Value, String>;

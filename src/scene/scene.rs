@@ -855,8 +855,8 @@ impl Scene {
         self.imports = imports;
     }
 
-    /// Apply the mesh and material changes scripts made since the last call. Rebuilds
-    /// the renderer's texture bind group if a script loaded a new texture.
+    /// Apply the mesh, material, light and camera changes scripts made since the last
+    /// call. Rebuilds the renderer's texture bind group if a script loaded a new texture.
     pub fn apply_script_asset_commands(&mut self, renderer: &mut Renderer) {
         use crate::scripting::lua::AssetCommand;
 
@@ -877,9 +877,18 @@ impl Scene {
                 AssetCommand::Mesh(mesh) => {
                     crate::remote::handlers::set_mesh(self, renderer, pending.entity, mesh)
                 }
+                AssetCommand::Light(patch) => {
+                    crate::remote::handlers::set_light(self.main_world_mut(), pending.entity, patch)
+                }
+                AssetCommand::Camera(patch) => {
+                    crate::remote::handlers::set_camera(self, pending.entity, patch)
+                }
+                AssetCommand::ActiveCamera => {
+                    crate::remote::handlers::set_active_camera(self, pending.entity)
+                }
             };
             if let Err(err) = outcome {
-                warn!(target: "script", "Mesh/material change for {:?} failed: {err}", pending.entity);
+                warn!(target: "script", "Mesh/material/light/camera change for {:?} failed: {err}", pending.entity);
             }
         }
         if textures_loaded {

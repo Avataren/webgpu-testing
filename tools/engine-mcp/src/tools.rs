@@ -354,7 +354,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scripting & runtime ----
         Tool {
             name: "lua_eval",
-            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives (spawn_primitive); Lua cannot create lights or cameras (use entity_spawn for those).",
+            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives, lights and cameras (spawn_primitive, spawn_light, spawn_camera).",
             schema: object(json!({
                 "code": { "type": "string" },
                 "entity": entity_ref(),
