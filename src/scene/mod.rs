@@ -61,8 +61,6 @@ pub use workspace::{
     SceneWorkspaceBuilder, SceneWorkspaceError, SceneWorkspaceSceneMut,
 };
 
-use hecs::World;
-
 // Re-export all components
 pub use components::{
     BoidsBehaviorConfig, CameraComponent, CanCastShadow, Children, DirectionalLight,
@@ -75,8 +73,3 @@ pub use components::{
     SelectedInEditor, SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible,
     WorldTransform,
 };
-
-/// Derive a stable identifier for a hecs world based on its address.
-pub fn world_id(world: &World) -> usize {
-    world as *const World as usize
-}
