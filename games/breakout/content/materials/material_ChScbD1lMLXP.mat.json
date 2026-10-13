@@ -1,0 +1,23 @@
+{
+  "base_color": [
+    63,
+    197,
+    90,
+    255
+  ],
+  "flags": 1,
+  "base_color_texture": {
+    "path": "content/textures/brick.png",
+    "name": "brick.png"
+  },
+  "metallic_roughness_texture": 0,
+  "normal_texture": 0,
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 38,
+  "roughness_factor": 89,
+  "emissive_strength": 38,
+  "kind": {
+    "type": "pbr"
+  }
+}

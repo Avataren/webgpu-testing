@@ -1,0 +1,23 @@
+{
+  "base_color": [
+    204,
+    229,
+    255,
+    255
+  ],
+  "flags": 1,
+  "base_color_texture": {
+    "path": "content/textures/wall.png",
+    "name": "wall.png"
+  },
+  "metallic_roughness_texture": 0,
+  "normal_texture": 0,
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 179,
+  "roughness_factor": 102,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}
