@@ -68,7 +68,15 @@ impl ParticleSorting {
             drop(guard);
             match result {
                 Ok(()) => {
-                    let data = slice.get_mapped_range();
+                    let data = match slice.get_mapped_range() {
+                        Ok(data) => data,
+                        Err(error) => {
+                            log::warn!("Failed to read particles for sorting: {error}");
+                            self.readback_buffer.unmap();
+                            self.pending_readback = false;
+                            return;
+                        }
+                    };
                     let particles = cast_slice::<u8, Particle>(&data);
 
                     let available = particles.len().min(render_high_water as usize);

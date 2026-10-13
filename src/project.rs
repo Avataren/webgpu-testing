@@ -43,10 +43,11 @@ fn collect_metadata_files(dir: &Path) -> Vec<PathBuf> {
                 let path = entry.path();
                 match entry.file_type() {
                     Ok(file_type) if file_type.is_dir() => stack.push(path),
-                    Ok(file_type) if file_type.is_file() => {
-                        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-                            files.push(path);
-                        }
+                    Ok(file_type)
+                        if file_type.is_file()
+                            && path.extension().and_then(|ext| ext.to_str()) == Some("json") =>
+                    {
+                        files.push(path);
                     }
                     _ => {}
                 }
@@ -917,6 +918,7 @@ mod tests {
                 power_preference: PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
+                ..Default::default()
             })) {
                 Ok(adapter) => adapter,
                 Err(err) => {

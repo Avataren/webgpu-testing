@@ -274,10 +274,8 @@ where
         }
 
         match event.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                if self.core.exit_on_escape() {
-                    event_loop.exit();
-                }
+            Key::Named(NamedKey::Escape) if self.core.exit_on_escape() => {
+                event_loop.exit();
             }
             Key::Character(ref c) if c.as_str().eq_ignore_ascii_case("g") => {
                 self.core.toggle_editor_gizmos();
@@ -586,7 +584,7 @@ where
                                 }
                             }
 
-                            render_frame.frame.present();
+                            renderer.present(render_frame);
                         }
                         Ok(RenderResult::Skipped) => {}
                         Err(err) => {

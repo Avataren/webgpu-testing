@@ -2,6 +2,7 @@
 name = "wgpu-cube"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.95"
 
 [lib]
 name = "wgpu_cube"
@@ -17,7 +18,7 @@ optimized-allocator = []
 [dependencies]
 winit = "0.30"
 pollster = "0.3"
-wgpu = "29.0"
+wgpu = "30.0"
 glam = "0.28"
 bytemuck = { version = "1.23", features = ["derive"] }
 env_logger = "0.11"
@@ -37,12 +38,12 @@ half = "2.4"
 mlua = { version = "0.10", features = ["lua54", "vendored", "send", "serialize"] }
 thiserror = "1.0"
 toml = "0.8"
-naga = { version = "29", features = ["wgsl-in"] }
-egui = { version = "0.35", optional = true }
-egui-wgpu = { version = "0.35", optional = true }
-egui-winit = { version = "0.35", optional = true, default-features=false }
+naga = { version = "30", features = ["wgsl-in"] }
+egui = { version = "0.36", optional = true }
+egui-wgpu = { version = "0.36", optional = true }
+egui-winit = { version = "0.36", optional = true, default-features=false }
 once_cell = { version = "1.21", optional = true }
-egui_tiles = { version = "0.16", optional = true }
+egui_tiles = { version = "0.17", optional = true }
 
 [[bin]]
 name = "editor"

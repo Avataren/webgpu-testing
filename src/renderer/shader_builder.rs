@@ -21,6 +21,8 @@ const SHADOWS: &str = include_str!("../shader/shadows.wgsl");
 const ENVIRONMENT: &str = include_str!("../shader/environment.wgsl");
 const LIGHTING_WITH_SHADOWS: &str = include_str!("../shader/lighting_with_shadows.wgsl");
 
+const ENABLE_BINDING_ARRAY: &str = "enable wgpu_binding_array;";
+
 const MARKER_INCLUDE_MATERIAL_SYSTEM: &str = "// @include_material_system";
 const MARKER_INCLUDE_LIGHTING: &str = "// @include_lighting";
 const MARKER_INCLUDE_SHADOWS: &str = "// @include_shadows";
@@ -283,6 +285,10 @@ impl ShaderBuilder {
         for constant in self.constant_overrides {
             Self::replace_constant(&mut source, constant.name, constant.value);
         }
+        // naga requires the extension to be enabled before any declaration.
+        if source.contains("binding_array<") && !source.contains(ENABLE_BINDING_ARRAY) {
+            source.insert_str(0, &format!("{ENABLE_BINDING_ARRAY}\n\n"));
+        }
         source
     }
 
@@ -376,7 +382,9 @@ mod tests {
             .build_modules_only();
 
         assert!(bindless.contains("binding_array"));
+        assert!(bindless.starts_with(ENABLE_BINDING_ARRAY));
         assert!(traditional.contains("base_color_texture_binding"));
+        assert!(!traditional.contains(ENABLE_BINDING_ARRAY));
         assert_ne!(bindless, traditional);
     }
 

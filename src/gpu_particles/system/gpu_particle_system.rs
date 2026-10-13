@@ -662,9 +662,13 @@ impl GpuParticleSystem {
         let result = status.lock().unwrap().take();
         match result {
             Some(Ok(())) => {
-                let data = slice.get_mapped_range();
-                self.process_dead_list_bytes(&data);
-                drop(data);
+                match slice.get_mapped_range() {
+                    Ok(data) => {
+                        self.process_dead_list_bytes(&data);
+                        drop(data);
+                    }
+                    Err(error) => log::error!("Failed to read particle dead list: {error}"),
+                }
                 self.dead_list_readback.unmap();
             }
             Some(Err(error)) => {

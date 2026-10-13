@@ -23,6 +23,15 @@ pub struct EguiContext {
     should_close: bool,
 }
 
+impl Drop for EguiContext {
+    fn drop(&mut self) {
+        // Uploads still pending at shutdown are intentionally discarded.
+        if let Some(output) = &mut self.pending_output {
+            output.textures_delta.clear();
+        }
+    }
+}
+
 pub struct EguiRenderTarget<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
@@ -139,10 +148,16 @@ impl EguiContext {
         self.pending_output.take()
     }
 
-    pub fn render(&mut self, target: &mut EguiRenderTarget<'_>, output: egui::FullOutput) {
+    pub fn render(&mut self, target: &mut EguiRenderTarget<'_>, mut output: egui::FullOutput) {
         self.handle_viewport_commands(target.window, &output.viewport_output);
 
+        let mut textures_delta = std::mem::take(&mut output.textures_delta);
         if target.surface_size[0] == 0 || target.surface_size[1] == 0 {
+            // Nothing to draw into, but texture uploads must still reach the GPU.
+            self.pending_output
+                .get_or_insert_with(Default::default)
+                .textures_delta
+                .append(textures_delta);
             return;
         }
 
@@ -152,9 +167,11 @@ impl EguiContext {
         };
 
         // Upload textures
-        for (id, delta) in &output.textures_delta.set {
-            self.renderer
-                .update_texture(target.device, target.queue, *id, delta);
+        for (id, deltas) in textures_delta.set.drain() {
+            for delta in &deltas {
+                self.renderer
+                    .update_texture(target.device, target.queue, id, delta);
+            }
         }
 
         // Tessellate UI shapes
@@ -199,8 +216,8 @@ impl EguiContext {
         // No `drop(pass)` here — it was moved by `forget_lifetime()` and will end when `pass_static` drops.
 
         // Free any textures egui wants to drop
-        for id in &output.textures_delta.free {
-            self.renderer.free_texture(id);
+        for id in textures_delta.free.drain() {
+            self.renderer.free_texture(&id);
         }
     }
 

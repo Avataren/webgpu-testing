@@ -124,6 +124,7 @@ impl RenderContext {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                ..Default::default()
             })
             .await
             .expect("Failed to find adapter");
@@ -245,6 +246,7 @@ impl RenderContext {
             height: size.height.max(1),
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
+            color_space: wgpu::SurfaceColorSpace::Auto,
             // Allow a linear view of the sRGB surface for UI: egui does its own gamma
             // handling and looks washed out when rendered through an sRGB view.
             view_formats: if format.is_srgb() {

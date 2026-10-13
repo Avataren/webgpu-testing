@@ -11,7 +11,7 @@ pub struct PipelineBuilder<'a> {
     shader: &'a wgpu::ShaderModule,
     vertex_entry: &'a str,
     fragment_entry: Option<&'a str>,
-    vertex_buffers: Vec<wgpu::VertexBufferLayout<'a>>,
+    vertex_buffers: Vec<Option<wgpu::VertexBufferLayout<'a>>>,
     color_targets: Vec<Option<wgpu::ColorTargetState>>,
     depth_stencil: Option<wgpu::DepthStencilState>,
     primitive: wgpu::PrimitiveState,
@@ -85,7 +85,7 @@ impl<'a> PipelineBuilder<'a> {
 
     /// Add a vertex buffer layout
     pub fn with_vertex_buffer(mut self, layout: wgpu::VertexBufferLayout<'a>) -> Self {
-        self.vertex_buffers.push(layout);
+        self.vertex_buffers.push(Some(layout));
         self
     }
 

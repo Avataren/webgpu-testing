@@ -72,7 +72,7 @@ impl PendingPickReadback {
         self.mapping_requested = true;
     }
 
-    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u64, wgpu::BufferAsyncError>> {
+    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u64, Box<dyn std::error::Error>>> {
         self.ensure_mapping_requested();
 
         {
@@ -89,22 +89,17 @@ impl PendingPickReadback {
         let result = guard.take();
         drop(guard);
 
-        result.map(|status| match status {
-            Ok(()) => {
+        result.map(|status| {
+            let value = status.map_err(Into::into).and_then(|()| {
                 let slice = self.buffer.slice(..size_of::<u64>() as u64);
-                let data = slice.get_mapped_range();
+                let data = slice.get_mapped_range()?;
                 let mut bytes = [0u8; 8];
                 bytes.copy_from_slice(&data[..8]);
-                drop(data);
-                self.buffer.unmap();
-                self.mapping_requested = false;
                 Ok(u64::from_le_bytes(bytes))
-            }
-            Err(err) => {
-                self.buffer.unmap();
-                self.mapping_requested = false;
-                Err(err)
-            }
+            });
+            self.buffer.unmap();
+            self.mapping_requested = false;
+            value
         })
     }
 }
@@ -352,6 +347,11 @@ impl Renderer {
         }
 
         None
+    }
+
+    /// Presents a rendered frame to the window.
+    pub fn present(&self, frame: RenderFrame) {
+        self.context.queue.present(frame.frame);
     }
 
     pub fn get_device(&self) -> &wgpu::Device {

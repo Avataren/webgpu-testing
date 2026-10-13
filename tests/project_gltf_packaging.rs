@@ -39,6 +39,7 @@ impl HeadlessDevice {
             power_preference: PowerPreference::LowPower,
             compatible_surface: None,
             force_fallback_adapter: false,
+            ..Default::default()
         })) {
             Ok(adapter) => adapter,
             Err(err) => {
