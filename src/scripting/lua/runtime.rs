@@ -68,13 +68,16 @@ impl LuaScriptingRuntime {
         // Parse metadata annotations from source
         let script_mode = parse_script_mode_annotation(&loaded.contents);
 
-        // Compile the Lua code to bytecode
+        // Compile the Lua code to bytecode. The `@` and `=` prefixes make Lua report
+        // errors as `path:line:` / `name:line:` instead of `[string "..."]:line:`.
         let chunk = if let Some(path) = &loaded.path {
             self.lua
                 .load(&*loaded.contents)
-                .set_name(path.to_string_lossy())
+                .set_name(format!("@{}", path.display()))
         } else {
-            self.lua.load(&*loaded.contents).set_name(&*loaded.name)
+            self.lua
+                .load(&*loaded.contents)
+                .set_name(format!("={}", loaded.name))
         };
 
         // Convert to bytecode for faster loading
