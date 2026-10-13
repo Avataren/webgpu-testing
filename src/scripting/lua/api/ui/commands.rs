@@ -156,13 +156,18 @@ impl UiCommand {
                     .constrain_to(base_rect)
                     .interactable(true)
                     .show(ui.ctx(), |ui| {
-                        if let Some(width) = width {
-                            ui.set_width(*width);
-                        }
-                        if let Some(height) = height {
-                            ui.set_height(*height);
-                        }
-                        render_children(ui, items);
+                        // A backdrop keeps HUD text readable over any scene.
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            match width {
+                                Some(width) => ui.set_width(*width),
+                                // Without a width the panel grows to fit its text.
+                                None => ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend),
+                            }
+                            if let Some(height) = height {
+                                ui.set_height(*height);
+                            }
+                            render_children(ui, items);
+                        });
                     });
             }
             leaf => {

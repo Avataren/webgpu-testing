@@ -5,7 +5,9 @@ use super::entity::{
     SceneAssetEntity, SceneMaterialHandle,
 };
 use super::resources::resolve_material_handle;
-use super::serialization::{ImportedGltfMeta, SerializedAnimationClip, SerializedTransform};
+use super::serialization::{
+    ImportedGltfMeta, SerializedAnimationClip, SerializedLuaScriptSource, SerializedTransform,
+};
 use crate::asset::{Assets, Handle, MaterialAsset, MeshData};
 use crate::project::{normalize_absolute_path, relativize_path_to_project, CONTENT_DIR};
 use crate::scene::animation::{AnimationClip, AnimationState};
@@ -73,6 +75,25 @@ impl SceneAsset {
 
     pub fn builder(name: impl Into<String>) -> SceneAssetBuilder {
         SceneAssetBuilder::new(name)
+    }
+
+    /// Store script files inside `project_root` relative to it, like texture paths, so
+    /// the project can be moved. Loading resolves them against the project again.
+    pub fn relativize_script_paths(&mut self, project_root: &Path) {
+        let canonical_project_root = std::fs::canonicalize(project_root)
+            .map(normalize_absolute_path)
+            .ok();
+        for entity in &mut self.entities {
+            if let Some(SerializedLuaScriptSource::File { path }) =
+                entity.script.as_mut().map(|script| &mut script.source)
+            {
+                *path = relativize_path_to_project(
+                    path.clone(),
+                    project_root,
+                    canonical_project_root.as_deref(),
+                );
+            }
+        }
     }
 
     pub fn persist_material_assets(&mut self, project_root: &Path) -> Result<(), std::io::Error> {
@@ -273,10 +294,10 @@ impl SceneAsset {
         assets: &mut Assets,
     ) -> SceneInstance {
         let mut instance = SceneInstance::new();
-        let mut entity_map = Vec::with_capacity(self.entities.len());
+        let mut builders = Vec::with_capacity(self.entities.len());
         let mut material_cache: HashMap<PathBuf, Handle<MaterialAsset>> = HashMap::new();
 
-        for (index, entity) in self.entities.iter().enumerate() {
+        for entity in &self.entities {
             let mut builder = hecs::EntityBuilder::new();
 
             if let Some(name) = &entity.name {
@@ -322,15 +343,26 @@ impl SceneAsset {
                 builder.add(MeshBounds::from(bounds));
             }
 
-            let material_handle = resolve_material_handle(
-                entity.material.as_ref(),
-                entity.material_data.as_ref(),
-                entity.gltf_source.as_deref(),
-                entity.gltf_material,
-                &mut renderer,
-                assets,
-                &mut material_cache,
-            );
+            // Only renderable entities need a material; anything else would just pick
+            // up the default one.
+            let needs_material = entity.material.is_some()
+                || entity.material_data.is_some()
+                || entity.gltf_material.is_some()
+                || entity.mesh_handle.is_some()
+                || entity.primitive_mesh.is_some();
+            let material_handle = needs_material
+                .then(|| {
+                    resolve_material_handle(
+                        entity.material.as_ref(),
+                        entity.material_data.as_ref(),
+                        entity.gltf_source.as_deref(),
+                        entity.gltf_material,
+                        &mut renderer,
+                        assets,
+                        &mut material_cache,
+                    )
+                })
+                .flatten();
 
             if let Some(handle) = material_handle {
                 builder.add(MaterialComponent(handle));
@@ -402,15 +434,24 @@ impl SceneAsset {
                 builder.add(environment.clone());
             }
 
-            let entity_id = instance.world_mut().spawn(builder.build());
-            if entity_map.len() == index {
-                entity_map.push(entity_id);
-            } else if index < entity_map.len() {
-                entity_map[index] = entity_id;
-            } else {
-                entity_map.resize(index + 1, entity_id);
+            builders.push(builder);
+        }
+
+        // Snapshot entities go back to their original ids first, so fresh ids handed
+        // out to the others cannot collide with them.
+        let mut entity_map: Vec<Option<hecs::Entity>> = vec![None; self.entities.len()];
+        for (index, (entity, builder)) in self.entities.iter().zip(&mut builders).enumerate() {
+            if let Some(handle) = entity.source_entity {
+                instance.world_mut().spawn_at(handle, builder.build());
+                entity_map[index] = Some(handle);
             }
         }
+        for (slot, builder) in entity_map.iter_mut().zip(&mut builders) {
+            if slot.is_none() {
+                *slot = Some(instance.world_mut().spawn(builder.build()));
+            }
+        }
+        let entity_map: Vec<hecs::Entity> = entity_map.into_iter().flatten().collect();
 
         for (index, entity) in self.entities.iter().enumerate() {
             let entity_id = entity_map[index];

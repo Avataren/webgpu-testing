@@ -1,3 +1,4 @@
+use crate::project::resolve_project_path;
 use crate::scripting::{LuaScriptComponent, LuaScriptSource};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -26,8 +27,25 @@ impl From<SerializedLuaScriptSource> for LuaScriptSource {
             SerializedLuaScriptSource::Inline { name, source } => {
                 LuaScriptSource::inline(name, source)
             }
-            SerializedLuaScriptSource::File { path } => LuaScriptSource::file(path),
+            SerializedLuaScriptSource::File { path } => {
+                LuaScriptSource::file(resolve_script_path(path))
+            }
         }
+    }
+}
+
+/// Saved projects store their scripts relative to the project; resolve those against
+/// the active project. Older saves may hold paths relative to the working directory,
+/// which are kept when the project has no such file.
+fn resolve_script_path(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    let resolved = resolve_project_path(&path);
+    if resolved.exists() {
+        resolved
+    } else {
+        path
     }
 }
 

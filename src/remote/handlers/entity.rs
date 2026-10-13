@@ -23,8 +23,9 @@ use crate::scripting::lua::ScriptMode;
 use crate::scripting::{LuaScriptComponent, LuaScriptSource};
 
 use super::super::json::{
-    apply_transform_params, color_from_json, color_json, entity_from_json, entity_id, opt_bool,
-    opt_f64, opt_str, patch_serde, req_entity, round, transform_to_json, vec3_from_json, vec3_json,
+    apply_transform_params, color_from_json, color_json, entity_from_json, entity_id, entity_name,
+    opt_bool, opt_f64, opt_str, opt_u64, patch_serde, req_entity, round, transform_to_json,
+    vec3_from_json, vec3_json,
 };
 use super::info::entity_summary;
 use super::{RemoteContext, RemoteResult};
@@ -514,6 +515,7 @@ pub(super) fn spawn(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRe
             "look_at",
             "preset",
             "active_camera",
+            "quiet",
         ] {
             object.remove(key);
         }
@@ -539,7 +541,15 @@ pub(super) fn spawn(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRe
     if kind == "environment" {
         sync_environment_from_entity(ctx, entity);
     }
+    if opt_bool(params, "quiet").unwrap_or(false) {
+        return Ok(brief(ctx.gpu.scene.main_world(), entity));
+    }
     Ok(entity_summary(ctx.gpu.scene.main_world(), entity))
+}
+
+/// `{id, name}` of an entity: the result of calls made with `quiet: true`.
+fn brief(world: &World, entity: Entity) -> Value {
+    json!({ "id": entity_id(entity), "name": entity_name(world, entity) })
 }
 
 /// The shared mesh for a primitive and its bounds, created on first use.
@@ -622,24 +632,99 @@ fn add_particle_components(
 }
 
 pub(super) fn update(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
-    let entity = req_entity(ctx.gpu.scene.main_world(), params)?;
+    let quiet = opt_bool(params, "quiet").unwrap_or(false);
     let mut patch = params.clone();
     if let Some(object) = patch.as_object_mut() {
-        object.remove("entity");
+        for key in ["entity", "entities", "name_contains", "quiet"] {
+            object.remove(key);
+        }
     }
-    let changed = apply_patch(ctx, entity, &patch)?;
-    if changed.is_empty() {
-        return Err(
-            "nothing to change; pass fields like name, translation, rotation, scale, parent, \
-             visible, material, point_light, script, ..."
-                .into(),
-        );
+    let nothing_to_change = || {
+        "nothing to change; pass fields like name, translation, rotation, scale, parent, \
+         visible, material, point_light, script, ..."
+            .to_string()
+    };
+
+    let Some(targets) = bulk_targets(ctx.gpu.scene.main_world(), params)? else {
+        let entity = req_entity(ctx.gpu.scene.main_world(), params)?;
+        let changed = apply_patch(ctx, entity, &patch)?;
+        if changed.is_empty() {
+            return Err(nothing_to_change());
+        }
+        ctx.gpu.scene.propagate_transforms();
+        ctx.mark_modified();
+        let mut summary = if quiet {
+            brief(ctx.gpu.scene.main_world(), entity)
+        } else {
+            entity_summary(ctx.gpu.scene.main_world(), entity)
+        };
+        summary["changed"] = json!(changed);
+        return Ok(summary);
+    };
+
+    if patch.get("name").is_some() && targets.len() > 1 {
+        return Err("name cannot be given to several entities; names must be unique".into());
+    }
+    let mut changed = Vec::new();
+    for (index, &entity) in targets.iter().enumerate() {
+        match apply_patch(ctx, entity, &patch) {
+            Ok(fields) => changed = fields,
+            Err(err) => {
+                if index > 0 {
+                    ctx.gpu.scene.propagate_transforms();
+                    ctx.mark_modified();
+                }
+                return Err(format!(
+                    "{err} (at entity {}; the {index} entities before it were changed)",
+                    entity_id(entity)
+                ));
+            }
+        }
+        if changed.is_empty() {
+            return Err(nothing_to_change());
+        }
     }
     ctx.gpu.scene.propagate_transforms();
     ctx.mark_modified();
-    let mut summary = entity_summary(ctx.gpu.scene.main_world(), entity);
-    summary["changed"] = json!(changed);
-    Ok(summary)
+    Ok(json!({
+        "updated": targets.len(),
+        "changed": changed,
+        "ids": targets.into_iter().map(entity_id).collect::<Vec<_>>(),
+    }))
+}
+
+/// The entities a bulk update applies to: an `entities` list of ids/names, or every
+/// entity whose name contains `name_contains` (case-insensitive). `None` when the call
+/// names a single `entity` instead.
+fn bulk_targets(world: &World, params: &Value) -> Result<Option<Vec<Entity>>, String> {
+    if let Some(list) = params.get("entities") {
+        let list = list
+            .as_array()
+            .ok_or("entities must be an array of ids or names")?;
+        let entities = list
+            .iter()
+            .map(|value| entity_from_json(world, value))
+            .collect::<Result<Vec<_>, _>>()?;
+        if entities.is_empty() {
+            return Err("entities is empty".into());
+        }
+        return Ok(Some(entities));
+    }
+    let Some(filter) = opt_str(params, "name_contains") else {
+        return Ok(None);
+    };
+    let filter = filter.to_lowercase();
+    let mut entities: Vec<Entity> = world
+        .query::<&Name>()
+        .iter()
+        .filter(|(_, name)| name.0.to_lowercase().contains(&filter))
+        .map(|(entity, _)| entity)
+        .collect();
+    if entities.is_empty() {
+        return Err(format!("no entity name contains {filter:?}"));
+    }
+    entities.sort_by_key(|entity| entity.id());
+    Ok(Some(entities))
 }
 
 /// Apply every recognised field of `patch` to `entity`. Returns the names of the
@@ -1491,6 +1576,107 @@ fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
 
 pub(super) fn duplicate(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let source = req_entity(ctx.gpu.scene.main_world(), params)?;
+    let quiet = opt_bool(params, "quiet").unwrap_or(false);
+    let count = opt_u64(params, "count").unwrap_or(1);
+    if !(1..=1000).contains(&count) {
+        return Err("count must be between 1 and 1000".into());
+    }
+    let vec3_param = |key: &str| {
+        params
+            .get(key)
+            .map(vec3_from_json)
+            .transpose()
+            .map(Option::unwrap_or_default)
+    };
+    let step = vec3_param("step")?;
+    let row_step = vec3_param("row_step")?;
+    let columns = opt_u64(params, "columns").filter(|&columns| columns > 0);
+    let arrayed = params.get("step").is_some() || params.get("row_step").is_some();
+
+    let mut patch = params.clone();
+    let mut base = None;
+    if let Some(object) = patch.as_object_mut() {
+        for key in ["entity", "quiet", "count", "step", "row_step", "columns"] {
+            object.remove(key);
+        }
+        if arrayed {
+            // Copies are placed relative to this position (the source's by default).
+            base = object
+                .remove("translation")
+                .or_else(|| object.remove("position"))
+                .map(|value| vec3_from_json(&value))
+                .transpose()?;
+        }
+    }
+    let base = base.unwrap_or_else(|| {
+        ctx.gpu
+            .scene
+            .main_world()
+            .get::<&TransformComponent>(source)
+            .map(|transform| transform.0.translation)
+            .unwrap_or_default()
+    });
+    let source_name =
+        entity_name(ctx.gpu.scene.main_world(), source).unwrap_or_else(|| "Copy".into());
+    let name = opt_str(params, "name").map(str::to_owned);
+
+    let mut copies = Vec::with_capacity(count as usize);
+    for index in 1..=count {
+        let mut copy_patch = patch.clone();
+        let copy_name = match &name {
+            Some(name) if name.contains("{i}") => name.replace("{i}", &index.to_string()),
+            Some(name) if count > 1 => format!("{name} {index}"),
+            Some(name) => name.clone(),
+            None if count > 1 => format!("{source_name} {index}"),
+            None => format!("{source_name} (copy)"),
+        };
+        copy_patch["name"] = json!(copy_name);
+        if arrayed {
+            // Copy `index` fills grid cell `index`; the source occupies cell 0.
+            let (column, row) = match columns {
+                Some(columns) => (index % columns, index / columns),
+                None => (index, 0),
+            };
+            let offset = step * column as f32 + row_step * row as f32;
+            copy_patch["translation"] = vec3_json(base + offset);
+        }
+        match duplicate_once(ctx, source, &copy_patch) {
+            Ok(copy) => copies.push(copy),
+            Err(err) => {
+                ctx.gpu.scene.propagate_transforms();
+                ctx.mark_modified();
+                return Err(format!("{err} (copy {index}; earlier copies were kept)"));
+            }
+        }
+    }
+    ctx.gpu.scene.propagate_transforms();
+    ctx.mark_modified();
+
+    let world = ctx.gpu.scene.main_world();
+    if count == 1 {
+        let (root, copied_entities) = copies[0];
+        if quiet {
+            return Ok(brief(world, root));
+        }
+        let mut summary = entity_summary(world, root);
+        summary["copied_entities"] = json!(copied_entities);
+        return Ok(summary);
+    }
+    Ok(json!({
+        "copies": copies
+            .iter()
+            .map(|&(root, _)| brief(world, root))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// Copy `source` and its children once and apply `patch` to the copy. Returns the
+/// copy and how many entities were copied.
+fn duplicate_once(
+    ctx: &mut RemoteContext<'_, '_>,
+    source: Entity,
+    patch: &Value,
+) -> Result<(Entity, usize), String> {
     let originals = subtree(ctx.gpu.scene.main_world(), source);
     let mut copies: Vec<(Entity, Entity)> = Vec::with_capacity(originals.len());
 
@@ -1521,22 +1707,8 @@ pub(super) fn duplicate(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Remo
     }
 
     let root = copies[0].1;
-    let mut patch = params.clone();
-    if let Some(object) = patch.as_object_mut() {
-        object.remove("entity");
-        if !object.contains_key("name") {
-            let name = super::super::json::entity_name(world, root)
-                .map(|name| format!("{name} (copy)"))
-                .unwrap_or_else(|| "Copy".into());
-            object.insert("name".into(), json!(name));
-        }
-    }
-    apply_patch(ctx, root, &patch)?;
-    ctx.gpu.scene.propagate_transforms();
-    ctx.mark_modified();
-    let mut summary = entity_summary(ctx.gpu.scene.main_world(), root);
-    summary["copied_entities"] = json!(copies.len());
-    Ok(summary)
+    apply_patch(ctx, root, patch)?;
+    Ok((root, copies.len()))
 }
 
 /// World matrix → local transform under `parent_world` (if any).

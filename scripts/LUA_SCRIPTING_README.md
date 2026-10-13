@@ -145,6 +145,10 @@ end
 - `get_string(key, default)` - Retrieve string with default
 - For-entity variants: `set_state_for`, `get_state_for`, etc.
 
+### Runtime
+- `is_playing()` - `true` while scripts run for play mode, `false` in editor mode. Lets a
+  `@tool` script keep game logic out of the editor.
+
 ### Entity Management
 - `spawn_entity(name)` - Create new entity
 - `set_name(entity, name)` - Set entity name
@@ -167,10 +171,10 @@ Script descriptors include:
 ### Transform API
 - `translate(entity, x, y, z)` - Move entity by delta
 - `set_translation(entity, x, y, z)` - Set entity position
-- `get_world_translation(entity)` - Get entity position (returns table with x, y, z)
+- `get_world_translation(entity)` - Get entity position (returns table with `x`, `y`, `z` fields)
 - `rotate(entity, axis_x, axis_y, axis_z, angle)` - Rotate around axis
 - `set_rotation(entity, yaw, pitch, roll)` - Set rotation (Euler angles in radians)
-- `get_world_rotation(entity)` - Get rotation (returns table with yaw, pitch, roll)
+- `get_world_rotation(entity)` - Get rotation (returns table with `yaw`, `pitch`, `roll` fields, radians)
 - `set_scale(entity, x, y, z)` - Set entity scale
 - `look_at(entity, target_x, target_y, target_z)` - Orient towards target
 
@@ -192,7 +196,9 @@ Script descriptors include:
 
 ### Component API
 - `has_component(entity, component_name)` - Check if entity has component
-- `get_component(entity, component_name)` - Get component data (returns table or nil)
+- `get_component(entity, component_name)` - Get component data (returns table or nil).
+  Vectors in component tables are **arrays**, not `{x, y, z}` tables: read
+  `t.translation[1]`, not `t.translation.x`
 - `set_component(entity, component_name, value)` - Set component data
 - `add_component(entity, component_name, value)` - Add component to entity
 - `remove_component(entity, component_name)` - Remove component from entity
@@ -207,7 +213,8 @@ Script descriptors include:
 - `OrbitAnimation` (`{ center = {x, y, z}, radius = number, speed = number, offset = number }`)
 
 **Readable/removable components**
-- `Transform` or `TransformComponent` (`{ translation = {x, y, z}, rotation = {x, y, z, w}, scale = {x, y, z} }`)
+- `Transform` or `TransformComponent` (`{ translation = {x, y, z}, rotation = {x, y, z, w}, scale = {x, y, z} }`,
+  each an array: `translation[1..3]`, `rotation[1..4]` (quaternion), `scale[1..3]`)
 - `Camera` or `CameraComponent` (`{ projection = { kind = "perspective" | "orthographic", ... } }`)
 - `PointLight` (`{ color = {x, y, z}, intensity = number, range = number }`)
 - `DirectionalLight` (`{ color = {x, y, z}, intensity = number, shadow_size = number }`)
@@ -255,9 +262,12 @@ Script descriptors include:
 - `get_clipboard()` - Get clipboard text (always returns empty string for security)
 - `set_clipboard(text)` - Copy text to clipboard
 
-### UI API (Editor Only)
+### UI API
 
-The UI API provides egui widgets for creating editor interfaces. UI is only available in `on_ui(self_entity, ui)` hook.
+The UI API provides egui widgets for editor panels and in-game HUDs. UI is only available
+in the `on_ui(self_entity, ui)` hook. It works in the editor and in the standalone player;
+top-level `anchored_panel`s are drawn as overlays on the game view, everything else goes
+into a window titled after the entity.
 
 **Note**: All UI widgets are methods called on the `ui` parameter passed to `on_ui()`.
 
@@ -277,6 +287,29 @@ The UI API provides egui widgets for creating editor interfaces. UI is only avai
 - `ui:slider(id, current_value, min, max)` → `number` - Horizontal slider, returns new value
 - `ui:drag_value(id, current_value)` → `number` - Draggable number widget, returns new value
 - `ui:color_edit(id, r, g, b)` → `table{r, g, b}` - Color picker, returns table with RGB values (0.0-1.0)
+
+#### Layout and HUD
+
+- `ui:anchored_panel(id, anchor, offset_x, offset_y, width, height, callback)` - HUD overlay
+  pinned to the game view. `anchor` is one of `top_left`, `top_center`, `top_right`,
+  `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`;
+  offsets are logical points from that anchor; `width`/`height` may be `nil` to fit the
+  content. `callback(panel)` builds the contents with the same widget methods.
+- `ui:horizontal(callback)` / `ui:horizontal_wrapped(callback)` - Lay out widgets in a row
+- `ui:centered_area(width, callback)` - Center a block horizontally (`width` 0 to fit)
+- `ui:menu_bar(callback)`, `ui:menu(text, callback)`, `ui:menu_item(id, text)` → `boolean` - Menus
+- `ui:get_viewport_size()` → `table{width, height}` - Size of the area the UI is drawn into
+- `ui:get_pixels_per_point()` → `number` - UI scale factor
+
+```lua
+function on_ui(self_entity, ui)
+    ui:anchored_panel("score", "top_left", 16, 16, nil, nil, function(panel)
+        panel:heading("Score: " .. get_i32("score", 0))
+    end)
+end
+```
+
+See `examples/scripts/ingame_hud.lua` for a complete HUD.
 
 #### Widget IDs and Values
 
@@ -423,7 +456,10 @@ Scripts declare where they run with an annotation in their leading comments:
 
 ## Known Limitations
 
-1. **Script Access API** (metaprogramming) is not yet implemented.
+1. Scripts cannot create meshes, materials or lights, or change material colors. Create
+   those entities in the editor (or through the engine tools) and show, hide, move or
+   reuse them from Lua.
+2. There is no audio API.
 
 ## Best Practices
 

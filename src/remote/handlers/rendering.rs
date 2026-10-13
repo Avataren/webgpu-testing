@@ -20,6 +20,10 @@ pub(super) fn camera_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let scene = &ctx.gpu.scene;
     let camera = scene.camera();
     let forward = (camera.target - camera.eye).normalize_or_zero();
+    // The stored up is only a hint for the view matrix and can be stale; report the
+    // up vector the view actually uses, perpendicular to forward.
+    let right = forward.cross(camera.up).try_normalize().unwrap_or(Vec3::X);
+    let up = right.cross(forward).normalize_or_zero();
     let active = scene.active_camera_entity();
     let projection = match camera.projection() {
         CameraProjection::Perspective {
@@ -41,7 +45,7 @@ pub(super) fn camera_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     Ok(json!({
         "position": vec3_json(camera.eye),
         "target": vec3_json(camera.target),
-        "up": vec3_json(camera.up),
+        "up": vec3_json(up),
         "forward": vec3_json(forward),
         "projection": projection,
         "active_camera_entity": active.map(|entity| json!({

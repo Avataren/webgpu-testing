@@ -266,8 +266,10 @@ impl Server {
                     .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
                 Ok(Output::Text(format!(
                     "{guide}\n\n## Notes for remote control\n\n\
-                     - Entity ids returned by the engine tools are the same i64 handles Lua uses.\n\
+                     - Entity ids returned by the engine tools are the same i64 handles Lua uses. They stay valid across play/stop and undo.\n\
                      - lua_eval runs with this whole API; `return` a value (or write a bare expression) to get it back.\n\
+                     - lua_eval with `entity` runs inside that entity's script, so it sees the script's globals but not its `local` variables. \
+                     To inspect game state while testing, keep it in a global table (e.g. `GAME = {{ score = 0 }}`) or in the state API (`set_i32`, ...).\n\
                      - Example scripts: scripts/*.lua and examples/scripts/*.lua in {}.\n",
                     self.engine.repo.display()
                 )))
@@ -300,6 +302,34 @@ impl Server {
                     .call(method, params)
                     .map(Output::Json)
                     .map_err(|err| err.to_string())
+            }
+            "project_create" => {
+                let created = self
+                    .engine
+                    .call("project.create", args.clone())
+                    .map_err(|err| err.to_string())?;
+                let directory = created["directory"]
+                    .as_str()
+                    .ok_or("the editor did not say where the project goes")?;
+                let directory = PathBuf::from(directory);
+                self.wait_for_project(&directory)?;
+                Ok(Output::Json(json!({
+                    "created": directory.display().to_string(),
+                    "editor": self.engine.call("editor.state", json!({})).map_err(|err| err.to_string())?,
+                })))
+            }
+            "project_open" => {
+                let path = args
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or("missing \"path\"")?;
+                let path = PathBuf::from(path);
+                let path = if path.is_absolute() {
+                    path
+                } else {
+                    self.engine.repo.join(path)
+                };
+                self.open_project(&path).map(Output::Json)
             }
             "screenshot" => {
                 let mut params = args.clone();
@@ -448,25 +478,11 @@ impl Server {
                 project.display()
             ));
         }
-        let wanted = project
-            .canonicalize()
-            .unwrap_or_else(|_| project.to_path_buf());
-        let loaded = |state: &Value| {
-            state["project"]["directory"]
-                .as_str()
-                .map(|dir| {
-                    PathBuf::from(dir)
-                        .canonicalize()
-                        .unwrap_or_else(|_| PathBuf::from(dir))
-                })
-                .is_some_and(|dir| dir == wanted)
-        };
-
         let state = self
             .engine
             .call("editor.state", json!({}))
             .map_err(|err| err.to_string())?;
-        if loaded(&state) {
+        if project_is_open(&state, project) {
             return Ok(json!({ "already_open": project.display().to_string() }));
         }
         self.engine
@@ -475,7 +491,12 @@ impl Server {
                 json!({ "path": project.display().to_string() }),
             )
             .map_err(|err| err.to_string())?;
+        self.wait_for_project(project)?;
+        Ok(json!({ "opened": project.display().to_string() }))
+    }
 
+    /// Wait until the editor reports `project` as its open project.
+    fn wait_for_project(&mut self, project: &Path) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut last_state = Value::Null;
         while Instant::now() < deadline {
@@ -486,8 +507,8 @@ impl Server {
                 .engine
                 .call("editor.state", json!({}))
                 .map_err(|err| err.to_string())?;
-            if loaded(&state) {
-                return Ok(json!({ "opened": project.display().to_string() }));
+            if project_is_open(&state, project) {
+                return Ok(());
             }
             last_state = state;
         }
@@ -496,6 +517,14 @@ impl Server {
             pretty(&last_state)
         ))
     }
+}
+
+/// Whether an `editor.state` result has `project` open.
+fn project_is_open(state: &Value, project: &Path) -> bool {
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    state["project"]["directory"]
+        .as_str()
+        .is_some_and(|dir| canonical(Path::new(dir)) == canonical(project))
 }
 
 fn pretty(value: &Value) -> String {

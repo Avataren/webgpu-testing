@@ -36,6 +36,9 @@ impl MaterialFlags {
     pub const UNLIT: Self = Self(1 << 7);
     pub const USE_NEAREST_FILTERING: Self = Self(1 << 8);
     pub const BILLBOARDED: Self = Self(1 << 9);
+    /// Leave the object out of shadow maps. Set per object at render time from
+    /// `CanCastShadow(false)`; not stored in material assets.
+    pub const NO_SHADOW: Self = Self(1 << 10);
 
     pub const fn bits(&self) -> u32 {
         self.0
@@ -247,6 +250,20 @@ impl Material {
 
     pub fn is_unlit(&self) -> bool {
         self.flags.contains(MaterialFlags::UNLIT)
+    }
+
+    pub fn with_shadow_casting(mut self, casts_shadow: bool) -> Self {
+        if casts_shadow {
+            self.flags.remove(MaterialFlags::NO_SHADOW);
+        } else {
+            self.flags.insert(MaterialFlags::NO_SHADOW);
+        }
+        self
+    }
+
+    /// Whether objects drawn with this material appear in shadow maps.
+    pub fn casts_shadow(&self) -> bool {
+        !self.is_unlit() && !self.flags.contains(MaterialFlags::NO_SHADOW)
     }
 
     pub fn requires_separate_pass(&self) -> bool {

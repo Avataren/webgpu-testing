@@ -5,7 +5,7 @@ use crate::renderer::{
     Material, PickId, RenderObject, Renderer,
 };
 use crate::scene::components::{
-    Billboard, BillboardOrientation, BillboardSpace, DepthState, EditorEntityId,
+    Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, EditorEntityId,
     GpuParticleInstance, MaterialComponent, MeshComponent, Name, SelectedInEditor,
     TransformComponent, Visible, WorldTransform,
 };
@@ -59,6 +59,7 @@ struct RenderEntity {
     depth_state: Option<DepthState>,
     gpu_instance: Option<GpuParticleInstance>,
     selected: bool,
+    casts_shadow: bool,
     pick_id: PickId,
 }
 
@@ -78,6 +79,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
             Option<&GpuParticleInstance>,
             Option<&SelectedInEditor>,
             Option<&EditorEntityId>,
+            Option<&CanCastShadow>,
         )>()
         .iter()
         .map(
@@ -95,6 +97,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                     gpu_instance,
                     selected_marker,
                     editor_id,
+                    cast_shadow,
                 ),
             )| {
                 let (material_handle, base_material) = assets
@@ -115,6 +118,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                     depth_state: depth_state.copied(),
                     gpu_instance: gpu_instance.copied(),
                     selected: selected_marker.is_some(),
+                    casts_shadow: cast_shadow.is_none_or(|flag| flag.0),
                     pick_id: encode_pick_id(editor_id.copied()),
                 }
             },
@@ -153,6 +157,11 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         } else {
             material.with_unlit()
         };
+        override_material = Some(material);
+    }
+
+    if !entity.casts_shadow {
+        material = material.with_shadow_casting(false);
         override_material = Some(material);
     }
 

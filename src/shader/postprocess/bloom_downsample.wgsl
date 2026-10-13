@@ -6,14 +6,14 @@ var bloom_down_sampler : sampler;
 @fragment
 fn fs_bloom_downsample(in : VertexOutput) -> @location(0) vec4<f32> {
     let tex_size = vec2<f32>(textureDimensions(bloom_down_texture, 0));
-    let texel = 1.0 / tex_size;
+    let texel = bloom_texel(tex_size);
     var result = vec3<f32>(0.0);
     var total = 0.0;
     for (var x : i32 = -2; x <= 2; x = x + 1) {
         for (var y : i32 = -2; y <= 2; y = y + 1) {
             let offset = vec2<f32>(f32(x), f32(y));
             let weight = bloom_gaussian_weight(offset, 2.5);
-            let sample_uv = clamp(in.uv + offset * texel, vec2<f32>(0.0), vec2<f32>(1.0));
+            let sample_uv = bloom_clamp_uv(in.uv + offset * texel);
             let color = textureSampleLevel(
                 bloom_down_texture,
                 bloom_down_sampler,

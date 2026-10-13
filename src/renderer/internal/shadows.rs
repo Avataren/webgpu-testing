@@ -545,7 +545,7 @@ impl ShadowResources {
                     }
                     continue;
                 };
-                if material.is_unlit() {
+                if !material.casts_shadow() {
                     if let Some(start) = current_range_start.take() {
                         pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
                     }

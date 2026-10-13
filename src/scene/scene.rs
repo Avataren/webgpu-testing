@@ -1208,9 +1208,12 @@ impl Scene {
                     entity.mesh_handle = mapped;
                 }
             }
-        } else { // FOR SNAPSHOTS: KEEP ORIGINAL HANDLES, NO MESH DATA
-             // Don't modify mesh handles, don't extract mesh data
-             // The full asset pool is preserved separately in the snapshot
+        } else {
+            // Snapshots keep the original mesh handles (the asset pool is preserved
+            // separately) and remember each entity so a restore keeps its id.
+            for (&entity, &index) in &index_map {
+                entities[index].source_entity = Some(entity);
+            }
         }
 
         let active_camera = if node == self.main_scene {
@@ -2058,5 +2061,50 @@ mod tests {
             .0
             .translation;
         assert!(restored_translation.abs_diff_eq(initial_translation, 1e-5));
+    }
+
+    #[test]
+    fn snapshot_restore_keeps_entity_ids_and_adds_no_materials() {
+        use crate::scene::components::{MaterialComponent, PointLight};
+
+        let mut scene = Scene::new();
+        // Leave gaps in the id space and spawn in an order that differs from the
+        // archetype iteration order, so a naive respawn would renumber.
+        let spare = scene.main_world_mut().spawn((Name::new("Spare"),));
+        let light = scene.main_world_mut().spawn((
+            Name::new("Light"),
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+            PointLight::default(),
+        ));
+        let empty = scene.main_world_mut().spawn((
+            Name::new("Empty"),
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+        ));
+        let _ = scene.main_world_mut().despawn(spare);
+        let child = scene.main_world_mut().spawn((
+            Name::new("Child"),
+            TransformComponent(Transform::from_translation(Vec3::X)),
+            Visible(true),
+        ));
+        let world = scene.main_world_mut();
+        world.insert_one(child, Parent(empty)).unwrap();
+        world.insert_one(empty, Children(vec![child])).unwrap();
+
+        let restored = SceneSnapshot::capture(&scene).into_scene();
+        let world = restored.main_world();
+        for (entity, name) in [(light, "Light"), (empty, "Empty"), (child, "Child")] {
+            assert_eq!(
+                world.get::<&Name>(entity).map(|n| n.0.clone()).ok(),
+                Some(name.to_string()),
+                "{name} changed id"
+            );
+            assert!(
+                world.get::<&MaterialComponent>(entity).is_err(),
+                "{name} gained a material"
+            );
+        }
+        assert_eq!(world.get::<&Parent>(child).map(|p| p.0).ok(), Some(empty));
     }
 }

@@ -28,6 +28,11 @@ pub use file_io::grant_path_access;
 pub use text_editor_bridge::enqueue_text_editor_request;
 pub use ui::{Anchor, UiCommand, UiContext, UiResponse};
 
+/// Whether scripts on a runtime are currently being run for play mode. Stored as Lua
+/// app data by the scripting state each time it runs scripts.
+#[derive(Clone, Copy)]
+pub(crate) struct PlayMode(pub bool);
+
 /// Register all Lua API functions with the runtime.
 pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     logging::register_logging_api(lua)?;
@@ -45,6 +50,12 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     ui::register_ui_api(lua)?;
     editor_commands::register_editor_command_api(lua)?;
     coroutine::register_coroutine_api(lua)?;
+    lua.globals().set(
+        "is_playing",
+        lua.create_function(|lua, ()| {
+            Ok(lua.app_data_ref::<PlayMode>().is_some_and(|mode| mode.0))
+        })?,
+    )?;
     text_editor_bridge::register_text_editor_bridge_api(lua)?;
 
     Ok(())

@@ -530,6 +530,9 @@ impl ScriptingState {
             self.outputs.apply_commands(world, &commands);
         }
 
+        self.runtime
+            .lua()
+            .set_app_data(super::api::PlayMode(!editor_mode));
         self.sync_instances(world);
 
         let active = self.active_entities(world, editor_mode);
@@ -774,6 +777,7 @@ impl ScriptingState {
     ) -> HashMap<Entity, Vec<UiCommand>> {
         let mut ui_commands = HashMap::new();
         let lua = self.runtime.lua();
+        lua.set_app_data(super::api::PlayMode(!editor_mode));
         let _world_guard = WorldGuard::enter(world);
 
         let mut entities: Vec<Entity> = world

@@ -185,10 +185,10 @@ impl RenderApplication for EditorApplication {
 
 impl EditorApplication {
     fn run_update_impl(&mut self, ctx: &mut UpdateContext) {
-        // DETECT MODE CHANGES FIRST - saves state BEFORE any animation changes
+        // Detect mode changes first so the rest of the update sees the new mode.
         let current_mode = ctx.runtime;
         if current_mode != self.shared.last_runtime_mode {
-            self.detect_mode_transition(ctx, current_mode);
+            self.detect_mode_transition(current_mode);
         }
 
         self.sync_active_scene_state(ctx);

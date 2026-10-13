@@ -489,6 +489,7 @@ impl ProjectManifest {
         manifest.environment.prepare_for_save(dir)?;
         for asset in manifest.scene_assets.values_mut() {
             asset.persist_material_assets(dir)?;
+            asset.relativize_script_paths(dir);
         }
 
         let json = serde_json::to_string_pretty(&manifest)?;

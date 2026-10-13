@@ -1,6 +1,5 @@
 use log::info;
-use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, UpdateContext};
-use wgpu_cube::scene::SceneStateSnapshot;
+use wgpu_cube::app::{GpuUpdateContext, RuntimeMode};
 
 use super::core::{EditorApplication, RuntimeModeTransition};
 
@@ -21,15 +20,14 @@ impl EditorApplication {
         }
     }
 
-    pub fn detect_mode_transition(&mut self, ctx: &mut UpdateContext, new_mode: RuntimeMode) {
+    pub fn detect_mode_transition(&mut self, new_mode: RuntimeMode) {
         let old_mode = self.shared.last_runtime_mode;
 
-        // Entering play mode from editor
+        // Entering play mode from editor. The scene snapshot that stop restores is taken
+        // by the runtime controller before the first play frame's scripts run; by now
+        // they already have, so the editor must not take (or restore) its own.
         if matches!(old_mode, RuntimeMode::Editor) && matches!(new_mode, RuntimeMode::Playing) {
-            info!("Transitioning from Editor to Play mode - capturing scene snapshot");
-
-            // Capture the ENTIRE scene state
-            self.shared.editor_scene_snapshot = Some(SceneStateSnapshot::capture(&ctx.scene));
+            info!("Transitioning from Editor to Play mode");
 
             self.shared.pending_mode_transition = Some(RuntimeModeTransition {
                 from: old_mode,
@@ -53,12 +51,9 @@ impl EditorApplication {
     }
 
     fn exit_play_mode(&mut self, ctx: &mut GpuUpdateContext) {
-        info!("Exiting play mode - restoring editor scene");
+        info!("Exiting play mode");
 
-        // Completely restore the scene from the snapshot
-        if let Some(snapshot) = self.shared.editor_scene_snapshot.take() {
-            snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
-        }
+        // The runtime controller has already restored the pre-play scene.
 
         // Refresh the hierarchy so the inspector shows the restored components
         // (material handles and the like).

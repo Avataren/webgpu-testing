@@ -241,6 +241,7 @@ impl SceneAssetEntityBuilder {
             environment: self.environment,
             camera: self.camera,
             scene_ref: self.scene_ref,
+            source_entity: None,
         }
     }
 }

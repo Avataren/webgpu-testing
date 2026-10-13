@@ -10,7 +10,7 @@ use std::time::Instant;
 use glam::Vec2;
 use serde_json::{json, Value};
 
-use crate::app::{GpuUpdateContext, RuntimeStateHandle};
+use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
 use crate::renderer::postprocess::PostProcessEffects;
 use crate::renderer::RenderRegion;
 use crate::scene::InputState;
@@ -337,12 +337,20 @@ pub fn process_requests(
                 reply,
             } = request;
             log::debug!(target: "remote", "Handling remote request {method}");
-            let result = app
+            let mut result = app
                 .remote_command(&method, &params, &mut remote)
                 .unwrap_or_else(|| handlers::handle(&method, &params, &mut remote));
+            let changed_scene = remote.take_modified();
+            modified |= changed_scene;
+            // Stopping play restores the scene from before play, so say so in the
+            // answer rather than letting the change vanish silently.
+            if changed_scene && remote.runtime_mode() == Some(RuntimeMode::Playing) {
+                if let Ok(Value::Object(object)) = &mut result {
+                    object.insert("discarded_on_stop".into(), Value::Bool(true));
+                }
+            }
             reply.send(result);
         }
-        modified |= remote.take_modified();
     }
 
     if modified {

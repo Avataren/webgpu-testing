@@ -10,9 +10,7 @@ use wgpu_cube::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle, UpdateCo
 use wgpu_cube::asset::{Handle, MaterialAsset, Mesh};
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::scene::workspace::SceneDocumentId;
-use wgpu_cube::scene::{
-    MeshBounds, Scene, SceneHandle, SceneStateSnapshot, SceneWorkspaceSceneMut,
-};
+use wgpu_cube::scene::{MeshBounds, Scene, SceneHandle, SceneWorkspaceSceneMut};
 use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
@@ -106,7 +104,6 @@ pub struct EditorSharedState {
     pub(super) runtime_state: RuntimeStateHandle,
     pub(super) last_runtime_mode: RuntimeMode,
     pub(super) pending_mode_transition: Option<RuntimeModeTransition>,
-    pub(super) editor_scene_snapshot: Option<SceneStateSnapshot>,
     pub(super) scene_hierarchy_registry: Option<SceneHierarchyRegistryHandle>,
     pub(super) scene_tabs: Option<SceneTabsHandle>,
     pub(super) commands: VecDeque<EditorCommand>,
@@ -380,7 +377,6 @@ impl EditorApplicationBuilder {
             runtime_state: RuntimeStateHandle::new(),
             last_runtime_mode: RuntimeMode::Editor,
             pending_mode_transition: None,
-            editor_scene_snapshot: None,
             scene_hierarchy_registry: None,
             scene_tabs: None,
             commands: VecDeque::new(),

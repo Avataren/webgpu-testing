@@ -74,6 +74,10 @@ pub struct SceneAssetEntity {
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_ref: Option<ScenePrefabRef>,
+    /// The entity this was captured from. Only set by in-memory scene snapshots, so a
+    /// restore respawns the entity with the same id; never saved.
+    #[serde(skip)]
+    pub source_entity: Option<Entity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +200,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             environment: data.environment,
             camera: data.camera,
             scene_ref: data.scene_ref,
+            source_entity: None,
         }
     }
 }
@@ -547,6 +552,7 @@ impl SceneAssetEntity {
             environment,
             camera,
             scene_ref: None,
+            source_entity: None,
         }
     }
 }

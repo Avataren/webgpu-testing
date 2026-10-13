@@ -120,7 +120,8 @@ pub struct RenderBatcher {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MaterialCacheKey {
     Pbr(Material),
-    Shader(Handle<MaterialAsset>),
+    /// Shader materials are shared per asset, apart from shadow casting.
+    Shader(Handle<MaterialAsset>, bool),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -188,7 +189,9 @@ impl RenderBatcher {
             MaterialPipelineKey::Pbr | MaterialPipelineKey::Error => {
                 MaterialCacheKey::Pbr(material)
             }
-            MaterialPipelineKey::Shader(handle) => MaterialCacheKey::Shader(handle),
+            MaterialPipelineKey::Shader(handle) => {
+                MaterialCacheKey::Shader(handle, material.casts_shadow())
+            }
         };
 
         let material_index = *self.material_lookup.entry(lookup_key).or_insert_with(|| {

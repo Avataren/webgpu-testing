@@ -96,7 +96,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "look_at": vec3("Rotate so -Z (forward) points at this world point"),
         "parent": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }], "description": "New parent entity, or null to unparent. The local transform is kept." },
         "visible": { "type": "boolean" },
-        "cast_shadow": { "type": "boolean" },
+        "cast_shadow": { "type": "boolean", "description": "Lights: whether the light casts shadows. Meshes: whether the mesh shows up in shadow maps (default true)" },
         "mesh": { "type": ["string", "null"], "enum": ["cube", "sphere", "plane", "cylinder", "cone", "torus", null], "description": "Replace the geometry with a primitive, or null to remove" },
         "material": material,
         "point_light": nullable_object("Add/update a point light, or null to remove", point),
@@ -158,8 +158,36 @@ pub fn tools() -> Vec<Tool> {
         "preset".into(),
         json!({ "type": "string", "enum": ["physics", "starfield", "boids", "optimized_boids"], "description": "Particle behavior for kind=particles" }),
     );
+    let quiet = json!({ "type": "boolean", "description": "Return only {id, name} instead of the entity summary; use for bulk work" });
+    spawn_props.insert("quiet".into(), quiet.clone());
     let mut update_props = entity_fields();
     update_props.insert("entity".into(), entity_ref());
+    update_props.insert("quiet".into(), quiet);
+    let mut duplicate_props = update_props.clone();
+    duplicate_props.insert(
+        "count".into(),
+        json!({ "type": "integer", "minimum": 1, "maximum": 1000, "description": "Number of copies (default 1). Copies are named \"<name> 1\", \"<name> 2\", ...; put {i} in name to place the number yourself" }),
+    );
+    duplicate_props.insert(
+        "step".into(),
+        vec3("Offset between neighbouring copies. The source is cell 0, copy i goes to cell i: translation (default the source's) + step * column + row_step * row"),
+    );
+    duplicate_props.insert(
+        "row_step".into(),
+        vec3("Offset between rows when columns is set"),
+    );
+    duplicate_props.insert(
+        "columns".into(),
+        json!({ "type": "integer", "minimum": 1, "description": "Cells per row for a grid (counting the source as cell 0); omit for a single row" }),
+    );
+    update_props.insert(
+        "entities".into(),
+        json!({ "type": "array", "items": { "anyOf": [{ "type": "integer" }, { "type": "string" }] }, "description": "Apply the same change to all of these entities instead of one" }),
+    );
+    update_props.insert(
+        "name_contains".into(),
+        json!({ "type": "string", "description": "Apply the same change to every entity whose name contains this (case-insensitive) instead of one" }),
+    );
 
     vec![
         // ---- Process control (local) ----
@@ -269,14 +297,14 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scene editing ----
         Tool {
             name: "entity_spawn",
-            description: "Create an entity in the active scene: an empty, a primitive mesh, a light, a camera (made active by default), a GPU particle system or an environment. Accepts every entity_update field too (material, script, parent, lights, ...). Returns the new entity's id. Units are meters, Y is up, -Z is forward.",
+            description: "Create an entity in the active scene: an empty, a primitive mesh, a light, a camera (made active by default), a GPU particle system or an environment. Accepts every entity_update field too (material, script, parent, lights, ...). Returns the new entity's id. Units are meters, Y is up, -Z is forward. To make many similar objects, spawn one and use entity_duplicate with count/step/columns.",
             schema: json!({ "type": "object", "properties": spawn_props }),
             action: Action::Engine("entity.spawn"),
         },
         Tool {
             name: "entity_update",
-            description: "Change any aspect of an entity in one call: name, transform, parent, visibility, shadows, mesh, material, point/spot/directional light, camera, script, particle system/emitter, environment, built-in animations, billboard. Only the given fields change; component fields set to null remove the component. Changes made during play mode are discarded on stop.",
-            schema: json!({ "type": "object", "properties": update_props, "required": ["entity"] }),
+            description: "Change any aspect of an entity in one call: name, transform, parent, visibility, shadows, mesh, material, point/spot/directional light, camera, script, particle system/emitter, environment, built-in animations, billboard. Only the given fields change; component fields set to null remove the component. Pass entities (a list) or name_contains instead of entity to apply the same change to many entities at once. Changes made during play mode are discarded on stop (results then carry discarded_on_stop: true).",
+            schema: json!({ "type": "object", "properties": update_props }),
             action: Action::Engine("entity.update"),
         },
         Tool {
@@ -296,14 +324,14 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "entity_duplicate",
-            description: "Copy an entity with its children (same parent). Inline materials are copied; scripts start fresh. Accepts entity_update fields to apply to the copy, e.g. a new name or translation.",
-            schema: json!({ "type": "object", "properties": update_props, "required": ["entity"] }),
+            description: "Copy an entity with its children (same parent). Inline materials are copied; scripts start fresh. Accepts entity_update fields to apply to the copy, e.g. a new name or translation. With count, step, row_step and columns it lays out a row or grid of copies in one call (e.g. 12x6 bricks: count 71, columns 12, step [1.1,0,0], row_step [0,-0.5,0]) and returns just their ids and names.",
+            schema: json!({ "type": "object", "properties": duplicate_props, "required": ["entity"] }),
             action: Action::Engine("entity.duplicate"),
         },
         // ---- Scripting & runtime ----
         Tool {
             name: "lua_eval",
-            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and bulk edits, e.g. spawning a grid of objects.",
+            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding or re-parenting many entities; Lua cannot create meshes, materials or lights (use entity_spawn/entity_duplicate for those).",
             schema: object(json!({
                 "code": { "type": "string" },
                 "entity": entity_ref(),
@@ -328,7 +356,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "runtime_set",
-            description: "Enter play mode (game scripts run on_created/update, animations play) or stop (the scene is restored to its state before play). Takes effect next frame; then use wait.",
+            description: "Enter play mode (game scripts run on_created/update, animations play) or stop (the scene is restored to its state before play, with the same entity ids). Takes effect next frame; then use wait.",
             schema: object(json!({ "mode": { "type": "string", "enum": ["play", "stop"] } }), &["mode"]),
             action: Action::Engine("runtime.set"),
         },
@@ -382,7 +410,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Viewing ----
         Tool {
             name: "screenshot",
-            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame.",
+            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera, not necessarily the game camera: use camera_set (or play mode) to look through the game's view.",
             schema: object(json!({
                 "target": { "type": "string", "enum": ["window", "viewport"], "description": "Default viewport in the editor is usually what you want to judge the game's look" },
                 "max_size": { "type": "integer", "description": "Longest side in pixels (default 1280)" },
@@ -474,18 +502,18 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_create",
-            description: "Editor only: create a new project at location/name and open it. Its content/ folder holds scenes, scripts and assets.",
+            description: "Editor only: create a new project at location/name and open it; returns once it is open, with the editor state. Its content/ folder holds scenes, scripts and assets.",
             schema: object(json!({
                 "name": { "type": "string" },
                 "location": { "type": "string", "description": "Parent directory" }
             }), &["name", "location"]),
-            action: Action::Engine("project.create"),
+            action: Action::Local,
         },
         Tool {
             name: "project_open",
-            description: "Editor only: open an existing project directory (containing project.json).",
+            description: "Editor only: open an existing project directory (containing project.json); returns once it is open.",
             schema: object(json!({ "path": { "type": "string" } }), &["path"]),
-            action: Action::Engine("project.open"),
+            action: Action::Local,
         },
         Tool {
             name: "project_save",
