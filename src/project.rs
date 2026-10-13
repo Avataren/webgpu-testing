@@ -1,4 +1,5 @@
 use crate::environment::{ColorGrading, Environment, HdrBackground};
+use crate::renderer::postprocess::PostProcessEffects;
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
     Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspace,
@@ -283,6 +284,10 @@ pub struct ProjectManifest {
     #[serde(default)]
     pub scenes: Vec<SceneDocument>,
     pub environment: SerializedEnvironment,
+    /// Bloom, SSAO and FXAA settings; absent in projects saved before they were stored, which
+    /// then keep the engine defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub postprocess: Option<PostProcessEffects>,
     #[serde(default)]
     pub engine_camera: SerializedEngineCamera,
     #[serde(default)]
@@ -309,6 +314,7 @@ impl ProjectManifest {
             metadata,
             scenes: Vec::new(),
             environment,
+            postprocess: None,
             engine_camera: SerializedEngineCamera::default(),
             imports: Vec::new(),
             scene_assets: HashMap::new(),
@@ -328,6 +334,10 @@ impl ProjectManifest {
 
     pub fn environment(&self) -> &SerializedEnvironment {
         &self.environment
+    }
+
+    pub fn postprocess(&self) -> Option<PostProcessEffects> {
+        self.postprocess
     }
 
     pub fn engine_camera(&self) -> &SerializedEngineCamera {
@@ -476,6 +486,7 @@ impl ProjectManifest {
             metadata,
             scenes: vec![document],
             environment,
+            postprocess: None,
             engine_camera,
             imports,
             scene_assets,
@@ -995,6 +1006,29 @@ mod tests {
         let environment = loaded_env.into_environment(tmp_dir.path()).unwrap();
         let background = environment.hdr_background().unwrap();
         assert!(background.path().ends_with("env.hdr"));
+    }
+
+    #[test]
+    fn postprocess_settings_roundtrip_through_manifest() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let mut effects = PostProcessEffects::default();
+        effects.ssao = false;
+        effects.bloom_settings.threshold = 1.7;
+        effects.ssao_settings.radius = 0.6;
+
+        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+        manifest.postprocess = Some(effects);
+        manifest.save_to_dir(tmp_dir.path()).unwrap();
+        let loaded = ProjectManifest::load_from_dir(tmp_dir.path()).unwrap();
+        assert_eq!(loaded.postprocess(), Some(effects));
+
+        // a manifest written before the field existed loads without one
+        let json = fs::read_to_string(tmp_dir.path().join(PROJECT_FILE_NAME)).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value.as_object_mut().unwrap().remove("postprocess");
+        fs::write(tmp_dir.path().join(PROJECT_FILE_NAME), value.to_string()).unwrap();
+        let old = ProjectManifest::load_from_dir(tmp_dir.path()).unwrap();
+        assert_eq!(old.postprocess(), None);
     }
 
     #[test]

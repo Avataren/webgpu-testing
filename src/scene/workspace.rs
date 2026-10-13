@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::asset::Assets;
 use crate::project::{ProjectError, ProjectManifest, SceneDocument};
+use crate::renderer::postprocess::PostProcessEffects;
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources, SceneLibrary};
 use slotmap::{new_key_type, SlotMap};
@@ -57,12 +58,19 @@ pub struct SceneWorkspace {
     scenes: SlotMap<SceneHandle, SceneEntry>,
     document_index: HashMap<SceneDocumentId, SceneHandle>,
     active_scene: Option<SceneHandle>,
+    /// Post-processing settings from the loaded project, waiting for the frame loop to apply.
+    pending_postprocess: Option<PostProcessEffects>,
 }
 
 impl SceneWorkspace {
     /// Creates an empty scene workspace with no open scenes.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Takes the post-processing settings the project was loaded with, once.
+    pub fn take_pending_postprocess(&mut self) -> Option<PostProcessEffects> {
+        self.pending_postprocess.take()
     }
 
     /// Returns the shared asset cache for the workspace.
@@ -465,6 +473,8 @@ impl<'a> SceneWorkspaceBuilder<'a> {
             workspace.open_scene_with_listener(document.id.clone(), scene, listener);
         }
 
+        // a project saved without post settings gets the defaults, not the previous project's
+        workspace.pending_postprocess = Some(self.manifest.postprocess().unwrap_or_default());
         Ok((workspace, textures_changed))
     }
 }

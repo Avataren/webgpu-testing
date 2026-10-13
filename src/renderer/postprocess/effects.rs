@@ -1,4 +1,9 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+/// Which post effects run and how they are tuned. Saved in the project manifest; fields missing
+/// from an older file take their defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PostProcessEffects {
     pub ssao: bool,
     pub bloom: bool,
@@ -7,7 +12,8 @@ pub struct PostProcessEffects {
     pub bloom_settings: BloomSettings,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SsaoSettings {
     pub radius: f32,
     pub bias: f32,
@@ -15,7 +21,8 @@ pub struct SsaoSettings {
     pub power: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BloomSettings {
     pub threshold: f32,
     pub knee: f32,

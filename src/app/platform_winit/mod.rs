@@ -571,8 +571,18 @@ where
                         .core
                         .run_gpu_systems(&mut renderer, &frame, active_handle);
 
+                    // A freshly loaded project brings its own post-processing settings.
+                    let project_effects = self.core.workspace_mut().take_pending_postprocess();
+                    #[cfg(not(feature = "egui"))]
+                    if let Some(effects) = project_effects {
+                        renderer.set_postprocess_effects(effects);
+                    }
+
                     #[cfg(feature = "egui")]
                     {
+                        if let Some(effects) = project_effects {
+                            self.editor.set_postprocess_effects(effects);
+                        }
                         self.editor.refresh_scene_hierarchy(self.core.workspace());
                         {
                             let mut scene = self.core.scene_mut();
