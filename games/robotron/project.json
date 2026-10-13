@@ -29,6 +29,22 @@
     },
     "hdr": null
   },
+  "postprocess": {
+    "ssao": true,
+    "bloom": true,
+    "fxaa": true,
+    "ssao_settings": {
+      "radius": 0.2,
+      "bias": 0.05,
+      "intensity": 0.75,
+      "power": 1.25
+    },
+    "bloom_settings": {
+      "threshold": 0.8,
+      "knee": 0.4,
+      "scatter": 0.95
+    }
+  },
   "engine_camera": {
     "eye": [
       0.0,

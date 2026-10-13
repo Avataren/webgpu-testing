@@ -10,8 +10,8 @@ shadow, and the original's effects are rebuilt from the same pixels:
 - **Rectangle zoom**: concentric colour-cycling rectangles zoom out from the player between waves.
 - **Death**: everything freezes while the player flashes through the colours and bursts; then the
   surviving enemies materialize again in new places (the family stays put).
-- Progs leave rainbow afterimages, cruise missiles zig-zag, a hulk leaves a skull where it crushed
-  someone, and the border cycles colours. As in the arcade there is no music during play.
+- Progs leave rainbow afterimages, cruise missiles zig-zag, a brain's victim flickers while it is
+  reprogrammed, a hulk leaves a skull where it crushed someone, and the border cycles colours. As in the arcade there is no music during play.
 
 The game boots into an attract mode where an autopilot plays a demo game under the title;
 press Enter to take over.
@@ -38,21 +38,35 @@ cargo run --bin player -- games/robotron      # or engine_launch {target: "playe
 
 ## Rules (as in the original)
 
+Enemy behaviour, speeds, fire rates and the wave table come from the 1982 source code
+(Williams' 6809 assembly, published as `historicalsource/robotron`), converted from its 60 Hz
+frames and pixels. The player covers one arcade pixel a frame, as in the arcade.
+
 - One hit kills you. Three lives; an extra man every 25,000 points.
-- A wave ends when every *killable* enemy is gone. Electrodes and hulks do not count and vanish.
+- A wave ends when every grunt, brain, spheroid, enforcer, quark and tank is gone. Hulks,
+  electrodes, progs and projectiles do not count and vanish with it.
 - Rescue the family (Mommy, Daddy, Mikey): 1000, 2000 ... up to 5000 points each, rising within a
-  wave and reset when you die.
-- **Grunts** (100) march at you in jerky eight-way steps that quicken the longer a wave lasts. A
-  grunt that walks into an electrode is destroyed.
-- **Electrodes** are static and deadly; shooting them is optional.
-- **Hulks** cannot be killed, only pushed back by shots. They lumber along one axis at a time
-  and crush the family.
-- **Brains** (500) turn the family into **Progs** (100, fast chasers) and fire zig-zagging cruise
-  missiles (50).
-- **Spheroids** (1000) drift around spawning **Enforcers** (150), which shoot aimed sparks.
-- **Quarks** (1000) spawn **Tanks** (200), whose shells ricochet off the walls.
-- The wave table follows the original's: grunt waves, hulk and spheroid waves, brain waves (5, 10),
-  tank waves (7, 12) and the 60-grunt swarm (9); electrodes change shape every wave.
+  wave and reset when you die. They wander in eight directions and steer around electrodes.
+- **Grunts** (100) step four pixels at a time toward you, each after a random 1..N ticks. Every grunt
+  you kill makes the rest an eighth faster, and every 3.75 s their top speed rises (twice as fast
+  when you are not scoring). A grunt that walks into an electrode dies.
+- **Electrodes** are static and deadly; shooting them is optional. Hulks crush them.
+- **Hulks** cannot be killed; a shot knocks one back a little. They walk one axis at a time toward a
+  family member (a quarter of them toward you) and crush the family, leaving a skull.
+- **Brains** (500) start near the walls and walk to the nearest family member, stop and reprogram it
+  into a **Prog** (100), which runs at you faster than you can move along one axis at a time.
+  Brains fire zig-zagging **cruise missiles** (25, shootable, up to eight in the air) that bounce
+  off the walls until shot.
+- **Spheroids** (1000) start at the side walls and drift about, drop one to five **Enforcers**
+  (150) and then leave through a wall. Enforcers glide toward you and fire **sparks** (25,
+  shootable) that curve and slide along the walls.
+- **Quarks** (1000) start at the top or bottom wall and drop one to five **Tanks** (200), then
+  leave. Tanks fire shells (25, shootable), half of them banked off the wall nearest you.
+- After a death the wave restarts with what is left in new places: progs and projectiles are gone,
+  and every four enforcers left become a spheroid again.
+- The 40-wave table is the original's (brain waves 5, 10, 15 ..., tank waves 7, 12, 17 ...,
+  grunt swarms 9, 19, 29, 39); after wave 40 it repeats waves 21-40. Electrodes change shape every
+  wave.
 
 ## Files
 
