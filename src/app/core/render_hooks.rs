@@ -1,9 +1,12 @@
 use crate::renderer::{
     CustomRenderCallback, CustomRenderRequest, CustomRenderStage, RenderFrame, RenderRegion,
 };
+use crate::scene::Camera;
 
 pub struct RenderParams {
     pub render_region: Option<RenderRegion>,
+    /// Render through this camera instead of the scene's, without gizmos.
+    pub camera_override: Option<Camera>,
 }
 
 pub enum RenderResult {

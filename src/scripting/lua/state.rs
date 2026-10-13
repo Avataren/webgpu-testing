@@ -23,7 +23,7 @@ use mlua::LuaSerdeExt;
 
 use super::api::ui::{UiCommand, UiContext, UiResponse};
 use super::api::CoroutineGuard;
-use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
+use super::commands::{entity_bits, PendingAssetCommand, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
 use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
@@ -122,6 +122,7 @@ impl ScriptSlot {
 #[derive(Default)]
 struct ScriptOutputs {
     pending_gltf_imports: Vec<PendingGltfImport>,
+    pending_asset_commands: Vec<PendingAssetCommand>,
     event_subscriptions: EventSubscriptions,
     pending_events: VecDeque<ScriptEvent>,
 }
@@ -139,6 +140,7 @@ impl ScriptOutputs {
         };
 
         self.pending_gltf_imports.extend(result.gltf_imports);
+        self.pending_asset_commands.extend(result.asset_commands);
 
         for sub in result.event_subscriptions {
             let subscribers = self.event_subscriptions.entry(sub.event_name).or_default();
@@ -758,6 +760,11 @@ impl ScriptingState {
     /// Get pending glTF imports and clear the list.
     pub fn take_pending_gltf_imports(&mut self) -> Vec<PendingGltfImport> {
         std::mem::take(&mut self.outputs.pending_gltf_imports)
+    }
+
+    /// Mesh and material changes scripts asked for since the last call.
+    pub fn take_pending_asset_commands(&mut self) -> Vec<PendingAssetCommand> {
+        std::mem::take(&mut self.outputs.pending_asset_commands)
     }
 
     /// Call `on_ui()` for all scripts and collect their UI commands.

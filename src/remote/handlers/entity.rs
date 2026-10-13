@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::asset::{MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot};
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
-use crate::renderer::Material;
+use crate::renderer::{Material, Renderer};
 use crate::scene::components::{Billboard, BillboardOrientation, DepthState};
 use crate::scene::{
     CameraComponent, CameraProjection, CanCastShadow, Children, DirectionalLight,
@@ -781,8 +781,14 @@ fn apply_patch(
                 let cast = value.as_bool().ok_or("cast_shadow must be true or false")?;
                 insert(ctx, entity, CanCastShadow(cast))?;
             }
-            "mesh" => set_mesh(ctx, entity, value)?,
-            "material" => patch_material(ctx, entity, value)?,
+            "mesh" => set_mesh(&mut ctx.gpu.scene, &mut *ctx.gpu.renderer, entity, value)?,
+            "material" => {
+                if patch_material(&mut ctx.gpu.scene, &mut *ctx.gpu.renderer, entity, value)? {
+                    ctx.gpu
+                        .renderer
+                        .update_texture_bind_group(&ctx.gpu.scene.assets);
+                }
+            }
             "point_light" => patch_component(ctx, entity, value, |light: &mut PointLight, v| {
                 patch_light_common(&mut light.color, &mut light.intensity, v)?;
                 if let Some(range) = opt_f64(v, "range") {
@@ -1056,8 +1062,14 @@ fn patch_camera(camera: &mut CameraComponent, value: &Value) -> Result<(), Strin
     Ok(())
 }
 
-fn set_mesh(ctx: &mut RemoteContext<'_, '_>, entity: Entity, value: &Value) -> Result<(), String> {
-    let world = ctx.gpu.scene.main_world_mut();
+/// Give `entity` a primitive mesh (`value` is its name), or remove its mesh (`null`).
+pub(crate) fn set_mesh(
+    scene: &mut Scene,
+    renderer: &mut Renderer,
+    entity: Entity,
+    value: &Value,
+) -> Result<(), String> {
+    let world = scene.main_world_mut();
     if value.is_null() {
         let _ = world.remove_one::<MeshComponent>(entity);
         let _ = world.remove_one::<PrimitiveMeshComponent>(entity);
@@ -1073,8 +1085,7 @@ fn set_mesh(ctx: &mut RemoteContext<'_, '_>, entity: Entity, value: &Value) -> R
         .satisfies::<&MaterialComponent>(entity)
         .unwrap_or(false);
 
-    let scene = &mut *ctx.gpu.scene;
-    let (mesh, bounds) = primitive_mesh(scene, &mut *ctx.gpu.renderer, descriptor);
+    let (mesh, bounds) = primitive_mesh(scene, renderer, descriptor);
     // Keep an existing material; only the geometry changes.
     let material = (!has_material).then(|| new_pbr_material(scene));
     let world = scene.main_world_mut();
@@ -1085,6 +1096,17 @@ fn set_mesh(ctx: &mut RemoteContext<'_, '_>, entity: Entity, value: &Value) -> R
         world
             .insert_one(entity, material)
             .map_err(|err| err.to_string())?;
+    }
+    // Only visible entities with a transform are drawn; entities spawned bare (e.g. by
+    // a script) have neither.
+    if !world.satisfies::<&Visible>(entity).unwrap_or(true) {
+        let _ = world.insert_one(entity, Visible(true));
+    }
+    if !world
+        .satisfies::<&TransformComponent>(entity)
+        .unwrap_or(true)
+    {
+        let _ = world.insert_one(entity, TransformComponent(Transform::default()));
     }
     match bounds {
         Some(bounds) => {
@@ -1097,16 +1119,19 @@ fn set_mesh(ctx: &mut RemoteContext<'_, '_>, entity: Entity, value: &Value) -> R
     Ok(())
 }
 
-fn patch_material(
-    ctx: &mut RemoteContext<'_, '_>,
+/// Change the given fields of `entity`'s material, copying a shared material first
+/// unless `edit_shared` is set. Returns whether new textures were loaded, in which case
+/// the renderer's texture bind group must be rebuilt.
+pub(crate) fn patch_material(
+    scene: &mut Scene,
+    renderer: &mut Renderer,
     entity: Entity,
     patch: &Value,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !patch.is_object() {
         return Err("material must be an object".into());
     }
     let edit_shared = opt_bool(patch, "edit_shared").unwrap_or(false);
-    let scene = &mut *ctx.gpu.scene;
 
     let current = scene
         .main_world()
@@ -1206,9 +1231,7 @@ fn patch_material(
                     .ok_or_else(|| format!("{key} must be an image path or null"))?,
             )?;
             let before = scene.assets.textures.len();
-            let texture = scene
-                .assets
-                .get_or_load_texture(&mut *ctx.gpu.renderer, &path, srgb)?;
+            let texture = scene.assets.get_or_load_texture(renderer, &path, srgb)?;
             textures_loaded |= scene.assets.textures.len() != before;
             material.flags.insert(flag);
             let display = path
@@ -1235,12 +1258,7 @@ fn patch_material(
     for (slot, reference) in references {
         asset.set_texture_reference(slot, reference);
     }
-    if textures_loaded {
-        ctx.gpu
-            .renderer
-            .update_texture_bind_group(&ctx.gpu.scene.assets);
-    }
-    Ok(())
+    Ok(textures_loaded)
 }
 
 fn patch_particle_system(
@@ -1505,11 +1523,22 @@ fn subtree(world: &World, root: Entity) -> Vec<Entity> {
 
 pub(super) fn delete(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let world = ctx.gpu.scene.main_world_mut();
-    let entity = req_entity(world, params)?;
-    set_parent(world, entity, None)?;
-    let removed = subtree(world, entity);
-    for entity in removed.iter().rev() {
-        let _ = world.despawn(*entity);
+    let targets = match bulk_targets(world, params)? {
+        Some(targets) => targets,
+        None => vec![req_entity(world, params)?],
+    };
+    let mut removed = Vec::new();
+    for entity in targets {
+        // A target may already be gone as a descendant of an earlier one.
+        if !world.contains(entity) {
+            continue;
+        }
+        set_parent(world, entity, None)?;
+        let subtree = subtree(world, entity);
+        for entity in subtree.iter().rev() {
+            let _ = world.despawn(*entity);
+        }
+        removed.extend(subtree);
     }
     if ctx
         .gpu

@@ -13,11 +13,11 @@ use serde_json::{json, Value};
 use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
 use crate::renderer::postprocess::PostProcessEffects;
 use crate::renderer::RenderRegion;
-use crate::scene::InputState;
+use crate::scene::{Camera, CameraComponent, InputState, Scene};
 
 use super::capture::FrameCapture;
-use super::handlers::{self, RemoteContext};
-use super::json::{opt_bool, opt_f64, opt_str, opt_u64};
+use super::handlers::{self, RemoteContext, SceneBaseline};
+use super::json::{entity_from_json, entity_id, opt_bool, opt_f64, opt_str, opt_u64};
 use super::RemoteApp;
 
 /// Shared handle to a [`RemoteHub`]; the frame loop and the dispatch system both hold one.
@@ -70,6 +70,10 @@ struct CaptureRequest {
     max_size: u32,
     save_path: Option<PathBuf>,
     inline: bool,
+    /// The `camera` parameter: render through this camera entity (or `"game"`).
+    camera: Option<Value>,
+    /// `camera` resolved to a view, once the scene has been consulted.
+    view: Option<Camera>,
 }
 
 struct Waiter {
@@ -91,8 +95,11 @@ pub struct RemoteHub {
     last_dt: f64,
     input: Vec<ScheduledInput>,
     captures: Vec<CaptureRequest>,
+    /// Whether the frame being rendered uses the first capture's camera override.
+    capturing_with_view: bool,
     waiters: Vec<Waiter>,
     postprocess_override: Option<PostProcessEffects>,
+    scene_baseline: Option<SceneBaseline>,
 }
 
 impl RemoteHub {
@@ -119,8 +126,10 @@ impl RemoteHub {
             last_dt: 0.0,
             input: Vec::new(),
             captures: Vec::new(),
+            capturing_with_view: false,
             waiters: Vec::new(),
             postprocess_override: None,
+            scene_baseline: None,
         }
     }
 
@@ -155,6 +164,14 @@ impl RemoteHub {
     /// UI that would otherwise overwrite the renderer's settings.
     pub fn take_postprocess_override(&mut self) -> Option<PostProcessEffects> {
         self.postprocess_override.take()
+    }
+
+    pub(crate) fn set_scene_baseline(&mut self, baseline: SceneBaseline) {
+        self.scene_baseline = Some(baseline);
+    }
+
+    pub(crate) fn scene_baseline(&self) -> Option<&SceneBaseline> {
+        self.scene_baseline.as_ref()
     }
 
     pub(crate) fn set_postprocess_override(&mut self, effects: PostProcessEffects) {
@@ -211,6 +228,35 @@ impl RemoteHub {
         !self.captures.is_empty()
     }
 
+    /// Resolve the `camera` parameter of new screenshot requests against the scene,
+    /// answering requests whose camera does not exist.
+    fn resolve_capture_cameras(&mut self, scene: &Scene) {
+        let mut index = 0;
+        while index < self.captures.len() {
+            let request = &mut self.captures[index];
+            if let (Some(spec), None) = (&request.camera, request.view) {
+                match resolve_view(scene, spec) {
+                    Ok(view) => request.view = Some(view),
+                    Err(message) => {
+                        self.captures.remove(index).reply.send(Err(message));
+                        continue;
+                    }
+                }
+            }
+            index += 1;
+        }
+    }
+
+    /// The camera the next frame must render through for a pending screenshot, if any.
+    ///
+    /// Call once per frame before rendering. A screenshot with its own camera gets a
+    /// frame to itself; [`Self::complete_captures`] then answers only that one.
+    pub fn capture_camera_override(&mut self) -> Option<Camera> {
+        let view = self.captures.first().and_then(|request| request.view);
+        self.capturing_with_view = view.is_some();
+        view
+    }
+
     /// Answer pending screenshot requests with the frame that is about to be presented.
     ///
     /// `region` is the scene viewport within the window, used by viewport-only captures.
@@ -219,7 +265,16 @@ impl RemoteHub {
         capture: Result<FrameCapture, String>,
         region: Option<RenderRegion>,
     ) {
-        for request in std::mem::take(&mut self.captures) {
+        let due: Vec<CaptureRequest> = if std::mem::take(&mut self.capturing_with_view) {
+            vec![self.captures.remove(0)]
+        } else {
+            let (due, later) = std::mem::take(&mut self.captures)
+                .into_iter()
+                .partition(|request| request.view.is_none());
+            self.captures = later;
+            due
+        };
+        for request in due {
             let result = capture
                 .as_ref()
                 .map_err(Clone::clone)
@@ -286,6 +341,11 @@ impl RemoteHub {
                     max_size,
                     save_path: opt_str(params, "save_path").map(PathBuf::from),
                     inline: opt_bool(params, "inline").unwrap_or(true),
+                    camera: params
+                        .get("camera")
+                        .filter(|value| !value.is_null())
+                        .cloned(),
+                    view: None,
                     reply: request.reply,
                 });
                 None
@@ -352,11 +412,35 @@ pub fn process_requests(
             reply.send(result);
         }
     }
+    hub.resolve_capture_cameras(&ctx.scene);
 
     if modified {
         ctx.scene.mark_dirty();
         app.remote_scene_modified(ctx);
     }
+}
+
+/// The view through the camera a screenshot asked for: a camera entity, or `"game"`
+/// for the scene's active camera (else its first camera).
+fn resolve_view(scene: &Scene, spec: &Value) -> Result<Camera, String> {
+    let world = scene.main_world();
+    let entity = if spec.as_str() == Some("game") {
+        scene
+            .active_camera_entity()
+            .or_else(|| {
+                world
+                    .query::<&CameraComponent>()
+                    .iter()
+                    .map(|(entity, _)| entity)
+                    .min_by_key(|entity| entity.id())
+            })
+            .ok_or("the scene has no camera entity")?
+    } else {
+        entity_from_json(world, spec)?
+    };
+    scene
+        .camera_for_entity(entity)
+        .ok_or_else(|| format!("entity {} is not a camera", entity_id(entity)))
 }
 
 fn encode_capture(

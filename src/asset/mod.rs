@@ -30,6 +30,8 @@ pub struct Assets {
     primitive_meshes: HashMap<PrimitiveMeshDescriptor, Handle<Mesh>>,
     material_paths: HashMap<PathBuf, Handle<MaterialAsset>>,
     texture_paths: HashMap<PathBuf, Handle<Texture>>,
+    /// Whether each texture loaded by path was sampled as sRGB, for reloading it.
+    texture_srgb: HashMap<PathBuf, bool>,
     default_material: Handle<MaterialAsset>,
 }
 
@@ -50,6 +52,7 @@ impl Assets {
             primitive_meshes: HashMap::new(),
             material_paths: HashMap::new(),
             texture_paths: HashMap::new(),
+            texture_srgb: HashMap::new(),
             default_material,
         }
     }
@@ -191,9 +194,56 @@ impl Assets {
         path: impl AsRef<Path>,
         is_srgb: bool,
     ) -> Result<Handle<Texture>, String> {
-        self.get_or_load_texture_with(path, |path| {
+        let handle = self.get_or_load_texture_with(&path, |path| {
             Texture::from_path(renderer.device(), renderer.queue(), path, is_srgb)
-        })
+        })?;
+        self.texture_srgb
+            .entry(Self::canonicalize_path(path.as_ref()))
+            .or_insert(is_srgb);
+        Ok(handle)
+    }
+
+    /// Re-read textures from disk into their existing handles, so every material using
+    /// them shows the new image. Reloads every texture loaded from a file, or only those
+    /// under `filter` (a file or a directory). Returns each texture's path and the
+    /// outcome. The renderer's texture bind group must be rebuilt afterwards.
+    pub fn reload_textures(
+        &mut self,
+        renderer: &mut dyn SceneImportDevice,
+        filter: Option<&Path>,
+    ) -> Vec<(PathBuf, Result<(), String>)> {
+        let filter = filter.map(Self::canonicalize_path);
+        let mut paths: Vec<(PathBuf, Handle<Texture>)> = self
+            .texture_paths
+            .iter()
+            .filter(|(path, _)| {
+                filter
+                    .as_ref()
+                    .is_none_or(|filter| path.starts_with(filter))
+            })
+            .map(|(path, handle)| (path.clone(), *handle))
+            .collect();
+        paths.sort_by(|a, b| a.0.cmp(&b.0));
+        paths
+            .into_iter()
+            .map(|(path, handle)| {
+                let outcome = match self.texture_srgb.get(&path) {
+                    None => Err("loaded as part of a model; re-import the model instead".into()),
+                    Some(&is_srgb) => {
+                        Texture::from_path(renderer.device(), renderer.queue(), &path, is_srgb)
+                            .and_then(|texture| {
+                                let slot = self
+                                    .textures
+                                    .get_mut(handle)
+                                    .ok_or("texture handle is gone")?;
+                                *slot = texture;
+                                Ok(())
+                            })
+                    }
+                };
+                (path, outcome)
+            })
+            .collect()
     }
 
     pub fn resolve_texture_index(

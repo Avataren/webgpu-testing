@@ -4,9 +4,9 @@
 -- Keys: Left/Right or A/D move, Space launches / restarts after game over, R restarts,
 -- P toggles the autopilot (it plays the game by itself, handy for testing).
 --
--- The scene is built in the editor (see entity names below). Lua can't create meshes or
--- materials, so bricks, ball trail and life icons are pre-placed entities that this
--- script moves, scales and hides.
+-- The scene is built in the editor (see entity names below): bricks, ball trail and life
+-- icons are pre-placed entities that this script moves, scales and hides. Sounds live in
+-- content/audio; brick hits show floating score popups (ui:world_label).
 
 local FIELD_L, FIELD_R, FIELD_T = -8.0, 8.0, 7.0
 local KILL_Y = -7.6
@@ -22,6 +22,8 @@ local START_LIVES = 3
 local TRAIL_COUNT = 6
 local INTRO_TIME = 1.2
 local DIE_TIME = 0.28
+local POPUP_TIME = 0.8
+local SFX_VOLUME = 0.5
 
 local g = {
     score = 0, best = 0, lives = START_LIVES, level = 1,
@@ -31,6 +33,7 @@ local g = {
     speed = 9.0, base_speed = 9.0, pulse = 0, shake = 0, combo = 0,
     bricks = {}, bricks_left = 0, hist = {}, aim = 0.0,
     trail_visible = nil, lives_shown = nil, ball_visible = nil,
+    popups = {},
 }
 
 GAME = g -- global so lua_eval can inspect and poke the game state while testing
@@ -51,6 +54,10 @@ local function ease_out_back(k)
     local c1 = 1.70158
     local x = k - 1
     return 1 + (c1 + 1) * x * x * x + c1 * x * x
+end
+
+local function sfx(name, pitch)
+    play_sound("content/audio/" .. name .. ".wav", { volume = SFX_VOLUME, pitch = pitch or 1.0 })
 end
 
 local function find(name)
@@ -100,6 +107,8 @@ local function start_level()
     g.combo = 0
     g.vx, g.vy = 0.0, 0.0
     g.phase, g.t = "intro", 0
+    g.popups = {}
+    sfx("intro")
 end
 
 local function new_game()
@@ -119,6 +128,7 @@ local function launch()
     g.vx = g.speed * math.sin(a)
     g.vy = g.speed * math.cos(a)
     g.phase = "play"
+    sfx("launch")
 end
 
 local function normalize_velocity()
@@ -138,7 +148,9 @@ local function lose_ball()
     if g.lives <= 0 then
         g.best = math.max(g.best, g.score)
         g.phase, g.t = "over", 0
+        sfx("gameover")
     else
+        sfx("lose")
         serve()
     end
 end
@@ -148,7 +160,11 @@ local function hit_brick(b)
     b.dying = 0
     b.spin = (math.random() < 0.5) and -1 or 1
     g.combo = g.combo + 1
-    g.score = g.score + ROW_POINTS[b.row + 1] * math.min(g.combo, 4)
+    local points = ROW_POINTS[b.row + 1] * math.min(g.combo, 4)
+    g.score = g.score + points
+    g.popups[#g.popups + 1] = { x = b.x, y = b.y, text = "+" .. points, t = 0 }
+    -- Each row has its own note; combos climb in pitch.
+    sfx("brick" .. b.row, 1.0 + 0.06 * (math.min(g.combo, 6) - 1))
     g.bricks_left = g.bricks_left - 1
     g.speed = math.min(g.speed + 0.09, g.base_speed + 4.0)
     g.pulse = 1.0
@@ -156,6 +172,7 @@ local function hit_brick(b)
     if g.bricks_left == 0 then
         g.best = math.max(g.best, g.score)
         g.phase, g.t = "cleared", 0
+        sfx("clear")
     end
 end
 
@@ -198,6 +215,7 @@ local function collide_paddle()
         normalize_velocity()
         g.squash = 1.0
         g.combo = 0
+        sfx("paddle")
         g.aim = (math.random() - 0.5) * 1.6
     else
         -- Caught the side of the paddle on the way down: bounce away and keep falling.
@@ -215,14 +233,17 @@ local function step_ball(dt)
         if g.bx < FIELD_L + BALL_R then
             g.bx = FIELD_L + BALL_R
             g.vx = math.abs(g.vx)
+            sfx("wall")
         elseif g.bx > FIELD_R - BALL_R then
             g.bx = FIELD_R - BALL_R
             g.vx = -math.abs(g.vx)
+            sfx("wall")
         end
         if g.by > FIELD_T - BALL_R then
             g.by = FIELD_T - BALL_R
             g.vy = -math.abs(g.vy)
             normalize_velocity()
+            sfx("wall")
         end
         collide_paddle()
         collide_bricks()
@@ -356,22 +377,19 @@ function on_created(self_entity)
     g.px, g.pv, g.squash, g.shake = 0.0, 0.0, 0, 0
     g.hist = {}
     g.trail_visible, g.lives_shown, g.ball_visible = nil, nil, nil
-    g.boot = 0
+    new_game()
     log_info(string.format("breakout: ready, %d bricks", #g.bricks))
 end
 
-function update(self_entity, dt)
-    -- The editor takes its pre-play snapshot only after the first play frame's scripts have
-    -- run, so anything changed on that frame would survive "stop" and get saved with the
-    -- scene. Leave the scene alone until the second frame.
-    if g.boot == 0 then
-        g.boot = 1
-        return
-    elseif g.boot == 1 then
-        g.boot = 2
-        new_game()
+local function age_popups(dt)
+    for i = #g.popups, 1, -1 do
+        local popup = g.popups[i]
+        popup.t = popup.t + dt
+        if popup.t >= POPUP_TIME then table.remove(g.popups, i) end
     end
+end
 
+function update(self_entity, dt)
     dt = math.min(dt, 1 / 30)
     g.t = g.t + dt
 
@@ -403,6 +421,7 @@ function update(self_entity, dt)
     end
 
     animate_bricks(dt)
+    age_popups(dt)
     sync_scene(dt)
     publish()
 end
@@ -414,6 +433,11 @@ local MESSAGES = {
 }
 
 function on_ui(self_entity, ui)
+    for _, popup in ipairs(g.popups) do
+        local k = popup.t / POPUP_TIME
+        ui:world_label(popup.x, popup.y + k * 1.2, 0.5, popup.text,
+            { color = { 1.0, 0.95, 0.55, 1.0 - k * k }, size = 22 })
+    end
     ui:anchored_panel("breakout_hud", "top_left", 18, 12, 300, 80, function(p)
         p:heading(string.format("SCORE  %06d", g.score))
         p:label(string.format("LEVEL %d     BALLS %d     BEST %d", g.level, g.lives, g.best))

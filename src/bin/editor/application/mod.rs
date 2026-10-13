@@ -599,9 +599,8 @@ impl EditorApplication {
 
         for (entity, commands) in &self.shared.script_ui_commands {
             let mut responses = HashMap::new();
-            let (overlays, widgets): (Vec<&UiCommand>, Vec<&UiCommand>) = commands
-                .iter()
-                .partition(|command| matches!(command, UiCommand::AnchoredPanel { .. }));
+            let (overlays, widgets): (Vec<&UiCommand>, Vec<&UiCommand>) =
+                commands.iter().partition(|command| command.is_overlay());
 
             if let (Some(rect), false) = (game_viewport_rect, overlays.is_empty()) {
                 // Host area for the panels; each anchored panel creates its own layer.

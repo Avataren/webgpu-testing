@@ -133,7 +133,7 @@ mod integration_tests;
 mod regression_tests;
 
 // Public exports
-pub use commands::PendingGltfImport;
+pub use commands::{AssetCommand, PendingAssetCommand, PendingGltfImport};
 pub use component::{FunctionCallOutcome, LuaScriptComponent};
 pub use error::LuaScriptingError;
 pub use guards::InputStateGuard;

@@ -2,10 +2,13 @@
 
 use serde_json::{json, Value};
 
+use crate::app::core::MAX_TIME_SCALE;
 use crate::app::RuntimeMode;
 use crate::scripting::LuaScriptComponent;
 
-use super::super::json::{entity_from_json, entity_id, entity_name, opt_bool, opt_str, req_str};
+use super::super::json::{
+    entity_from_json, entity_id, entity_name, opt_bool, opt_f64, opt_str, req_str,
+};
 use super::entity::resolve_existing_path;
 use super::info::runtime_mode_name;
 use super::{RemoteContext, RemoteResult};
@@ -21,6 +24,9 @@ pub(super) fn eval(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRes
         .scene
         .eval_lua(code, entity)
         .map_err(|err| err.to_string())?;
+    ctx.gpu
+        .scene
+        .apply_script_asset_commands(&mut *ctx.gpu.renderer);
     if !opt_bool(params, "read_only").unwrap_or(false) {
         ctx.gpu.scene.propagate_transforms();
         ctx.mark_modified();
@@ -92,6 +98,7 @@ pub(super) fn runtime_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     Ok(json!({
         "mode": runtime_mode_name(handle.active_mode()),
         "requested": runtime_mode_name(handle.desired_mode()),
+        "time_scale": handle.time_scale(),
     }))
 }
 
@@ -99,16 +106,32 @@ pub(super) fn runtime_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Re
     let handle = ctx
         .runtime_handle()
         .ok_or("runtime mode is not available in this application")?;
-    let mode = match req_str(params, "mode")? {
-        "play" | "playing" => RuntimeMode::Playing,
-        "editor" | "edit" | "stop" => RuntimeMode::Editor,
-        other => return Err(format!("unknown mode {other:?}; use play or stop")),
+    let mode = match opt_str(params, "mode") {
+        None => None,
+        Some("play" | "playing") => Some(RuntimeMode::Playing),
+        Some("editor" | "edit" | "stop") => Some(RuntimeMode::Editor),
+        Some(other) => return Err(format!("unknown mode {other:?}; use play or stop")),
     };
+    let time_scale = opt_f64(params, "time_scale");
+    if mode.is_none() && time_scale.is_none() {
+        return Err("give mode (play or stop) and/or time_scale".into());
+    }
+    if let Some(scale) = time_scale {
+        if !(0.0..=MAX_TIME_SCALE).contains(&scale) {
+            return Err(format!("time_scale must be between 0 and {MAX_TIME_SCALE}"));
+        }
+        handle.set_time_scale(scale);
+    }
     let previous = handle.active_mode();
-    handle.request_mode(mode);
-    Ok(json!({
-        "previous": runtime_mode_name(previous),
-        "requested": runtime_mode_name(mode),
-        "note": "The switch happens at the start of the next frame. Stopping restores the scene as it was before play.",
-    }))
+    let mut result = json!({
+        "mode": runtime_mode_name(previous),
+        "time_scale": handle.time_scale(),
+    });
+    if let Some(mode) = mode {
+        handle.request_mode(mode);
+        result["previous"] = result["mode"].take();
+        result["requested"] = json!(runtime_mode_name(mode));
+        result["note"] = json!("The switch happens at the start of the next frame. Stopping restores the scene as it was before play and resets time_scale to 1.");
+    }
+    Ok(result)
 }

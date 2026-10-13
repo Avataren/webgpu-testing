@@ -1,0 +1,106 @@
+//! # Mesh and Material API
+//!
+//! Lets scripts give entities primitive meshes and change their materials at runtime,
+//! e.g. to recolor a brick when it is hit or to spawn effects.
+//!
+//! Changes are queued like other script commands and applied before the frame is
+//! drawn. Changing the material of an entity that shares it with others gives that
+//! entity its own copy first, so only it changes.
+
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
+use serde_json::json;
+
+use crate::scripting::lua::commands::AssetCommand;
+use crate::scripting::lua::guards::with_active_commands;
+
+/// Primitive mesh names `set_mesh` and `spawn_primitive` accept.
+const PRIMITIVES: &[&str] = &["cube", "sphere", "plane", "cylinder", "cone", "torus"];
+
+fn check_primitive(kind: &str) -> LuaResult<()> {
+    if PRIMITIVES.contains(&kind) {
+        Ok(())
+    } else {
+        Err(mlua::Error::RuntimeError(format!(
+            "unknown primitive {kind:?}; use one of {}",
+            PRIMITIVES.join(", ")
+        )))
+    }
+}
+
+/// Registers the mesh and material functions:
+///
+/// - `set_material(entity, fields)` - change material fields: `color` ({r, g, b[, a]} in
+///   0..1 or "#rrggbb"), `emissive`, `metallic`, `roughness` (0..1), `unlit`,
+///   `transparent`, `double_sided`, `nearest_filtering` (booleans), and texture paths
+///   `base_color_texture`, `normal_texture`, `emissive_texture`, ... (false removes one)
+/// - `set_material_color(entity, r, g, b[, a])` - shorthand for the base color
+/// - `set_mesh(entity, kind)` - replace the geometry with a primitive, or `nil` to remove it
+/// - `spawn_primitive(kind[, name])` - spawn a visible entity with a primitive mesh and
+///   its own material; returns its handle
+pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
+    let globals = lua.globals();
+
+    globals.set(
+        "set_material",
+        lua.create_function(|lua, (entity, fields): (i64, LuaValue)| {
+            let mut patch: serde_json::Value = lua.from_value(fields)?;
+            let Some(object) = patch.as_object_mut() else {
+                return Err(mlua::Error::RuntimeError(
+                    "set_material expects a table of fields".into(),
+                ));
+            };
+            // Lua tables cannot hold nil, so `false` removes a texture.
+            for value in object.values_mut() {
+                if *value == json!(false) {
+                    *value = serde_json::Value::Null;
+                }
+            }
+            for flag in ["unlit", "transparent", "double_sided", "nearest_filtering"] {
+                if object.get(flag).is_some_and(serde_json::Value::is_null) {
+                    object.insert(flag.into(), json!(false));
+                }
+            }
+            with_active_commands(|commands| {
+                commands.asset_command(entity, AssetCommand::Material(patch))
+            })
+        })?,
+    )?;
+
+    globals.set(
+        "set_material_color",
+        lua.create_function(
+            |_, (entity, r, g, b, a): (i64, f64, f64, f64, Option<f64>)| {
+                let patch = json!({ "color": [r, g, b, a.unwrap_or(1.0)] });
+                with_active_commands(|commands| {
+                    commands.asset_command(entity, AssetCommand::Material(patch))
+                })
+            },
+        )?,
+    )?;
+
+    globals.set(
+        "set_mesh",
+        lua.create_function(|_, (entity, kind): (i64, Option<String>)| {
+            if let Some(kind) = &kind {
+                check_primitive(kind)?;
+            }
+            with_active_commands(|commands| {
+                commands.asset_command(entity, AssetCommand::Mesh(json!(kind)))
+            })
+        })?,
+    )?;
+
+    globals.set(
+        "spawn_primitive",
+        lua.create_function(|_, (kind, name): (String, Option<String>)| {
+            check_primitive(&kind)?;
+            with_active_commands(|commands| {
+                let entity = commands.spawn_entity(name.or_else(|| Some(kind.clone())));
+                commands.asset_command(entity, AssetCommand::Mesh(json!(kind)))?;
+                Ok(entity)
+            })
+        })?,
+    )?;
+
+    Ok(())
+}

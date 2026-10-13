@@ -1,5 +1,6 @@
 pub mod app;
 pub mod asset;
+pub mod audio;
 pub mod environment;
 pub mod gpu_particles;
 pub mod io;

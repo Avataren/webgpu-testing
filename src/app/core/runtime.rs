@@ -16,7 +16,11 @@ pub struct RuntimeStateHandle {
 struct RuntimeState {
     desired_mode: RuntimeMode,
     active_mode: RuntimeMode,
+    time_scale: f64,
 }
+
+/// Largest supported play-mode time scale.
+pub const MAX_TIME_SCALE: f64 = 16.0;
 
 impl RuntimeStateHandle {
     pub fn new() -> Self {
@@ -24,6 +28,7 @@ impl RuntimeStateHandle {
             inner: Arc::new(Mutex::new(RuntimeState {
                 desired_mode: RuntimeMode::Editor,
                 active_mode: RuntimeMode::Editor,
+                time_scale: 1.0,
             })),
         }
     }
@@ -39,6 +44,17 @@ impl RuntimeStateHandle {
 
     pub fn active_mode(&self) -> RuntimeMode {
         self.lock().active_mode
+    }
+
+    /// How fast play mode runs relative to real time (1 is normal, 0 pauses).
+    pub fn time_scale(&self) -> f64 {
+        self.lock().time_scale
+    }
+
+    /// Set the play-mode time scale, clamped to `0..=MAX_TIME_SCALE`.
+    pub fn set_time_scale(&self, scale: f64) {
+        let scale = if scale.is_finite() { scale } else { 1.0 };
+        self.lock().time_scale = scale.clamp(0.0, MAX_TIME_SCALE);
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, RuntimeState> {
@@ -162,6 +178,9 @@ impl RuntimeController {
             }
         }
 
+        crate::audio::stop_all();
+        // A sped-up playtest should not carry over into the next play session.
+        self.state.set_time_scale(1.0);
         self.gizmos_enabled = self.editor_gizmos_enabled;
         self.mode = RuntimeMode::Editor;
     }

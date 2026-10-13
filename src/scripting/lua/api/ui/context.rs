@@ -1,10 +1,49 @@
 use super::commands::{Anchor, UiCommand, UiResponse};
+use glam::{Mat4, Vec4};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Lock a mutex, recovering the data if a previous holder panicked.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+thread_local! {
+    /// View-projection of the camera the UI is drawn over, while scripts build UI.
+    static UI_VIEW_PROJECTION: Cell<Option<Mat4>> = const { Cell::new(None) };
+}
+
+/// Makes `view_projection` the camera `ui:world_label` projects through while alive.
+pub struct UiCameraGuard {
+    previous: Option<Mat4>,
+}
+
+impl UiCameraGuard {
+    pub fn enter(view_projection: Mat4) -> Self {
+        let previous = UI_VIEW_PROJECTION.with(|cell| cell.replace(Some(view_projection)));
+        Self { previous }
+    }
+}
+
+impl Drop for UiCameraGuard {
+    fn drop(&mut self) {
+        UI_VIEW_PROJECTION.with(|cell| cell.set(self.previous));
+    }
+}
+
+/// Project a world point to fractions of the viewport (0..1 from the top left), or
+/// `None` if it is behind the camera or off screen.
+fn project_to_viewport(view_projection: Mat4, point: [f32; 3]) -> Option<(f32, f32)> {
+    let clip = view_projection * Vec4::new(point[0], point[1], point[2], 1.0);
+    if clip.w <= 1e-6 {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    if !(-1.0..=1.0).contains(&ndc.x) || !(-1.0..=1.0).contains(&ndc.y) {
+        return None;
+    }
+    Some(((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5))
 }
 
 /// UI context that Lua scripts use to build their UI.
@@ -113,6 +152,33 @@ impl UiContext {
             .get(id)
             .filter(|response| response.changed)
             .cloned()
+    }
+
+    /// Draw `text` over the scene at world position `point`, centered on it. Returns
+    /// whether the point is on screen (and so drawn).
+    pub fn world_label(
+        &self,
+        point: [f32; 3],
+        text: String,
+        color: [u8; 4],
+        size: f32,
+        backdrop: bool,
+    ) -> bool {
+        let Some(view_projection) = UI_VIEW_PROJECTION.with(Cell::get) else {
+            return false;
+        };
+        let Some((x, y)) = project_to_viewport(view_projection, point) else {
+            return false;
+        };
+        self.push(UiCommand::WorldLabel {
+            x,
+            y,
+            text,
+            color,
+            size,
+            backdrop,
+        });
+        true
     }
 
     /// Display a text label.
@@ -338,9 +404,30 @@ impl Default for UiContext {
 
 #[cfg(test)]
 mod tests {
-    use super::UiContext;
+    use super::{UiCameraGuard, UiContext};
     use crate::scripting::lua::api::{Anchor, UiCommand, UiResponse};
     use mlua::Lua;
+
+    #[test]
+    fn world_labels_project_through_the_ui_camera() {
+        let context = UiContext::new();
+        // Nothing to project through outside a UI pass.
+        assert!(!context.world_label([0.0; 3], "x".into(), [255; 4], 16.0, false));
+
+        let camera = crate::scene::Camera::default();
+        let _guard = UiCameraGuard::enter(camera.view_proj(1.0));
+        assert!(context.world_label(camera.target.to_array(), "hit".into(), [255; 4], 16.0, true));
+        let behind = (camera.eye * 2.0 - camera.target).to_array();
+        assert!(!context.world_label(behind, "behind".into(), [255; 4], 16.0, true));
+
+        match &context.take_commands()[..] {
+            [UiCommand::WorldLabel { x, y, text, .. }] => {
+                assert!((x - 0.5).abs() < 1e-4 && (y - 0.5).abs() < 1e-4);
+                assert_eq!(text, "hit");
+            }
+            other => panic!("unexpected commands: {other:?}"),
+        }
+    }
 
     #[test]
     fn anchored_panel_records_commands() {

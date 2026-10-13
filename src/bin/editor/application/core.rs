@@ -757,6 +757,13 @@ impl EditorApplication {
         }
 
         for path in watcher.poll() {
+            let is_script = path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"));
+            if !is_script {
+                self.reload_changed_texture(ctx, &path);
+                continue;
+            }
             log::info!("Script file changed: {:?}", path);
 
             let plugin = self
@@ -785,6 +792,37 @@ impl EditorApplication {
                         )
                     )));
             }
+        }
+    }
+
+    /// Reload a texture whose image file changed on disk, if the scene uses it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn reload_changed_texture(&mut self, ctx: &mut GpuUpdateContext, path: &std::path::Path) {
+        let results = ctx
+            .scene
+            .assets
+            .reload_textures(&mut *ctx.renderer, Some(path));
+        let mut reloaded = false;
+        for (texture, outcome) in results {
+            match outcome {
+                Ok(()) => {
+                    log::info!("Hot-reloaded texture {:?}", texture);
+                    reloaded = true;
+                }
+                Err(err) => log::warn!("Failed to reload texture {:?}: {err}", texture),
+            }
+        }
+        if reloaded {
+            ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
+            self.shared
+                .reload_notifications
+                .push(ReloadNotification::success(format!(
+                    "Reloaded {}",
+                    path.file_name().map_or_else(
+                        || path.display().to_string(),
+                        |name| { name.to_string_lossy().into_owned() }
+                    )
+                )));
         }
     }
 

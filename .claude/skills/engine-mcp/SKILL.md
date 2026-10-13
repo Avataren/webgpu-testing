@@ -52,14 +52,21 @@ engine you launched; save first).
   removes that component.
 - Materials are copied on write when other entities share them, so recoloring one object
   never recolors others; pass `edit_shared: true` to change all users.
-- For many objects (grids, rings, rows), loop in `lua_eval`, or call `entity_spawn` once
-  and then `entity_duplicate {entity, translation}` the result.
+- For many objects: `entity_duplicate {entity, count, step, row_step, columns}` lays out a
+  row or grid in one call; `entity_update`/`entity_delete` take `entities` or
+  `name_contains` to change or remove many at once; `batch` runs a list of tool calls in
+  one round trip. Pass `quiet: true` for terse results.
 - `camera_set {focus: <entity>}` or `{position, target}` to frame the shot, then
   `screenshot {target: "viewport"}` (just the 3D view) or `"window"` (with the editor
-  UI). **Look at the screenshot after visual changes** instead of assuming they worked.
+  UI). `screenshot {camera: "game"}` (or a camera entity) renders that one frame through
+  the game camera without moving the editor view. **Look at the screenshot after visual changes** instead of assuming they worked.
 - `environment_set` controls background, ambient light, HDR sky and grading;
   `postprocess_set` toggles SSAO, bloom and FXAA.
-- `asset_import {path}` brings in a glTF model (samples are under `web/assets/`).
+- `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
+  an image, sound, font, script or shader into the project's `content/` and returns the
+  project-relative path to reference. After rewriting an image on disk, `asset_reload`
+  (or the editor's file watcher) shows the new version under the same path.
+- `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it).
 
 ## Gameplay with Lua
 
@@ -72,21 +79,25 @@ Call `lua_api_reference` before writing scripts. Then:
    under its `content/` folder, so later changes need no reattach.
 3. `script_status`: `compiled` and `last_error` for every script. Errors read
    `file.lua:LINE: message`.
-4. Playtest: `runtime_set {mode: "play"}`, `wait`, inject input, `wait`, then check state
-   (`entity_get`, `lua_eval`, `logs {target: "script"}`, `screenshot`).
-5. `runtime_set {mode: "stop"}` restores the scene to its pre-play state. Every change
-   made during play (including your remote edits) is discarded.
+4. Playtest in one call: `playtest {seconds, time_scale, input, entity, eval}` plays,
+   injects input, runs (faster than real time with `time_scale` up to 16), then reports
+   failing scripts, warnings, the sounds played, a `scene_diff` of what changed, the
+   `eval` result and a screenshot, and stops. Step by step: `runtime_set {mode: "play"}`,
+   `wait`, inject input, `wait`, then `entity_get`, `lua_eval`, `logs`, `screenshot`.
+5. `runtime_set {mode: "stop"}` restores the scene to its pre-play state with the same
+   entity ids. Every change made during play (including your remote edits) is discarded;
+   such results carry `discarded_on_stop: true`.
 
 Facts that change how you write scripts:
 
 - Scripts without an annotation run `on_created`/`update` **only in play mode**. Use
   `-- @tool` for scripts that should also run while editing, and `-- @editor` for
   editor-only ones.
-- Lua can spawn entities and set transforms, names, visibility, shadows and the built-in
-  rotate/orbit animations, but it **cannot add meshes, materials or lights**. For things
-  that appear at runtime (bullets, enemies, pickups), pre-place a pool in the editor with
-  `entity_spawn`/`entity_duplicate`, start them hidden (`visible: false`), and have
-  scripts move and show or hide them (`set_component(e, "Visible", true)`).
+- Lua can spawn entities with primitive meshes (`spawn_primitive`), change meshes and
+  materials (`set_mesh`, `set_material_color`, `set_material`), play sounds
+  (`play_sound`) and draw text at world positions (`ui:world_label` in `on_ui`). It
+  cannot create lights or cameras. Pools of pre-placed, hidden entities are still the
+  cheapest way to show many short-lived objects.
 - Mutations from a hook are queued and applied after it returns, so reading back a
   value you just set in the same hook gives the old value.
 - Keep game state in the state API (`set_f64`/`get_f64`, `set_state`/`get_state`). It
@@ -124,8 +135,8 @@ printed.
 - `project_save` writes the project. It refuses while playing; stop first.
 - `environment_set` creates an Environment entity when the scene has none, because only
   that entity round-trips (the project-level environment is not restored on load).
-- Script paths are stored as given (absolute), so a project that references scripts by
-  absolute path is not portable to another machine.
+- Script and texture paths inside the project are saved relative to it, so projects
+  are portable.
 - `editor_undo`/`editor_redo` step through scene changes, including remote edits made
   in editor mode.
 - To check the game outside the editor:

@@ -2,6 +2,7 @@
 //
 // This module contains all the API functions exposed to Lua scripts.
 
+mod audio;
 mod clipboard;
 mod component;
 mod coroutine;
@@ -12,6 +13,7 @@ mod file_io;
 mod hierarchy;
 mod input;
 mod logging;
+mod material;
 mod query;
 mod script_access;
 mod state;
@@ -26,7 +28,7 @@ pub(crate) use coroutine::{resume_coroutine, CoroutineGuard};
 pub use editor_commands::{drain_editor_commands, LuaEditorCommand};
 pub use file_io::grant_path_access;
 pub use text_editor_bridge::enqueue_text_editor_request;
-pub use ui::{Anchor, UiCommand, UiContext, UiResponse};
+pub use ui::{Anchor, UiCameraGuard, UiCommand, UiContext, UiResponse};
 
 /// Whether scripts on a runtime are currently being run for play mode. Stored as Lua
 /// app data by the scripting state each time it runs scripts.
@@ -42,6 +44,8 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     hierarchy::register_hierarchy_api(lua)?;
     input::register_input_api(lua)?;
     component::register_component_api(lua)?;
+    material::register_material_api(lua)?;
+    audio::register_audio_api(lua)?;
     query::register_query_api(lua)?;
     script_access::register_script_access_api(lua)?;
     events::register_events_api(lua)?;

@@ -356,12 +356,29 @@ impl Scheduler {
         handle: SceneHandle,
         dt: f64,
         runtime: RuntimeMode,
+        time_scale: f64,
     ) -> Option<SceneHandle> {
         let mut active_handle = handle;
+        let mut dt = dt;
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             match runtime {
-                RuntimeMode::Playing => scene.update_with_mode(dt, false),
+                RuntimeMode::Playing => {
+                    // Speed-ups run several normal-sized steps rather than one long one,
+                    // so game logic sees the same step sizes as at normal speed.
+                    dt *= time_scale;
+                    let steps = time_scale.ceil().max(1.0) as u32;
+                    let step_dt = dt / f64::from(steps);
+                    for step in 0..steps {
+                        if step > 0 {
+                            // A key press is "just pressed" in one step only, as at 1x,
+                            // or toggles would flip once per step.
+                            scene.input_state_mut().update();
+                            scene.propagate_transforms();
+                        }
+                        scene.update_with_mode(step_dt, false);
+                    }
+                }
                 RuntimeMode::Editor => scene.run_editor_scripts(dt),
             }
         } else {
@@ -432,6 +449,12 @@ impl Scheduler {
         let mut active_handle = handle;
         let mut textures_changed = false;
         let mut workspace_swapped = false;
+
+        // Scripts queue mesh and material changes during the update stage; they need
+        // the renderer, so they land here, before anything is drawn.
+        if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
+            scene.apply_script_asset_commands(renderer);
+        }
 
         for system in &mut self.gpu_systems {
             let Some(scene) = workspace.scene_mut_by_handle(active_handle) else {
@@ -689,7 +712,7 @@ mod tests {
         workspace.open_scene(second_id.clone(), Scene::new());
 
         let result = scheduler
-            .run_update_stage(&mut workspace, first_handle, 0.0, RuntimeMode::Editor)
+            .run_update_stage(&mut workspace, first_handle, 0.0, RuntimeMode::Editor, 1.0)
             .expect("update stage should succeed");
 
         assert_eq!(workspace.active_scene_handle(), Some(result));

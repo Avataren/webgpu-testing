@@ -97,9 +97,28 @@ pub enum UiCommand {
         height: Option<f32>,
         items: Vec<UiCommand>,
     },
+    /// Text drawn over the scene at a world position, already projected to the
+    /// viewport: `x`/`y` are fractions of its width and height from the top left.
+    WorldLabel {
+        x: f32,
+        y: f32,
+        text: String,
+        color: [u8; 4],
+        size: f32,
+        backdrop: bool,
+    },
 }
 
 impl UiCommand {
+    /// Whether the command is drawn over the game view (a HUD element) rather than
+    /// inside the script's window.
+    pub fn is_overlay(&self) -> bool {
+        matches!(
+            self,
+            UiCommand::AnchoredPanel { .. } | UiCommand::WorldLabel { .. }
+        )
+    }
+
     /// Render this command with a real egui::Ui and record widget responses by id.
     ///
     /// `viewport_rect` is the area anchored panels are positioned in; it defaults to
@@ -169,6 +188,40 @@ impl UiCommand {
                             render_children(ui, items);
                         });
                     });
+            }
+            UiCommand::WorldLabel {
+                x,
+                y,
+                text,
+                color,
+                size,
+                backdrop,
+            } => {
+                let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
+                let position =
+                    base_rect.min + egui::vec2(x * base_rect.width(), y * base_rect.height());
+                let painter = ui
+                    .ctx()
+                    .layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("script_world_labels"),
+                    ))
+                    .with_clip_rect(base_rect);
+                let [r, g, b, a] = *color;
+                let galley = painter.layout_no_wrap(
+                    text.clone(),
+                    egui::FontId::proportional(*size),
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                );
+                let text_rect = egui::Align2::CENTER_CENTER.anchor_size(position, galley.size());
+                if *backdrop {
+                    painter.rect_filled(
+                        text_rect.expand2(egui::vec2(6.0, 3.0)),
+                        4.0,
+                        egui::Color32::from_black_alpha(150),
+                    );
+                }
+                painter.galley(text_rect.min, galley, egui::Color32::WHITE);
             }
             leaf => {
                 if let Some((id, response)) = leaf.render_leaf(ui) {
@@ -325,7 +378,8 @@ impl UiCommand {
             | UiCommand::Menu { .. }
             | UiCommand::Horizontal { .. }
             | UiCommand::CenteredArea { .. }
-            | UiCommand::AnchoredPanel { .. } => None,
+            | UiCommand::AnchoredPanel { .. }
+            | UiCommand::WorldLabel { .. } => None,
         }
     }
 }

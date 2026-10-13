@@ -3,6 +3,7 @@
 //! Every method takes a JSON object of parameters and returns a JSON value. See
 //! [`CORE_METHODS`] for the list and [`super::json`] for value conventions.
 
+mod diff;
 mod entity;
 mod info;
 mod input;
@@ -14,6 +15,9 @@ use serde_json::{json, Value};
 use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
 
 use super::hub::RemoteHub;
+
+pub(crate) use diff::SceneBaseline;
+pub(crate) use entity::{patch_material, set_mesh};
 
 /// Outcome of a remote method: a JSON result or an error message.
 pub type RemoteResult = Result<Value, String>;
@@ -34,6 +38,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Flat list of entities, filterable by name or component",
     ),
     ("scene.tree", "Entity hierarchy as a tree"),
+    (
+        "scene.mark",
+        "Remember the scene's state for a later scene.diff",
+    ),
+    (
+        "scene.diff",
+        "Entities added, removed and changed since scene.mark",
+    ),
     ("entity.get", "Every component of one entity"),
     (
         "entity.spawn",
@@ -75,6 +87,16 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     (
         "assets.list",
         "Meshes, materials and textures loaded in the scene",
+    ),
+    (
+        "asset.reload",
+        "Re-read textures and scripts from disk (all, or under a path)",
+    ),
+    ("audio.play", "Play a sound file (volume, pitch, loop)"),
+    ("audio.stop", "Stop one sound, or all"),
+    (
+        "audio.status",
+        "Sounds playing now and recently played (with ids, paths, times)",
     ),
     (
         "input.send",
@@ -153,6 +175,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "stats" => info::stats(ctx),
         "scene.entities" => info::scene_entities(params, ctx),
         "scene.tree" => info::scene_tree(params, ctx),
+        "scene.mark" => diff::mark(ctx),
+        "scene.diff" => diff::diff(params, ctx),
         "assets.list" => info::assets_list(params, ctx),
         "logs" => info::logs(params),
         "entity.get" => entity::get(params, ctx),
@@ -174,6 +198,20 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             &ctx.gpu.renderer.postprocess_effects(),
         )),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
+        "asset.reload" => rendering::asset_reload(params, ctx),
+        "audio.play" => audio_play(params),
+        "audio.stop" => match super::json::opt_u64(params, "id") {
+            Some(id) => Ok(json!({ "stopped": crate::audio::stop(id) })),
+            None => {
+                crate::audio::stop_all();
+                Ok(json!({ "stopped": "all" }))
+            }
+        },
+        "audio.status" => Ok(json!({
+            "playing": crate::audio::playing(),
+            "next_id": crate::audio::next_id(),
+            "recent": crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0)),
+        })),
         "input.send" => input::send(params, ctx),
         "input.state" => input::state(params, ctx),
         "input.clear" => input::clear(ctx),
@@ -181,6 +219,19 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             "unknown method {method:?}; call engine.methods for the list"
         )),
     }
+}
+
+fn audio_play(params: &Value) -> RemoteResult {
+    use super::json::{opt_bool, opt_f64, req_str};
+    let path = req_str(params, "path")?;
+    let options = crate::audio::PlayOptions {
+        volume: opt_f64(params, "volume").unwrap_or(1.0).max(0.0) as f32,
+        pitch: opt_f64(params, "pitch").unwrap_or(1.0) as f32,
+        looped: opt_bool(params, "loop").unwrap_or(false),
+    };
+    let since = crate::audio::next_id();
+    let id = crate::audio::play(path, options)?;
+    Ok(json!({ "id": id, "played": crate::audio::history(since)[0].clone() }))
 }
 
 fn methods(ctx: &RemoteContext<'_, '_>) -> Value {

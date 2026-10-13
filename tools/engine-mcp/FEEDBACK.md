@@ -6,7 +6,13 @@ Collected while building a Breakout game end to end through the MCP
 ## Status
 
 First round of fixes: commit `7f0fd5f` (branch `fix/engine-mcp-feedback`, 2026-10-13).
-Every bug is fixed and was checked against a running editor and player. Each entry below
+Every bug is fixed and was checked against a running editor and player.
+
+Second round (branch `feat/engine-mcp-feedback-2`, 2026-10-13): every remaining pain
+point and wish-list item is done (audio, Lua meshes/materials, world-space text,
+non-glTF import, texture reload, game-camera screenshots, bulk delete, scene diff,
+playtest, time scale, batch). Breakout now plays its sounds and shows score popups.
+Checked in the editor and the player, partly through a fresh MCP server binary. Each entry below
 ends with a **Resolution** (bugs), **Done** / **Partly done** / **Open** (pain points) or a
 ✅ / ⬜ mark (wish list).
 
@@ -136,23 +142,34 @@ How to read the sections:
   **Done:** `entity_duplicate {count, step, row_step, columns}` lays out a row or grid in one
   call and returns only ids and names.
 - **The engine has no audio at all.** No `play_sound` in Lua and no audio crate in
-  `Cargo.toml`, so "add sounds" cannot be done from the MCP side. **Open.**
+  `Cargo.toml`, so "add sounds" cannot be done from the MCP side. **Done:** `rodio`
+  playback (wav/ogg/mp3/flac) with Lua `play_sound`/`stop_sound`/`stop_all_sounds`/
+  `set_master_volume`, MCP `sound_play`/`sound_stop`/`audio_status`. Sounds stop with
+  play mode. A play history lets agents check which sounds played. Native only; web
+  builds record plays but stay silent.
 - **Lua cannot add or change meshes, materials or lights.** Anything that varies at
-  runtime (brick colours, damage states) needs one pre-made entity per variant. **Open**
-  (now documented as a limitation).
+  runtime (brick colours, damage states) needs one pre-made entity per variant. **Done**
+  for meshes and materials: `spawn_primitive`, `set_mesh`, `set_material_color`,
+  `set_material` (copy-on-write for shared materials). Lights and cameras still need the
+  editor or the tools.
 - **HUD text exists only in the editor.** `on_ui` needs egui, so the standalone `player`
-  shows no score, and there is no world-space text. **Partly done:** HUDs work in the
-  player; world-space text is still open.
+  shows no score, and there is no world-space text. **Done:** HUDs work in the player,
+  and `ui:world_label(x, y, z, text, opts)` draws text at a world position (projected
+  through the view camera; drawn over the scene, not occluded).
 - **`project_create` returns `queued`.** I had to `wait` and poll `editor_state` to learn the
   project had opened. **Done:** `project_create` and `project_open` return once the project
   is open (`project_create` also returns the editor state).
 - **No way to bring in non-glTF assets through the MCP.** `asset_import` is glTF only. PNGs
-  (and WAVs) are written with plain file tools and referenced by absolute path. **Open.**
+  (and WAVs) are written with plain file tools and referenced by absolute path. **Done:**
+  `asset_import` copies images, audio, fonts, `.lua` and `.wgsl` into
+  `content/<kind>/` (or `dest`) and returns the project-relative path.
 - **Lua has no "am I playing?" query.** That is why `@tool` versus unannotated scripts needs
   care when a script has both game logic and `on_ui`. **Done:** `is_playing()`.
 - **Texture files are cached by path.** Rewriting a PNG on disk and re-assigning the same path
   shows the old image; I had to write the new image under a different filename. There is no
-  texture reload. **Open.**
+  texture reload. **Done:** textures reload into their existing slots, through
+  `asset_reload {path}`, automatically when the editor sees an image in the project
+  change, and when `asset_import {overwrite: true}` replaces one.
 - **Edits made during play are silently lost on stop.** I changed `environment_set` while
   playing (to tune the look against a running game) and had to redo it. The result gives no
   hint that the change is temporary. A `"discarded_on_stop": true` field would help.
@@ -172,8 +189,9 @@ How to read the sections:
   filter plus a bulk `entity_update {entities: [...], ...}` (or `name_contains` on update)
   would fix it. **Done:** `entity_update` takes `entities` (ids/names) or `name_contains`.
 - **Viewport screenshots show the editor's free camera until `camera_set` is called**, not
-  the scene's active game camera. Easy to misread as a broken scene. **Partly done:** the
-  `screenshot` description now says so; rendering through the game camera is still open.
+  the scene's active game camera. Easy to misread as a broken scene. **Done:**
+  `screenshot {camera: "game" | <camera entity>}` renders that frame through the camera
+  without gizmos and without moving the editor view.
 - **`lua_eval` can't see script locals.** I had to export the game state as a global
   (`GAME = g`) to poke it during tests; a documented debug convention would be nicer.
   **Done:** `lua_api_reference` documents keeping test-visible state in a global table or
@@ -182,26 +200,31 @@ How to read the sections:
 ## Wish list
 
 - ✅ `entity_duplicate {count, step}` for a linear/grid array, or a generic `batch` tool that
-  takes a list of tool calls and runs them in one round trip. (Arrays done; no generic
-  `batch` tool.)
-- ⬜ Lua `set_material_color(entity, r, g, b)` (plus emissive and texture) and a Lua way to
-  spawn a primitive mesh, so pools and per-object colour are not needed.
-- ⬜ Audio: `play_sound(path, {volume, pitch, loop})` in Lua and a matching `sound_play` MCP
-  tool for testing, plus `.wav`/`.ogg` loading from the project's `content/`.
+  takes a list of tool calls and runs them in one round trip. (Both done.)
+- ✅ Lua `set_material_color(entity, r, g, b)` (plus emissive and texture) and a Lua way to
+  spawn a primitive mesh, so pools and per-object colour are not needed. (`set_material`
+  covers emissive and textures; `spawn_primitive`, `set_mesh`.)
+- ✅ Audio: `play_sound(path, {volume, pitch, loop})` in Lua and a matching `sound_play` MCP
+  tool for testing, plus `.wav`/`.ogg` loading from the project's `content/`. (Also mp3 and
+  flac, and `audio_status` to see what played.)
 - ✅ `project_create`/`project_open` that block until the project is open.
-- ⬜ `assets_import {path}` for images, audio and fonts that copies into `content/`.
-- ⬜ World-space text (a billboard text component) and HUD support in the player. (HUD
-  support in the player done; world-space text open.)
-- ⬜ A `describe_scene`/`scene_diff` tool to see exactly what a play session changed.
+- ✅ `assets_import {path}` for images, audio and fonts that copies into `content/`. (As
+  `asset_import`.)
+- ✅ World-space text (a billboard text component) and HUD support in the player. (As
+  `ui:world_label`, an overlay rather than a component.)
+- ✅ A `describe_scene`/`scene_diff` tool to see exactly what a play session changed.
+  (`scene_mark` + `scene_diff`; `playtest` includes the diff.)
 - ✅ Bulk `entity_update` / `entity_delete` by id list or name filter, with a terse result
-  mode. (Update done; bulk delete open.)
-- ⬜ Texture/script/asset hot reload by path (and an `asset_reload` tool). (Scripts already
-  hot-reload; textures and other assets do not.)
-- ⬜ A `playtest` helper: run N seconds of play with scripted input and return a state snapshot
+  mode.
+- ✅ Texture/script/asset hot reload by path (and an `asset_reload` tool).
+- ✅ A `playtest` helper: run N seconds of play with scripted input and return a state snapshot
   (`lua_eval` result) plus a screenshot at the end, so one call replaces
-  `runtime_set` + `input_send` + `wait` + `lua_eval` + `screenshot`.
-- ⬜ A `time_scale` setting (`runtime_set {time_scale: 4}`) so automated playtests of long
-  flows (clearing a level took about a minute at 1x) can run faster than real time.
-- ⬜ `screenshot {entity}` or `camera: "game"` to render through the scene's active camera
+  `runtime_set` + `input_send` + `wait` + `lua_eval` + `screenshot`. (Also reports failing
+  scripts, warnings, sounds played and the scene diff.)
+- ✅ A `time_scale` setting (`runtime_set {time_scale: 4}`) so automated playtests of long
+  flows (clearing a level took about a minute at 1x) can run faster than real time. (Up to
+  16x, run as several normal-sized steps per frame so game logic behaves as at 1x; resets to
+  1 on stop.)
+- ✅ `screenshot {entity}` or `camera: "game"` to render through the scene's active camera
   while editing.
 - ✅ Return `{"discarded_on_stop": true}` on mutating calls made during play.

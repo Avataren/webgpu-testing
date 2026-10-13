@@ -48,6 +48,94 @@ fn absolute(path: &str) -> PathBuf {
     }
 }
 
+/// Content subfolder for a non-model asset, by file extension.
+fn content_folder(extension: &str) -> Option<&'static str> {
+    Some(match extension {
+        "png" | "jpg" | "jpeg" | "tga" | "bmp" | "hdr" | "exr" => "textures",
+        "wav" | "ogg" | "mp3" | "flac" => "audio",
+        "ttf" | "otf" => "fonts",
+        "lua" => "scripts",
+        "wgsl" => "shaders",
+        _ => return None,
+    })
+}
+
+/// Copy an image, sound, font, script or shader into the project's content folder.
+/// A texture the scene already uses is reloaded when its file is replaced.
+fn import_file(
+    ctx: &mut RemoteContext<'_, '_>,
+    project_dir: &std::path::Path,
+    source: &std::path::Path,
+    extension: &str,
+    params: &Value,
+) -> RemoteResult {
+    let content = project_dir.join(wgpu_cube::project::CONTENT_DIR);
+    let relative = match params.get("dest").and_then(Value::as_str) {
+        Some(dest) => PathBuf::from(dest),
+        None => {
+            let folder = content_folder(extension).ok_or_else(|| {
+                format!(
+                    "cannot import .{extension} files: use glTF/GLB models, images (png, jpg, tga, bmp, hdr, exr), \
+                     audio (wav, ogg, mp3, flac), fonts (ttf, otf), .lua or .wgsl, or give dest"
+                )
+            })?;
+            let name = source.file_name().ok_or("the path has no file name")?;
+            PathBuf::from(folder).join(name)
+        }
+    };
+    if relative.is_absolute() || relative.components().any(|part| part.as_os_str() == "..") {
+        return Err("dest must be a path inside the project's content folder".into());
+    }
+    let target = content.join(&relative);
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let same_file = target
+        .canonicalize()
+        .is_ok_and(|target| source.canonicalize().is_ok_and(|source| source == target));
+    let replaced = target.exists() && !same_file;
+    if replaced && !overwrite {
+        return Err(format!(
+            "{} already exists; pass overwrite: true to replace it",
+            target.display()
+        ));
+    }
+    if !same_file {
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+        }
+        std::fs::copy(source, &target)
+            .map_err(|err| format!("cannot copy to {}: {err}", target.display()))?;
+    }
+    let mut result = json!({
+        "imported": target.display().to_string(),
+        "project_path": std::path::Path::new(wgpu_cube::project::CONTENT_DIR)
+            .join(&relative)
+            .display()
+            .to_string(),
+        "note": "Reference it by project_path (e.g. material base_color_texture) so the project stays portable.",
+    });
+    if replaced {
+        let reloaded = ctx
+            .gpu
+            .scene
+            .assets
+            .reload_textures(&mut *ctx.gpu.renderer, Some(&target))
+            .into_iter()
+            .filter(|(_, outcome)| outcome.is_ok())
+            .count();
+        if reloaded > 0 {
+            ctx.gpu
+                .renderer
+                .update_texture_bind_group(&ctx.gpu.scene.assets);
+        }
+        result["textures_reloaded"] = json!(reloaded);
+    }
+    Ok(result)
+}
+
 impl EditorApplication {
     pub(super) fn handle_remote_command(
         &mut self,
@@ -180,8 +268,17 @@ impl EditorApplication {
                 if !path.exists() {
                     return Err(format!("file not found: {}", path.display()));
                 }
-                if self.project_system().controller().current_dir().is_none() {
+                let Some(project_dir) = self.project_system().controller().current_dir().cloned()
+                else {
                     return Err("open or create a project before importing".to_string());
+                };
+                let extension = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(str::to_ascii_lowercase)
+                    .unwrap_or_default();
+                if !matches!(extension.as_str(), "gltf" | "glb") {
+                    return import_file(ctx, &project_dir, &path, &extension, params);
                 }
                 self.enqueue_command(EditorCommand::ImportPath(path.clone()));
                 Ok(json!({

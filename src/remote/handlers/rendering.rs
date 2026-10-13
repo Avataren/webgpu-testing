@@ -11,7 +11,7 @@ use crate::scene::{
 
 use super::super::json::{
     color_from_json, entity_from_json, entity_id, entity_name, look_rotation, opt_bool, opt_f64,
-    patch_serde, round, vec3_from_json, vec3_json,
+    opt_str, patch_serde, round, vec3_from_json, vec3_json,
 };
 use super::entity::{resolve_existing_path, world_to_local};
 use super::{RemoteContext, RemoteResult};
@@ -249,4 +249,45 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
     ctx.gpu.renderer.set_postprocess_effects(effects);
     ctx.hub.set_postprocess_override(effects);
     Ok(postprocess_json(&effects))
+}
+
+/// Re-read textures (and scripts) from disk: everything, or what lives under `path`.
+pub(super) fn asset_reload(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let filter = opt_str(params, "path")
+        .map(resolve_existing_path)
+        .transpose()?;
+    let scene = &mut ctx.gpu.scene;
+    let results = scene
+        .assets
+        .reload_textures(&mut *ctx.gpu.renderer, filter.as_deref());
+    let mut reloaded = Vec::new();
+    let mut failed = serde_json::Map::new();
+    for (path, outcome) in results {
+        match outcome {
+            Ok(()) => reloaded.push(json!(path.display().to_string())),
+            Err(err) => {
+                failed.insert(path.display().to_string(), json!(err));
+            }
+        }
+    }
+    if !reloaded.is_empty() {
+        ctx.gpu
+            .renderer
+            .update_texture_bind_group(&ctx.gpu.scene.assets);
+    }
+    let scripts = match &filter {
+        Some(path) => ctx.gpu.scene.reload_script_path(path),
+        None => 0,
+    };
+    if reloaded.is_empty() && failed.is_empty() && scripts == 0 {
+        return Err(match &filter {
+            Some(path) => format!("no loaded texture or script uses {}", path.display()),
+            None => "no textures were loaded from files".into(),
+        });
+    }
+    Ok(json!({
+        "textures_reloaded": reloaded,
+        "textures_failed": failed,
+        "scripts_reloaded": scripts,
+    }))
 }

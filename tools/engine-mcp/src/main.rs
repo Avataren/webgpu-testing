@@ -195,28 +195,7 @@ impl Server {
             .filter(Value::is_object)
             .unwrap_or_else(|| json!({}));
 
-        let Some(action) = self
-            .tools
-            .iter()
-            .find(|tool| tool.name == name)
-            .map(|tool| match tool.action {
-                Action::Engine(method) => Some(method),
-                Action::Local => None,
-            })
-        else {
-            return error_result(format!("unknown tool {name:?}"));
-        };
-
-        let outcome = match action {
-            Some(method) => self
-                .engine
-                .call(method, arguments)
-                .map(Output::Json)
-                .map_err(|err| err.to_string()),
-            None => self.local_tool(name, &arguments),
-        };
-
-        match outcome {
+        match self.run_tool(name, arguments) {
             Ok(Output::Json(value)) => text_result(pretty(&value), false),
             Ok(Output::Text(text)) => text_result(text, false),
             Ok(Output::Image {
@@ -233,8 +212,79 @@ impl Server {
         }
     }
 
+    fn run_tool(&mut self, name: &str, arguments: Value) -> Result<Output, String> {
+        let action = self
+            .tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .map(|tool| match tool.action {
+                Action::Engine(method) => Some(method),
+                Action::Local => None,
+            })
+            .ok_or_else(|| format!("unknown tool {name:?}"))?;
+        match action {
+            Some(method) => self
+                .engine
+                .call(method, arguments)
+                .map(Output::Json)
+                .map_err(|err| err.to_string()),
+            None => self.local_tool(name, &arguments),
+        }
+    }
+
+    /// Run several tool calls in order and collect their results. Images are left out.
+    fn batch(&mut self, args: &Value) -> Result<Output, String> {
+        let calls = args
+            .get("calls")
+            .and_then(Value::as_array)
+            .ok_or("calls must be an array of {tool, arguments}")?;
+        let stop_on_error = args
+            .get("stop_on_error")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let mut results = Vec::new();
+        let mut failed = 0;
+        for (index, call) in calls.iter().enumerate() {
+            let name = call
+                .get("tool")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("call {index} has no \"tool\""))?;
+            if name == "batch" {
+                return Err("batch calls cannot nest".into());
+            }
+            let arguments = call
+                .get("arguments")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            let result = match self.run_tool(name, arguments) {
+                Ok(Output::Json(value)) => json!({ "tool": name, "result": value }),
+                Ok(Output::Text(text)) => json!({ "tool": name, "result": text }),
+                Ok(Output::Image { caption, .. }) => {
+                    json!({ "tool": name, "result": caption, "note": "image left out; call screenshot directly to see it" })
+                }
+                Err(message) => {
+                    failed += 1;
+                    json!({ "tool": name, "error": message })
+                }
+            };
+            let stop = failed > 0 && stop_on_error;
+            results.push(result);
+            if stop {
+                break;
+            }
+        }
+        Ok(Output::Json(json!({
+            "ran": results.len(),
+            "of": calls.len(),
+            "failed": failed,
+            "results": results,
+        })))
+    }
+
     fn local_tool(&mut self, name: &str, args: &Value) -> Result<Output, String> {
         match name {
+            "batch" => self.batch(args),
             "engine_launch" => self.launch(args).map(Output::Json),
             "engine_stop" => self.engine.stop().map(Output::Json),
             "engine_status" => Ok(Output::Json(self.engine.status())),
@@ -331,6 +381,7 @@ impl Server {
                 };
                 self.open_project(&path).map(Output::Json)
             }
+            "playtest" => self.playtest(args),
             "screenshot" => {
                 let mut params = args.clone();
                 params["inline"] = json!(true);
@@ -350,6 +401,149 @@ impl Server {
             }
             other => Err(format!("tool {other} is not implemented")),
         }
+    }
+
+    /// Play for a while with scripted input, then report errors, the state `eval`
+    /// returns and a screenshot, and (by default) stop again.
+    fn playtest(&mut self, args: &Value) -> Result<Output, String> {
+        let seconds = args
+            .get("seconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(3.0)
+            .clamp(0.0, 240.0);
+        let stop = args.get("stop").and_then(Value::as_bool).unwrap_or(true);
+        let call = |engine: &mut Engine, method: &str, params: Value| {
+            engine.call(method, params).map_err(|err| err.to_string())
+        };
+
+        let log_start =
+            call(&mut self.engine, "logs", json!({ "limit": 1 }))?["latest_seq"].clone();
+        let sounds_since = self
+            .engine
+            .call("audio.status", json!({}))
+            .ok()
+            .map(|status| status["next_id"].clone());
+        let diff = args.get("diff").and_then(Value::as_bool).unwrap_or(true);
+        if diff {
+            call(&mut self.engine, "scene.mark", json!({}))?;
+        }
+        let mut start = json!({ "mode": "play" });
+        if let Some(scale) = args.get("time_scale") {
+            start["time_scale"] = scale.clone();
+        }
+        call(&mut self.engine, "runtime.set", start)?;
+        // Play starts at the beginning of the next frame.
+        call(&mut self.engine, "wait", json!({ "frames": 2 }))?;
+
+        if let Some(events) = args.get("input").filter(|events| !events.is_null()) {
+            call(&mut self.engine, "input.send", json!({ "events": events }))?;
+        }
+        let waited = call(
+            &mut self.engine,
+            "wait",
+            json!({ "seconds": seconds, "frames": 1 }),
+        )?;
+
+        let mut report = serde_json::Map::new();
+        report.insert("waited".into(), waited);
+        let runtime = call(&mut self.engine, "runtime.get", json!({}))?;
+        report.insert("time_scale".into(), runtime["time_scale"].clone());
+        if let Some(code) = args.get("eval").and_then(Value::as_str) {
+            let mut params = json!({ "code": code, "read_only": true });
+            if let Some(entity) = args.get("entity") {
+                params["entity"] = entity.clone();
+            }
+            report.insert(
+                "eval".into(),
+                self.engine
+                    .call("lua.eval", params)
+                    .unwrap_or_else(|err| json!({ "error": err.to_string() })),
+            );
+        }
+        let scripts = call(&mut self.engine, "script.status", json!({}))?;
+        let failing: Vec<Value> = scripts["scripts"]
+            .as_array()
+            .map(|scripts| {
+                scripts
+                    .iter()
+                    .filter(|script| !script["last_error"].is_null())
+                    .map(|script| json!({ "entity": script["entity"], "name": script["name"], "error": script["last_error"] }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        report.insert("failing_scripts".into(), json!(failing));
+        let logs = call(
+            &mut self.engine,
+            "logs",
+            json!({ "after": log_start, "min_level": "warn", "limit": 30 }),
+        )?;
+        let warnings: Vec<Value> = logs["entries"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| {
+                        json!(format!(
+                            "{} {}: {}",
+                            entry["level"].as_str().unwrap_or(""),
+                            entry["target"].as_str().unwrap_or(""),
+                            entry["message"].as_str().unwrap_or("")
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        report.insert("warnings".into(), json!(warnings));
+        if let Some(since) = sounds_since {
+            if let Ok(status) = self.engine.call("audio.status", json!({ "since": since })) {
+                report.insert("sounds_played".into(), status["recent"].clone());
+            }
+        }
+        if diff {
+            let limit = args.get("diff_limit").and_then(Value::as_u64).unwrap_or(30);
+            report.insert(
+                "scene_diff".into(),
+                call(&mut self.engine, "scene.diff", json!({ "limit": limit }))?,
+            );
+        }
+
+        let screenshot = if args
+            .get("screenshot")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+        {
+            let mut params = json!({ "target": "viewport", "inline": true });
+            if let Some(size) = args.get("max_size") {
+                params["max_size"] = size.clone();
+            }
+            let mut shot = call(&mut self.engine, "screenshot", params)?;
+            shot.as_object_mut()
+                .and_then(|shot| shot.remove("png_base64"))
+                .and_then(|data| data.as_str().map(str::to_owned))
+        } else {
+            None
+        };
+
+        call(&mut self.engine, "input.clear", json!({}))?;
+        if stop {
+            call(&mut self.engine, "runtime.set", json!({ "mode": "stop" }))?;
+            call(&mut self.engine, "wait", json!({ "frames": 2 }))?;
+            report.insert(
+                "stopped".into(),
+                json!("the scene is back to its state before play"),
+            );
+        } else {
+            report.insert("stopped".into(), json!(false));
+        }
+
+        let report = Value::Object(report);
+        Ok(match screenshot {
+            Some(png_base64) => Output::Image {
+                png_base64,
+                caption: report,
+            },
+            None => Output::Json(report),
+        })
     }
 
     fn validate_target(&self, target: &str) -> Result<(), String> {

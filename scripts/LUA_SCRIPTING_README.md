@@ -157,6 +157,38 @@ end
 - `attach_script(entity, path)` - Attach script from file
 - `import_gltf(entity, path, scale)` - Import GLTF model
 
+### Meshes and Materials
+- `spawn_primitive(kind[, name])` → `entity` - Spawn a visible entity with a primitive mesh
+  (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and its own material
+- `set_mesh(entity, kind)` - Replace the geometry with a primitive, or `nil` to remove it
+- `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
+- `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
+  `"#rrggbb"`), `emissive`, `metallic`, `roughness` (0..1), `unlit`, `transparent`,
+  `double_sided`, `nearest_filtering` (booleans) and texture paths such as
+  `base_color_texture` (`false` removes a texture)
+
+Changes apply before the frame is drawn. An entity that shares its material with others
+gets its own copy on the first change, so recoloring one brick leaves the rest alone.
+Lights and cameras are still created in the editor or through the engine tools.
+
+```lua
+local spark = spawn_primitive("sphere", "Spark")
+set_translation(spark, 0, 2, 0)
+set_material(spark, { color = {1, 0.6, 0.1}, emissive = 1, unlit = true })
+set_material_color(hit_brick, 1, 1, 1) -- flash
+```
+
+### Audio
+- `play_sound(path[, {volume = 1, pitch = 1, loop = false}])` → `id` - Play a wav, ogg,
+  mp3 or flac file. Paths are relative to the project (`"content/audio/hit.wav"`) or
+  absolute. `pitch` is the playback speed.
+- `stop_sound(id)` - Stop one sound
+- `stop_all_sounds()` - Stop everything
+- `set_master_volume(volume)` - Gain applied to every sound
+
+Sounds stop when play mode ends. Without an audio device sounds are silent but still
+recorded, so automated tests can check what played (engine tool `audio_status`).
+
 ### Script Access
 - `get_entity_scripts(entity)` - List script descriptors for an entity
 - `read_script_source(entity)` - Read script contents (inline or file-backed)
@@ -295,6 +327,10 @@ into a window titled after the entity.
   `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`;
   offsets are logical points from that anchor; `width`/`height` may be `nil` to fit the
   content. `callback(panel)` builds the contents with the same widget methods.
+- `ui:world_label(x, y, z, text[, {color = {r, g, b, a}, size = 16, backdrop = false}])` →
+  `boolean` - Text drawn over the game view at a world position (floating score, names).
+  Returns `false` when the point is behind the camera or off screen. Labels are not hidden
+  by geometry.
 - `ui:horizontal(callback)` / `ui:horizontal_wrapped(callback)` - Lay out widgets in a row
 - `ui:centered_area(width, callback)` - Center a block horizontally (`width` 0 to fit)
 - `ui:menu_bar(callback)`, `ui:menu(text, callback)`, `ui:menu_item(id, text)` → `boolean` - Menus
@@ -456,10 +492,12 @@ Scripts declare where they run with an annotation in their leading comments:
 
 ## Known Limitations
 
-1. Scripts cannot create meshes, materials or lights, or change material colors. Create
-   those entities in the editor (or through the engine tools) and show, hide, move or
-   reuse them from Lua.
-2. There is no audio API.
+1. Scripts cannot create lights or cameras, or load glTF meshes other than through
+   `import_gltf`; create those in the editor (or through the engine tools). Meshes are
+   limited to the built-in primitives.
+2. Scripts cannot read material values back; keep the colors you set in script state.
+3. `ui:world_label` text is drawn on top of the scene, not occluded by it.
+4. Audio is not available in web builds yet.
 
 ## Best Practices
 

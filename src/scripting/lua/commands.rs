@@ -23,6 +23,9 @@ pub(crate) struct ScriptCommands {
     pub registry: Rc<RefCell<EntityHandleRegistry>>,
     pub pending: HashMap<i64, PendingEntity>,
     pub existing: Vec<ExistingCommand>,
+    /// Mesh and material changes by entity handle; they need the renderer, so they are
+    /// handed to the scene rather than applied to the world.
+    pub assets: Vec<(i64, AssetCommand)>,
 }
 
 impl ScriptCommands {
@@ -31,7 +34,17 @@ impl ScriptCommands {
             registry,
             pending: HashMap::new(),
             existing: Vec::new(),
+            assets: Vec::new(),
         }
+    }
+
+    /// Queue a mesh or material change. Works for entities spawned this frame too.
+    pub fn asset_command(&mut self, handle: i64, command: AssetCommand) -> Result<(), mlua::Error> {
+        if !self.pending.contains_key(&handle) {
+            self.resolve_entity_bits(handle)?;
+        }
+        self.assets.push((handle, command));
+        Ok(())
     }
 
     pub fn spawn_entity(&mut self, name: Option<String>) -> i64 {
@@ -314,7 +327,7 @@ impl ScriptCommands {
 
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.existing.is_empty()
+        self.pending.is_empty() && self.existing.is_empty() && self.assets.is_empty()
     }
 
     pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
@@ -396,6 +409,22 @@ impl ScriptCommands {
         for command in self.existing.drain(..) {
             if let Err(err) = Self::apply_existing(world, command, &mut result) {
                 warn!(target: "script", "Skipping script command: {err}");
+            }
+        }
+
+        for (handle, command) in self.assets.drain(..) {
+            let bits = self
+                .registry
+                .borrow()
+                .resolved_bits(handle)
+                .unwrap_or(handle as u64);
+            match Entity::from_bits(bits) {
+                Some(entity) => result
+                    .asset_commands
+                    .push(PendingAssetCommand { entity, command }),
+                None => {
+                    warn!(target: "script", "Skipping mesh/material change for invalid entity {handle}")
+                }
             }
         }
 
@@ -1259,10 +1288,26 @@ pub struct PendingEventUnsubscription {
     pub event_name: String,
 }
 
+/// A mesh or material change a script asked for, in the same JSON form the remote
+/// `entity.update` fields `mesh` and `material` take.
+#[derive(Debug, Clone)]
+pub enum AssetCommand {
+    Material(serde_json::Value),
+    Mesh(serde_json::Value),
+}
+
+/// An [`AssetCommand`] resolved to its entity, waiting for the renderer.
+#[derive(Debug, Clone)]
+pub struct PendingAssetCommand {
+    pub entity: Entity,
+    pub command: AssetCommand,
+}
+
 #[derive(Default)]
 pub(crate) struct ScriptApplyResult {
     pub scripts_added: Vec<Entity>,
     pub gltf_imports: Vec<PendingGltfImport>,
+    pub asset_commands: Vec<PendingAssetCommand>,
     pub event_subscriptions: Vec<PendingEventSubscription>,
     pub event_unsubscriptions: Vec<PendingEventUnsubscription>,
 }

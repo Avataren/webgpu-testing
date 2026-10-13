@@ -19,7 +19,7 @@ use crate::scene::components::{
 };
 use crate::scene::transform::Transform;
 use crate::scene::{Camera, InputState};
-use crate::scripting::lua::api::ui::{UiCommand, UiResponse};
+use crate::scripting::lua::api::ui::{UiCameraGuard, UiCommand, UiResponse};
 use crate::scripting::lua::guards::InputStateGuard;
 use crate::scripting::lua::state::UiViewportInfo;
 use crate::scripting::ScriptingState;
@@ -150,6 +150,10 @@ impl Scene {
         viewport: Option<UiViewportInfo>,
     ) -> HashMap<Entity, Vec<UiCommand>> {
         let _input_guard = InputStateGuard::enter(&self.input_state);
+        let aspect = viewport
+            .filter(|(width, height, _)| *width > 0.0 && *height > 0.0)
+            .map_or(16.0 / 9.0, |(width, height, _)| width / height);
+        let _camera_guard = UiCameraGuard::enter(self.camera().view_proj(aspect));
         match self.nodes.get(self.main_scene) {
             Some(main_node) => {
                 let world = main_node.instance().world();
@@ -801,6 +805,19 @@ impl Scene {
         }
     }
 
+    /// The view through camera `entity` (a [`CameraComponent`] entity), without making it
+    /// the active camera.
+    pub fn camera_for_entity(&self, entity: Entity) -> Option<Camera> {
+        let world = self.main_world();
+        if !world.satisfies::<&CameraComponent>(entity).unwrap_or(false) {
+            return None;
+        }
+        let mut camera = self.camera;
+        camera
+            .apply_from_entity(world, entity)
+            .then(|| *camera.camera())
+    }
+
     fn apply_camera_from_entity(&mut self, entity: Entity) -> bool {
         let mut camera = std::mem::take(&mut self.camera);
         let world = self.main_world();
@@ -836,6 +853,38 @@ impl Scene {
         let mut imports = std::mem::take(&mut self.imports);
         imports.merge_as_child(self, parent_entity, other, renderer);
         self.imports = imports;
+    }
+
+    /// Apply the mesh and material changes scripts made since the last call. Rebuilds
+    /// the renderer's texture bind group if a script loaded a new texture.
+    pub fn apply_script_asset_commands(&mut self, renderer: &mut Renderer) {
+        use crate::scripting::lua::AssetCommand;
+
+        let commands = self.runtime.scripting_mut().take_pending_asset_commands();
+        if commands.is_empty() {
+            return;
+        }
+        let mut textures_loaded = false;
+        for pending in commands {
+            if !self.main_world().contains(pending.entity) {
+                continue;
+            }
+            let outcome = match &pending.command {
+                AssetCommand::Material(patch) => {
+                    crate::remote::handlers::patch_material(self, renderer, pending.entity, patch)
+                        .map(|loaded| textures_loaded |= loaded)
+                }
+                AssetCommand::Mesh(mesh) => {
+                    crate::remote::handlers::set_mesh(self, renderer, pending.entity, mesh)
+                }
+            };
+            if let Err(err) = outcome {
+                warn!(target: "script", "Mesh/material change for {:?} failed: {err}", pending.entity);
+            }
+        }
+        if textures_loaded {
+            renderer.update_texture_bind_group(&self.assets);
+        }
     }
 
     pub fn process_pending_gltf_imports(&mut self, renderer: &mut Renderer) {

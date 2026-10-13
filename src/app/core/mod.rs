@@ -7,7 +7,7 @@ use runtime::RuntimeController;
 use scheduler::Scheduler;
 
 pub use render_hooks::{RenderParams, RenderResult};
-pub use runtime::{RuntimeMode, RuntimeStateHandle, RuntimeTransition};
+pub use runtime::{RuntimeMode, RuntimeStateHandle, RuntimeTransition, MAX_TIME_SCALE};
 pub use scheduler::{
     FrameStep, GpuUpdateContext, GpuUpdateSystem, StartupContext, StartupSystem, UpdateContext,
     UpdateSystem,
@@ -305,10 +305,13 @@ impl AppCore {
     pub fn run_update_stage(&mut self, frame: &FrameStep) -> SceneHandle {
         let runtime_mode = self.runtime.mode();
         let handle = frame.scene_handle();
-        match self
-            .scheduler
-            .run_update_stage(&mut self.workspace, handle, frame.dt(), runtime_mode)
-        {
+        match self.scheduler.run_update_stage(
+            &mut self.workspace,
+            handle,
+            frame.dt(),
+            runtime_mode,
+            self.runtime.state_handle().time_scale(),
+        ) {
             Some(new_handle) => new_handle,
             None => {
                 log::warn!(
@@ -356,7 +359,7 @@ impl AppCore {
             .render_region
             .map(|region| region.width() as f32 / region.height() as f32)
             .unwrap_or_else(|| renderer.aspect_ratio());
-        let gizmos_enabled = self.runtime.gizmos_enabled();
+        let gizmos_enabled = self.runtime.gizmos_enabled() && params.camera_override.is_none();
         let mut scene = match self.workspace.scene_mut_by_handle(handle) {
             Some(scene) => scene,
             None => {
@@ -374,7 +377,10 @@ impl AppCore {
         std::mem::swap(&mut batcher, &mut self.batcher);
 
         let mut custom_render_request = render_hooks.prepare_request();
-        renderer.set_camera(scene.camera(), aspect);
+        renderer.set_camera(
+            params.camera_override.as_ref().unwrap_or(scene.camera()),
+            aspect,
+        );
         renderer.set_render_region(params.render_region);
 
         let render_result = scene.render(

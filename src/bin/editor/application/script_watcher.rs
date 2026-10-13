@@ -12,7 +12,11 @@ use std::time::{Duration, Instant};
 #[cfg(not(target_arch = "wasm32"))]
 use log::warn;
 
-/// Watches for Lua script (.lua) file updates on native builds.
+/// File extensions the watcher reports: Lua scripts and texture images.
+#[cfg(not(target_arch = "wasm32"))]
+const WATCHED_EXTENSIONS: &[&str] = &["lua", "png", "jpg", "jpeg", "tga", "bmp"];
+
+/// Watches for Lua script (.lua) and texture image updates on native builds.
 /// Supports debouncing to avoid triggering multiple reloads for rapid saves.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) struct ScriptWatcher {
@@ -89,7 +93,7 @@ impl ScriptWatcher {
         self.last_change_time.clear();
     }
 
-    /// Polls for file events and returns the set of .lua files that changed.
+    /// Polls for file events and returns the scripts and images that changed.
     /// Applies debouncing to avoid rapid reload cycles.
     pub(super) fn poll(&mut self) -> Vec<PathBuf> {
         let mut changed = HashSet::new();
@@ -101,12 +105,13 @@ impl ScriptWatcher {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) => {
                             for path in event.paths {
-                                // Only process .lua files
-                                if path
-                                    .extension()
-                                    .and_then(|ext| ext.to_str())
-                                    .is_some_and(|ext| ext.eq_ignore_ascii_case("lua"))
-                                    && path.exists()
+                                if path.extension().and_then(|ext| ext.to_str()).is_some_and(
+                                    |ext| {
+                                        WATCHED_EXTENSIONS
+                                            .iter()
+                                            .any(|watched| ext.eq_ignore_ascii_case(watched))
+                                    },
+                                ) && path.exists()
                                 {
                                     // Check debounce
                                     if let Some(last_change) = self.last_change_time.get(&path) {

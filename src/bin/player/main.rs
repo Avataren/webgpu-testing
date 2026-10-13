@@ -128,9 +128,8 @@ impl RenderApplication for ProjectPlayer {
         let mut all_responses = HashMap::new();
         for (entity, commands) in &script_ui.commands {
             let mut responses = HashMap::new();
-            let (overlays, widgets): (Vec<&UiCommand>, Vec<&UiCommand>) = commands
-                .iter()
-                .partition(|command| matches!(command, UiCommand::AnchoredPanel { .. }));
+            let (overlays, widgets): (Vec<&UiCommand>, Vec<&UiCommand>) =
+                commands.iter().partition(|command| command.is_overlay());
 
             if !overlays.is_empty() {
                 egui::Area::new(egui::Id::new(("script_hud", *entity)))

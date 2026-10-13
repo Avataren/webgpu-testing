@@ -579,7 +579,13 @@ where
                     #[cfg(not(feature = "egui"))]
                     let render_region: Option<RenderRegion> = None;
 
-                    let params = RenderParams { render_region };
+                    let camera_override = remote
+                        .as_ref()
+                        .and_then(|hub| hub.borrow_mut().capture_camera_override());
+                    let params = RenderParams {
+                        render_region,
+                        camera_override,
+                    };
 
                     let result =
                         self.core

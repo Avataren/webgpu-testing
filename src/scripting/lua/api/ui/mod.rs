@@ -44,7 +44,7 @@ mod commands;
 mod context;
 
 pub use commands::{merge_ui_responses, Anchor, UiCommand, UiResponse};
-pub use context::UiContext;
+pub use context::{UiCameraGuard, UiContext};
 
 use mlua::{Lua, UserData, UserDataMethods};
 
@@ -73,6 +73,7 @@ use mlua::{Lua, UserData, UserDataMethods};
 /// - `ui:menu_item(id, text)` - Create menu item, returns true if clicked
 /// - `ui:horizontal(callback)` - Layout items horizontally (single row)
 /// - `ui:horizontal_wrapped(callback)` - Layout items horizontally with wrapping
+/// - `ui:world_label(x, y, z, text[, {color = {r, g, b, a}, size = 16, backdrop = false}])` - Draw text over the scene at a world position; returns whether it is on screen
 /// - `ui:anchored_panel(id, anchor, offset_x, offset_y, width, height, callback)` - Render a panel at a fixed viewport position (`anchor` is one of `top_left`, `top_center`, `top_right`, `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`)
 /// - `ui:get_viewport_size()` - Get viewport dimensions as {width, height} table
 /// - `ui:get_pixels_per_point()` - Get DPI scaling factor
@@ -144,6 +145,30 @@ impl UserData for UiContext {
             )| {
                 let anchor = parse_anchor(&anchor)?;
                 this.anchored_panel(id, anchor, offset_x, offset_y, width, height, callback)
+            },
+        );
+
+        // Text over the scene at a world position (labels, floating score text)
+        methods.add_method(
+            "world_label",
+            |_, this, (x, y, z, text, options): (f32, f32, f32, String, Option<mlua::Table>)| {
+                let mut color = [255u8; 4];
+                let mut size = 16.0;
+                let mut backdrop = false;
+                if let Some(options) = options {
+                    if let Some(rgba) = options.get::<Option<Vec<f32>>>("color")? {
+                        for (channel, value) in color.iter_mut().zip(rgba) {
+                            *channel = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+                        }
+                    }
+                    if let Some(value) = options.get::<Option<f32>>("size")? {
+                        size = value.clamp(4.0, 200.0);
+                    }
+                    if let Some(value) = options.get::<Option<bool>>("backdrop")? {
+                        backdrop = value;
+                    }
+                }
+                Ok(this.world_label([x, y, z], text, color, size, backdrop))
             },
         );
 

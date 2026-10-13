@@ -241,6 +241,25 @@ pub fn tools() -> Vec<Tool> {
             schema: empty(),
             action: Action::Local,
         },
+        Tool {
+            name: "batch",
+            description: "Run several tool calls in one round trip, in order, e.g. a sequence of entity_spawn/entity_update calls. Each result is returned in order (screenshot images are left out). Stops at the first error unless stop_on_error is false.",
+            schema: object(json!({
+                "calls": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": { "type": "string", "description": "Tool name, e.g. entity_spawn" },
+                            "arguments": { "type": "object" }
+                        },
+                        "required": ["tool"]
+                    }
+                },
+                "stop_on_error": { "type": "boolean", "description": "Default true" }
+            }), &["calls"]),
+            action: Action::Local,
+        },
         // ---- Overview ----
         Tool {
             name: "engine_info",
@@ -318,8 +337,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "entity_delete",
-            description: "Delete an entity and all its children.",
-            schema: object(json!({ "entity": entity_ref() }), &["entity"]),
+            description: "Delete an entity and all its children. Pass entities (a list) or name_contains instead of entity to delete many at once.",
+            schema: object(json!({
+                "entity": entity_ref(),
+                "entities": { "type": "array", "items": { "anyOf": [{ "type": "integer" }, { "type": "string" }] }, "description": "Delete all of these entities instead of one" },
+                "name_contains": { "type": "string", "description": "Delete every entity whose name contains this (case-insensitive)" }
+            }), &[]),
             action: Action::Engine("entity.delete"),
         },
         Tool {
@@ -331,7 +354,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scripting & runtime ----
         Tool {
             name: "lua_eval",
-            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding or re-parenting many entities; Lua cannot create meshes, materials or lights (use entity_spawn/entity_duplicate for those).",
+            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives (spawn_primitive); Lua cannot create lights or cameras (use entity_spawn for those).",
             schema: object(json!({
                 "code": { "type": "string" },
                 "entity": entity_ref(),
@@ -356,9 +379,41 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "runtime_set",
-            description: "Enter play mode (game scripts run on_created/update, animations play) or stop (the scene is restored to its state before play, with the same entity ids). Takes effect next frame; then use wait.",
-            schema: object(json!({ "mode": { "type": "string", "enum": ["play", "stop"] } }), &["mode"]),
+            description: "Enter play mode (game scripts run on_created/update, animations play) or stop (the scene is restored to its state before play, with the same entity ids). Takes effect next frame; then use wait. time_scale speeds up (or slows, or with 0 pauses) play so long playtests finish sooner; speed-ups run several normal-sized update steps per frame, so game logic behaves as at 1x. wait's seconds stay real seconds. Stopping resets time_scale to 1.",
+            schema: object(json!({
+                "mode": { "type": "string", "enum": ["play", "stop"] },
+                "time_scale": { "type": "number", "minimum": 0, "maximum": 16, "description": "Play speed relative to real time (default 1); can be set before or during play" }
+            }), &[]),
             action: Action::Engine("runtime.set"),
+        },
+        Tool {
+            name: "playtest",
+            description: "One-call playtest: enter play (optionally sped up with time_scale), send scripted input, run for `seconds`, then report failing scripts, new warnings/errors, the sounds played, what changed in the scene (added/removed entities and changed fields), the result of an `eval` Lua expression and a viewport screenshot, and stop again (the scene is restored). Replaces runtime_set + input_send + wait + lua_eval + screenshot + runtime_set.",
+            schema: object(json!({
+                "seconds": { "type": "number", "description": "Real seconds to play (default 3, up to 240); game time is seconds * time_scale" },
+                "time_scale": { "type": "number", "minimum": 0, "maximum": 16, "description": "Play speed (default 1)" },
+                "input": { "type": "array", "items": { "type": "object" }, "description": "Input events as for input_send (key/mouse_button/mouse_move/scroll, action, frames, delay in frames). Everything is released at the end." },
+                "eval": { "type": "string", "description": "Lua evaluated at the end, e.g. \"return GAME.score\"" },
+                "entity": entity_ref(),
+                "screenshot": { "type": "boolean", "description": "Include a viewport screenshot (default true)" },
+                "max_size": { "type": "integer", "description": "Screenshot longest side (default 1280)" },
+                "diff": { "type": "boolean", "description": "Report what play changed in the scene (default true)" },
+                "diff_limit": { "type": "integer", "description": "Most changed entities listed (default 30)" },
+                "stop": { "type": "boolean", "description": "Stop play at the end (default true); false keeps the game running for further inspection" }
+            }), &[]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "scene_mark",
+            description: "Remember the current scene state as the baseline for scene_diff (e.g. before play, before a lua_eval bulk edit).",
+            schema: empty(),
+            action: Action::Engine("scene.mark"),
+        },
+        Tool {
+            name: "scene_diff",
+            description: "What changed since scene_mark: entities added and removed, and for each changed entity the fields that differ as path: [old, new] (transform, visibility, material, lights, script errors, ...). Diff before stopping play, because stop restores the scene.",
+            schema: object(json!({ "limit": { "type": "integer", "description": "Most changed entities listed (default 100)" } }), &[]),
+            action: Action::Engine("scene.diff"),
         },
         Tool {
             name: "wait",
@@ -368,6 +423,30 @@ pub fn tools() -> Vec<Tool> {
                 "seconds": { "type": "number", "description": "Up to 240" }
             }), &[]),
             action: Action::Engine("wait"),
+        },
+        // ---- Audio ----
+        Tool {
+            name: "sound_play",
+            description: "Play a sound file (wav, ogg, mp3, flac) through the engine, e.g. to try a sound effect before a script uses it. Paths are relative to the project (content/audio/hit.wav) or absolute. Returns its id for sound_stop.",
+            schema: object(json!({
+                "path": { "type": "string" },
+                "volume": { "type": "number", "description": "Linear gain (default 1)" },
+                "pitch": { "type": "number", "description": "Playback speed and pitch (default 1)" },
+                "loop": { "type": "boolean" }
+            }), &["path"]),
+            action: Action::Engine("audio.play"),
+        },
+        Tool {
+            name: "sound_stop",
+            description: "Stop one sound by id, or every sound.",
+            schema: object(json!({ "id": { "type": "integer" } }), &[]),
+            action: Action::Engine("audio.stop"),
+        },
+        Tool {
+            name: "audio_status",
+            description: "Sounds playing now and the recently played ones (id, path, volume, pitch, time, audible). You cannot hear the game, so use this (or playtest's sounds_played) to check that scripts play the right sounds at the right moments.",
+            schema: object(json!({ "since": { "type": "integer", "description": "Only plays with an id at least this (next_id from an earlier call)" } }), &[]),
+            action: Action::Engine("audio.status"),
         },
         // ---- Input ----
         Tool {
@@ -410,8 +489,9 @@ pub fn tools() -> Vec<Tool> {
         // ---- Viewing ----
         Tool {
             name: "screenshot",
-            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera, not necessarily the game camera: use camera_set (or play mode) to look through the game's view.",
+            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos and without moving the view.",
             schema: object(json!({
+                "camera": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "\"game\" for the scene's active camera, or a camera entity id/name. Only this capture's frame uses it." },
                 "target": { "type": "string", "enum": ["window", "viewport"], "description": "Default viewport in the editor is usually what you want to judge the game's look" },
                 "max_size": { "type": "integer", "description": "Longest side in pixels (default 1280)" },
                 "save_path": { "type": "string", "description": "Also write the PNG here" }
@@ -556,9 +636,19 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "asset_import",
-            description: "Editor only: import a glTF/GLB model: it is copied into the project, saved as a scene document and instanced into the active scene. Example models are under web/assets/.",
-            schema: object(json!({ "path": { "type": "string" } }), &["path"]),
+            description: "Editor only: bring a file into the project. A glTF/GLB model is copied in, saved as a scene document and instanced into the active scene (example models are under web/assets/). Images, audio, fonts, .lua and .wgsl files are copied into content/textures, audio, fonts, scripts or shaders (or dest) and the result gives the project-relative path to reference. Replacing a texture the scene uses reloads it.",
+            schema: object(json!({
+                "path": { "type": "string", "description": "Source file" },
+                "dest": { "type": "string", "description": "Non-model files: target path relative to the project's content folder, e.g. textures/ui/logo.png" },
+                "overwrite": { "type": "boolean", "description": "Replace an existing file at the target (default false)" }
+            }), &["path"]),
             action: Action::Engine("asset.import"),
+        },
+        Tool {
+            name: "asset_reload",
+            description: "Re-read textures (and scripts) from disk after changing the files, so the scene shows the new images without renaming them. Without path, every texture loaded from a file is reloaded. The editor also does this by itself when an image in the project changes.",
+            schema: object(json!({ "path": { "type": "string", "description": "A file or folder (absolute, or relative to the project)" } }), &[]),
+            action: Action::Engine("asset.reload"),
         },
         Tool {
             name: "editor_select",

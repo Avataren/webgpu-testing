@@ -38,8 +38,9 @@ Options and environment:
   the port (for example an editor you started yourself), it attaches instead. The
   engine's stdout/stderr go to `target/engine-mcp/engine.log` and `engine_output`.
 - Every other tool is one request to the engine (see `src/tools.rs` for the mapping),
-  except `engine_info` (which combines several), `screenshot` (returns an image) and
-  `lua_api_reference` (reads `scripts/LUA_SCRIPTING_README.md`).
+  except `engine_info` (which combines several), `screenshot` (returns an image),
+  `lua_api_reference` (reads `scripts/LUA_SCRIPTING_README.md`), `batch` (runs several
+  tools in one call) and `playtest` (play, input, wait, report, screenshot, stop).
 - Closing the MCP server leaves a launched engine running, so unsaved work in the
   editor is never lost; use `engine_stop` to end it.
 
@@ -48,14 +49,15 @@ Options and environment:
 | Area | Tools |
 |---|---|
 | Process | `engine_launch`, `engine_stop`, `engine_status`, `engine_output`, `engine_build` |
-| Overview | `engine_info`, `engine_stats`, `engine_call` (any method) |
-| Scene | `scene_list_entities`, `scene_tree`, `entity_get`, `assets_list` |
+| Overview | `engine_info`, `engine_stats`, `engine_call` (any method), `batch` |
+| Scene | `scene_list_entities`, `scene_tree`, `entity_get`, `assets_list`, `scene_mark`, `scene_diff` |
 | Editing | `entity_spawn`, `entity_update`, `entity_remove_component`, `entity_delete`, `entity_duplicate` |
 | Scripting | `lua_eval`, `script_status`, `script_reload`, `lua_api_reference` |
-| Runtime | `runtime_set` (play/stop), `wait` |
+| Runtime | `runtime_set` (play/stop, time_scale), `wait`, `playtest` |
+| Audio | `sound_play`, `sound_stop`, `audio_status` |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
-| Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `editor_select`, `editor_undo`, `editor_redo` |
+| Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 
 Value conventions: meters, Y up, -Z forward; rotations as Euler degrees `[x, y, z]`
 applied yaw, pitch, roll (like Lua's `set_rotation`); colors as `[r, g, b(, a)]` in 0..1
