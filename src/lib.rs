@@ -1,6 +1,8 @@
 pub mod app;
 pub mod asset;
 pub mod audio;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod audio_inspect;
 pub mod environment;
 pub mod gpu_particles;
 pub mod io;

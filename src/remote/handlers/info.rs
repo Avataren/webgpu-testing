@@ -3,7 +3,6 @@
 use hecs::Entity;
 use serde_json::{json, Value};
 
-use crate::asset::Handle;
 use crate::scene::{Children, Name, Parent, WorldTransform};
 
 use super::super::json::{entity_id, opt_bool, opt_str, opt_u64, round, vec3_json};
@@ -64,10 +63,26 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let stats = ctx.gpu.renderer.last_frame_stats();
     let dt = ctx.hub.last_dt();
     let scene = &ctx.gpu.scene;
+    let stages = crate::app::core::frame_timings::snapshot();
+    let accounted: f64 = stages.iter().map(|(_, _, average)| average).sum();
+    let breakdown: serde_json::Map<String, Value> = stages
+        .iter()
+        .map(|(stage, last, average)| {
+            (
+                (*stage).to_owned(),
+                json!({ "last_ms": round(*last as f32), "avg_ms": round(*average as f32) }),
+            )
+        })
+        .collect();
     Ok(json!({
         "frame": ctx.hub.frame(),
         "frame_time_ms": round((dt * 1000.0) as f32),
         "fps": fps(dt),
+        "frame_breakdown": breakdown,
+        "frame_breakdown_note": format!(
+            "Time per stage of the engine's frame loop (avg is a running average). The stages sum to {:.1} ms; the rest of frame_time_ms is waiting for the display (vsync) and window events. scripts = Lua update/on_created; render_collect = gathering visible meshes; render_gpu = batching, uploads and recording/submitting GPU passes; present may block on vsync; ui_build/ui_render = egui; gpu_systems = editor systems, particles and remote commands. Measure game performance in the player: the editor's UI and systems add their own cost.",
+            accounted
+        ),
         "entities": scene.main_world().len(),
         "scripts": scene.lua_scripting().script_entities().len(),
         "renderer": {
@@ -80,7 +95,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         },
         "assets": {
             "meshes": scene.assets.meshes.len(),
-            "materials": scene.assets.materials.len(),
+            "materials": scene.assets.materials.live_count(),
             "textures": scene.assets.textures.len(),
         },
     }))
@@ -208,16 +223,16 @@ pub(super) fn assets_list(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Re
     let assets = &ctx.gpu.scene.assets;
     match kind {
         "materials" => {
-            let materials: Vec<Value> = (0..assets.materials.len())
-                .filter_map(|index| {
-                    let handle = Handle::new(index);
-                    let asset = assets.materials.get(handle)?;
+            let materials: Vec<Value> = assets
+                .materials
+                .iter()
+                .map(|(handle, asset)| {
                     let path = asset.canonical_path();
-                    Some(json!({
-                        "handle": index,
+                    json!({
+                        "handle": handle.index(),
                         "path": (!path.as_os_str().is_empty()).then(|| path.display().to_string()),
                         "material": super::entity::material_json(asset),
-                    }))
+                    })
                 })
                 .collect();
             Ok(json!({ "kind": kind, "count": materials.len(), "materials": materials }))

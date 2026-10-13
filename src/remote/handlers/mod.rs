@@ -93,8 +93,16 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "asset.reload",
         "Re-read textures and scripts from disk (all, or under a path)",
     ),
+    (
+        "view.preview",
+        "Lay the game out at another view shape ({aspect} or {size: [w, h]}; {} restores)",
+    ),
     ("audio.play", "Play a sound file (volume, pitch, loop)"),
     ("audio.stop", "Stop one sound, or all"),
+    (
+        "audio.inspect",
+        "Measure a sound file: length, peak/RMS, clipping, silence, loop seam, waveform and spectrogram",
+    ),
     (
         "audio.status",
         "Sounds playing now and recently played (with ids, paths, times)",
@@ -208,6 +216,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
                 Ok(json!({ "stopped": "all" }))
             }
         },
+        "audio.inspect" => audio_inspect(params),
+        "view.preview" => super::preview::set_from_params(params),
         "audio.status" => {
             let recent = crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0));
             let mut status = json!({
@@ -228,6 +238,25 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             "unknown method {method:?}; call engine.methods for the list"
         )),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn audio_inspect(params: &Value) -> RemoteResult {
+    let path = crate::audio::resolve_path(super::json::req_str(params, "path")?)?;
+    let picture = super::json::opt_bool(params, "image").unwrap_or(true);
+    let (mut report, png) = crate::audio_inspect::inspect(&path, picture)?;
+    if let Some(png) = png {
+        report["png_base64"] = json!(base64::encode(&png));
+        report["image"] = json!(
+            "top: waveform (red where it clips); bottom: spectrogram, 30 Hz (bottom) to Nyquist (top) on a log scale, -90..0 dB"
+        );
+    }
+    Ok(report)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn audio_inspect(_params: &Value) -> RemoteResult {
+    Err("audio.inspect needs a native build".into())
 }
 
 /// Group a sound history by file: how often each played, when first and last, and the

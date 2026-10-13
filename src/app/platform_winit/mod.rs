@@ -3,6 +3,7 @@ mod native;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
+use crate::app::core::frame_timings;
 use winit::{
     application::ApplicationHandler,
     event::{DeviceEvent, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
@@ -561,7 +562,9 @@ where
                 if let Some(mut renderer) = self.platform.take_renderer() {
                     #[cfg(feature = "egui")]
                     if let Some(window_handle) = self.platform.window().cloned() {
-                        self.editor.run_ui_frame(window_handle.as_ref());
+                        frame_timings::time("ui_build", || {
+                            self.editor.run_ui_frame(window_handle.as_ref())
+                        });
                     }
 
                     active_handle = self
@@ -590,6 +593,16 @@ where
                     let mut render_region = self.editor.render_region();
                     #[cfg(not(feature = "egui"))]
                     let mut render_region: Option<RenderRegion> = None;
+
+                    // A viewport preview lays the game out at another shape.
+                    if let Some(region) = {
+                        let size = renderer.surface_size();
+                        render_region
+                            .or_else(|| RenderRegion::full(size.width, size.height))
+                            .and_then(crate::remote::preview::preview_region)
+                    } {
+                        render_region = Some(region);
+                    }
 
                     let capture_override = remote
                         .as_ref()
@@ -621,12 +634,14 @@ where
                             if let Some(window_handle) = self.platform.window().cloned() {
                                 let window = window_handle.as_ref();
                                 if let Some(output) = self.editor.take_ui_output() {
-                                    self.editor.render_ui(
-                                        &mut renderer,
-                                        window,
-                                        &mut render_frame,
-                                        output,
-                                    );
+                                    frame_timings::time("ui_render", || {
+                                        self.editor.render_ui(
+                                            &mut renderer,
+                                            window,
+                                            &mut render_frame,
+                                            output,
+                                        )
+                                    });
                                 }
                                 if self.editor.take_exit_request() {
                                     self.core.request_exit();
@@ -641,7 +656,7 @@ where
                                 }
                             }
 
-                            renderer.present(render_frame);
+                            frame_timings::time("present", || renderer.present(render_frame));
                         }
                         Ok(RenderResult::Skipped) => {}
                         Err(err) => {
@@ -655,6 +670,7 @@ where
                     self.platform.put_renderer(renderer);
 
                     self.update_input_state(|input| input.update());
+                    frame_timings::end_frame();
                     if let Some(hub) = &remote {
                         hub.borrow_mut().end_frame(frame.dt());
                     }

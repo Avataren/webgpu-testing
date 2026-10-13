@@ -35,8 +35,11 @@ fn check_primitive(kind: &str) -> LuaResult<()> {
 ///   `base_color_texture`, `normal_texture`, `emissive_texture`, ... (false removes one)
 /// - `set_material_color(entity, r, g, b[, a])` - shorthand for the base color
 /// - `set_mesh(entity, kind)` - replace the geometry with a primitive, or `nil` to remove it
-/// - `spawn_primitive(kind[, name])` - spawn a visible entity with a primitive mesh and
-///   its own material; returns its handle
+/// - `spawn_primitive(kind[, name[, {material_of = entity}]])` - spawn a visible entity
+///   with a primitive mesh and its own material (or `material_of`'s); returns its handle
+/// - `share_material(entity, source)` - draw `entity` with `source`'s material, so many
+///   entities (sparks of one color) use one material. Changing a shared material with
+///   `set_material` gives that entity its own copy again.
 pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
@@ -92,12 +95,33 @@ pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
 
     globals.set(
         "spawn_primitive",
-        lua.create_function(|_, (kind, name): (String, Option<String>)| {
-            check_primitive(&kind)?;
+        lua.create_function(
+            |_, (kind, name, options): (String, Option<String>, Option<mlua::Table>)| {
+                check_primitive(&kind)?;
+                let material_of = match &options {
+                    Some(options) => options.get::<Option<i64>>("material_of")?,
+                    None => None,
+                };
+                with_active_commands(|commands| {
+                    let entity = commands.spawn_entity(name.or_else(|| Some(kind.clone())));
+                    // Shared first, so the mesh change finds a material and makes none.
+                    if let Some(source) = material_of {
+                        commands.resolve_or_pending(source)?;
+                        commands.asset_command(entity, AssetCommand::ShareMaterial(source))?;
+                    }
+                    commands.asset_command(entity, AssetCommand::Mesh(json!(kind)))?;
+                    Ok(entity)
+                })
+            },
+        )?,
+    )?;
+
+    globals.set(
+        "share_material",
+        lua.create_function(|_, (entity, source): (i64, i64)| {
             with_active_commands(|commands| {
-                let entity = commands.spawn_entity(name.or_else(|| Some(kind.clone())));
-                commands.asset_command(entity, AssetCommand::Mesh(json!(kind)))?;
-                Ok(entity)
+                commands.resolve_or_pending(source)?;
+                commands.asset_command(entity, AssetCommand::ShareMaterial(source))
             })
         })?,
     )?;

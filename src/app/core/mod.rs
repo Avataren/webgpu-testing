@@ -1,3 +1,4 @@
+pub mod frame_timings;
 mod render_hooks;
 mod runtime;
 mod scheduler;

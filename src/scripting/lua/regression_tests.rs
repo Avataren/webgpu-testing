@@ -680,3 +680,96 @@ fn parenting_in_the_spawning_chunk_keeps_child_lists_so_despawn_takes_the_childr
         .unwrap();
     assert_eq!(world.query::<&crate::scene::Name>().iter().count(), 0);
 }
+
+#[test]
+fn hot_reload_hands_on_destroyed_result_to_the_new_on_created_and_follows_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("game.lua");
+    let module = dir.path().join("waves.lua");
+    std::fs::write(&module, "return { first = 1 }").unwrap();
+    std::fs::write(
+        &path,
+        r#"
+            local waves = require("waves")
+            function on_created(self_entity, previous)
+                GAME = previous or { wave = waves.first, created = 0 }
+                GAME.created = GAME.created + 1
+            end
+            function on_destroyed(self_entity, reason)
+                if reason == "reload" then return GAME end
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let entity = world.spawn((LuaScriptComponent::new(
+        crate::scripting::LuaScriptSource::file(&path),
+    ),));
+    state.process_scripts(&mut world, DT, false).unwrap();
+    state
+        .eval(&mut world, "GAME.wave = 7", Some(entity))
+        .unwrap();
+
+    // Editing the required module reloads the script that uses it, and the game state
+    // survives because on_destroyed returned it.
+    assert_eq!(state.reload_path(&module), 1);
+    state.process_scripts(&mut world, DT, false).unwrap();
+    state.process_scripts(&mut world, DT, false).unwrap();
+    assert_eq!(state.last_error(entity), None);
+    let result = state
+        .eval(&mut world, "return GAME.wave, GAME.created", Some(entity))
+        .unwrap();
+    assert_eq!(
+        result.values,
+        vec![serde_json::json!(7), serde_json::json!(2)]
+    );
+
+    // A reset (play start or stop) starts fresh.
+    state.reset_runtime();
+    state.process_scripts(&mut world, DT, false).unwrap();
+    let result = state
+        .eval(&mut world, "return GAME.wave, GAME.created", Some(entity))
+        .unwrap();
+    assert_eq!(
+        result.values,
+        vec![serde_json::json!(1), serde_json::json!(1)]
+    );
+}
+
+#[test]
+fn spawn_primitive_can_share_a_material() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    state
+        .eval(
+            &mut world,
+            r#"
+                local a = spawn_primitive("cube", "A")
+                local b = spawn_primitive("cube", "B", { material_of = a })
+                share_material(spawn_entity("C"), a)
+            "#,
+            None,
+        )
+        .unwrap();
+    let commands = state.take_pending_asset_commands();
+    let shares: Vec<_> = commands
+        .iter()
+        .filter_map(|pending| match pending.command {
+            crate::scripting::lua::AssetCommand::ShareMaterial(source) => Some(source),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shares.len(), 2);
+    let a = world
+        .query::<&crate::scene::Name>()
+        .iter()
+        .find(|(_, name)| name.0 == "A")
+        .map(|(entity, _)| entity)
+        .unwrap();
+    // Queued handles are resolved to the source's entity id.
+    assert!(shares
+        .iter()
+        .all(|&source| source as u64 == a.to_bits().get()));
+}

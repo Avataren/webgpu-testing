@@ -36,9 +36,10 @@ impl RenderBridge {
             let world = node.instance().world();
             let world_transform = *node.world_transform();
 
-            for mut object in
-                rendering::build_render_objects(world, &scene.assets, camera_vectors).into_iter()
-            {
+            let objects = crate::app::core::frame_timings::time("render_collect", || {
+                rendering::build_render_objects(world, &scene.assets, camera_vectors)
+            });
+            for mut object in objects {
                 object.transform = world_transform.mul_transform(&object.transform);
                 if let Err(err) = batcher.add(object, &scene.assets) {
                     error!("failed to enqueue render object: {err}");
@@ -100,13 +101,15 @@ impl RenderBridge {
             lights_data.extend_from(&node_lights);
         }
 
-        renderer.render(
-            scene,
-            &scene.assets,
-            batcher,
-            lights_data,
-            scene.environment(),
-            custom_render,
-        )
+        crate::app::core::frame_timings::time("render_gpu", || {
+            renderer.render(
+                scene,
+                &scene.assets,
+                batcher,
+                lights_data,
+                scene.environment(),
+                custom_render,
+            )
+        })
     }
 }

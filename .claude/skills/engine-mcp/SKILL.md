@@ -27,9 +27,12 @@ one `ToolSearch` call rather than one by one. A good starting set:
    engine windows open on (they may be using the other one).
 2. `engine_info`: runtime mode, active scene, value conventions and, in the editor,
    `editor.project` and `editor.startup_dialog_visible`.
-3. No project open? Use `project_create {name, location}` or `project_open {path}`, then
-   `wait {frames: 30}` and check `editor_state`. The startup dialog blocks the editor UI
-   until a project is open. `editor_state.project.scripts_dir` is where scripts go.
+3. No project open? Use `project_create {name, location}` or `project_open {path}`; both
+   return once the project is open. The startup dialog blocks the editor UI until then.
+   `project_create` makes `content/scripts`, `audio` and `textures`, and starts the scene
+   with a dark backdrop, ambient light, a shadowed sun, an active `GameCamera` looking at
+   the origin and a 40 m `Floor` (`template: "empty"` for a bare scene).
+   `editor_state.project.scripts_dir` is where scripts go.
 
 After changing engine *Rust* code, the running process still has the old code:
 `engine_build` to see compiler errors, then `engine_launch {restart: true}` (only for an
@@ -43,9 +46,9 @@ engine you launched; save first).
 - Colors: `[r, g, b(, a)]` in 0..1 or `"#rrggbb"`.
 - Entities: the numeric id from any result (the same i64 handle Lua uses) or a
   *unique* name. Duplicate names are an error that lists the ids.
-- Primitives differ in size: the cube spans -0.5..0.5, the sphere has radius 1, and
-  cylinder and cone lie along Z. `entity_get` shows `mesh.local_bounds`. The plane is 1x1
-  in XY facing +Z, so a floor is
+- Primitives differ in size: the cube spans -0.5..0.5, the sphere has radius 1, the
+  cylinder (radius 1, length 1), cone and torus (ring 1, tube 0.35) lie along Z.
+  `entity_get` shows `mesh.local_bounds`. The plane is 1x1 in XY facing +Z, so a floor is
   `entity_spawn {kind: "plane", rotation: [-90, 0, 0], scale: 30}`.
 - A scene needs a light to be lit, for example
   `entity_spawn {kind: "directional_light"}`.
@@ -68,8 +71,10 @@ engine you launched; save first).
   UI). `screenshot {camera: "game"}` (or a camera entity) renders that one frame through
   the game camera (viewport only, no gizmos or editor grid) without moving the editor
   view. `camera` can also be a one-off pose `{position, target, fov_deg}` for looking
-  around, and `aspect: "16:9"` (or `"4:3"`, `1.5`) previews the framing at another window
-  shape, so check the game camera at both. `camera_set` edits the game camera entity
+  around, and `aspect: "16:9"` (or `"4:3"`, `1.5`, or `viewport_size: [w, h]`) lays the
+  game out at another window shape for the capture: scripts see it through
+  `get_viewport_size()` and HUDs anchor to it, so check the game camera and HUD at both.
+  `viewport_preview` keeps a shape on across several calls; `playtest` takes `aspect` too. `camera_set` edits the game camera entity
   while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
 - `environment_set` controls background, ambient light, HDR sky and grading;
   `postprocess_set` toggles SSAO, bloom and FXAA.
@@ -79,7 +84,9 @@ engine you launched; save first).
   (or the editor's file watcher) shows the new version under the same path.
 - `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it). A
   busy game plays the same files hundreds of times, so pass `summary: true` for one entry
-  per file.
+  per file. Run `sound_inspect {path}` on every sound you generate or import: it reports
+  length, peak/RMS, clipping, silence at either end and whether the loop seam clicks,
+  with notes on problems and a waveform/spectrogram image.
 - Material `emissive` makes a surface glow in its own color; above 1 it is HDR, which is
   what lets bloom pick up a lit surface (try 2 to 5 with bloom on).
 - The cone's tip points toward +Z, opposite to forward: ships and arrows made from cones
@@ -120,17 +127,33 @@ Facts that change how you write scripts:
   (`ui:world_label`, `ui:screen_label` in `on_ui`). `despawn_entity` removes entities, so
   bullets and sparks can be spawned and removed; a script that spawns its own pool should
   remove it in `on_destroyed(self, reason)`, which also runs before a hot reload (otherwise
-  every saved edit leaks a second pool). Reusing hidden entities is still cheapest for
-  very short-lived objects.
+  every saved edit leaks a second pool). Materials of despawned entities are freed.
+  Hiding a parent hides its children.
+- Effects: `emit_particles(x, y, z, {count, color, intensity, speed, life, size, shape,
+  gravity})` bursts GPU particles (sparks, explosions, `shape = "ring"` shockwaves) for
+  almost no CPU cost; prefer it to spark entities. For pooled entities of one color,
+  `spawn_primitive(kind, name, {material_of = first})` or `share_material` makes them
+  share one material.
+- Split a big game into files: `require("waves")` returns a module, `include("autopilot")`
+  runs a file inside the script. Editing either hot-reloads the scripts that use it.
+- `save_data(key, text)` / `load_data(key)` keep a high score or settings between runs
+  (per user and project, outside the repo; `localStorage` on the web).
+- Hot reload resets script locals. Return the game state from `on_destroyed(self, reason)`
+  when `reason == "reload"` and take it in `on_created(self, previous)` to keep playing
+  through edits.
 - `get_time()` is game time since play started (it follows `time_scale`); `get_forward`,
   `get_right`, `get_up` give an entity's world directions; `screen_to_ground`,
   `screen_to_world_ray` and `world_to_screen` convert between mouse pixels and the world,
   so mouse aiming does not need hand-written projection math.
 - Mutations from a hook are queued and applied after it returns, so reading back a
   value you just set in the same hook gives the old value.
-- Keep game state in the state API (`set_f64`/`get_f64`, `set_state`/`get_state`). It
-  survives hot reloads and is readable from outside with
-  `lua_eval {entity, code: "get_f64('score', 0)"}`.
+- Keep game state in a global table (`GAME = {...}`) or the state API (`set_f64`,
+  `set_state`). Both are readable from outside with `lua_eval {entity, code: "return GAME.wave"}`.
+- Add test hooks: a global `RT` table next to `GAME` with functions such as
+  `RT.jump(wave)`, `RT.spawn(kind, x, z)`, `RT.god(true)` and `RT.units()`, called through
+  `lua_eval {entity}`. Then any enemy type or wave can be checked in seconds, with
+  `runtime_set {time_scale: 0}` plus `screenshot {camera: {position, target}}` to look at a
+  frozen frame from any angle, instead of playing up to it.
 - Input key names: letters are upper case (`"W"`), and the named keys are `Space`,
   `Return`, `Escape`, `ArrowUp`/`Down`/`Left`/`Right`, `Shift`, `Control`, `Alt`, `Tab`.
   Mouse buttons are 0 left, 1 right, 2 middle.
@@ -153,14 +176,17 @@ printed.
 
 - A bare expression returns its value; otherwise `return` one (several values come back
   as an array).
-- Without `entity`, globals persist between calls like a REPL. With `entity`, the code
-  runs inside that entity's script, so it can read or change the script's globals and
-  state.
+- Without `entity`, globals persist between calls like a REPL, but script globals
+  (`GAME`) are not visible: the error names the script that defines the global. With
+  `entity`, the code runs inside that entity's script, so it can read or change the
+  script's globals and state. `playtest`'s `eval` finds the script by itself when only one
+  defines the global.
 - Pass `read_only: true` for pure queries, so they don't add undo steps in the editor.
 
 ## Persisting work
 
-- `project_save` writes the project. It refuses while playing; stop first.
+- `project_save` writes the project and returns once the files are on disk, listing them.
+  It refuses while playing; stop first.
 - `environment_set` creates an Environment entity when the scene has none, because only
   that entity round-trips (the project-level environment is not restored on load).
 - Script and texture paths inside the project are saved relative to it, so projects
@@ -169,7 +195,10 @@ printed.
   in editor mode.
 - To check the game outside the editor:
   `engine_launch {target: "player", project: "<dir>"}` on a saved project. It starts in
-  play mode.
+  play mode and hot-reloads edited scripts.
+- **Measure performance in the player**, not the editor: the editor's UI and systems cost
+  several times more per frame. `engine_stats.frame_breakdown` shows where each frame goes
+  (scripts, transforms, render_collect, render_gpu, ui, present, ...).
 
 ## When something goes wrong
 

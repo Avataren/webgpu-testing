@@ -223,10 +223,20 @@ impl EditorApplication {
                             .to_string(),
                     );
                 }
+                let after_seq = self
+                    .project_system()
+                    .controller()
+                    .last_save()
+                    .map_or(0, |save| save.seq);
                 self.project_system_mut()
                     .controller_mut()
                     .request_save_project(dir.clone());
-                Ok(json!({ "queued": "project.save", "path": dir.display().to_string() }))
+                Ok(json!({
+                    "queued": "project.save",
+                    "path": dir.display().to_string(),
+                    "save_seq": after_seq + 1,
+                    "note": "Saved on the next frame; editor.state's last_save reports the outcome.",
+                }))
             })(),
             "scene.new" => {
                 self.shared.runtime_state.request_mode(RuntimeMode::Editor);
@@ -345,6 +355,11 @@ impl EditorApplication {
                 "directory": dir.display().to_string(),
                 "content_root": content_root.as_ref().map(|root| root.display().to_string()),
                 "scripts_dir": content_root.as_ref().map(|root| root.join("scripts").display().to_string()),
+            })),
+            "last_save": controller.last_save().map(|save| json!({
+                "seq": save.seq,
+                "directory": save.dir.display().to_string(),
+                "error": save.error,
             })),
             "startup_dialog_visible": self.project_system().is_startup_dialog_visible(),
             "runtime_mode": match self.shared.runtime_state.active_mode() {

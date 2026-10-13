@@ -19,11 +19,30 @@ pub(super) fn eval(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRes
         None | Some(Value::Null) => None,
         Some(value) => Some(entity_from_json(ctx.gpu.scene.main_world(), value)?),
     };
-    let output = ctx
-        .gpu
-        .scene
-        .eval_lua(code, entity)
-        .map_err(|err| err.to_string())?;
+    let mut ran_in = None;
+    let output = match ctx.gpu.scene.eval_lua(code, entity) {
+        Ok(output) => output,
+        Err(err) if entity.is_none() => {
+            let message = err.to_string();
+            // playtest's eval asks to run inside the script when exactly one defines the
+            // global the console could not find.
+            let owner = match script_global_owners(ctx, &message).as_slice() {
+                [owner] if opt_bool(params, "fallback_to_script").unwrap_or(false) => Some(*owner),
+                _ => None,
+            };
+            match owner {
+                Some(owner) => {
+                    ran_in = Some(owner);
+                    ctx.gpu
+                        .scene
+                        .eval_lua(code, Some(owner))
+                        .map_err(|err| err.to_string())?
+                }
+                None => return Err(message.clone() + &script_global_hint(ctx, &message)),
+            }
+        }
+        Err(err) => return Err(err.to_string()),
+    };
     ctx.gpu
         .scene
         .apply_script_asset_commands(&mut *ctx.gpu.renderer);
@@ -36,7 +55,54 @@ pub(super) fn eval(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRes
         [single] => single.clone(),
         many => Value::Array(many.to_vec()),
     };
-    Ok(json!({ "result": result, "printed": output.printed }))
+    let mut reply = json!({ "result": result, "printed": output.printed });
+    if let Some(owner) = ran_in {
+        reply["ran_in_script_of"] = json!({
+            "id": entity_id(owner),
+            "name": entity_name(ctx.gpu.scene.main_world(), owner),
+        });
+    }
+    Ok(reply)
+}
+
+/// Scripted entities defining the global a "nil global 'NAME'" error names.
+fn script_global_owners(ctx: &RemoteContext<'_, '_>, message: &str) -> Vec<hecs::Entity> {
+    message
+        .split("global '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .map(|name| ctx.gpu.scene.lua_scripting().entities_with_global(name))
+        .unwrap_or_default()
+}
+
+/// When console code fails on a nil global that a script defines, say which entity to
+/// pass so the code runs inside that script: console code cannot see script globals.
+fn script_global_hint(ctx: &RemoteContext<'_, '_>, message: &str) -> String {
+    let Some(name) = message
+        .split("global '")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+    else {
+        return String::new();
+    };
+    let scene = &ctx.gpu.scene;
+    let owners: Vec<String> = script_global_owners(ctx, message)
+        .into_iter()
+        .map(|entity| match entity_name(scene.main_world(), entity) {
+            Some(entity_name) => format!("{entity_name:?} ({})", entity_id(entity)),
+            None => entity_id(entity).to_string(),
+        })
+        .collect();
+    match owners.as_slice() {
+        [] => String::new(),
+        [owner] => format!(
+            "\nhint: `{name}` is a global of the script on {owner}. Code without `entity` runs in a separate console environment; pass entity: {owner} to run inside that script."
+        ),
+        owners => format!(
+            "\nhint: `{name}` is a global of the scripts on {}. Code without `entity` runs in a separate console environment; pass one of them as entity.",
+            owners.join(", ")
+        ),
+    }
 }
 
 pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {

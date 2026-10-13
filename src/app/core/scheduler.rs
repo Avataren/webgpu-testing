@@ -407,7 +407,7 @@ impl Scheduler {
                 close_scene_requests: Vec::new(),
                 rename_scene_requests: Vec::new(),
             };
-            (system)(&mut ctx);
+            super::frame_timings::time("update_systems", || (system)(&mut ctx));
 
             let active_request = ctx.take_active_scene_request();
             let close_requests = ctx.take_close_scene_requests();
@@ -428,7 +428,7 @@ impl Scheduler {
         }
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
-            scene.propagate_transforms();
+            super::frame_timings::time("transforms", || scene.propagate_transforms());
             Some(active_handle)
         } else {
             log::warn!(
@@ -453,7 +453,9 @@ impl Scheduler {
         // Scripts queue mesh and material changes during the update stage; they need
         // the renderer, so they land here, before anything is drawn.
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
-            scene.apply_script_asset_commands(renderer);
+            super::frame_timings::time("script_assets", || {
+                scene.apply_script_asset_commands(renderer)
+            });
         }
 
         for system in &mut self.gpu_systems {
@@ -476,7 +478,8 @@ impl Scheduler {
                 open_scene_requests: Vec::new(),
                 rename_scene_requests: Vec::new(),
             };
-            (system)(&mut ctx);
+            // Editor systems, particles and remote-control commands run here.
+            super::frame_timings::time("gpu_systems", || (system)(&mut ctx));
 
             let swap = ctx.take_workspace_swap();
             let active_request = ctx.take_active_scene_request();
@@ -501,7 +504,7 @@ impl Scheduler {
         }
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
-            scene.propagate_transforms();
+            super::frame_timings::time("transforms", || scene.propagate_transforms());
         } else {
             log::warn!(
                 "GPU propagation skipped: active scene handle {:?} is unavailable",

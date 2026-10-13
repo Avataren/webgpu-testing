@@ -623,7 +623,17 @@ impl EditorApplication {
     /// Top-level anchored panels are HUD overlays positioned inside the game viewport;
     /// all other widgets go into a window titled after the entity.
     fn render_scene_script_ui(&self, ctx: &egui::Context) -> HashMap<Entity, ScriptUiResponses> {
-        let game_viewport_rect = self.shared.viewports.game_viewport.rect();
+        // HUDs follow a viewport preview (view.preview) like the game view does.
+        let game_viewport_rect = self.shared.viewports.game_viewport.rect().map(|rect| {
+            let (x, y, w, h) = wgpu_cube::remote::preview::preview_rect(
+                rect.min.x,
+                rect.min.y,
+                rect.width(),
+                rect.height(),
+                ctx.pixels_per_point(),
+            );
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+        });
         let mut scene_responses = HashMap::new();
 
         for (entity, commands) in &self.shared.script_ui_commands {

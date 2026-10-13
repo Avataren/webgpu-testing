@@ -177,6 +177,8 @@ impl RuntimeController {
             if !scene.has_any_lights() {
                 scene.add_default_lighting();
             }
+            // Restoring rebuilds every entity with fresh inline materials.
+            scene.collect_unused_materials();
         }
 
         crate::audio::stop_all();

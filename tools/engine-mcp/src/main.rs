@@ -332,7 +332,12 @@ impl Server {
                      - Entity ids returned by the engine tools are the same i64 handles Lua uses. They stay valid across play/stop and undo.\n\
                      - lua_eval runs with this whole API; `return` a value (or write a bare expression) to get it back.\n\
                      - lua_eval with `entity` runs inside that entity's script, so it sees the script's globals but not its `local` variables. \
-                     To inspect game state while testing, keep it in a global table (e.g. `GAME = {{ score = 0 }}`) or in the state API (`set_i32`, ...).\n\
+                     To inspect game state while testing, keep it in a global table (e.g. `GAME = {{ score = 0 }}`) or in the state API (`set_i32`, ...). \
+                     Without `entity`, a missing global's error names the script that defines it, and playtest's eval falls back to that script by itself.\n\
+                     - Test hooks: next to `GAME`, expose a global table of functions that jump straight to the situation you want to look at, \
+                     e.g. `RT = {{ jump = function(wave) ... end, spawn = function(kind, x, z) ... end, god = function(on) ... end, units = function() ... end }}`, \
+                     and call them with lua_eval {{entity}}. One enemy type or wave can then be checked in seconds instead of playing up to it.\n\
+                     - Measure performance in the player (engine_launch target player), not the editor: engine_stats' frame_breakdown shows where a frame's time goes.\n\
                      - Example scripts: scripts/*.lua and examples/scripts/*.lua in {}.\n",
                     self.engine.repo.display()
                 );
@@ -397,10 +402,27 @@ impl Server {
                     .ok_or("the editor did not say where the project goes")?;
                 let directory = PathBuf::from(directory);
                 self.wait_for_project(&directory)?;
-                Ok(Output::Json(json!({
+                let template = args
+                    .get("template")
+                    .and_then(Value::as_str)
+                    .unwrap_or("starter");
+                let starter = match template {
+                    "starter" => Some(self.build_starter_scene()?),
+                    "empty" => None,
+                    other => {
+                        return Err(format!(
+                            "unknown template {other:?}; use starter or empty (the project was created empty)"
+                        ))
+                    }
+                };
+                let mut result = json!({
                     "created": directory.display().to_string(),
                     "editor": self.engine.call("editor.state", json!({})).map_err(|err| err.to_string())?,
-                })))
+                });
+                if let Some(starter) = starter {
+                    result["starter_scene"] = starter;
+                }
+                Ok(Output::Json(result))
             }
             "project_open" => {
                 let path = args
@@ -415,14 +437,47 @@ impl Server {
                 };
                 self.open_project(&path).map(Output::Json)
             }
+            "project_save" => self.save_project(args).map(Output::Json),
             "playtest" => self.playtest(args),
+            "sound_inspect" => {
+                let mut report = self
+                    .engine
+                    .call("audio.inspect", args.clone())
+                    .map_err(|err| err.to_string())?;
+                match report
+                    .as_object_mut()
+                    .and_then(|report| report.remove("png_base64"))
+                    .and_then(|data| data.as_str().map(str::to_owned))
+                {
+                    Some(png_base64) => Ok(Output::Image {
+                        png_base64,
+                        caption: report,
+                    }),
+                    None => Ok(Output::Json(report)),
+                }
+            }
             "screenshot" => {
                 let mut params = args.clone();
                 params["inline"] = json!(true);
-                let mut result = self
+                // Another shape is laid out for real (scripts, cameras and HUDs see it)
+                // for a few frames, captured, then the full view comes back.
+                let preview = preview_params(args);
+                if let Some(preview) = &preview {
+                    self.set_preview(preview.clone(), 3)?;
+                    if let Some(object) = params.as_object_mut() {
+                        object.remove("viewport_size");
+                        object.remove("aspect");
+                    }
+                    params["target"] = json!("viewport");
+                }
+                let shot = self
                     .engine
                     .call("screenshot", params)
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| err.to_string());
+                if preview.is_some() {
+                    self.set_preview(json!({}), 1)?;
+                }
+                let mut result = shot?;
                 let png_base64 = result
                     .as_object_mut()
                     .and_then(|object| object.remove("png_base64"))
@@ -435,6 +490,19 @@ impl Server {
             }
             other => Err(format!("tool {other} is not implemented")),
         }
+    }
+
+    /// Turn a viewport preview on (`{aspect}` / `{size}`) or off (`{}`) and let `frames`
+    /// frames pass so scripts and the layout adapt.
+    fn set_preview(&mut self, preview: Value, frames: u64) -> Result<Value, String> {
+        let result = self
+            .engine
+            .call("view.preview", preview)
+            .map_err(|err| err.to_string())?;
+        self.engine
+            .call("wait", json!({ "frames": frames }))
+            .map_err(|err| err.to_string())?;
+        Ok(result)
     }
 
     /// Whether this server is older than its sources, and the repository's commit, so a
@@ -519,6 +587,10 @@ impl Server {
         if diff {
             call(&mut self.engine, "scene.mark", json!({}))?;
         }
+        let preview = preview_params(args);
+        if let Some(preview) = &preview {
+            self.set_preview(preview.clone(), 1)?;
+        }
         let mut start = json!({ "mode": "play" });
         if let Some(scale) = args.get("time_scale") {
             start["time_scale"] = scale.clone();
@@ -541,7 +613,8 @@ impl Server {
         let runtime = call(&mut self.engine, "runtime.get", json!({}))?;
         report.insert("time_scale".into(), runtime["time_scale"].clone());
         if let Some(code) = args.get("eval").and_then(Value::as_str) {
-            let mut params = json!({ "code": code, "read_only": true });
+            // Without an entity, a global only a script defines (GAME) is looked up there.
+            let mut params = json!({ "code": code, "read_only": true, "fallback_to_script": true });
             if let Some(entity) = args.get("entity") {
                 params["entity"] = entity.clone();
             }
@@ -613,6 +686,7 @@ impl Server {
             .unwrap_or(!lean)
         {
             let mut params = json!({ "target": "viewport", "inline": true });
+            // The preview is still on here, so the capture shows the previewed shape.
             if let Some(size) = args.get("max_size") {
                 params["max_size"] = size.clone();
             }
@@ -625,6 +699,9 @@ impl Server {
         };
 
         call(&mut self.engine, "input.clear", json!({}))?;
+        if preview.is_some() {
+            self.set_preview(json!({}), 1)?;
+        }
         if stop {
             call(&mut self.engine, "runtime.set", json!({ "mode": "stop" }))?;
             call(&mut self.engine, "wait", json!({ "frames": 2 }))?;
@@ -789,6 +866,97 @@ impl Server {
         Ok(json!({ "opened": project.display().to_string() }))
     }
 
+    /// Fill a new project's scene with what every game needs first: a dark backdrop with
+    /// usable ambient light and grading, a shadowed sun, an active camera looking
+    /// down at the origin and a 40 m floor; then save it.
+    fn build_starter_scene(&mut self) -> Result<Value, String> {
+        let calls = [
+            (
+                "environment.set",
+                json!({
+                    "clear_color": "#05070f",
+                    "ambient_intensity": 0.35,
+                    "color_grading": { "exposure": 1.05, "saturation": 1.15, "contrast": 1.05 },
+                }),
+            ),
+            (
+                "entity.spawn",
+                json!({
+                    "kind": "directional_light", "name": "Sun",
+                    "translation": [0, 10, 0], "rotation": [-55, 25, 0],
+                    "directional_light": { "color": [1.0, 0.96, 0.9], "intensity": 1.6, "shadow_size": 30 },
+                    "quiet": true,
+                }),
+            ),
+            (
+                "entity.spawn",
+                json!({
+                    "kind": "camera", "name": "GameCamera",
+                    "translation": [0, 14, 12], "look_at": [0, 0, 0],
+                    "camera": { "fov_deg": 50, "near": 0.3, "far": 300 },
+                    "quiet": true,
+                }),
+            ),
+            (
+                "entity.spawn",
+                json!({
+                    "kind": "plane", "name": "Floor",
+                    "rotation": [-90, 0, 0], "scale": [40, 40, 1],
+                    "material": { "color": "#262b36", "roughness": 0.9, "metallic": 0.0 },
+                    "quiet": true,
+                }),
+            ),
+        ];
+        for (method, params) in calls {
+            self.engine
+                .call(method, params)
+                .map_err(|err| format!("starter scene: {method} failed: {err}"))?;
+        }
+        let saved = self.save_project(&json!({}))?;
+        Ok(json!({
+            "entities": ["Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0)"],
+            "environment": "dark blue backdrop, ambient 0.35, slight color grading",
+            "note": "Post-processing (bloom, SSAO, FXAA) is an engine setting, on by default, not stored in the project. Change or delete any of this; pass template: \"empty\" for a bare scene.",
+            "saved": saved["written"],
+        }))
+    }
+
+    /// Save the project, wait for the editor to finish, and list the files it wrote.
+    fn save_project(&mut self, args: &Value) -> Result<Value, String> {
+        // File times come from a coarse kernel clock that can lag this one by a tick.
+        let started = SystemTime::now() - Duration::from_millis(20);
+        let queued = self
+            .engine
+            .call("project.save", args.clone())
+            .map_err(|err| err.to_string())?;
+        let seq = queued["save_seq"].as_u64().unwrap_or(0);
+        let directory = PathBuf::from(queued["path"].as_str().unwrap_or_default());
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            self.engine
+                .call("wait", json!({ "frames": 1 }))
+                .map_err(|err| err.to_string())?;
+            let state = self
+                .engine
+                .call("editor.state", json!({}))
+                .map_err(|err| err.to_string())?;
+            let save = &state["last_save"];
+            if save["seq"].as_u64().is_some_and(|done| done >= seq) {
+                if let Some(error) = save["error"].as_str() {
+                    return Err(format!("saving {} failed: {error}", directory.display()));
+                }
+                break;
+            }
+            if Instant::now() > deadline {
+                return Err("the editor did not finish saving within 60s; check logs".into());
+            }
+        }
+        let mut written = Vec::new();
+        collect_modified(&directory, &directory, started, &mut written);
+        written.sort();
+        Ok(json!({ "saved": directory.display().to_string(), "written": written }))
+    }
+
     /// Wait until the editor reports `project` as its open project.
     fn wait_for_project(&mut self, project: &Path) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
@@ -810,6 +978,37 @@ impl Server {
             "the project did not finish loading within 60s; check logs. Last editor state: {}",
             pretty(&last_state)
         ))
+    }
+}
+
+/// The `view.preview` parameters for a tool's `aspect` or `viewport_size`, if any.
+fn preview_params(args: &Value) -> Option<Value> {
+    if let Some(size) = args.get("viewport_size").filter(|size| !size.is_null()) {
+        return Some(json!({ "size": size }));
+    }
+    args.get("aspect")
+        .filter(|aspect| !aspect.is_null())
+        .map(|aspect| json!({ "aspect": aspect }))
+}
+
+/// Files under `dir` modified at or after `since`, as paths relative to `root`.
+fn collect_modified(root: &Path, dir: &Path, since: SystemTime, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            if !entry.file_name().to_string_lossy().starts_with('.') {
+                collect_modified(root, &path, since, out);
+            }
+        } else if meta.modified().is_ok_and(|modified| modified >= since) {
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            out.push(relative.display().to_string());
+        }
     }
 }
 

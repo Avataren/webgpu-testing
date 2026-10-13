@@ -26,6 +26,8 @@ pub(crate) struct ScriptCommands {
     /// Mesh, material, light and camera changes by entity handle; they need the scene
     /// or the renderer, so they are handed to the scene rather than applied to the world.
     pub assets: Vec<(i64, AssetCommand)>,
+    /// `emit_particles` requests, handed to the scene's particle runtime.
+    pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
 }
 
 impl ScriptCommands {
@@ -35,6 +37,7 @@ impl ScriptCommands {
             pending: HashMap::new(),
             existing: Vec::new(),
             assets: Vec::new(),
+            particle_bursts: Vec::new(),
         }
     }
 
@@ -45,6 +48,14 @@ impl ScriptCommands {
             self.resolve_entity_bits(handle)?;
         }
         self.assets.push((handle, command));
+        Ok(())
+    }
+
+    /// Check that `handle` names a live entity or one spawned earlier in this chunk.
+    pub fn resolve_or_pending(&self, handle: i64) -> Result<(), mlua::Error> {
+        if !self.pending.contains_key(&handle) {
+            self.resolve_entity_bits(handle)?;
+        }
         Ok(())
     }
 
@@ -380,7 +391,10 @@ impl ScriptCommands {
     pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
         use log::error;
 
-        let mut result = ScriptApplyResult::default();
+        let mut result = ScriptApplyResult {
+            particle_bursts: std::mem::take(&mut self.particle_bursts),
+            ..ScriptApplyResult::default()
+        };
         let mut deferred_parents: Vec<(Entity, i64)> = Vec::new();
 
         // First pass: spawn all entities and collect parent relationships
@@ -475,12 +489,17 @@ impl ScriptCommands {
             }
         }
 
-        for (handle, command) in self.assets.drain(..) {
-            let bits = self
-                .registry
-                .borrow()
-                .resolved_bits(handle)
-                .unwrap_or(handle as u64);
+        for (handle, mut command) in self.assets.drain(..) {
+            let resolve = |handle: i64| {
+                self.registry
+                    .borrow()
+                    .resolved_bits(handle)
+                    .unwrap_or(handle as u64)
+            };
+            let bits = resolve(handle);
+            if let AssetCommand::ShareMaterial(source) = &mut command {
+                *source = resolve(*source) as i64;
+            }
             match Entity::from_bits(bits) {
                 Some(entity) => result
                     .asset_commands
@@ -1475,6 +1494,9 @@ pub enum AssetCommand {
     Light(serde_json::Value),
     Camera(serde_json::Value),
     ActiveCamera,
+    /// Use the material of this entity (a script handle while queued, entity bits once
+    /// applied), so both draw with one material.
+    ShareMaterial(i64),
 }
 
 /// An [`AssetCommand`] resolved to its entity, waiting for the renderer.
@@ -1491,6 +1513,7 @@ pub(crate) struct ScriptApplyResult {
     pub despawned: Vec<Entity>,
     pub gltf_imports: Vec<PendingGltfImport>,
     pub asset_commands: Vec<PendingAssetCommand>,
+    pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
     pub event_subscriptions: Vec<PendingEventSubscription>,
     pub event_unsubscriptions: Vec<PendingEventUnsubscription>,
 }

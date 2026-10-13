@@ -47,6 +47,15 @@ and key events for the human-control path, `entity_delete {name_contains}` and `
 to rebuild the arena. The findings below are B11, B12 and the pain points from "`project_create`
 does not create the scripts folder" onward; the new wish-list items are at the end of that section.
 
+Sixth round (2026-10-13): everything the fifth round found is done or partly done (marked below),
+including B11 and B12. Checked live in the editor through a freshly built MCP server over stdio
+(a scratch project with a modular Lua game), and Robotron in the player for regressions (no
+warnings, 7.8 ms frames). Two things the checking turned up: GPU particles only ever ran in the
+editor (the runtime lived in the editor binary), and a stalled frame (a screenshot readback in a
+debug build) aged every particle at once, so whole bursts vanished between screenshots. Not
+checked live: script particle bursts in the player (same runtime as the editor; the player only
+gained the hooks), and the web build beyond `cargo check` (it compiles with no new warnings).
+
 MCP-server changes (new tool parameters, blocking project tools) only take effect after the
 MCP server is restarted; engine changes take effect after `engine_launch` rebuilds.
 
@@ -205,7 +214,7 @@ How to read the sections:
   frames rendered through another camera. Verified: a game-camera capture is the 1045x688
   viewport with no grid outside the arena.
 
-### B11. Despawned entities leak their material assets (confirmed)
+### B11. Despawned entities leak their material assets (fixed, engine)
 
 - Repro, in a running player with `time_scale` 0 for stable counts: `engine_stats` shows
   `assets.materials` 2907. A Lua chunk spawns 100 primitives (`spawn_primitive("cube", ...)`):
@@ -220,8 +229,14 @@ How to read the sections:
   frame time"). Robotron trims its pools only when a new game starts and says why in a comment.
 - Fix idea: reference-count materials by the entities that use them and free the slot when the
   count reaches zero (also when play mode stops and the scene is restored).
+- **Resolution:** asset caches can release slots (reused by later inserts), and the scene
+  releases inline PBR materials no entity in any of its worlds uses (file-backed and shader
+  materials are kept). It sweeps after Lua despawns (once the frame's mesh/material commands
+  have run), after `entity_delete` and after play -> stop. `engine_stats` and `assets_list`
+  count live materials. Verified: 100 `spawn_primitive` cubes took materials from 2 to 102;
+  despawning them brought it back to 2. Unit test `released_slots_are_reused`.
 
-### B12. `Visible = false` on a parent does not hide its children (confirmed)
+### B12. `Visible = false` on a parent does not hide its children (fixed, engine)
 
 - Repro: `local root = spawn_entity("R"); local c = spawn_primitive("cube", "C"); set_parent(c, root);
   set_component(root, "Visible", false)`. The cube still renders. An actor made of a root and
@@ -229,6 +244,11 @@ How to read the sections:
 - Fix idea: make visibility inherited in the renderer (an entity is drawn only if it and all its
   ancestors are visible), as every other engine does, or document that it is not and add
   `set_visible_recursive(entity, bool)` to the Lua API.
+- **Resolution:** visibility is inherited when the renderer collects meshes (an entity is
+  drawn only if it and every ancestor are visible), and hidden entities are now skipped before
+  any per-entity work (no name clone or material lookup). Verified by screenshot: hiding a
+  parent hid its child cube. Unit test `hidden_parent_hides_its_descendants`; documented in
+  the Lua guide's Hierarchy section.
 
 ## Pain points
 
@@ -365,78 +385,117 @@ How to read the sections:
 
 - **`project_create` does not create the scripts folder.** `editor_state.project.scripts_dir`
   names `content/scripts`, but only `content/materials` and `content/scenes` exist, so the first
-  script write fails until `mkdir -p` (same for `content/audio`). **Open.** Create `scripts` and
-  `audio` with the project.
+  script write fails until `mkdir -p` (same for `content/audio`). **Done:** new projects get
+  `content/scripts`, `audio` and `textures`.
 - **A new project is an empty scene with a game-unfriendly environment** (ambient 0.03, pale
   blue clear color, no light, no camera, bloom off). Robotron needed the same ten calls as Neon
   Rift (environment, bloom, sun, camera, floor, border). This is the open "starter scene"
-  wish below; a `project_create {template: "arena"}` would remove it.
+  wish below; a `project_create {template: "arena"}` would remove it. **Done:**
+  `project_create` builds a starter scene by default (dark backdrop, ambient 0.35, grading,
+  a shadowed `Sun`, an active `GameCamera` looking at the origin, a 40 m `Floor`) and saves it;
+  `template: "empty"` skips it. Bloom turned out to be on by default; post-processing is an
+  engine setting, not stored in projects.
 - **`playtest {eval}` and `lua_eval` without `entity` cannot see script globals.** `eval:
   "return GAME.wave"` fails with `attempt to index a nil value (global 'GAME')`, which reads as a
   game bug. The fix is `entity: "GameController"` (it is documented, but the error does not say
-  so). **Open.** When exactly one script is attached, default `entity` to it, or add the hint to
-  the error text.
+  so). **Done:** the error now ends with a hint naming the script(s) that define the global
+  (`pass entity: "GameController"`), and `playtest`'s eval reruns inside the script when exactly
+  one defines it (the result says `ran_in_script_of`). Verified live.
 - **`entity_duplicate {count: 20, quiet: true}` still returns every copy's id and name** (about
   700 tokens for 20, 1400 for 40). `quiet` should return only the first and last id and the
-  count.
+  count. **Done** (count, first, last; ids need not be consecutive, so the note points to names).
 - **`project_save` returns `{"queued": "project.save"}`** and nothing says it finished or what
   was written; I checked with `git status`. `project_create` and `project_open` were fixed to
-  block; `project_save` should return the written paths.
+  block; `project_save` should return the written paths. **Done:** it returns once the editor
+  has saved (an error if the save failed) with the files written.
 - **`screenshot {aspect: "16:9"}` crops the frame that was rendered; it does not re-lay the
   scene out.** A script that fits its camera to `get_viewport_size()` (Robotron does, so one
   arena fits 16:9 and 4:3) still sees the real viewport, the HUD is cropped away, and a "4:3"
   preview looks like a framing bug. Previewing another shape needs a real resize
   (`resize_window` or `screenshot {viewport_size: [w, h]}` that also updates
-  `get_viewport_size()`).
+  `get_viewport_size()`). **Done:** a viewport preview (`view.preview`, MCP `viewport_preview`)
+  lays the game out at an aspect or exact pixel size inside the view: the renderer draws into
+  it, scripts get it from `get_viewport_size()` and HUDs (editor and player) anchor to it.
+  `screenshot {aspect | viewport_size}` and `playtest {aspect | viewport_size}` turn it on for
+  their duration. Verified: a [390, 640] preview made `get_viewport_size()` report 390x640.
 - **The editor runs about five times slower than the player, and `engine_stats` cannot say
   why.** Idle editor, 40 entities: 26 fps (38 ms). Player, Robotron with 460 entities: 119 fps
   (8.4 ms). Lua time was 0.5 ms per frame (measured with `os.clock`), so the rest is the
   engine. Games that clamp `dt` (Robotron clamps at 34 ms) run slower than real time at 26 fps, and frame
   times measured there say nothing about the game. A breakdown (scripts, transform update, culling,
   render, UI, egui) in `engine_stats` would show where it goes. The skill should say: measure
-  performance in the player.
+  performance in the player. **Partly done:** `engine_stats.frame_breakdown` times each stage
+  (animations, transforms, scripts, update_systems, gpu_systems, script_assets,
+  render_collect, render_gpu, ui_build, ui_render, present), last frame and running average,
+  and the skill says to measure in the player. Measured (debug build, scratch scene): the
+  editor spends about 6.5 ms in `ui_build` and 5 ms in `render_gpu`; Robotron in the player
+  sums to 7.4 ms (render_gpu 2.7, ui_build 1.6, render_collect 0.8, scripts 0.6). The editor's
+  own cost was not reduced.
 - **Hidden entities seem to cost frame time.** Observed in the player (noisy, not isolated): 460
   entities 8.4 ms (119 fps), about 900 entities 16 to 21 ms, about 1400 entities 22 ms; 500 extra
   `Visible = false` cubes at y = -80 read 22.6 ms, and 21 ms again after they were despawned,
   because the game's own load moves the frame time too. If it holds, a pool of "hidden" sparks
   and actors is not free, and trimming it leaks materials (B11). Robotron cut its part counts
   instead (grunts three entities, sparks 28 per colour). A per-system breakdown would settle it.
+  **Partly done:** hidden entities are now dropped before any render work, despawning no longer
+  leaks (B11), and `frame_breakdown` shows render_collect and transforms separately. Hidden
+  entities still go through transform propagation; not re-measured with a large pool.
 - **Every primitive has its own material and there is no way to share one.** 100 sparks of
   one color are 100 materials. Robotron keeps one pool per palette color so a spark never needs
   `set_material`. Wish: `spawn_primitive(kind, name, {material_of = other_entity})` or a
-  `share_material(dst, src)`.
+  `share_material(dst, src)`. **Done:** both. Verified: 50 spheres spawned with `material_of`
+  added one material.
 - **No Lua access to the GPU particle system.** Explosions, warp-in rings and trails are all
   spark entities moved from Lua (about 300 entities and 600 commands per busy frame). A
   `emit_particles(x, y, z, {count, color, speed, life, gravity})` would replace all of it.
+  **Done:** `emit_particles(x, y, z, {count, color, color_end, intensity, speed, life, size,
+  size_end, velocity, gravity, drag, radius, shape = "sphere" | "ring", blend})`. Bursts share
+  GPU particle systems per physics setting, follow `time_scale` (frozen at 0), and are cleared
+  when play starts or stops; idle systems cost nothing. The particle runtime moved from the
+  editor binary into the engine (`gpu_particles::ParticleRuntime`), so the player now runs
+  particle systems too. Particle steps are clamped to 50 ms of real time, because a stalled
+  frame used to end every burst at once. Verified in the editor (bursts, ring shockwaves,
+  bloom, pause).
 - **No `require` or `include`.** `require` is `nil` (`package`, `io` and `os` tables exist), so
   a game is one file: Robotron is about 1700 lines in `robotron.lua`, and the autopilot, the
   wave table and the enemy definitions cannot be separate files. Allow `require "name"`
-  resolving against the project's scripts folder (with hot reload of dependents).
+  resolving against the project's scripts folder (with hot reload of dependents). **Done:**
+  `require(name)` (module, cached per script, own globals) and `include(name)` (runs in the
+  script's environment), looked up next to the script, then under the scripts root; editing
+  either reloads the scripts that use it. Verified: editing `lib/waves.lua` reloaded
+  `game.lua`.
 - **`write_file` writes relative to the engine's working directory, not the project.**
   `write_file("scripts/x.txt", "1")` created `<repo>/scripts/x.txt` and `read_file` found it, so
   an arcade high score cannot be stored with a project (Robotron's high score resets on
   restart). Wish: `save_data(key, text)` / `load_data(key)` in a per-project or per-user data
-  directory (and localStorage on the web).
+  directory (and localStorage on the web). **Done:** `save_data(key, text)` / `load_data(key)`,
+  per user and project folder (`~/.local/share/wgpu-cube/saves/<project>/` on Linux,
+  `localStorage` on the web). Verified live.
 - **The Lua guide does not give primitive sizes beyond the cone and plane.** The torus has an
   outer radius of 1.35 and a tube of 0.35 with its axis along Z (`entity_get` shows the
   bounds), so a thin ring cannot be made by scaling it (the tube scales with the ring). Robotron's
   shockwaves are rings of sparks instead. Add a size table (cube 1, sphere radius 1, cylinder
   radius 1 and length 1 along Z, torus 1.35/0.35 along Z) to the guide and the
-  `entity_spawn` schema.
+  `entity_spawn` schema. **Done** (a size table in the guide; the schema and skill list them).
 - **`ui:screen_label` offsets are insets, which is easy to get backwards.** For `top_right` and
   `bottom_*` anchors a positive offset moves the text inward; I passed negative numbers and the
   text sat off screen (the screenshot showed "LIVES I I" cut at the edge). The guide says "inset
-  offsets"; one example per corner would save the round trip.
+  offsets"; one example per corner would save the round trip. **Done** (an example per corner
+  and a note never to pass negative offsets).
 - **I cannot judge sounds.** Robotron's 20 effects and a 7.5 s music loop are synthesized with
   numpy and checked only through `audio_status` (that they play, how often, at what volume).
   Clipping, silence, a click at the loop point or a 3 s "short" effect would go unnoticed. Wish:
   `sound_inspect {path}` returning duration, peak, RMS, clipped samples, loop-seam
-  discontinuity and a spectrogram image.
+  discontinuity and a spectrogram image. **Done:** `sound_inspect` (engine `audio.inspect`,
+  native builds) reports those plus DC offset, leading/trailing silence, loudness by tenth and
+  plain-language notes, with a waveform-over-spectrogram image. Checked on Robotron's music
+  loop (seamless, -4.4 dBFS peak) and shoot effect.
 - **Hot reload restarts the game.** Script locals (all of Robotron's state) reset on every
   saved edit, which is documented, and `set_*` state survives. For a game with a large state
   table that means every tweak restarts the demo at wave 1; `on_destroyed(self, "reload")`
   could return a table that `on_created(self, previous)` receives, so a game can keep its
-  state across edits.
+  state across edits. **Done** as suggested; entering or leaving play starts fresh. Verified:
+  `GAME.wave = 9` survived a reload triggered by a module edit.
 
 ## Wish list
 
@@ -496,19 +555,22 @@ How to read the sections:
   `logs {min_level: "warn"}`.
 - ✅ A lean `playtest` mode (no screenshot, diff or sound list) for long AI soak tests.
   (`lean: true`.)
-- ⬜ A starter game scene (environment, bloom, camera, light, floor) for `project_create`.
+- ✅ A starter game scene (environment, bloom, camera, light, floor) for `project_create`.
 
-- ⬜ A `project_create` template with scripts and audio folders and a starter scene
+- ✅ A `project_create` template with scripts and audio folders and a starter scene
   (environment, bloom, camera, light, floor); see the pain point above.
-- ⬜ Release materials of despawned entities (B11) and inherit `Visible` from parents (B12).
-- ⬜ `emit_particles` from Lua (the GPU particle system), `share_material`, and a frame-time
+- ✅ Release materials of despawned entities (B11) and inherit `Visible` from parents (B12).
+- ✅ `emit_particles` from Lua (the GPU particle system), `share_material`, and a frame-time
   breakdown in `engine_stats`.
-- ⬜ `require` for project scripts, `save_data`/`load_data`, and state that survives hot reload.
-- ⬜ `sound_inspect {path}` (duration, peak, RMS, clipping, loop seam, spectrogram).
-- ⬜ `screenshot {viewport_size: [w, h]}` that really resizes, so fitted cameras and HUDs can be
-  checked at 16:9 and 4:3.
-- ⬜ A skill note: expose a global `RT` table of test hooks (`jump`, `spawn`, `god`, `units`)
-  next to the `GAME` state table; it made every enemy type testable in seconds.
+- ✅ `require` for project scripts, `save_data`/`load_data`, and state that survives hot reload.
+- ✅ `sound_inspect {path}` (duration, peak, RMS, clipping, loop seam, spectrogram).
+- ✅ `screenshot {viewport_size: [w, h]}` that really resizes, so fitted cameras and HUDs can be
+  checked at 16:9 and 4:3. (A viewport preview inside the view rather than a window resize.)
+- ✅ A skill note: expose a global `RT` table of test hooks (`jump`, `spawn`, `god`, `units`)
+  next to the `GAME` state table; it made every enemy type testable in seconds. (Also in the
+  Lua reference's remote-control notes.)
+- ⬜ Make the editor's own frame cheaper (`ui_build` about 6.5 ms in a debug build), and skip
+  hidden subtrees in transform propagation.
 
 ## Open: Lua scripting on the web
 

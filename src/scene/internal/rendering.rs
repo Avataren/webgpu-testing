@@ -6,13 +6,14 @@ use crate::renderer::{
 };
 use crate::scene::components::{
     Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, EditorEntityId,
-    GpuParticleInstance, MaterialComponent, MeshComponent, Name, SelectedInEditor,
+    GpuParticleInstance, MaterialComponent, MeshComponent, Name, Parent, SelectedInEditor,
     TransformComponent, Visible, WorldTransform,
 };
 use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
-use hecs::World;
+use hecs::{Entity, World};
 use rayon::prelude::*;
+use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraVectors {
@@ -63,8 +64,37 @@ struct RenderEntity {
     pick_id: PickId,
 }
 
+/// Entities with `Visible(false)`. Visibility is inherited: an entity is drawn only if
+/// it and every ancestor are visible.
+fn hidden_entities(world: &World) -> HashSet<Entity> {
+    world
+        .query::<&Visible>()
+        .iter()
+        .filter(|(_, visible)| !visible.0)
+        .map(|(entity, _)| entity)
+        .collect()
+}
+
+/// Whether an ancestor of `entity` is hidden. Bounded so a parent cycle cannot hang.
+fn has_hidden_ancestor(world: &World, hidden: &HashSet<Entity>, entity: Entity) -> bool {
+    let mut current = entity;
+    for _ in 0..256 {
+        match world.get::<&Parent>(current) {
+            Ok(parent) => {
+                current = parent.0;
+                if hidden.contains(&current) {
+                    return true;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> {
     let default_material = assets.default_material_handle();
+    let hidden = hidden_entities(world);
 
     world
         .query::<(
@@ -82,6 +112,11 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
             Option<&CanCastShadow>,
         )>()
         .iter()
+        // Skip hidden entities before doing any work for them; pools of hidden objects
+        // are common in games.
+        .filter(|(entity, (_, _, visible, ..))| {
+            visible.0 && (hidden.is_empty() || !has_hidden_ancestor(world, &hidden, *entity))
+        })
         .map(
             |(
                 _entity,
@@ -353,6 +388,21 @@ fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
 mod tests {
     use super::*;
     use crate::scene::transform::Transform;
+
+    #[test]
+    fn hidden_parent_hides_its_descendants() {
+        let mut world = World::new();
+        let root = world.spawn((Visible(false),));
+        let child = world.spawn((Visible(true), Parent(root)));
+        let grandchild = world.spawn((Visible(true), Parent(child)));
+        let other = world.spawn((Visible(true),));
+
+        let hidden = hidden_entities(&world);
+        assert!(has_hidden_ancestor(&world, &hidden, child));
+        assert!(has_hidden_ancestor(&world, &hidden, grandchild));
+        assert!(!has_hidden_ancestor(&world, &hidden, other));
+        assert!(!has_hidden_ancestor(&world, &hidden, root));
+    }
 
     #[test]
     fn view_space_billboard_aligns_with_camera_basis() {

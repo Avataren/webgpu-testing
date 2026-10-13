@@ -151,7 +151,7 @@ pub fn tools() -> Vec<Tool> {
             "type": "string",
             "enum": ["empty", "cube", "sphere", "plane", "cylinder", "cone", "torus",
                      "point_light", "directional_light", "spot_light", "camera", "particles", "environment"],
-            "description": "What to create (default empty). Primitive sizes differ: the cube spans -0.5..0.5, the sphere has radius 1, the cylinder (z -0.5..0.5) and cone lie along the Z axis; the cone's tip is at the origin and its base at z = -1, so it points toward +Z, opposite to forward: give ships and arrows a 180 degree yaw. entity_get shows local_bounds. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor."
+            "description": "What to create (default empty). Primitive sizes at scale 1: cube 1x1x1 centred (-0.5..0.5); sphere radius 1; cylinder radius 1, length 1 along Z (z -0.5..0.5); cone base radius 1 at z = -1 and tip at the origin, so it points toward +Z, opposite to forward: give ships and arrows a 180 degree yaw; torus ring radius 1 (to the tube centre) with tube radius 0.35 (1.35 outer), axis along Z, and the tube scales with the ring. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor. entity_get shows local_bounds."
         }),
     );
     spawn_props.insert(
@@ -164,6 +164,10 @@ pub fn tools() -> Vec<Tool> {
     update_props.insert("entity".into(), entity_ref());
     update_props.insert("quiet".into(), quiet);
     let mut duplicate_props = update_props.clone();
+    duplicate_props.insert(
+        "quiet".into(),
+        json!({ "type": "boolean", "description": "One copy: return only {id, name}. Several: return only the count and the first and last copy instead of every id and name" }),
+    );
     duplicate_props.insert(
         "count".into(),
         json!({ "type": "integer", "minimum": 1, "maximum": 1000, "description": "Number of copies (default 1). Copies are named \"<name> 1\", \"<name> 2\", ...; put {i} in name to place the number yourself" }),
@@ -358,7 +362,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scripting & runtime ----
         Tool {
             name: "lua_eval",
-            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state. World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives, lights and cameras (spawn_primitive, spawn_light, spawn_camera).",
+            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state (console code cannot see them; the error names the script that defines a missing global). World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives, lights and cameras (spawn_primitive, spawn_light, spawn_camera).",
             schema: object(json!({
                 "code": { "type": "string" },
                 "entity": entity_ref(),
@@ -397,10 +401,12 @@ pub fn tools() -> Vec<Tool> {
                 "seconds": { "type": "number", "description": "Real seconds to play (default 3, up to 240); game time is seconds * time_scale" },
                 "time_scale": { "type": "number", "minimum": 0, "maximum": 16, "description": "Play speed (default 1)" },
                 "input": { "type": "array", "items": { "type": "object" }, "description": "Input events as for input_send (key/mouse_button/mouse_move/scroll, action, frames, delay in frames). Everything is released at the end." },
-                "eval": { "type": "string", "description": "Lua evaluated at the end, e.g. \"return GAME.score\"" },
+                "eval": { "type": "string", "description": "Lua evaluated at the end, e.g. \"return GAME.score\". Without entity it runs in the console; if it fails on a global that exactly one script defines (GAME), it runs again inside that script" },
                 "entity": entity_ref(),
                 "screenshot": { "type": "boolean", "description": "Include a viewport screenshot (default true)" },
                 "max_size": { "type": "integer", "description": "Screenshot longest side (default 1280)" },
+                "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Play with the view laid out at this shape (\"16:9\", \"4:3\"); scripts, cameras and HUDs see it. Restored at the end" },
+                "viewport_size": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "Play with the view at exactly [width, height] pixels" },
                 "diff": { "type": "boolean", "description": "Report what play changed in the scene (default true)" },
                 "sounds": { "anyOf": [{ "type": "string", "enum": ["summary", "list"] }, { "type": "boolean" }], "description": "Sounds played: \"summary\" (default) groups them by file with counts and first/last time, \"list\" gives every play, false leaves them out" },
                 "lean": { "type": "boolean", "description": "For long soak tests: no screenshot, scene diff or sounds; just failing scripts, warnings and the eval result. Explicit screenshot/diff/sounds settings still win" },
@@ -447,6 +453,15 @@ pub fn tools() -> Vec<Tool> {
             description: "Stop one sound by id, or every sound.",
             schema: object(json!({ "id": { "type": "integer" } }), &[]),
             action: Action::Engine("audio.stop"),
+        },
+        Tool {
+            name: "sound_inspect",
+            description: "Measure a sound file, since you cannot listen to it: duration, sample rate, peak and RMS level (dBFS), clipped samples, DC offset, silence before and after the sound, the jump at the loop seam (a click when looped), loudness by tenth of the clip, plain-language notes on problems, and an image (waveform over a log-frequency spectrogram). Use it on every generated or imported sound effect and music loop.",
+            schema: object(json!({
+                "path": { "type": "string", "description": "wav, ogg, mp3 or flac; relative to the project (content/audio/hit.wav) or absolute" },
+                "image": { "type": "boolean", "description": "Include the waveform/spectrogram image (default true)" }
+            }), &["path"]),
+            action: Action::Local,
         },
         Tool {
             name: "audio_status",
@@ -498,7 +513,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Viewing ----
         Tool {
             name: "screenshot",
-            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos or the editor grid and without moving the view. camera can also be a one-off pose {position, target, fov_deg} that looks around without editing anything. aspect previews the framing at another window shape (e.g. \"16:9\", \"4:3\").",
+            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame (a few with aspect or viewport_size). In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos or the editor grid and without moving the view. camera can also be a one-off pose {position, target, fov_deg} that looks around without editing anything. aspect previews the framing at another window shape (e.g. \"16:9\", \"4:3\").",
             schema: object(json!({
                 "camera": { "anyOf": [
                     { "type": "integer" },
@@ -511,12 +526,22 @@ pub fn tools() -> Vec<Tool> {
                         "far": { "type": "number" }
                     }}
                 ], "description": "\"game\" for the scene's active camera, a camera entity id/name, or a one-off view {position, target, fov_deg, near, far} starting from the view camera. Only this capture's frame uses it; nothing is moved." },
-                "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Render at this width/height, as a number (1.78) or \"16:9\", in the largest region of that shape that fits the viewport (the image is cropped to it). Use it to check that a game camera frames the game at 16:9 and 4:3, not only at the editor's shape. Implies target viewport." },
+                "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Lay the game out at this width/height, as a number (1.78) or \"16:9\", in the largest region of that shape inside the viewport, and capture it. The layout is real for the capture: scripts see the shape through get_viewport_size() (cameras fitted to the view adapt) and HUDs anchor to it. Use it to check framing at 16:9 and 4:3. Implies target viewport." },
+                "viewport_size": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "Like aspect, but an exact [width, height] in pixels (shrunk to fit if the viewport is smaller), e.g. [1280, 720] or a phone's [390, 844]" },
                 "target": { "type": "string", "enum": ["window", "viewport"], "description": "window (the default) is the whole engine window; viewport is just the scene view. With camera or aspect the default is viewport." },
                 "max_size": { "type": "integer", "description": "Longest side in pixels (default 1280)" },
                 "save_path": { "type": "string", "description": "Also write the PNG here" }
             }), &[]),
             action: Action::Local,
+        },
+        Tool {
+            name: "viewport_preview",
+            description: "Lay the game out at another window shape until turned off: the scene renders into the largest region of that aspect (or an exact pixel size) inside the viewport, scripts see it as get_viewport_size(), and HUDs anchor to it. For checking framing and HUD layout at 16:9, 4:3 or a phone size across several screenshots and playtests. Call with neither field to restore the full view. screenshot and playtest also take aspect / viewport_size for a one-off.",
+            schema: object(json!({
+                "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Width/height, e.g. \"16:9\" or 1.33" },
+                "size": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "[width, height] in pixels" }
+            }), &[]),
+            action: Action::Engine("view.preview"),
         },
         Tool {
             name: "camera_get",
@@ -603,10 +628,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_create",
-            description: "Editor only: create a new project at location/name and open it; returns once it is open, with the editor state. Its content/ folder holds scenes, scripts and assets.",
+            description: "Editor only: create a new project at location/name and open it; returns once it is open, with the editor state. Its content/ folder holds scenes, scripts (content/scripts), audio and textures. By default the scene starts with a starter set-up (dark backdrop, ambient light, a shadowed sun, an active GameCamera looking at the origin, a 40 m Floor) and is saved.",
             schema: object(json!({
                 "name": { "type": "string" },
-                "location": { "type": "string", "description": "Parent directory" }
+                "location": { "type": "string", "description": "Parent directory" },
+                "template": { "type": "string", "enum": ["starter", "empty"], "description": "starter (default) or empty" }
             }), &["name", "location"]),
             action: Action::Local,
         },
@@ -618,9 +644,9 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_save",
-            description: "Editor only: save the project (scenes, environment, editor camera) to its directory, or to path. Must be in editor mode, not playing.",
+            description: "Editor only: save the project (scenes, environment, editor camera) to its directory, or to path. Must be in editor mode, not playing. Returns once the files are written, with the paths that changed.",
             schema: object(json!({ "path": { "type": "string" } }), &[]),
-            action: Action::Engine("project.save"),
+            action: Action::Local,
         },
         Tool {
             name: "scene_new",

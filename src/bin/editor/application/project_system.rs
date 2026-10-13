@@ -367,11 +367,14 @@ impl ProjectSystem {
 
     fn handle_project_save(&mut self, ctx: &mut EditorContext<'_, '_, '_>, dir: PathBuf) {
         let Some(gpu_ctx) = ctx.gpu_context_mut() else {
+            self.controller
+                .record_save(dir, Some("the renderer is not ready".into()));
             return;
         };
 
         let existing_document = self.controller.primary_scene_document();
         let notification;
+        let mut save_error = None;
 
         match ProjectManifest::capture(
             &gpu_ctx.scene,
@@ -394,6 +397,7 @@ impl ProjectSystem {
 
                 if let Err(err) = manifest.save_to_dir(&dir) {
                     error!("Failed to save project to {:?}: {err}", dir);
+                    save_error = Some(err.to_string());
                     notification =
                         ReloadNotification::error(format!("Failed to save project: {err}"));
                 } else {
@@ -412,14 +416,16 @@ impl ProjectSystem {
                             );
                         }
                     }
-                    self.controller.set_current_dir(dir);
+                    self.controller.set_current_dir(dir.clone());
                 }
             }
             Err(err) => {
                 error!("Failed to prepare project for saving: {err}");
+                save_error = Some(err.to_string());
                 notification = ReloadNotification::error(format!("Failed to save project: {err}"));
             }
         }
+        self.controller.record_save(dir, save_error);
         ctx.notify(notification);
     }
 
@@ -841,7 +847,10 @@ mod native {
         }
 
         fs::create_dir_all(dir)?;
-        fs::create_dir_all(dir.join(CONTENT_DIR))?;
+        // The folders scripts, sounds and textures go into, so the first write needs no mkdir.
+        for folder in ["scripts", "audio", "textures"] {
+            fs::create_dir_all(dir.join(CONTENT_DIR).join(folder))?;
+        }
 
         let manifest = ProjectManifest::new_empty(request.metadata.clone());
         manifest.save_to_dir(dir)?;

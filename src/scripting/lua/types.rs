@@ -90,11 +90,12 @@ impl LuaScriptSource {
                     path.clone()
                 };
 
-                let contents =
-                    crate::io::read_to_string(&absolute).map_err(|source| LuaScriptingError::Io {
+                let contents = crate::io::read_to_string(&absolute).map_err(|source| {
+                    LuaScriptingError::Io {
                         path: absolute.clone(),
                         source,
-                    })?;
+                    }
+                })?;
 
                 Ok(LoadedScript {
                     name: absolute.to_string_lossy().into_owned(),
@@ -175,14 +176,17 @@ pub(crate) struct LuaScript {
     pub mode: ScriptMode,
     /// Compiled Lua chunk (stored as bytecode for reuse)
     pub chunk: Arc<Vec<u8>>,
+    /// The file the script was loaded from; `require` looks next to it first.
+    pub path: Option<PathBuf>,
 }
 
 impl LuaScript {
-    pub fn new(name: String, mode: ScriptMode, chunk: Vec<u8>) -> Arc<Self> {
+    pub fn new(name: String, mode: ScriptMode, chunk: Vec<u8>, path: Option<PathBuf>) -> Arc<Self> {
         Arc::new(Self {
             name,
             mode,
             chunk: Arc::new(chunk),
+            path,
         })
     }
 

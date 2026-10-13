@@ -29,7 +29,8 @@ impl LuaScriptingRuntime {
         // Disable some unsafe functions that might bypass our API
         lua.globals().set("dofile", mlua::Nil)?;
         lua.globals().set("loadfile", mlua::Nil)?;
-        lua.globals().set("require", mlua::Nil)?; // We'll provide our own module system
+        // Scripts get their own `require` and `include` (api::modules).
+        lua.globals().set("require", mlua::Nil)?;
 
         // Register all API functions
         api::register_all_apis(&lua)?;
@@ -38,6 +39,21 @@ impl LuaScriptingRuntime {
             lua,
             script_root: None,
         })
+    }
+
+    /// Where `require` and `include` look for a script's modules: next to the script,
+    /// then under the script root.
+    pub(crate) fn module_search_dirs(&self, script: &LuaScript) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(dir) = script.path.as_deref().and_then(std::path::Path::parent) {
+            dirs.push(dir.to_path_buf());
+        }
+        if let Some(root) = &self.script_root {
+            if !dirs.contains(root) {
+                dirs.push(root.clone());
+            }
+        }
+        dirs
     }
 
     /// Configure a base directory for resolving relative script paths.
@@ -84,7 +100,7 @@ impl LuaScriptingRuntime {
         let bytecode = chunk.into_function()?.dump(false);
 
         Ok((
-            LuaScript::new(loaded.name, script_mode, bytecode),
+            LuaScript::new(loaded.name, script_mode, bytecode, loaded.path),
             script_mode,
         ))
     }

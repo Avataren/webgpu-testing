@@ -112,6 +112,11 @@ pub(crate) struct LuaScriptInstance {
     pub(crate) coroutines: Rc<RefCell<CoroutineMap>>,
     /// Registry key for this instance's environment table
     pub(crate) env_registry_key: mlua::RegistryKey,
+    /// Files loaded with `require`/`include`; editing one reloads this script.
+    pub(crate) dependencies: crate::scripting::lua::api::modules::Dependencies,
+    /// What `on_destroyed(self, "reload")` returned: handed out once the reloaded
+    /// script is rebuilt, then passed to its `on_created(self, previous)`.
+    pub(crate) carried: Option<mlua::RegistryKey>,
 }
 
 impl fmt::Debug for LuaScriptInstance {
@@ -128,6 +133,7 @@ impl LuaScriptInstance {
         lua: &Lua,
         script: Arc<LuaScript>,
         source: LuaScriptSource,
+        module_dirs: Vec<std::path::PathBuf>,
     ) -> Result<Self, LuaScriptingError> {
         // Create a new environment table that inherits from _G
         let env = lua.create_table()?;
@@ -135,6 +141,8 @@ impl LuaScriptInstance {
         let metatable = lua.create_table()?;
         metatable.set("__index", globals)?;
         env.set_metatable(Some(metatable));
+        let dependencies = crate::scripting::lua::api::modules::Dependencies::default();
+        crate::scripting::lua::api::modules::install(lua, &env, module_dirs, dependencies.clone())?;
 
         // Store the environment in the registry to keep it alive
         let env_registry_key = lua.create_registry_value(env)?;
@@ -146,6 +154,8 @@ impl LuaScriptInstance {
             state_store: Rc::new(RefCell::new(HashMap::new())),
             coroutines: Rc::new(RefCell::new(HashMap::new())),
             env_registry_key,
+            dependencies,
+            carried: None,
         })
     }
 
@@ -183,8 +193,17 @@ impl LuaScriptInstance {
         commands: Rc<RefCell<ScriptCommands>>,
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
+        // `previous` is what on_destroyed returned before a hot reload, or nil.
+        let previous = match self.carried.take() {
+            Some(key) => {
+                let value = lua.registry_value::<mlua::Value>(&key)?;
+                lua.remove_registry_value(key)?;
+                value
+            }
+            None => mlua::Value::Nil,
+        };
         self.with_script_context(entity_bits, commands, event_queue, || {
-            self.call_function(lua, "on_created", entity_bits)
+            self.call_function_with_args(lua, "on_created", (entity_bits, previous))
         })
     }
 
@@ -213,9 +232,20 @@ impl LuaScriptInstance {
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
         let reason = if reload { "reload" } else { "removed" };
-        self.with_script_context(entity_bits, commands, event_queue, || {
-            self.call_function_with_args(lua, "on_destroyed", (entity_bits, reason))
-        })
+        let mut kept = None;
+        let outcome = self.with_script_context(entity_bits, commands, event_queue, || {
+            let Some(func) = self.resolve_function(lua, "on_destroyed")? else {
+                return Ok(FunctionCallOutcome::Missing);
+            };
+            let value = func.call::<mlua::Value>((entity_bits, reason))?;
+            // Before a reload, the returned value is kept for the new code.
+            if reload && !value.is_nil() {
+                kept = Some(lua.create_registry_value(value)?);
+            }
+            Ok(FunctionCallOutcome::Executed)
+        })?;
+        self.carried = kept;
+        Ok(outcome)
     }
 
     pub(crate) fn call_on_ui(
@@ -251,22 +281,6 @@ impl LuaScriptInstance {
             let lua_data = lua.to_value(&data).map_err(LuaScriptingError::Lua)?;
             self.call_function_with_args(lua, &handler_name, lua_data)
         })
-    }
-
-    fn call_function(
-        &self,
-        lua: &Lua,
-        name: &str,
-        arg: i64,
-    ) -> Result<FunctionCallOutcome, LuaScriptingError> {
-        let Some(func) = self.resolve_function(lua, name)? else {
-            return Ok(FunctionCallOutcome::Missing);
-        };
-
-        match func.call::<()>(arg) {
-            Ok(_) => Ok(FunctionCallOutcome::Executed),
-            Err(e) => Err(LuaScriptingError::Lua(e)),
-        }
     }
 
     fn call_function_with_args<A>(

@@ -1668,6 +1668,7 @@ pub(super) fn delete(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteR
     }
     ctx.gpu.scene.propagate_transforms();
     ctx.mark_modified();
+    ctx.gpu.scene.collect_unused_materials();
     Ok(json!({ "deleted": removed.into_iter().map(entity_id).collect::<Vec<_>>() }))
 }
 
@@ -1808,6 +1809,17 @@ pub(super) fn duplicate(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Remo
         let mut summary = entity_summary(world, root);
         summary["copied_entities"] = json!(copied_entities);
         return Ok(summary);
+    }
+    if quiet {
+        // Ids need not be consecutive (freed slots are reused), so point at names instead.
+        let (first, _) = copies[0];
+        let (last, _) = copies[copies.len() - 1];
+        return Ok(json!({
+            "count": copies.len(),
+            "first": brief(world, first),
+            "last": brief(world, last),
+            "note": "Address the copies by name (entity_update/entity_delete name_contains, find_entity_by_name in Lua).",
+        }));
     }
     Ok(json!({
         "copies": copies

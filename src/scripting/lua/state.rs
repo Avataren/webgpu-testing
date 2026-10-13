@@ -128,6 +128,10 @@ struct ScriptOutputs {
     pending_asset_commands: Vec<PendingAssetCommand>,
     event_subscriptions: EventSubscriptions,
     pending_events: VecDeque<ScriptEvent>,
+    /// Set when applied commands despawned entities.
+    entities_despawned: bool,
+    /// `emit_particles` requests waiting for the particle runtime.
+    particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
 }
 
 impl ScriptOutputs {
@@ -144,7 +148,9 @@ impl ScriptOutputs {
 
         self.pending_gltf_imports.extend(result.gltf_imports);
         self.pending_asset_commands.extend(result.asset_commands);
+        self.particle_bursts.extend(result.particle_bursts);
 
+        self.entities_despawned |= !result.despawned.is_empty();
         for entity in result.despawned {
             self.remove_subscriptions(entity);
         }
@@ -266,6 +272,8 @@ pub struct ScriptingState {
     outputs: ScriptOutputs,
     /// State to restore into scripts once they are re-created after a reload.
     pending_state_restoration: HashMap<Entity, ScriptStateMap>,
+    /// What `on_destroyed(self, "reload")` returned, for the reloaded `on_created`.
+    pending_carried: HashMap<Entity, mlua::RegistryKey>,
     /// Scripts to rebuild: `on_destroyed` runs for them at the start of the next frame
     /// (it needs the world), then they are recompiled and `on_created` runs again.
     pending_reloads: Vec<Entity>,
@@ -290,6 +298,7 @@ impl ScriptingState {
             slots: HashMap::new(),
             outputs: ScriptOutputs::default(),
             pending_state_restoration: HashMap::new(),
+            pending_carried: HashMap::new(),
             pending_reloads: Vec::new(),
             elapsed: 0.0,
             view_rect: None,
@@ -342,6 +351,8 @@ impl ScriptingState {
         for entity in entities {
             self.unload(entity);
         }
+        // A reset (entering or leaving play) starts games fresh.
+        self.pending_carried.clear();
         self.outputs = ScriptOutputs::default();
         self.pending_reloads.clear();
         self.elapsed = 0.0;
@@ -358,15 +369,24 @@ impl ScriptingState {
         let entities: Vec<Entity> = self
             .slots
             .iter()
-            .filter(|(_, slot)| match &slot.source {
-                LuaScriptSource::File { path } => {
-                    let resolved = match &script_root {
-                        Some(root) if path.is_relative() => root.join(path),
-                        _ => path.clone(),
-                    };
-                    canonical(&resolved) == target
-                }
-                LuaScriptSource::Inline { .. } => false,
+            .filter(|(_, slot)| {
+                let own = match &slot.source {
+                    LuaScriptSource::File { path } => {
+                        let resolved = match &script_root {
+                            Some(root) if path.is_relative() => root.join(path),
+                            _ => path.clone(),
+                        };
+                        canonical(&resolved) == target
+                    }
+                    LuaScriptSource::Inline { .. } => false,
+                };
+                // Scripts that `require` or `include` the file reload with it.
+                own || slot.instance.as_ref().is_some_and(|instance| {
+                    instance
+                        .dependencies
+                        .lock()
+                        .is_ok_and(|deps| deps.iter().any(|dep| canonical(dep) == target))
+                })
             })
             .map(|(entity, _)| *entity)
             .collect();
@@ -419,10 +439,13 @@ impl ScriptingState {
     /// so it can be restored when the script is re-created.
     fn unload(&mut self, entity: Entity) {
         if let Some(slot) = self.slots.remove(&entity) {
-            if let Some(instance) = slot.instance {
+            if let Some(mut instance) = slot.instance {
                 let state = instance.state_store.borrow().clone();
                 if !state.is_empty() {
                     self.pending_state_restoration.insert(entity, state);
+                }
+                if let Some(carried) = instance.carried.take() {
+                    self.pending_carried.insert(entity, carried);
                 }
             }
         }
@@ -447,6 +470,25 @@ impl ScriptingState {
             .collect();
         entries.sort_unstable_by_key(|(entity, ..)| entity.to_bits());
         entries
+    }
+
+    /// Entities whose script environment defines the global `name`.
+    pub fn entities_with_global(&self, name: &str) -> Vec<Entity> {
+        let lua = self.runtime.lua();
+        let mut entities: Vec<Entity> = self
+            .slots
+            .iter()
+            .filter(|(_, slot)| {
+                slot.instance.as_ref().is_some_and(|instance| {
+                    lua.registry_value::<mlua::Table>(&instance.env_registry_key)
+                        .and_then(|env| env.raw_get::<mlua::Value>(name))
+                        .is_ok_and(|value| !value.is_nil())
+                })
+            })
+            .map(|(entity, _)| *entity)
+            .collect();
+        entities.sort_unstable_by_key(|entity| entity.to_bits());
+        entities
     }
 
     /// Run `code` against `world` with the full scripting API, like a console.
@@ -754,8 +796,12 @@ impl ScriptingState {
                     if let Ok(mut component) = world.get::<&mut LuaScriptComponent>(entity) {
                         component.set_script_mode(mode);
                     }
-                    match LuaScriptInstance::new(self.runtime.lua(), script, source) {
-                        Ok(instance) => slot.instance = Some(instance),
+                    let module_dirs = self.runtime.module_search_dirs(&script);
+                    match LuaScriptInstance::new(self.runtime.lua(), script, source, module_dirs) {
+                        Ok(mut instance) => {
+                            instance.carried = self.pending_carried.remove(&entity);
+                            slot.instance = Some(instance);
+                        }
                         Err(err) => slot.report(entity, "instantiate", err),
                     }
                 }
@@ -836,6 +882,17 @@ impl ScriptingState {
     /// Get pending glTF imports and clear the list.
     pub fn take_pending_gltf_imports(&mut self) -> Vec<PendingGltfImport> {
         std::mem::take(&mut self.outputs.pending_gltf_imports)
+    }
+
+    /// Particle bursts scripts requested since the last call.
+    pub fn take_particle_bursts(&mut self) -> Vec<crate::gpu_particles::ParticleBurst> {
+        std::mem::take(&mut self.outputs.particle_bursts)
+    }
+
+    /// Whether scripts despawned entities since the last call (so their materials may
+    /// be unused now).
+    pub fn take_entities_despawned(&mut self) -> bool {
+        std::mem::take(&mut self.outputs.entities_despawned)
     }
 
     /// Mesh and material changes scripts asked for since the last call.

@@ -175,13 +175,24 @@ end
 - `import_gltf(entity, path, scale)` - Import GLTF model
 
 ### Meshes and Materials
-- `spawn_primitive(kind[, name])` → `entity` - Spawn a visible entity with a primitive mesh
-  (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and its own material. `plane`
-  is a 1x1 quad in the XY plane facing +Z; rotate it -90° about X for a floor. The
-  `cylinder` (radius 1, z from -0.5 to 0.5) and `cone` lie along the Z axis. The cone's tip
-  is at the origin and its base (radius 1) at z = -1, so the tip points toward +Z, the
-  opposite of the engine's -Z forward: a ship or arrow made from a cone needs a 180° yaw
-  to point where `look_at` / `get_forward` say.
+- `spawn_primitive(kind[, name[, {material_of = entity}]])` → `entity` - Spawn a visible
+  entity with a primitive mesh (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and
+  its own material, or the material of `material_of` (see `share_material`). Sizes at scale 1:
+
+  | Primitive | Size | Notes |
+  |-----------|------|-------|
+  | `cube` | 1 x 1 x 1, centred | |
+  | `sphere` | radius 1 (2 m across) | |
+  | `plane` | 1 x 1 in XY, facing +Z | rotate -90° about X for a floor |
+  | `cylinder` | radius 1, length 1 along Z (z -0.5..0.5) | |
+  | `cone` | base radius 1 at z = -1, tip at the origin | tip points +Z: give ships and arrows a 180° yaw |
+  | `torus` | ring radius 1 to the tube centre, tube radius 0.35 (1.35 outer), axis along Z | the tube scales with the ring, so a thin ring cannot be made by scaling |
+
+  The cone's tip points toward +Z, the opposite of the engine's -Z forward, so a ship or
+  arrow made from a cone needs a 180° yaw to point where `look_at` / `get_forward` say.
+- `share_material(entity, source)` - Draw `entity` with `source`'s material. Many entities
+  of one color (sparks, bullets, bricks) then use one material instead of one each.
+  `set_material` on one of them gives it its own copy again.
 - `set_mesh(entity, kind)` - Replace the geometry with a primitive, or `nil` to remove it
 - `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
 - `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
@@ -192,6 +203,8 @@ end
 
 Changes apply before the frame is drawn. An entity that shares its material with others
 gets its own copy on the first change, so recoloring one brick leaves the rest alone.
+Materials no entity uses any more (after `despawn_entity`) are freed, so spawning and
+despawning entities over a long game does not grow memory.
 
 ```lua
 local spark = spawn_primitive("sphere", "Spark")
@@ -224,6 +237,67 @@ set_translation(flash, x, y, z)
 local cam = spawn_camera({ fov_deg = 50, active = true }, "Cutscene")
 set_translation(cam, 0, 4, 8)
 look_at(cam, 0, 0, 0)
+```
+
+### Particle effects
+- `emit_particles(x, y, z[, options])` - A one-off burst of GPU particles at a world point:
+  sparks, explosions, warp-in rings, debris. Thousands of particles cost almost nothing on
+  the CPU, unlike spark entities moved from Lua, and they render in the editor and the
+  player. Options (all optional):
+  - `count` (default 24, up to 4096)
+  - `color`, `color_end` - `{r, g, b[, a]}` or `"#rrggbb"`; particles fade from `color` to
+    `color_end` (default: fade out)
+  - `intensity` - multiplies both colors; above 1 is HDR and blooms (try 2-4)
+  - `speed` - outward m/s, a number or `{min, max}` (default `{2, 6}`)
+  - `life` - seconds, a number or `{min, max}` (default `{0.4, 0.8}`)
+  - `size`, `size_end` - quad size in meters at spawn and at death (default 0.15 -> 0)
+  - `velocity` - `{x, y, z}` added to every particle (inherit a ship's motion)
+  - `gravity` - vertical acceleration, negative falls (default 0); `drag` - fraction of
+    speed lost per second (default 1)
+  - `radius` - start within this distance of the point (default 0)
+  - `shape` - `"sphere"` (default, all directions) or `"ring"` (flat in the XZ plane: a
+    shockwave on a top-down playfield)
+  - `blend` - `"add"` (default, glows) or `"alpha"`
+
+  Unknown option names are an error. Particles are camera-facing quads; they are not
+  entities, so `scene_diff` and queries do not see them.
+
+```lua
+emit_particles(x, 0.5, z, { count = 60, color = "#ffb030", intensity = 3, speed = {3, 9} })
+emit_particles(x, 0.2, z, { count = 48, shape = "ring", speed = 8, life = 0.35, color = {0.3, 0.8, 1} })
+emit_particles(x, 1, z, { count = 30, gravity = -9.8, drag = 0.2, color = "#999999", blend = "alpha" })
+```
+
+### Saving data
+- `save_data(key, text)` - Keep a small text value between runs (a high score, settings);
+  `nil` deletes it. Store tables as JSON or a Lua literal.
+- `load_data(key)` → `string` or `nil`
+
+Values belong to the open project (its folder name) and the user, not to the project's
+files, so they never end up in its repository: native builds write
+`<user data dir>/wgpu-cube/saves/<project>/<key>.txt` (`~/.local/share` on Linux), web
+builds use the browser's `localStorage`. Keys are 1-64 letters, digits, `_`, `-` or `.`.
+
+```lua
+local best = tonumber(load_data("highscore") or "0")
+if score > best then save_data("highscore", tostring(score)) end
+```
+
+### Modules
+- `require(name)` - Load a module from another file and return what it returns (usually a
+  table). It runs once per script; later calls return the same value. The module sees the
+  scripting API, and its own globals stay in the module.
+- `include(name)` - Run another file inside this script, as if its text were pasted here:
+  the functions and globals it defines become this script's. Runs on every call.
+
+`name` is a path without `.lua` (`"enemies"`, `"ai.autopilot"` or `"ai/autopilot"`), looked
+up next to the script first, then under the scripts root. Editing a required or included
+file hot-reloads every script that uses it.
+
+```lua
+-- content/scripts/game.lua
+local waves = require("waves")       -- content/scripts/waves.lua: return { {grunts = 15}, ... }
+include("autopilot")                 -- defines autopilot_update() in this script
 ```
 
 ### Audio
@@ -268,6 +342,9 @@ Script descriptors include:
   `translate(ship, f.x * speed * dt, 0, f.z * speed * dt)`.
 
 ### Hierarchy API
+Visibility is inherited: an entity is drawn only if it and all its ancestors are visible,
+so `set_component(root, "Visible", false)` hides a whole actor.
+
 - `set_parent(entity, parent)` - Set parent entity (or nil to unparent)
 - `get_parent(entity)` - Get parent entity (returns number or nil)
 - `get_children(entity)` - Get child entities (returns table array)
@@ -363,6 +440,9 @@ if target then look_at(ship, target.x, 0, target.z) end
 - `unsubscribe_event(event_name)` - Unsubscribe from event
 
 ### File I/O API (Sandboxed)
+Paths are relative to the engine's working directory, not the project; use `save_data` /
+`load_data` for values a game keeps between runs.
+
 - `read_file(path)` - Read text file (only from `scripts/` or `examples/scripts/`)
 - `write_file(path, contents)` - Write text file (only to allowed directories)
 - `file_exists(path)` - Check if file exists
@@ -409,6 +489,18 @@ into a window titled after the entity.
 - `ui:screen_label(anchor, offset_x, offset_y, text[, {color, size, backdrop = false}])` -
   Text pinned to the game view (same anchors and inset offsets as `anchored_panel`) with no
   panel around it: big titles, wave banners, "GAME OVER".
+
+Offsets are **insets**: positive values always move the text or panel inward from its
+anchor, whichever corner it is. Never pass negative offsets to reach a right or bottom
+edge; that pushes the text off screen.
+
+```lua
+ui:screen_label("top_left", 16, 12, "SCORE 1200")      -- 16 right, 12 down from the top left
+ui:screen_label("top_right", 16, 12, "LIVES 3")        -- 16 left, 12 down from the top right
+ui:screen_label("bottom_left", 16, 12, "WAVE 4")       -- 16 right, 12 up from the bottom left
+ui:screen_label("bottom_right", 16, 12, "x2")          -- 16 left, 12 up from the bottom right
+ui:screen_label("center", 0, 0, "GAME OVER", { size = 64 })
+```
 - `ui:world_label(x, y, z, text[, {color = {r, g, b, a}, size = 16, backdrop = false}])` →
   `boolean` - Text drawn over the game view at a world position (floating score, names).
   Returns `false` when the point is behind the camera or off screen. Labels are not hidden
@@ -515,8 +607,9 @@ See `ui_example_comprehensive.lua` for every available UI widget.
 Scripts can implement these lifecycle functions:
 
 ```lua
-function on_created(self_entity)
-    -- Called once when the script starts (and again after a hot reload)
+function on_created(self_entity, previous)
+    -- Called once when the script starts (and again after a hot reload). `previous` is
+    -- what on_destroyed returned before the reload, or nil.
 end
 
 function update(self_entity, dt)
@@ -530,6 +623,7 @@ end
 function on_destroyed(self_entity, reason)
     -- Called when the script component or its entity is removed, and before a hot
     -- reload. `reason` is "removed" or "reload". Despawn what on_created spawned here.
+    -- Before a reload, whatever it returns is handed to the new code's on_created.
 end
 ```
 
@@ -560,7 +654,22 @@ Top-level code runs once when the script is loaded, with the full API available.
 When a script file changes on disk it is hot-reloaded: `on_destroyed(self, "reload")` runs
 on the old code at the start of the next frame, then the new code is compiled,
 `on_created` runs again, and values stored with the state API (`set_f64`, `set_state`, ...)
-are restored afterwards. Errors are logged once per distinct message and shown in the
+are restored afterwards.
+
+Script locals reset on a reload. To keep a game going while you edit it (instead of
+restarting the demo at wave 1), return the state from `on_destroyed` and take it back in
+`on_created`. Any Lua value works, including tables with functions; entering or leaving
+play mode always starts fresh.
+
+```lua
+function on_created(self_entity, previous)
+    GAME = previous or new_game()
+end
+
+function on_destroyed(self_entity, reason)
+    if reason == "reload" then return GAME end
+end
+``` Errors are logged once per distinct message and shown in the
 editor; one failing script never stops the others.
 
 ### Coroutines

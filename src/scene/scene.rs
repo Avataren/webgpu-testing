@@ -11,6 +11,7 @@ use super::prefab_instantiator::PrefabInstantiator;
 use super::render_bridge::RenderBridge;
 use super::state::{GizmoState, TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace};
 use super::{SceneCamera, SceneEnvironment, SceneImportsManager, SceneRuntimeController};
+use crate::app::core::frame_timings;
 use crate::asset::{Assets, Handle, MeshData};
 use crate::environment::Environment;
 use crate::renderer::{CustomRenderRequest, RenderBatcher, Renderer};
@@ -41,6 +42,11 @@ pub struct Scene {
     runtime: SceneRuntimeController,
     gizmos: GizmoState,
     imports: SceneImportsManager,
+    /// Seconds of scene time scripts were stepped by since the last
+    /// [`Scene::take_stepped_time`] (follows time_scale; 0 while paused).
+    stepped_time: f64,
+    /// Set by [`Scene::reset_script_runtime`]; see [`Scene::take_script_effects_reset`].
+    script_effects_reset: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -66,7 +72,16 @@ impl Scene {
             runtime: SceneRuntimeController::new(),
             gizmos: GizmoState::new(),
             imports: SceneImportsManager::new(),
+            stepped_time: 0.0,
+            script_effects_reset: false,
         }
+    }
+
+    /// Scene time scripts advanced by since the last call: the sum of this frame's play
+    /// steps (so it follows time_scale and is 0 while paused), or the editor-mode step.
+    /// Simulations that should keep pace with the game (particles) step by this.
+    pub fn take_stepped_time(&mut self) -> f64 {
+        std::mem::take(&mut self.stepped_time)
     }
 
     pub(super) fn node(&self, id: SceneNodeId) -> &SceneNode {
@@ -373,6 +388,13 @@ impl Scene {
 
     pub fn reset_script_runtime(&mut self) {
         self.runtime.reset_script_runtime();
+        self.script_effects_reset = true;
+    }
+
+    /// Whether scripts were reset (play started or stopped) since the last call, so
+    /// effects they left behind, such as particle bursts, should be cleared.
+    pub fn take_script_effects_reset(&mut self) -> bool {
+        std::mem::take(&mut self.script_effects_reset)
     }
 
     /// Recompile the script attached to `entity`, keeping its state.
@@ -689,11 +711,13 @@ impl Scene {
     /// Unlike [`Self::update`], this does not advance scene time or animations; it only
     /// gives editor-mode scripts their `update(self_entity, dt)` tick.
     pub fn run_editor_scripts(&mut self, dt: f64) {
+        self.stepped_time += dt;
         self.refresh_script_view();
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
-            self.runtime.run_scripts(world, dt, true);
+            let runtime = &mut self.runtime;
+            frame_timings::time("scripts", || runtime.run_scripts(world, dt, true));
         }
     }
 
@@ -728,22 +752,72 @@ impl Scene {
         self.runtime.scripting_mut().eval(world, code, entity)
     }
 
+    /// Particle bursts scripts asked for (`emit_particles`) since the last call.
+    pub fn take_particle_bursts(&mut self) -> Vec<crate::gpu_particles::ParticleBurst> {
+        self.runtime.scripting_mut().take_particle_bursts()
+    }
+
+    /// Give `entity` the material of the entity with id bits `source`.
+    fn share_material(&mut self, entity: hecs::Entity, source: i64) -> Result<(), String> {
+        let world = self.main_world_mut();
+        let source = hecs::Entity::from_bits(source as u64)
+            .filter(|source| world.contains(*source))
+            .ok_or("the material source entity no longer exists")?;
+        let material = world
+            .get::<&crate::scene::components::MaterialComponent>(source)
+            .map(|material| material.0)
+            .map_err(|_| "the material source entity has no material")?;
+        world
+            .insert_one(
+                entity,
+                crate::scene::components::MaterialComponent(material),
+            )
+            .map_err(|err| err.to_string())
+    }
+
+    /// Release inline materials no entity in any of this scene's worlds uses any more
+    /// (left behind by despawned entities and replaced scenes). Returns how many.
+    pub fn collect_unused_materials(&mut self) -> usize {
+        let in_use: std::collections::HashSet<usize> = self
+            .nodes
+            .values()
+            .flat_map(|node| {
+                node.instance()
+                    .world()
+                    .query::<&crate::scene::components::MaterialComponent>()
+                    .iter()
+                    .map(|(_, material)| material.0.index())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let released = self.assets.release_unused_materials(&in_use);
+        if released > 0 {
+            log::debug!("released {released} unused materials");
+        }
+        released
+    }
+
     pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
+        self.stepped_time += dt;
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);
         let assets = &mut self.assets;
-        for node in self.nodes.values_mut() {
-            node.instance_mut().update(assets, dt, absolute_time);
-        }
+        let nodes = &mut self.nodes;
+        frame_timings::time("animations", || {
+            for node in nodes.values_mut() {
+                node.instance_mut().update(assets, dt, absolute_time);
+            }
+        });
 
-        self.update_world_transforms();
+        frame_timings::time("transforms", || self.update_world_transforms());
 
         self.refresh_script_view();
 
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
-            self.runtime.run_scripts(world, dt, editor_mode);
+            let runtime = &mut self.runtime;
+            frame_timings::time("scripts", || runtime.run_scripts(world, dt, editor_mode));
         } else {
             error!("Cannot run scripts: main scene node is missing");
         }
@@ -889,7 +963,13 @@ impl Scene {
         self.runtime.scripting_mut().set_view_rect(Some(rect));
 
         let commands = self.runtime.scripting_mut().take_pending_asset_commands();
+        // Asset commands may still attach materials created earlier in the frame, so
+        // unused ones are only released once they have run.
+        let collect = self.runtime.scripting_mut().take_entities_despawned();
         if commands.is_empty() {
+            if collect {
+                self.collect_unused_materials();
+            }
             return;
         }
         let mut textures_loaded = false;
@@ -914,6 +994,7 @@ impl Scene {
                 AssetCommand::ActiveCamera => {
                     crate::remote::handlers::set_active_camera(self, pending.entity)
                 }
+                AssetCommand::ShareMaterial(source) => self.share_material(pending.entity, *source),
             };
             if let Err(err) = outcome {
                 warn!(target: "script", "Mesh/material/light/camera change for {:?} failed: {err}", pending.entity);
@@ -921,6 +1002,9 @@ impl Scene {
         }
         if textures_loaded {
             renderer.update_texture_bind_group(&self.assets);
+        }
+        if collect {
+            self.collect_unused_materials();
         }
     }
 

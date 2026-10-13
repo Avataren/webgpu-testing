@@ -7,8 +7,10 @@ use std::path::PathBuf;
 #[cfg(feature = "egui")]
 use hecs::Entity;
 
-use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::gpu_particles::ParticleRuntime;
 use wgpu_cube::project::ProjectManifest;
+use wgpu_cube::renderer::CustomRenderContext;
 use wgpu_cube::scene::SceneLibrary;
 
 #[cfg(target_arch = "wasm32")]
@@ -120,10 +122,21 @@ struct ProjectPlayer {
     script_poller: ScriptPoller,
     #[cfg(feature = "egui")]
     script_ui: ScriptUi,
+    /// Particle systems in the scene and bursts scripts emit.
+    particles: ParticleRuntime,
 }
 
 impl ProjectPlayer {
     fn new(manifest: ProjectManifest, project_root: PathBuf) -> Self {
+        // Same namespace as the editor uses for this project (its folder name); web
+        // builds are served from "." and use the project's name.
+        let folder = project_root.canonicalize().ok().and_then(|root| {
+            root.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        });
+        wgpu_cube::scripting::lua::api::set_save_namespace(
+            folder.as_deref().unwrap_or(&manifest.metadata.name),
+        );
         Self {
             manifest,
             #[cfg(not(target_arch = "wasm32"))]
@@ -133,6 +146,7 @@ impl ProjectPlayer {
             library: SceneLibrary::new(),
             #[cfg(feature = "egui")]
             script_ui: ScriptUi::default(),
+            particles: ParticleRuntime::default(),
         }
     }
 
@@ -181,6 +195,18 @@ impl RenderApplication for ProjectPlayer {
         }
     }
 
+    fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
+        self.particles.update(ctx);
+    }
+
+    fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
+        self.particles.render(ctx);
+    }
+
+    fn custom_render_includes_shadows(&self) -> bool {
+        self.particles.has_shadow_casters()
+    }
+
     #[cfg(not(feature = "egui"))]
     fn update(&mut self, ctx: &mut UpdateContext) {
         self.reload_edited_scripts(&mut ctx.scene);
@@ -217,7 +243,18 @@ impl RenderApplication for ProjectPlayer {
     #[cfg(feature = "egui")]
     fn ui(&mut self, ui: &mut egui::Ui, _default_ui: &mut wgpu_cube::DefaultUI) {
         let ctx = ui.ctx().clone();
-        let rect = ctx.viewport_rect();
+        // HUDs follow a viewport preview (view.preview) like the game view does.
+        let rect = {
+            let full = ctx.viewport_rect();
+            let (x, y, w, h) = wgpu_cube::remote::preview::preview_rect(
+                full.min.x,
+                full.min.y,
+                full.width(),
+                full.height(),
+                ctx.pixels_per_point(),
+            );
+            egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+        };
         let script_ui = &mut self.script_ui;
         script_ui.viewport = Some((rect.width(), rect.height(), ctx.pixels_per_point()));
 

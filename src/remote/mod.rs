@@ -39,6 +39,7 @@ pub mod handlers;
 mod hub;
 mod json;
 pub mod log_tap;
+pub mod preview;
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
 

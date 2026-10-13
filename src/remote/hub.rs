@@ -469,7 +469,7 @@ pub fn process_requests(
 /// The view through the camera a screenshot asked for: a camera entity, or `"game"`
 /// for the scene's active camera (else its first camera).
 /// An aspect ratio given as a number (`1.777`) or text (`"16:9"`, `"1.5"`).
-fn parse_aspect(value: &Value) -> Result<f32, String> {
+pub(crate) fn parse_aspect(value: &Value) -> Result<f32, String> {
     let parsed = match value {
         Value::Number(number) => number.as_f64(),
         Value::String(text) => match text.split_once(':') {

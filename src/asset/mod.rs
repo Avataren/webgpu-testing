@@ -150,6 +150,29 @@ impl Assets {
         self.materials.get_mut(handle)
     }
 
+    /// Release inline PBR materials (not loaded from a file, not shaders, not the
+    /// default) whose handle is not in `in_use`. Returns how many were released.
+    ///
+    /// Every primitive gets its own inline material, so without this a game that spawns
+    /// and despawns entities grows the material list without bound.
+    pub fn release_unused_materials(&mut self, in_use: &std::collections::HashSet<usize>) -> usize {
+        let unused: Vec<Handle<MaterialAsset>> = self
+            .materials
+            .iter()
+            .filter(|(handle, asset)| {
+                *handle != self.default_material
+                    && !in_use.contains(&handle.index())
+                    && asset.canonical_path().as_os_str().is_empty()
+                    && matches!(asset.kind(), MaterialKind::Pbr)
+            })
+            .map(|(handle, _)| handle)
+            .collect();
+        for &handle in &unused {
+            self.materials.release(handle);
+        }
+        unused.len()
+    }
+
     pub fn default_material_handle(&self) -> Handle<MaterialAsset> {
         self.default_material
     }

@@ -17,6 +17,16 @@ pub struct ProjectController {
     startup_dialog: StartupDialogState,
     build_dialog: BuildDialogState,
     scene_documents: Vec<SceneDocument>,
+    last_save: Option<SaveOutcome>,
+}
+
+/// What the most recent project save did, so remote clients can wait for it.
+#[derive(Clone, Debug)]
+pub struct SaveOutcome {
+    /// Counts saves since the editor started; a new save has a higher number.
+    pub seq: u64,
+    pub dir: PathBuf,
+    pub error: Option<String>,
 }
 
 impl ProjectController {
@@ -32,7 +42,17 @@ impl ProjectController {
             startup_dialog: StartupDialogState::new(),
             build_dialog: BuildDialogState::default(),
             scene_documents: Vec::new(),
+            last_save: None,
         }
+    }
+
+    pub fn last_save(&self) -> Option<&SaveOutcome> {
+        self.last_save.as_ref()
+    }
+
+    pub fn record_save(&mut self, dir: PathBuf, error: Option<String>) {
+        let seq = self.last_save.as_ref().map_or(1, |save| save.seq + 1);
+        self.last_save = Some(SaveOutcome { seq, dir, error });
     }
 
     pub fn metadata(&self) -> &ProjectMetadata {
@@ -66,6 +86,10 @@ impl ProjectController {
     pub fn set_current_dir(&mut self, dir: PathBuf) {
         // Project scripts may read and write files inside their own project.
         wgpu_cube::scripting::lua::api::grant_path_access(&dir);
+        // save_data/load_data keep each project's values apart, by folder name.
+        if let Some(name) = dir.file_name() {
+            wgpu_cube::scripting::lua::api::set_save_namespace(&name.to_string_lossy());
+        }
         self.current_dir = Some(dir);
         self.startup_dialog.on_project_loaded();
     }
