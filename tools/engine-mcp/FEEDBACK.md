@@ -56,6 +56,11 @@ debug build) aged every particle at once, so whole bursts vanished between scree
 checked live: script particle bursts in the player (same runtime as the editor; the player only
 gained the hooks), and the web build beyond `cargo check` (it compiles with no new warnings).
 
+Seventh round (2026-10-13): Robotron's visual overhaul (voxel models of the 1982 sprites, about
+4,000 entities on the 60-grunt wave) turned up four engine bugs, all fixed here: B13 to B16. In the
+release player that wave runs at 5.7 ms frames (Lua 0.46 ms); in the debug editor it went from
+7 fps to about 20 fps once B15 and B16 were fixed.
+
 MCP-server changes (new tool parameters, blocking project tools) only take effect after the
 MCP server is restarted; engine changes take effect after `engine_launch` rebuilds.
 
@@ -249,6 +254,46 @@ How to read the sections:
   any per-entity work (no name clone or material lookup). Verified by screenshot: hiding a
   parent hid its child cube. Unit test `hidden_parent_hides_its_descendants`; documented in
   the Lua guide's Hierarchy section.
+
+### B13. A bare `spawn_entity` strands everything parented below it (fixed, engine)
+
+- Repro: `local g = spawn_entity("Group"); set_parent(g, root); local c = spawn_primitive("cube");
+  set_parent(c, g)`, never moving `g`. `c` renders at its *local* position near the origin,
+  whatever `root` does. Robotron's walk-frame nodes (one per animation frame of each actor)
+  left a pile of legs at the arena's centre.
+- Cause: script-spawned entities only got a `TransformComponent` when the script set a
+  translation, rotation or scale in the same hook, and transform propagation skips an entity
+  without one, along with its whole subtree.
+- **Resolution:** every script-spawned entity gets a transform (identity unless set). Unit test
+  `a_bare_spawned_group_node_carries_its_children_along`.
+
+### B14. Directional shadows vanish when looking through a game camera (fixed, engine)
+
+- Repro: a game camera 45 m above the floor looking down at it; the sun casts shadows in
+  editor close-ups but none through the game camera.
+- Cause: the shadow area is centred on the camera's target, and a game camera's target is the
+  eye plus one metre, so the shadow box hung in the air in front of the camera.
+- **Resolution:** for such a camera the shadow area centres where its view meets the ground
+  plane (y = 0), or half the shadow area ahead when it looks level; an editor orbit target is
+  used as before. Unit test
+  `directional_shadow_of_a_game_camera_centers_where_it_looks_at_the_ground`; checked by
+  screenshot through Robotron's camera.
+
+### B15. The hierarchy panel lays out every entity every frame (fixed, editor)
+
+- Repro: play a game that spawns about 1,000 entities; `engine_stats` shows `ui_build` at
+  128 ms per frame (debug editor), with every row of the expanded tree laid out.
+- **Resolution:** the tree is flattened into the rows whose ancestors are expanded and drawn
+  with `ScrollArea::show_rows`, so only the rows in view cost anything. Selecting an entity
+  still scrolls its row into view.
+
+### B16. One debug warning per entity spawned, flooding the console (fixed, engine)
+
+- Repro: spawn 1,000 entities from a script in a debug build: 1,000 lines of
+  `Entity 'RT_v' using LOCAL transform (no WorldTransform)`, and the console laying out its
+  whole 1,000-line buffer each frame kept `ui_build` at about 38 ms after B15.
+- **Resolution:** reported once per run. (Most of these were B13; the rest are entities drawn
+  on the frame they were spawned, before propagation, which is harmless.)
 
 ## Pain points
 
@@ -496,6 +541,12 @@ How to read the sections:
   could return a table that `on_created(self, previous)` receives, so a game can keep its
   state across edits. **Done** as suggested; entering or leaving play starts fresh. Verified:
   `GAME.wave = 9` survived a reload triggered by a module edit.
+
+- **Post-processing settings are not saved with the project.** `postprocess_set` (bloom
+  threshold, SSAO radius) changes the running engine only; after `project_save` and a restart
+  `postprocess_get` showed the defaults again, and Lua cannot set them. Robotron's look had to be
+  tuned against the defaults. Wish: keep them in `project.json` like the environment, or a
+  `set_postprocess` Lua call.
 
 ## Wish list
 

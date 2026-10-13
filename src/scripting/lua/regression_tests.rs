@@ -773,3 +773,37 @@ fn spawn_primitive_can_share_a_material() {
         .iter()
         .all(|&source| source as u64 == a.to_bits().get()));
 }
+
+#[test]
+fn a_bare_spawned_group_node_carries_its_children_along() {
+    use crate::scene::internal::transforms::propagate_transforms;
+    use crate::scene::Name;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    state
+        .eval(
+            &mut world,
+            r#"
+                local root = spawn_entity("Root")
+                set_translation(root, 5, 0, 0)
+                local group = spawn_entity("Group") -- never moved: still needs a transform
+                set_parent(group, root)
+                local leaf = spawn_entity("Leaf")
+                set_parent(leaf, group)
+                set_translation(leaf, 0, 1, 0)
+            "#,
+            None,
+        )
+        .unwrap();
+    propagate_transforms(&mut world);
+
+    let leaf = world
+        .query::<&Name>()
+        .iter()
+        .find(|(_, name)| name.0 == "Leaf")
+        .map(|(entity, _)| entity)
+        .unwrap();
+    let position = world.get::<&WorldTransform>(leaf).unwrap().0.translation;
+    assert_eq!(position, Vec3::new(5.0, 1.0, 0.0));
+}

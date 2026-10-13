@@ -406,22 +406,20 @@ impl ScriptCommands {
                 world.insert_one(entity, Name(name))?;
             }
 
-            if pending.translation.is_some()
-                || pending.rotation.is_some()
-                || pending.scale.is_some()
-            {
-                let mut transform = Transform::default();
-                if let Some(translation) = pending.translation.take() {
-                    transform.translation = translation;
-                }
-                if let Some(rotation) = pending.rotation.take() {
-                    transform.rotation = rotation;
-                }
-                if let Some(scale) = pending.scale.take() {
-                    transform.scale = scale;
-                }
-                world.insert_one(entity, TransformComponent(transform))?;
+            // Every spawned entity gets a transform, even one the script never moves: an
+            // entity without one is skipped by transform propagation, and so is everything
+            // parented below it (a bare `spawn_entity` group node would strand its children).
+            let mut transform = Transform::default();
+            if let Some(translation) = pending.translation.take() {
+                transform.translation = translation;
             }
+            if let Some(rotation) = pending.rotation.take() {
+                transform.rotation = rotation;
+            }
+            if let Some(scale) = pending.scale.take() {
+                transform.scale = scale;
+            }
+            world.insert_one(entity, TransformComponent(transform))?;
 
             // Attach all scripts to this entity
             for script in pending.scripts {

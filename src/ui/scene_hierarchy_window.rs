@@ -484,6 +484,13 @@ struct SceneHierarchyViewState {
 }
 
 #[cfg(feature = "egui")]
+/// One line of the hierarchy tree.
+struct HierarchyRow {
+    entity: Entity,
+    depth: usize,
+    has_children: bool,
+}
+
 pub struct SceneHierarchyWindow {
     handle: Option<SceneHierarchyHandle>,
     title: String,
@@ -795,24 +802,37 @@ impl SceneHierarchyWindow {
             return events;
         }
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .show(ui, |ui| {
-                self.entity_tree(ui, &snapshot, workspace, &mut events)
-            });
+        // Only the rows in view are laid out, so a game that spawns thousands of entities
+        // during play does not slow the editor down.
+        let rows = self.visible_rows(ui.ctx(), &snapshot);
+        let row_height = ui.spacing().interact_size.y;
+        let mut area = egui::ScrollArea::vertical().auto_shrink([false; 2]);
+        if self.pending_scroll_to_selection {
+            if let Some(index) = rows.iter().position(|row| self.is_selected(row.entity)) {
+                let pitch = row_height + ui.spacing().item_spacing.y;
+                let offset = index as f32 * pitch - ui.available_height() * 0.5;
+                area = area.vertical_scroll_offset(offset.max(0.0));
+                self.pending_scroll_to_selection = false;
+            }
+        }
+        area.show_rows(ui, row_height, rows.len(), |ui, range| {
+            for row in &rows[range] {
+                self.draw_row(ui, row, &snapshot, workspace, &mut events);
+            }
+        });
         events
     }
 
-    fn entity_tree(
-        &mut self,
-        ui: &mut egui::Ui,
+    /// The rows the tree shows, in order: every entity whose ancestors are all expanded.
+    fn visible_rows(
+        &self,
+        ctx: &egui::Context,
         snapshot: &SceneHierarchySnapshot,
-        workspace: &SceneHierarchyWorkspaceInfo,
-        events: &mut Vec<SceneHierarchyEvent>,
-    ) {
+    ) -> Vec<HierarchyRow> {
+        let mut rows = Vec::new();
         let mut visited = BTreeSet::new();
         for &root in snapshot.roots() {
-            self.draw_entity(ui, root, snapshot, &mut visited, workspace, events);
+            self.collect_rows(ctx, root, 0, snapshot, &mut visited, &mut rows);
         }
 
         for entity in snapshot.iter_nodes() {
@@ -824,12 +844,46 @@ impl SceneHierarchyWindow {
                 continue;
             };
 
-            if self.is_hidden_by_collapsed_parent(node, snapshot, ui) {
+            if self.is_hidden_by_collapsed_parent(node, snapshot, ctx) {
                 continue;
             }
 
-            self.draw_entity(ui, entity, snapshot, &mut visited, workspace, events);
+            self.collect_rows(ctx, entity, 0, snapshot, &mut visited, &mut rows);
         }
+        rows
+    }
+
+    fn collect_rows(
+        &self,
+        ctx: &egui::Context,
+        entity: Entity,
+        depth: usize,
+        snapshot: &SceneHierarchySnapshot,
+        visited: &mut BTreeSet<Entity>,
+        rows: &mut Vec<HierarchyRow>,
+    ) {
+        if !visited.insert(entity) {
+            return;
+        }
+        let Some(node) = snapshot.node(entity) else {
+            return;
+        };
+        let has_children = !node.children.is_empty();
+        rows.push(HierarchyRow {
+            entity,
+            depth,
+            has_children,
+        });
+        if has_children && self.collapse_state(ctx, entity).is_open() {
+            for &child in &node.children {
+                self.collect_rows(ctx, child, depth + 1, snapshot, visited, rows);
+            }
+        }
+    }
+
+    fn collapse_state(&self, ctx: &egui::Context, entity: Entity) -> CollapsingState {
+        let id = egui::Id::new(("scene_hierarchy", self.active_scene, entity));
+        CollapsingState::load_with_default_open(ctx, id, true)
     }
 
     fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {
@@ -840,19 +894,15 @@ impl SceneHierarchyWindow {
         Some(state.snapshot_with_revision())
     }
 
-    fn draw_entity(
+    fn draw_row(
         &mut self,
         ui: &mut egui::Ui,
-        entity: Entity,
+        row: &HierarchyRow,
         snapshot: &SceneHierarchySnapshot,
-        visited: &mut BTreeSet<Entity>,
         workspace: &SceneHierarchyWorkspaceInfo,
         events: &mut Vec<SceneHierarchyEvent>,
     ) {
-        if !visited.insert(entity) {
-            return;
-        }
-
+        let entity = row.entity;
         let Some(node) = snapshot.node(entity) else {
             return;
         };
@@ -874,80 +924,59 @@ impl SceneHierarchyWindow {
         let selected = self.is_selected(entity);
 
         let mut clicked = false;
-        let mut row = |this: &mut Self, ui: &mut egui::Ui| {
-            ui.horizontal(|ui| {
-                let response = ui
-                    .selectable_label(selected, label.clone())
-                    .on_hover_text(format!("Entity {:?}", node.entity));
-
-                response.context_menu(|ui| {
-                    if ui.button("Add Script").clicked() {
-                        events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Delete").clicked() {
-                        events.push(SceneHierarchyEvent::DeleteEntity(entity));
-                        ui.close();
-                    }
-                });
-
-                if let Some(info) = &prefab_info {
-                    this.decorate_prefab_response(&response, info, workspace, events);
-                    if workspace.is_foreign_document(&info.document_id) {
-                        ui.add_space(4.0);
-                        this.add_prefab_badge(ui, info);
-                    }
-                }
-                if response.clicked() {
-                    clicked = true;
-                }
-                if selected && this.pending_scroll_to_selection {
-                    response.scroll_to_me(Some(egui::Align::Center));
-                    this.pending_scroll_to_selection = false;
-                }
-            });
-        };
-
-        if node.children.is_empty() {
-            // Line leaf rows up with the labels of rows that have a collapse arrow.
-            ui.horizontal(|ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(row.depth as f32 * ui.spacing().indent);
+            if row.has_children {
+                let mut state = self.collapse_state(ui.ctx(), entity);
+                state.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
+                state.store(ui.ctx());
+            } else {
+                // Line leaf rows up with the labels of rows that have a collapse arrow.
                 ui.add_space(ui.spacing().indent);
-                row(self, ui);
-            });
-            if clicked {
-                self.update_selected_entity(Some(entity), false);
             }
-            return;
-        }
+            let response = ui
+                .selectable_label(selected, label.clone())
+                .on_hover_text(format!("Entity {:?}", node.entity));
 
-        let id = egui::Id::new(("scene_hierarchy", self.active_scene, entity));
-        let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
-        let header_response = state.show_header(ui, |ui| row(self, ui));
+            response.context_menu(|ui| {
+                if ui.button("Add Script").clicked() {
+                    events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Delete").clicked() {
+                    events.push(SceneHierarchyEvent::DeleteEntity(entity));
+                    ui.close();
+                }
+            });
+
+            if let Some(info) = &prefab_info {
+                self.decorate_prefab_response(&response, info, workspace, events);
+                if workspace.is_foreign_document(&info.document_id) {
+                    ui.add_space(4.0);
+                    self.add_prefab_badge(ui, info);
+                }
+            }
+            if response.clicked() {
+                clicked = true;
+            }
+        });
 
         if clicked {
             self.update_selected_entity(Some(entity), false);
         }
-
-        let _ = header_response.body(|ui| {
-            for &child in &node.children {
-                self.draw_entity(ui, child, snapshot, visited, workspace, events);
-            }
-        });
     }
 
     fn is_hidden_by_collapsed_parent(
         &self,
         node: &SceneHierarchyNode,
         snapshot: &SceneHierarchySnapshot,
-        ui: &egui::Ui,
+        ctx: &egui::Context,
     ) -> bool {
         let mut current = node.parent;
 
         while let Some(parent_entity) = current {
-            let id = egui::Id::new(("scene_hierarchy", self.active_scene, parent_entity));
-            let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
-            if !state.is_open() {
+            if !self.collapse_state(ctx, parent_entity).is_open() {
                 return true;
             }
 

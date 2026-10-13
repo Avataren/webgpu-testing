@@ -133,6 +133,30 @@ fn shadow_enabled(flag: Option<&CanCastShadow>) -> bool {
     flag.map(|flag| flag.0).unwrap_or(false)
 }
 
+/// Where the directional shadow area is centered. The editor camera orbits a target in the
+/// scene, so that is used. A game camera's target is only a step ahead of its eye, which
+/// would center the shadows in the air in front of a high camera (and leave the ground it
+/// looks at without any), so for it the shadows center where its view meets the ground
+/// plane (y = 0), or half the shadow area ahead when it does not look down.
+fn shadow_focus(camera_pos: Vec3, camera_target: Vec3, shadow_size: f32) -> Vec3 {
+    const ORBIT_TARGET_MIN_DISTANCE: f32 = 2.0;
+    let offset = camera_target - camera_pos;
+    let length = offset.length();
+    if length <= 1e-2 {
+        return camera_pos;
+    }
+    if length >= ORBIT_TARGET_MIN_DISTANCE {
+        return camera_target;
+    }
+    let forward = offset / length;
+    let extent = shadow_size.max(0.1);
+    if forward.y < -0.05 && camera_pos.y > 0.0 {
+        let to_ground = (camera_pos.y / -forward.y).min(extent * 4.0);
+        return camera_pos + forward * to_ground;
+    }
+    camera_pos + forward * extent
+}
+
 pub(crate) fn build_directional_shadow(
     camera_pos: Vec3,
     camera_target: Vec3,
@@ -144,11 +168,7 @@ pub(crate) fn build_directional_shadow(
     let raw_dir = light_transform.rotation * Vec3::NEG_Z;
     let direction = safe_normalize(raw_dir, Vec3::new(0.0, -1.0, 0.0));
 
-    let focus = if (camera_target - camera_pos).length_squared() > 1e-4 {
-        camera_target
-    } else {
-        camera_pos
-    };
+    let focus = shadow_focus(camera_pos, camera_target, shadow_size);
     let light_pos = focus - direction * shadow_distance;
 
     let mut up = light_transform.rotation * Vec3::Y;
@@ -408,6 +428,23 @@ mod tests {
 
         let dir_in_view = (actual_view * direction.extend(0.0)).truncate().normalize();
         assert!(dir_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
+    }
+
+    #[test]
+    fn directional_shadow_of_a_game_camera_centers_where_it_looks_at_the_ground() {
+        // A game camera high above the arena: its target is a step ahead of the eye.
+        let eye = Vec3::new(0.0, 40.0, 20.0);
+        let forward = (Vec3::new(0.0, 0.0, -3.0) - eye).normalize();
+        let focus = shadow_focus(eye, eye + forward, 24.0);
+        assert!(focus.abs_diff_eq(Vec3::new(0.0, 0.0, -3.0), 1e-3), "{focus:?}");
+
+        // An orbit target in the scene is used as it is.
+        let target = Vec3::new(1.0, 0.5, -2.0);
+        assert_eq!(shadow_focus(eye, target, 24.0), target);
+
+        // Looking at the horizon: half the shadow area ahead.
+        let level = shadow_focus(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 2.0, -1.0), 10.0);
+        assert!(level.abs_diff_eq(Vec3::new(0.0, 2.0, -10.0), 1e-4), "{level:?}");
     }
 
     #[test]

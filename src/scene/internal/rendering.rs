@@ -260,10 +260,14 @@ fn select_render_transform(entity: &RenderEntity) -> Transform {
     if let Some(world) = entity.world_transform {
         world
     } else if let Some(local) = entity.local_transform {
-        if cfg!(debug_assertions) {
+        // Entities spawned this frame (by scripts, say) get their WorldTransform on the next
+        // propagation, so this happens routinely; a game spawning a thousand of them must not
+        // flood the log, so it is reported once per run.
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if cfg!(debug_assertions) && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             if let Some(name) = &entity.name {
                 log::warn!(
-                    "Entity '{}' using LOCAL transform (no WorldTransform)",
+                    "Entity '{}' using LOCAL transform (no WorldTransform); reported once",
                     name
                 );
             }
