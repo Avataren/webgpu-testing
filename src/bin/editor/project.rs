@@ -197,7 +197,10 @@ impl ProjectController {
                 }
             }
 
-            if ui.button("Save Project").clicked() {
+            if ui
+                .add(egui::Button::new("Save Project").shortcut_text("Ctrl+S"))
+                .clicked()
+            {
                 if let Some(dir) = self
                     .current_dir()
                     .cloned()

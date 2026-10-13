@@ -459,7 +459,7 @@ enum StatusKind {
     Error,
 }
 
-fn highlight_wgsl(ui: &egui::Ui, text: &str, wrap_width: f32) -> LayoutJob {
+pub(crate) fn highlight_wgsl(ui: &egui::Ui, text: &str, wrap_width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
 

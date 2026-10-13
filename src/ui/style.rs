@@ -14,6 +14,8 @@ pub struct UiStyle {
     pub window_opacity: f32,
     /// Opacity for panel backgrounds (0.0 - 1.0)
     pub panel_opacity: f32,
+    /// Sets the whole style in place of the colors above, e.g. an application theme.
+    pub theme: Option<fn(&mut egui::Style)>,
 }
 
 #[cfg(feature = "egui")]
@@ -25,6 +27,7 @@ impl Default for UiStyle {
             dark_mode: true,
             window_opacity: 0.9,
             panel_opacity: 0.8,
+            theme: None,
         }
     }
 }
@@ -40,6 +43,14 @@ impl UiStyle {
         };
         style.apply_opacity();
         style
+    }
+
+    /// Create a style that lets `theme` set every style field.
+    pub fn with_theme(theme: fn(&mut egui::Style)) -> Self {
+        Self {
+            theme: Some(theme),
+            ..Self::default()
+        }
     }
 
     /// Create a fully transparent style
@@ -95,6 +106,11 @@ impl UiStyle {
 
     /// Apply this style to an egui context
     pub fn apply(&self, ctx: &Context) {
+        if let Some(theme) = self.theme {
+            ctx.style_mut_of(ctx.theme(), theme);
+            return;
+        }
+
         let mut visuals = if self.dark_mode {
             Visuals::dark()
         } else {

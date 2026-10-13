@@ -18,6 +18,7 @@ pub(super) const EDITOR_METHODS: &[&str] = &[
     "editor.undo",
     "editor.redo",
     "editor.select",
+    "editor.open_file",
     "project.create",
     "project.open",
     "project.save",
@@ -163,6 +164,14 @@ impl EditorApplication {
                 Ok(json!({ "queued": method }))
             }
             "editor.select" => self.remote_select(params, ctx),
+            "editor.open_file" => (|| {
+                let path = absolute(str_param(params, "path")?);
+                if !path.is_file() {
+                    return Err(format!("no file at {}", path.display()));
+                }
+                self.script_editor_system_mut().open_file(&path);
+                Ok(json!({ "opened": path.display().to_string() }))
+            })(),
             "project.create" => (|| {
                 let name = str_param(params, "name")?.trim().to_owned();
                 if name.is_empty() {

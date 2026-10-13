@@ -1,7 +1,14 @@
+//! Tabbed code editor for Lua scripts, shaders and other text files.
+//!
+//! Documents are either files on disk (saved in place; the file watcher hot-reloads
+//! scripts that use them) or inline scripts stored in an entity's script component.
+
 use std::io;
 #[cfg(target_arch = "wasm32")]
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant, SystemTime};
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
@@ -9,11 +16,20 @@ use hecs::Entity;
 
 use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 
+use crate::theme::{self, colors, icons};
+
 /// Lua 5.4 reserved words.
 const KEYWORDS: &[&str] = &[
     "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
     "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
 ];
+
+/// Font used for code and the line-number gutter; both must match so rows line up.
+const CODE_FONT_SIZE: f32 = 14.0;
+
+/// How often clean file documents check whether the file changed on disk.
+#[cfg(not(target_arch = "wasm32"))]
+const DISK_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub enum ScriptEditorEvent {
     None,
@@ -23,272 +39,687 @@ pub enum ScriptEditorEvent {
         contents: String,
         message: String,
     },
-    SaveFile {
-        entity: Entity,
-        message: String,
-    },
-    Closed,
-}
-
-pub struct ScriptEditorState {
-    entity: Entity,
-    source: ScriptEditorSource,
-    buffer: String,
-    original_buffer: String,
-    status: Option<StatusMessage>,
-    open: bool,
-    target_missing: bool,
-    save_in_progress: bool,
-}
-
-impl ScriptEditorState {
-    pub fn new(entity: Entity, component: LuaScriptComponent) -> Self {
-        let (source, buffer, status) = Self::extract_source(&component);
-        Self {
-            entity,
-            source,
-            original_buffer: buffer.clone(),
-            buffer,
-            status,
-            open: true,
-            target_missing: false,
-            save_in_progress: false,
-        }
-    }
-
-    pub fn entity(&self) -> Entity {
-        self.entity
-    }
-
-    pub fn show(&mut self, ctx: &egui::Context) -> ScriptEditorEvent {
-        let mut event = ScriptEditorEvent::None;
-        let mut open = self.open;
-        let window_title = format!("Script Editor - {}", self.source.window_label());
-        egui::Window::new(window_title)
-            .open(&mut open)
-            .resizable(true)
-            .default_size(egui::vec2(720.0, 520.0))
-            .show(ctx, |ui| {
-                if let Some(status) = &self.status {
-                    let color = status.color(ui.visuals());
-                    ui.colored_label(color, &status.text);
-                    ui.add_space(6.0);
-                }
-
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("Entity: {:?}", self.entity)).monospace());
-                    if self.save_in_progress {
-                        ui.add_space(8.0);
-                        ui.spinner();
-                        ui.label("Saving...");
-                    }
-                });
-                ui.label(self.source.description());
-                if self.target_missing {
-                    ui.label(
-                        egui::RichText::new("Target entity unavailable")
-                            .color(ui.visuals().warn_fg_color),
-                    );
-                }
-
-                ui.separator();
-
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    let dirty = self.buffer != self.original_buffer;
-                    let can_save = dirty && !self.save_in_progress && !self.target_missing;
-
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(can_save, egui::Button::new("Save"))
-                            .clicked()
-                        {
-                            let source_snapshot = self.source.clone();
-                            match source_snapshot {
-                                ScriptEditorSource::Inline { name } => {
-                                    self.save_in_progress = true;
-                                    self.set_status_info("Saving inline script...");
-                                    event = ScriptEditorEvent::SaveInline {
-                                        entity: self.entity,
-                                        name: name.clone(),
-                                        contents: self.buffer.clone(),
-                                        message: format!(
-                                            "Inline script `{}` saved and hot-reloaded.",
-                                            name
-                                        ),
-                                    };
-                                }
-                                ScriptEditorSource::File { path } => {
-                                    match write_file(&path, &self.buffer) {
-                                        Ok(()) => {
-                                            self.original_buffer = self.buffer.clone();
-                                            self.set_status_info(format!(
-                                                "Saved to {}",
-                                                path.display()
-                                            ));
-                                            event = ScriptEditorEvent::SaveFile {
-                                                entity: self.entity,
-                                                message: format!(
-                                                    "Script `{}` hot-reloaded.",
-                                                    path.display()
-                                                ),
-                                            };
-                                        }
-                                        Err(err) => {
-                                            self.set_status_error(format!(
-                                                "Failed to save {}: {err}",
-                                                path.display()
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if ui
-                            .add_enabled(
-                                dirty && !self.save_in_progress,
-                                egui::Button::new("Reset"),
-                            )
-                            .clicked()
-                        {
-                            self.buffer = self.original_buffer.clone();
-                            self.set_status_info("Reverted changes.");
-                        }
-                    });
-
-                    ui.add_space(8.0);
-
-                    let mut layouter =
-                        |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
-                            let job = highlight_lua(ui, text.as_str(), wrap_width);
-                            ui.fonts_mut(|fonts| fonts.layout_job(job))
-                        };
-
-                    let editor = egui::TextEdit::multiline(&mut self.buffer)
-                        .code_editor()
-                        .lock_focus(true)
-                        .layouter(&mut layouter);
-
-                    let mut available = ui.available_size();
-                    available.y = available.y.max(0.0);
-                    let available_size = available;
-
-                    ui.add_enabled_ui(!self.target_missing, |ui| {
-                        ui.add_sized(available_size, editor);
-                    });
-                });
-            });
-
-        if !open && self.open && matches!(event, ScriptEditorEvent::None) {
-            event = ScriptEditorEvent::Closed;
-        }
-        self.open = open;
-        event
-    }
-
-    pub fn mark_target_missing(&mut self, message: impl Into<String>) {
-        self.target_missing = true;
-        self.save_in_progress = false;
-        self.status = Some(StatusMessage::error(message));
-    }
-
-    pub fn clear_target_missing(&mut self) {
-        self.target_missing = false;
-    }
-
-    pub fn sync_with_component(&mut self, component: &LuaScriptComponent) {
-        if self.save_in_progress || self.buffer != self.original_buffer {
-            return;
-        }
-
-        let (source, buffer, status) = Self::extract_source(component);
-        let changed = self.source != source || self.original_buffer != buffer;
-        if changed {
-            self.source = source;
-            self.original_buffer = buffer.clone();
-            self.buffer = buffer;
-            if let Some(status) = status {
-                self.status = Some(status);
-            } else {
-                self.set_status_info("Script updated.");
-            }
-        } else if let Some(status) = status {
-            self.status = Some(status);
-        }
-    }
-
-    pub fn finish_save(&mut self, message: impl Into<String>) {
-        self.save_in_progress = false;
-        self.original_buffer = self.buffer.clone();
-        self.set_status_info(message);
-    }
-
-    pub fn fail_save(&mut self, message: impl Into<String>) {
-        self.save_in_progress = false;
-        self.set_status_error(message);
-    }
-
-    fn extract_source(
-        component: &LuaScriptComponent,
-    ) -> (ScriptEditorSource, String, Option<StatusMessage>) {
-        match component.source() {
-            LuaScriptSource::Inline { name, source } => (
-                ScriptEditorSource::Inline {
-                    name: name.to_string(),
-                },
-                source.to_string(),
-                None,
-            ),
-            LuaScriptSource::File { path } => match read_file_to_string(path) {
-                Ok(contents) => (
-                    ScriptEditorSource::File { path: path.clone() },
-                    contents,
-                    None,
-                ),
-                Err(err) => (
-                    ScriptEditorSource::File { path: path.clone() },
-                    String::new(),
-                    Some(StatusMessage::error(format!(
-                        "Failed to load {}: {err}",
-                        path.display()
-                    ))),
-                ),
-            },
-        }
-    }
-
-    fn set_status_info(&mut self, text: impl Into<String>) {
-        self.status = Some(StatusMessage::info(text));
-    }
-
-    fn set_status_error(&mut self, text: impl Into<String>) {
-        self.status = Some(StatusMessage::error(text));
-    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum ScriptEditorSource {
-    Inline { name: String },
+enum DocumentSource {
+    Inline { entity: Entity, name: String },
     File { path: PathBuf },
 }
 
-impl ScriptEditorSource {
-    fn description(&self) -> String {
-        match self {
-            Self::Inline { name } => format!("Inline script `{name}`"),
-            Self::File { path } => format!("File: {}", path.display()),
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Language {
+    Lua,
+    Wgsl,
+    Plain,
+}
+
+struct Document {
+    source: DocumentSource,
+    buffer: String,
+    original: String,
+    status: Option<StatusMessage>,
+    target_missing: bool,
+    save_in_progress: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    disk_modified: Option<SystemTime>,
+    #[cfg(not(target_arch = "wasm32"))]
+    last_disk_check: Option<Instant>,
+}
+
+impl Document {
+    fn inline(entity: Entity, name: &str, source: &str) -> Self {
+        Self::new(
+            DocumentSource::Inline {
+                entity,
+                name: name.to_string(),
+            },
+            source.to_string(),
+            None,
+        )
+    }
+
+    fn file(path: &Path) -> Self {
+        let (contents, status) = match read_file_to_string(path) {
+            Ok(contents) => (contents, None),
+            Err(err) => (
+                String::new(),
+                Some(StatusMessage::error(format!("Failed to load: {err}"))),
+            ),
+        };
+        let mut document = Self::new(
+            DocumentSource::File {
+                path: path.to_path_buf(),
+            },
+            contents,
+            status,
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            document.disk_modified = modified_time(path);
+        }
+        document
+    }
+
+    fn new(source: DocumentSource, contents: String, status: Option<StatusMessage>) -> Self {
+        Self {
+            source,
+            original: contents.clone(),
+            buffer: contents,
+            status,
+            target_missing: false,
+            save_in_progress: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            disk_modified: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            last_disk_check: None,
         }
     }
 
-    fn window_label(&self) -> String {
-        match self {
-            Self::Inline { name } => format!("Inline {name}"),
-            Self::File { path } => path
+    fn is_dirty(&self) -> bool {
+        self.buffer != self.original
+    }
+
+    fn title(&self) -> String {
+        match &self.source {
+            DocumentSource::Inline { name, .. } => name.clone(),
+            DocumentSource::File { path } => path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string()),
         }
     }
+
+    fn description(&self) -> String {
+        match &self.source {
+            DocumentSource::Inline { entity, .. } => {
+                format!("Inline script on entity {entity:?}")
+            }
+            DocumentSource::File { path } => path.display().to_string(),
+        }
+    }
+
+    /// Like [`Self::description`], with project files relative to the content folder.
+    fn short_description(&self, content_root: Option<&Path>) -> String {
+        match (&self.source, content_root) {
+            (DocumentSource::File { path }, Some(root)) => path
+                .strip_prefix(root)
+                .map(|relative| relative.display().to_string())
+                .unwrap_or_else(|_| self.description()),
+            _ => self.description(),
+        }
+    }
+
+    fn language(&self) -> Language {
+        match &self.source {
+            DocumentSource::Inline { .. } => Language::Lua,
+            DocumentSource::File { path } => match path.extension().and_then(|ext| ext.to_str()) {
+                Some(ext) if ext.eq_ignore_ascii_case("lua") => Language::Lua,
+                Some(ext) if ext.eq_ignore_ascii_case("wgsl") => Language::Wgsl,
+                _ => Language::Plain,
+            },
+        }
+    }
+
+    fn inline_entity(&self) -> Option<Entity> {
+        match self.source {
+            DocumentSource::Inline { entity, .. } => Some(entity),
+            DocumentSource::File { .. } => None,
+        }
+    }
+
+    /// Save the buffer: files are written now, inline scripts go through the editor.
+    fn save(&mut self) -> ScriptEditorEvent {
+        if !self.is_dirty() || self.save_in_progress || self.target_missing {
+            return ScriptEditorEvent::None;
+        }
+        match self.source.clone() {
+            DocumentSource::Inline { entity, name } => {
+                self.save_in_progress = true;
+                self.status = Some(StatusMessage::info("Saving..."));
+                ScriptEditorEvent::SaveInline {
+                    entity,
+                    contents: self.buffer.clone(),
+                    message: format!("Saved inline script `{name}`."),
+                    name,
+                }
+            }
+            DocumentSource::File { path } => {
+                match write_file(&path, &self.buffer) {
+                    Ok(()) => {
+                        self.original = self.buffer.clone();
+                        self.status = Some(StatusMessage::info("Saved."));
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            self.disk_modified = modified_time(&path);
+                        }
+                    }
+                    Err(err) => {
+                        self.status = Some(StatusMessage::error(format!("Failed to save: {err}")));
+                    }
+                }
+                ScriptEditorEvent::None
+            }
+        }
+    }
+
+    /// Pick up changes other programs made to the file.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn check_disk(&mut self) {
+        let DocumentSource::File { path } = &self.source else {
+            return;
+        };
+        if self
+            .last_disk_check
+            .is_some_and(|checked| checked.elapsed() < DISK_CHECK_INTERVAL)
+        {
+            return;
+        }
+        self.last_disk_check = Some(Instant::now());
+
+        let modified = modified_time(path);
+        if modified.is_none() || modified == self.disk_modified {
+            return;
+        }
+        if self.is_dirty() {
+            self.status = Some(StatusMessage::error(
+                "The file changed on disk. Saving will overwrite those changes.",
+            ));
+            self.disk_modified = modified;
+            return;
+        }
+        if let Ok(contents) = read_file_to_string(path) {
+            self.disk_modified = modified;
+            if contents != self.original {
+                self.original = contents.clone();
+                self.buffer = contents;
+                self.status = Some(StatusMessage::info("Reloaded: the file changed on disk."));
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn check_disk(&mut self) {}
+}
+
+/// What a pending close confirmation is for.
+#[derive(Clone, Copy)]
+enum CloseRequest {
+    Tab(usize),
+    Window,
+}
+
+#[derive(Default)]
+pub struct ScriptEditorState {
+    documents: Vec<Document>,
+    active: usize,
+    confirm_close: Option<CloseRequest>,
+    /// Whether the editor had keyboard focus or the pointer last frame.
+    wants_keyboard: bool,
+}
+
+impl ScriptEditorState {
+    pub fn is_open(&self) -> bool {
+        !self.documents.is_empty()
+    }
+
+    /// True while the editor should receive shortcuts such as Ctrl+S.
+    pub fn wants_keyboard(&self) -> bool {
+        self.is_open() && self.wants_keyboard
+    }
+
+    /// Open (or focus) an entity's inline script.
+    pub fn open_inline(&mut self, entity: Entity, component: &LuaScriptComponent) {
+        if let LuaScriptSource::File { path } = component.source() {
+            self.open_file(path);
+            return;
+        }
+        if let Some(index) = self
+            .documents
+            .iter()
+            .position(|doc| doc.inline_entity() == Some(entity))
+        {
+            self.active = index;
+            self.sync_inline(entity, Ok(component));
+            return;
+        }
+        if let LuaScriptSource::Inline { name, source } = component.source() {
+            self.documents.push(Document::inline(entity, name, source));
+            self.active = self.documents.len() - 1;
+        }
+    }
+
+    /// Open (or focus) a file.
+    pub fn open_file(&mut self, path: &Path) {
+        let wanted = canonical(path);
+        if let Some(index) = self.documents.iter().position(|doc| match &doc.source {
+            DocumentSource::File { path } => canonical(path) == wanted,
+            DocumentSource::Inline { .. } => false,
+        }) {
+            self.active = index;
+            return;
+        }
+        self.documents.push(Document::file(path));
+        self.active = self.documents.len() - 1;
+    }
+
+    /// Entities whose inline scripts are open, to be checked with [`Self::sync_inline`].
+    pub fn inline_entities(&self) -> Vec<Entity> {
+        self.documents
+            .iter()
+            .filter_map(Document::inline_entity)
+            .collect()
+    }
+
+    /// Update an inline document from its entity's script component, or mark it
+    /// unavailable with the reason.
+    pub fn sync_inline(&mut self, entity: Entity, component: Result<&LuaScriptComponent, &str>) {
+        for doc in &mut self.documents {
+            if doc.inline_entity() != Some(entity) {
+                continue;
+            }
+            let component = match component {
+                Ok(component) => component,
+                Err(reason) => {
+                    if !doc.target_missing {
+                        doc.target_missing = true;
+                        doc.save_in_progress = false;
+                        doc.status = Some(StatusMessage::error(reason));
+                    }
+                    continue;
+                }
+            };
+            let LuaScriptSource::Inline { name, source } = component.source() else {
+                if !doc.target_missing {
+                    doc.target_missing = true;
+                    doc.status = Some(StatusMessage::error(
+                        "The entity now uses a script file instead.",
+                    ));
+                }
+                continue;
+            };
+            if doc.target_missing {
+                doc.target_missing = false;
+                doc.status = None;
+            }
+            if doc.save_in_progress || doc.is_dirty() {
+                continue;
+            }
+            if doc.original != *source {
+                doc.original = source.to_string();
+                doc.buffer = source.to_string();
+                doc.status = Some(StatusMessage::info("Script updated."));
+            }
+            if let DocumentSource::Inline { name: doc_name, .. } = &mut doc.source {
+                if doc_name != name {
+                    *doc_name = name.to_string();
+                }
+            }
+        }
+    }
+
+    pub fn finish_save(&mut self, entity: Entity, message: impl Into<String>) {
+        let message = message.into();
+        for doc in &mut self.documents {
+            if doc.inline_entity() == Some(entity) && doc.save_in_progress {
+                doc.save_in_progress = false;
+                doc.original = doc.buffer.clone();
+                doc.status = Some(StatusMessage::info(message.clone()));
+            }
+        }
+    }
+
+    pub fn fail_save(&mut self, entity: Entity, message: impl Into<String>) {
+        let message = message.into();
+        for doc in &mut self.documents {
+            if doc.inline_entity() == Some(entity) {
+                doc.save_in_progress = false;
+                doc.status = Some(StatusMessage::error(message.clone()));
+            }
+        }
+    }
+
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        content_root: Option<PathBuf>,
+    ) -> ScriptEditorEvent {
+        if self.documents.is_empty() {
+            self.wants_keyboard = false;
+            return ScriptEditorEvent::None;
+        }
+        self.active = self.active.min(self.documents.len() - 1);
+        for doc in &mut self.documents {
+            doc.check_disk();
+        }
+
+        let mut event = ScriptEditorEvent::None;
+        let mut open = true;
+        let mut editor_focused = false;
+
+        // Ctrl+S saves the active document while the editor has focus or the pointer.
+        if self.wants_keyboard
+            && ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::S,
+                ))
+            })
+        {
+            event = self.documents[self.active].save();
+        }
+
+        let window = egui::Window::new(format!("{}  Code Editor", icons::SCRIPT))
+            .id(egui::Id::new("code_editor_window"))
+            .open(&mut open)
+            .resizable(true)
+            .collapsible(true)
+            .default_size(egui::vec2(780.0, 560.0))
+            .min_size(egui::vec2(360.0, 220.0))
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.viewport_rect().center())
+            .show(ctx, |ui| {
+                self.tab_strip(ui);
+                ui.add_space(4.0);
+
+                let doc = &mut self.documents[self.active];
+                let description = doc.short_description(content_root.as_deref());
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let dirty = doc.is_dirty();
+                        let can_save = dirty && !doc.save_in_progress && !doc.target_missing;
+                        let save = if can_save {
+                            theme::primary_button(format!("{}  Save", icons::SAVE))
+                        } else {
+                            egui::Button::new(format!("{}  Save", icons::SAVE))
+                        };
+                        if ui
+                            .add_enabled(can_save, save)
+                            .on_hover_text("Save (Ctrl+S)")
+                            .clicked()
+                        {
+                            event = doc.save();
+                        }
+                        if ui
+                            .add_enabled(
+                                dirty && !doc.save_in_progress,
+                                egui::Button::new(format!("{}  Revert", icons::REVERT)),
+                            )
+                            .on_hover_text("Discard unsaved changes")
+                            .clicked()
+                        {
+                            doc.buffer = doc.original.clone();
+                            doc.status = Some(StatusMessage::info("Reverted changes."));
+                        }
+                        if doc.save_in_progress {
+                            ui.spinner();
+                        }
+                        // Fills the space left of the buttons, truncated if long.
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(theme::hint(description).monospace().small())
+                                    .truncate(),
+                            )
+                            .on_hover_text(doc.description());
+                        });
+                    });
+                });
+
+                if let Some(status) = &doc.status {
+                    ui.colored_label(status.color(), &status.text);
+                }
+
+                ui.add_space(2.0);
+                editor_focused = code_view(ui, doc);
+            });
+
+        let hovered = window.as_ref().is_some_and(|window| {
+            ctx.pointer_hover_pos()
+                .is_some_and(|pos| window.response.rect.contains(pos))
+        });
+        self.wants_keyboard = editor_focused || hovered;
+
+        if !open {
+            self.request_close(CloseRequest::Window);
+        }
+        let close_event = self.close_confirmation(ctx);
+        if matches!(event, ScriptEditorEvent::None) {
+            event = close_event;
+        }
+        event
+    }
+
+    fn tab_strip(&mut self, ui: &mut egui::Ui) {
+        let mut close = None;
+        egui::ScrollArea::horizontal()
+            .id_salt("code_editor_tabs")
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (index, doc) in self.documents.iter().enumerate() {
+                        let active = index == self.active;
+                        let title = if doc.is_dirty() {
+                            format!("● {}", doc.title())
+                        } else {
+                            doc.title()
+                        };
+                        let text = egui::RichText::new(title).color(if active {
+                            colors::TEXT_STRONG
+                        } else {
+                            colors::TEXT_WEAK
+                        });
+                        let response = ui
+                            .selectable_label(active, text)
+                            .on_hover_text(doc.description());
+                        if response.clicked() {
+                            self.active = index;
+                        }
+                        if response.middle_clicked() {
+                            close = Some(index);
+                        }
+                        if ui
+                            .add(egui::Button::new(icons::CLOSE).frame(false).small())
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
+                            close = Some(index);
+                        }
+                        ui.add_space(6.0);
+                    }
+                });
+            });
+        if let Some(index) = close {
+            self.request_close(CloseRequest::Tab(index));
+        }
+    }
+
+    fn request_close(&mut self, request: CloseRequest) {
+        let dirty = match request {
+            CloseRequest::Tab(index) => self.documents.get(index).is_some_and(Document::is_dirty),
+            CloseRequest::Window => self.documents.iter().any(Document::is_dirty),
+        };
+        if dirty {
+            self.confirm_close = Some(request);
+        } else {
+            self.close(request);
+        }
+    }
+
+    fn close(&mut self, request: CloseRequest) {
+        match request {
+            CloseRequest::Tab(index) if index < self.documents.len() => {
+                self.documents.remove(index);
+                if self.active > index || self.active >= self.documents.len() {
+                    self.active = self.active.saturating_sub(1);
+                }
+            }
+            CloseRequest::Tab(_) => {}
+            CloseRequest::Window => {
+                self.documents.clear();
+                self.active = 0;
+            }
+        }
+    }
+
+    fn close_confirmation(&mut self, ctx: &egui::Context) -> ScriptEditorEvent {
+        let Some(request) = self.confirm_close else {
+            return ScriptEditorEvent::None;
+        };
+        let names: Vec<String> = match request {
+            CloseRequest::Tab(index) => self
+                .documents
+                .get(index)
+                .map(Document::title)
+                .into_iter()
+                .collect(),
+            CloseRequest::Window => self
+                .documents
+                .iter()
+                .filter(|doc| doc.is_dirty())
+                .map(Document::title)
+                .collect(),
+        };
+
+        let mut choice = None;
+        let modal = egui::Modal::new(egui::Id::new("code_editor_close_confirm")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading("Unsaved changes");
+            ui.add_space(4.0);
+            ui.label(format!("Save changes to {}?", names.join(", ")));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::primary_button("Save")).clicked() {
+                    choice = Some(true);
+                }
+                if ui.button("Don't Save").clicked() {
+                    choice = Some(false);
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirm_close = None;
+                }
+            });
+        });
+        if modal.should_close() {
+            self.confirm_close = None;
+        }
+
+        let Some(save) = choice else {
+            return ScriptEditorEvent::None;
+        };
+        self.confirm_close = None;
+        let mut event = ScriptEditorEvent::None;
+        if save {
+            let indices: Vec<usize> = match request {
+                CloseRequest::Tab(index) => vec![index],
+                CloseRequest::Window => (0..self.documents.len()).collect(),
+            };
+            for index in indices {
+                let doc = &mut self.documents[index];
+                if !doc.is_dirty() {
+                    continue;
+                }
+                if doc.inline_entity().is_some() {
+                    // The save event carries the contents, so the tab can close now,
+                    // but only one inline save goes out per frame.
+                    if !matches!(event, ScriptEditorEvent::None) {
+                        return event;
+                    }
+                    event = doc.save();
+                } else {
+                    let _ = doc.save();
+                    if doc.is_dirty() {
+                        // Saving failed; leave it open with the error.
+                        return event;
+                    }
+                }
+            }
+        }
+        self.close(request);
+        event
+    }
+}
+
+/// The text area with a line-number gutter. Returns whether it has keyboard focus.
+fn code_view(ui: &mut egui::Ui, doc: &mut Document) -> bool {
+    let language = doc.language();
+    let font = FontId::monospace(CODE_FONT_SIZE);
+    let line_count = doc.buffer.lines().count().max(1) + usize::from(doc.buffer.ends_with('\n'));
+    let gutter_digits = line_count.to_string().len().max(3);
+    let mut focused = false;
+
+    egui::Frame::new()
+        .fill(colors::BG_DEEP)
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(0, 4))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .id_salt("code_editor_scroll")
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let numbers: String = (1..=line_count)
+                            .map(|line| format!("{line:>gutter_digits$}\n"))
+                            .collect();
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(numbers)
+                                    .font(font.clone())
+                                    .color(colors::TEXT_WEAK.gamma_multiply(0.7)),
+                            )
+                            .selectable(false),
+                        );
+                        ui.add_space(8.0);
+
+                        let mut layouter =
+                            |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap_width: f32| {
+                                let job = match language {
+                                    Language::Lua => highlight_lua(ui, text.as_str()),
+                                    Language::Wgsl => crate::shader_editor::highlight_wgsl(
+                                        ui,
+                                        text.as_str(),
+                                        f32::INFINITY,
+                                    ),
+                                    Language::Plain => LayoutJob::simple(
+                                        text.as_str().to_owned(),
+                                        FontId::monospace(CODE_FONT_SIZE),
+                                        colors::TEXT,
+                                        f32::INFINITY,
+                                    ),
+                                };
+                                ui.fonts_mut(|fonts| fonts.layout_job(job))
+                            };
+
+                        let min_height = ui.available_height().max(120.0);
+                        let response = ui.add_enabled(
+                            !doc.target_missing,
+                            egui::TextEdit::multiline(&mut doc.buffer)
+                                .code_editor()
+                                .frame(egui::Frame::NONE)
+                                .lock_focus(true)
+                                .margin(egui::Margin::ZERO)
+                                .desired_width(f32::INFINITY)
+                                .min_size(egui::vec2(0.0, min_height))
+                                .layouter(&mut layouter),
+                        );
+                        focused = response.has_focus();
+                    });
+                });
+        });
+    focused
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
 }
 
 #[derive(Clone)]
@@ -312,10 +743,10 @@ impl StatusMessage {
         }
     }
 
-    fn color(&self, visuals: &egui::Visuals) -> Color32 {
+    fn color(&self) -> Color32 {
         match self.kind {
-            StatusKind::Info => visuals.text_color(),
-            StatusKind::Error => visuals.error_fg_color,
+            StatusKind::Info => colors::TEXT_WEAK,
+            StatusKind::Error => colors::WARNING,
         }
     }
 }
@@ -326,11 +757,11 @@ enum StatusKind {
     Error,
 }
 
-fn highlight_lua(ui: &egui::Ui, text: &str, wrap_width: f32) -> LayoutJob {
+fn highlight_lua(ui: &egui::Ui, text: &str) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.wrap.max_width = wrap_width;
+    job.wrap.max_width = f32::INFINITY;
 
-    let font_id = FontId::new(14.0, egui::FontFamily::Monospace);
+    let font_id = FontId::new(CODE_FONT_SIZE, egui::FontFamily::Monospace);
     let visuals = ui.visuals();
 
     for (range, kind) in lua_tokens(text) {

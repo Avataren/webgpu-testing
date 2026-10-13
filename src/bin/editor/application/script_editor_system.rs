@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 
 use hecs::Entity;
 use log::warn;
@@ -11,61 +12,59 @@ use wgpu_cube::scripting::LuaScriptComponent;
 
 #[derive(Default)]
 pub(crate) struct ScriptEditorSystem {
-    editor: Option<ScriptEditorState>,
+    editor: ScriptEditorState,
     window_enabled: bool,
+    content_root: Option<PathBuf>,
 }
 
 impl ScriptEditorSystem {
+    /// Open an entity's script: inline scripts edit the component, file scripts the file.
     pub(crate) fn open_script_editor(&mut self, entity: Entity, component: LuaScriptComponent) {
-        if let Some(editor) = self.editor.as_mut() {
-            if editor.entity() == entity {
-                editor.sync_with_component(&component);
-                return;
-            }
-        }
-        self.editor = Some(ScriptEditorState::new(entity, component));
+        self.editor.open_inline(entity, &component);
+    }
+
+    /// Open any text file in the code editor.
+    pub(crate) fn open_file(&mut self, path: &Path) {
+        self.editor.open_file(path);
+    }
+
+    /// True while the code editor should get keyboard shortcuts such as Ctrl+S.
+    pub(crate) fn wants_keyboard(&self) -> bool {
+        self.window_enabled && self.editor.wants_keyboard()
     }
 
     pub(crate) fn set_window_enabled(&mut self, enabled: bool) {
         self.window_enabled = enabled;
     }
 
+    /// The project content folder, so project files show relative paths.
+    pub(crate) fn set_content_root(&mut self, content_root: Option<PathBuf>) {
+        self.content_root = content_root;
+    }
+
     fn ensure_target_valid(&mut self, scene: &Scene) {
-        let Some(editor) = self.editor.as_mut() else {
-            return;
-        };
-
         let world = scene.main_world();
-        if !world.contains(editor.entity()) {
-            editor.mark_target_missing("Entity has been removed.");
-            return;
-        }
-
-        match world.get::<&LuaScriptComponent>(editor.entity()) {
-            Ok(component) => {
-                editor.clear_target_missing();
-                editor.sync_with_component(&component);
+        for entity in self.editor.inline_entities() {
+            if !world.contains(entity) {
+                self.editor
+                    .sync_inline(entity, Err("Entity has been removed."));
+                continue;
             }
-            Err(_) => {
-                editor.mark_target_missing("Script component removed from entity.");
+            match world.get::<&LuaScriptComponent>(entity) {
+                Ok(component) => self.editor.sync_inline(entity, Ok(&component)),
+                Err(_) => self
+                    .editor
+                    .sync_inline(entity, Err("Script component removed from entity.")),
             }
         }
     }
 
     fn notify_saved(&mut self, entity: Entity, message: impl Into<String>) {
-        if let Some(editor) = self.editor.as_mut() {
-            if editor.entity() == entity {
-                editor.finish_save(message);
-            }
-        }
+        self.editor.finish_save(entity, message);
     }
 
     fn notify_error(&mut self, entity: Entity, message: impl Into<String>) {
-        if let Some(editor) = self.editor.as_mut() {
-            if editor.entity() == entity {
-                editor.fail_save(message);
-            }
-        }
+        self.editor.fail_save(entity, message);
     }
 
     fn drain_script_commands(queue: &mut VecDeque<EditorCommand>) -> Vec<PendingScriptAction> {
@@ -131,13 +130,6 @@ impl ScriptEditorSystem {
                         app.record_scene_change(scene);
                     }
                 }
-                PendingScriptAction::ReloadRuntime { entity, message } => {
-                    if scene.reload_entity_script(entity) {
-                        notifications.push((entity, message));
-                    } else {
-                        self.notify_error(entity, "Script is not loaded");
-                    }
-                }
             }
         }
 
@@ -176,17 +168,8 @@ impl EditorSystem for ScriptEditorSystem {
             return;
         }
 
-        let Some(editor) = self.editor.as_mut() else {
-            return;
-        };
-
-        let event = editor.show(egui_ctx);
-
-        match event {
+        match self.editor.show(egui_ctx, self.content_root.clone()) {
             ScriptEditorEvent::None => {}
-            ScriptEditorEvent::Closed => {
-                self.editor = None;
-            }
             ScriptEditorEvent::SaveInline {
                 entity,
                 name,
@@ -200,11 +183,6 @@ impl EditorSystem for ScriptEditorSystem {
                         contents,
                         message,
                     },
-                ));
-            }
-            ScriptEditorEvent::SaveFile { entity, message } => {
-                ctx.command_queue().push_back(EditorCommand::Script(
-                    PendingScriptAction::ReloadRuntime { entity, message },
                 ));
             }
         }

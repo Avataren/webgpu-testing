@@ -80,7 +80,8 @@ impl EditorApplication {
     }
 
     pub(super) fn handle_gizmo_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_system().is_looking() {
+        // Letters and Delete belong to a focused text field, not the scene.
+        if self.camera_system().is_looking() || ctx.text_edit_focused() {
             return;
         }
         ctx.input_mut(|input| {
@@ -104,7 +105,7 @@ impl EditorApplication {
     }
 
     pub(super) fn handle_general_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_system().is_looking() {
+        if self.camera_system().is_looking() || ctx.text_edit_focused() {
             return;
         }
 
@@ -115,8 +116,33 @@ impl EditorApplication {
         });
     }
 
+    /// Shortcuts that work in both edit and play mode.
+    pub(super) fn handle_global_shortcuts(&mut self, ctx: &egui::Context) {
+        let play = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P);
+        if ctx.input_mut(|input| input.consume_shortcut(&play)) {
+            let mode = match self.shared.runtime_state.desired_mode() {
+                RuntimeMode::Editor => RuntimeMode::Playing,
+                RuntimeMode::Playing => RuntimeMode::Editor,
+            };
+            self.shared.runtime_state.request_mode(mode);
+        }
+
+        // The code editor saves its own file with Ctrl+S while it has focus.
+        if self.script_editor_system().wants_keyboard() {
+            return;
+        }
+        let save = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
+        if ctx.input_mut(|input| input.consume_shortcut(&save)) {
+            let controller = self.project_system_mut().controller_mut();
+            if let Some(dir) = controller.current_dir().cloned() {
+                controller.request_save_project(dir);
+            }
+        }
+    }
+
     pub(super) fn handle_history_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.camera_system().is_looking() {
+        // Text fields have their own undo.
+        if self.camera_system().is_looking() || ctx.text_edit_focused() {
             return;
         }
 

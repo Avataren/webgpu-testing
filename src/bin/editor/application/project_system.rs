@@ -8,6 +8,7 @@ use wgpu_cube::scene::{
     InstantiatedSceneAsset, Name, SceneLibrary, Transform, TransformComponent, Visible,
 };
 
+use super::core::ReloadNotification;
 use crate::project::{BuildPlatform, NewProjectRequest, ProjectBuildRequest, ProjectController};
 
 use super::{EditorContext, EditorSystem};
@@ -370,6 +371,7 @@ impl ProjectSystem {
         };
 
         let existing_document = self.controller.primary_scene_document();
+        let notification;
 
         match ProjectManifest::capture(
             &gpu_ctx.scene,
@@ -392,7 +394,10 @@ impl ProjectSystem {
 
                 if let Err(err) = manifest.save_to_dir(&dir) {
                     error!("Failed to save project to {:?}: {err}", dir);
+                    notification =
+                        ReloadNotification::error(format!("Failed to save project: {err}"));
                 } else {
+                    notification = ReloadNotification::success("Project saved");
                     self.controller.set_scene_documents(manifest.scenes.clone());
                     self.scene_library.clear();
                     for document in manifest.scenes() {
@@ -412,8 +417,10 @@ impl ProjectSystem {
             }
             Err(err) => {
                 error!("Failed to prepare project for saving: {err}");
+                notification = ReloadNotification::error(format!("Failed to save project: {err}"));
             }
         }
+        ctx.notify(notification);
     }
 
     fn handle_project_load(&mut self, ctx: &mut EditorContext<'_, '_, '_>, dir: PathBuf) {

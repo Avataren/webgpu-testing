@@ -1,15 +1,19 @@
 use std::path::PathBuf;
 
-use egui::{Color32, Stroke, StrokeKind};
-use egui_tiles::{Behavior, Container, Tile, TileId, Tree, UiResponse};
+use egui::{Color32, Stroke};
+use egui_tiles::{
+    Behavior, Container, ResizeState, SimplificationOptions, TabState, Tile, TileId, Tiles, Tree,
+    UiResponse,
+};
 
 use wgpu_cube::renderer::RenderRegion;
 use wgpu_cube::{
     LogWindow, SceneHierarchyEvent, SceneHierarchyWindow, SceneHierarchyWorkspaceInfo,
 };
 
-use crate::asset_browser::AssetBrowserState;
+use crate::asset_browser::{AssetBrowserAction, AssetBrowserState};
 use crate::inspector::{show_entity_inspector, InspectorAction};
+use crate::theme;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EditorPane {
@@ -56,6 +60,7 @@ pub struct EditorBehavior<'a> {
     pub inspector_actions: &'a mut Vec<InspectorAction>,
     pub scene_events: &'a mut Vec<SceneHierarchyEvent>,
     pub asset_browser: &'a mut AssetBrowserState,
+    pub asset_actions: &'a mut Vec<AssetBrowserAction>,
     pub content_root: Option<PathBuf>,
     pub workspace_info: SceneHierarchyWorkspaceInfo,
 }
@@ -68,52 +73,22 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
         pane: &mut EditorPane,
     ) -> UiResponse {
         match pane {
-            EditorPane::SceneHierarchy => {
-                ui.set_min_width(220.0);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        let events = self.scene_hierarchy.ui(ui, &self.workspace_info);
-                        self.scene_events.extend(events);
-                    });
-            }
             EditorPane::SceneViewport => {
-                show_viewport(ui, self.scene_viewport, "Scene View", true, None);
+                show_viewport(ui, self.scene_viewport, true, None);
             }
             EditorPane::GameViewport => {
                 let placeholder = if self.is_playing {
                     None
                 } else {
-                    Some("Press Play to run the scene")
+                    Some("Press  ▶ Play  (Ctrl+P) to run the game here")
                 };
-                show_viewport(
-                    ui,
-                    self.game_viewport,
-                    "Game View",
-                    self.is_playing,
-                    placeholder,
-                );
+                show_viewport(ui, self.game_viewport, self.is_playing, placeholder);
             }
-            EditorPane::Inspector => {
-                ui.set_min_width(240.0);
-                ui.heading("Inspector");
-                ui.separator();
-
-                if let Some(selection) = self.scene_hierarchy.selected_entity_data() {
-                    let actions =
-                        show_entity_inspector(ui, &selection, self.content_root.as_deref());
-                    self.inspector_actions.extend(actions);
-                } else {
-                    ui.label("Select an entity to view its components.");
-                }
-            }
-            EditorPane::AssetBrowser => {
-                self.asset_browser.ui(ui, self.content_root.as_deref());
-            }
-            EditorPane::Log => {
-                ui.heading("Log");
-                ui.add_space(4.0);
-                self.log_window.ui(ui);
+            _ => {
+                theme::pane_frame().show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    self.panel_ui(ui, *pane);
+                });
             }
         }
 
@@ -126,14 +101,125 @@ impl Behavior<EditorPane> for EditorBehavior<'_> {
             EditorPane::SceneViewport => "Scene".into(),
             EditorPane::GameViewport => {
                 if self.is_playing {
-                    "Game ▶".into()
+                    egui::RichText::new("▶ Game")
+                        .color(theme::colors::SUCCESS)
+                        .into()
                 } else {
                     "Game".into()
                 }
             }
             EditorPane::Inspector => "Inspector".into(),
             EditorPane::AssetBrowser => "Assets".into(),
-            EditorPane::Log => "Log".into(),
+            EditorPane::Log => "Console".into(),
+        }
+    }
+
+    fn simplification_options(&self) -> SimplificationOptions {
+        SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            ..SimplificationOptions::default()
+        }
+    }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        28.0
+    }
+
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        3.0
+    }
+
+    fn tab_title_spacing(&self, _visuals: &egui::Visuals) -> f32 {
+        12.0
+    }
+
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> Color32 {
+        theme::colors::BG_DEEP
+    }
+
+    fn tab_bg_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<EditorPane>,
+        _tile_id: TileId,
+        state: &TabState,
+    ) -> Color32 {
+        if state.active {
+            theme::colors::BG_PANEL
+        } else {
+            Color32::TRANSPARENT
+        }
+    }
+
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<EditorPane>,
+        _tile_id: TileId,
+        _state: &TabState,
+    ) -> Stroke {
+        Stroke::NONE
+    }
+
+    fn tab_bar_hline_stroke(&self, _visuals: &egui::Visuals) -> Stroke {
+        Stroke::NONE
+    }
+
+    fn tab_text_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &Tiles<EditorPane>,
+        _tile_id: TileId,
+        state: &TabState,
+    ) -> Color32 {
+        if state.active {
+            theme::colors::TEXT_STRONG
+        } else {
+            theme::colors::TEXT_WEAK
+        }
+    }
+
+    fn resize_stroke(&self, _style: &egui::Style, resize_state: ResizeState) -> Stroke {
+        match resize_state {
+            ResizeState::Idle => Stroke::new(3.0, theme::colors::BG_DEEP),
+            ResizeState::Hovering => Stroke::new(3.0, theme::colors::BORDER_STRONG),
+            ResizeState::Dragging => Stroke::new(3.0, theme::colors::ACCENT),
+        }
+    }
+}
+
+impl EditorBehavior<'_> {
+    fn panel_ui(&mut self, ui: &mut egui::Ui, pane: EditorPane) {
+        match pane {
+            EditorPane::SceneHierarchy => {
+                let events = self.scene_hierarchy.ui(ui, &self.workspace_info);
+                self.scene_events.extend(events);
+            }
+            EditorPane::Inspector => {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if let Some(selection) = self.scene_hierarchy.selected_entity_data() {
+                            let actions =
+                                show_entity_inspector(ui, &selection, self.content_root.as_deref());
+                            self.inspector_actions.extend(actions);
+                        } else {
+                            theme::empty_state(
+                                ui,
+                                "Nothing selected",
+                                "Select an entity in the Hierarchy or the Scene view.",
+                            );
+                        }
+                    });
+            }
+            EditorPane::AssetBrowser => {
+                let actions = self.asset_browser.ui(ui, self.content_root.as_deref());
+                self.asset_actions.extend(actions);
+            }
+            EditorPane::Log => {
+                self.log_window.ui(ui);
+            }
+            EditorPane::SceneViewport | EditorPane::GameViewport => {}
         }
     }
 }
@@ -169,8 +255,8 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
 
     let root = tiles.insert_vertical_tile(vec![horizontal, bottom_split]);
     if let Some(Tile::Container(Container::Linear(linear))) = tiles.get_mut(root) {
-        linear.shares.set_share(horizontal, 0.78);
-        linear.shares.set_share(bottom_split, 0.22);
+        linear.shares.set_share(horizontal, 0.74);
+        linear.shares.set_share(bottom_split, 0.26);
     }
 
     Tree::new("editor_dock", root, tiles)
@@ -179,7 +265,6 @@ pub fn create_editor_layout() -> Tree<EditorPane> {
 fn show_viewport(
     ui: &mut egui::Ui,
     viewport: &mut ViewportState,
-    label: &str,
     active: bool,
     placeholder: Option<&str>,
 ) {
@@ -196,41 +281,25 @@ fn show_viewport(
 
     let Some(region) = compute_viewport_region(ui.ctx(), rect) else {
         viewport.clear();
-        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        painter.rect_filled(rect, 0.0, theme::colors::BG_DEEP);
         return;
     };
 
     viewport.set(rect, region);
 
     if !active {
-        painter.rect_filled(rect, 0.0, ui.visuals().panel_fill);
+        painter.rect_filled(rect, 0.0, theme::colors::BG_DEEP);
 
         if let Some(text) = placeholder {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 text,
-                egui::TextStyle::Body.resolve(ui.style()),
-                Color32::from_gray(140),
+                egui::FontId::proportional(15.0),
+                theme::colors::TEXT_WEAK,
             );
         }
-
-        return;
     }
-
-    painter.rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(1.0, Color32::from_gray(60)),
-        StrokeKind::Outside,
-    );
-    painter.text(
-        rect.center_top() + egui::vec2(0.0, 8.0),
-        egui::Align2::CENTER_TOP,
-        label,
-        egui::TextStyle::Button.resolve(ui.style()),
-        Color32::from_gray(180),
-    );
 }
 
 pub fn compute_viewport_region(ctx: &egui::Context, rect: egui::Rect) -> Option<RenderRegion> {

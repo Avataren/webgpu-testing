@@ -3,11 +3,15 @@ use std::path::PathBuf;
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Material;
+use wgpu_cube::scene::components::PrimitiveMeshComponent;
 use wgpu_cube::scene::{
-    CameraComponent, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshComponent,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight,
+    CameraComponent, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshBounds,
+    MeshComponent, ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight,
 };
+use wgpu_cube::scripting::LuaScriptComponent;
 use wgpu_cube::ScenePrimitivePreset;
+
+use crate::inspector::RemovableComponent;
 
 use super::{ActionContext, ActionResult};
 
@@ -212,4 +216,48 @@ pub fn handle_add_particle_system(ctx: &mut ActionContext, entity: Entity) -> Ac
             }
         }
     }
+}
+
+/// Handle RemoveComponent action
+pub fn handle_remove_component(
+    ctx: &mut ActionContext,
+    entity: Entity,
+    component: RemovableComponent,
+) -> ActionResult {
+    fn remove<T: hecs::Component>(world: &mut hecs::World, entity: Entity) -> bool {
+        world.remove_one::<T>(entity).is_ok()
+    }
+
+    let world = ctx.scene.main_world_mut();
+    let removed = match component {
+        RemovableComponent::Camera => remove::<CameraComponent>(world, entity),
+        RemovableComponent::Mesh => {
+            // The inspector adds meshes together with a material, so remove both.
+            let removed = remove::<MeshComponent>(world, entity);
+            remove::<PrimitiveMeshComponent>(world, entity);
+            remove::<MeshBounds>(world, entity);
+            remove::<MaterialComponent>(world, entity);
+            removed
+        }
+        RemovableComponent::PointLight => remove::<PointLight>(world, entity),
+        RemovableComponent::DirectionalLight => remove::<DirectionalLight>(world, entity),
+        RemovableComponent::SpotLight => remove::<SpotLight>(world, entity),
+        RemovableComponent::Environment => remove::<EnvironmentComponent>(world, entity),
+        RemovableComponent::ParticleSystem => {
+            let removed = remove::<ParticleSystemComponent>(world, entity);
+            remove::<ParticleEmitterComponent>(world, entity);
+            removed
+        }
+        RemovableComponent::Script => remove::<LuaScriptComponent>(world, entity),
+    };
+
+    if !removed {
+        log::warn!("Entity {entity:?} has no {} component", component.label());
+        return ActionResult::no_change();
+    }
+    if component == RemovableComponent::Camera && ctx.scene.active_camera_entity() == Some(entity) {
+        ctx.scene.set_active_camera_entity(None);
+    }
+    log::info!("Removed {} from entity {entity:?}", component.label());
+    ActionResult::scene_changed()
 }

@@ -6,7 +6,7 @@ use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::core::{
     EditorApplication, EditorSharedState, EditorSystemIndices, PendingScriptAction,
-    PendingShaderAction,
+    PendingShaderAction, ReloadNotification,
 };
 use super::history_system::HistorySystem;
 use super::project_system::ProjectSystem;
@@ -476,6 +476,11 @@ impl<'app, 'ctx, 'scene> EditorContext<'app, 'ctx, 'scene> {
         self.shared = Some(shared);
         self.systems = Some(systems);
         Some(result)
+    }
+
+    /// Show a toast in the editor.
+    pub fn notify(&mut self, notification: ReloadNotification) {
+        self.shared_mut().reload_notifications.push(notification);
     }
 
     pub fn runtime_handle(&self) -> RuntimeStateHandle {

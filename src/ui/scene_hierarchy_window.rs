@@ -87,6 +87,7 @@ pub enum SceneHierarchyEvent {
     Create(SceneCreationAction),
     OpenScene(SceneDocumentId),
     AddScriptToEntity(Entity),
+    DeleteEntity(Entity),
 }
 
 #[cfg(feature = "egui")]
@@ -530,7 +531,7 @@ impl SceneHierarchyWindow {
             .resizable(true)
             .frame(egui::Frame::side_top_panel(ui.style()))
             .show(ui, |ui| {
-                events = self.panel_contents(ui, workspace);
+                events = self.panel_contents(ui, workspace, true);
             });
 
         events
@@ -541,7 +542,7 @@ impl SceneHierarchyWindow {
         ui: &mut egui::Ui,
         workspace: &SceneHierarchyWorkspaceInfo,
     ) -> Vec<SceneHierarchyEvent> {
-        self.panel_contents(ui, workspace)
+        self.panel_contents(ui, workspace, false)
     }
 
     pub fn selected_entity(&self) -> Option<Entity> {
@@ -649,10 +650,13 @@ impl SceneHierarchyWindow {
         self.view_states.get(&handle)
     }
 
+    /// The Add menu and the entity tree. `show_heading` adds the window title, for
+    /// hosts that do not show it in a tab.
     fn panel_contents(
         &mut self,
         ui: &mut egui::Ui,
         workspace: &SceneHierarchyWorkspaceInfo,
+        show_heading: bool,
     ) -> Vec<SceneHierarchyEvent> {
         let Some(active_scene) = self.active_scene else {
             ui.label("No active scene selected.");
@@ -680,10 +684,12 @@ impl SceneHierarchyWindow {
         let mut events = Vec::new();
 
         ui.horizontal(|ui| {
-            ui.heading(&self.title);
-            ui.add_space(8.0);
+            if show_heading {
+                ui.heading(&self.title);
+                ui.add_space(8.0);
+            }
             let mut close_top_menu = false;
-            ui.menu_button("Add", |ui| {
+            ui.menu_button("✚ Add", |ui| {
                 if ui.button("Empty Entity").clicked() {
                     events.push(SceneHierarchyEvent::Create(SceneCreationAction::Empty));
                     close_top_menu = true;
@@ -773,16 +779,40 @@ impl SceneHierarchyWindow {
                 ui.close();
             }
         });
+        ui.add_space(2.0);
         ui.separator();
 
         if snapshot.is_empty() {
-            ui.label("Scene is empty.");
+            ui.add_space(16.0);
+            ui.vertical_centered(|ui| {
+                ui.weak("The scene is empty");
+                ui.label(
+                    egui::RichText::new("Use ✚ Add to create an entity.")
+                        .small()
+                        .weak(),
+                );
+            });
             return events;
         }
 
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                self.entity_tree(ui, &snapshot, workspace, &mut events)
+            });
+        events
+    }
+
+    fn entity_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &SceneHierarchySnapshot,
+        workspace: &SceneHierarchyWorkspaceInfo,
+        events: &mut Vec<SceneHierarchyEvent>,
+    ) {
         let mut visited = BTreeSet::new();
         for &root in snapshot.roots() {
-            self.draw_entity(ui, root, &snapshot, &mut visited, workspace, &mut events);
+            self.draw_entity(ui, root, snapshot, &mut visited, workspace, events);
         }
 
         for entity in snapshot.iter_nodes() {
@@ -794,13 +824,12 @@ impl SceneHierarchyWindow {
                 continue;
             };
 
-            if self.is_hidden_by_collapsed_parent(node, &snapshot, ui) {
+            if self.is_hidden_by_collapsed_parent(node, snapshot, ui) {
                 continue;
             }
 
-            self.draw_entity(ui, entity, &snapshot, &mut visited, workspace, &mut events);
+            self.draw_entity(ui, entity, snapshot, &mut visited, workspace, events);
         }
-        events
     }
 
     fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {
@@ -828,37 +857,63 @@ impl SceneHierarchyWindow {
             return;
         };
 
-        let label = format!("{} ({:?})", node.name, node.entity);
+        let (icon, icon_color) = entity_icon(snapshot.entity_components(entity));
+        let mut label = egui::text::LayoutJob::default();
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        label.append(
+            icon,
+            0.0,
+            egui::TextFormat::simple(font.clone(), icon_color),
+        );
+        label.append(
+            &node.name,
+            6.0,
+            egui::TextFormat::simple(font, ui.visuals().text_color()),
+        );
         let prefab_info = snapshot.entity_prefab_metadata(entity).cloned();
         let selected = self.is_selected(entity);
 
-        if node.children.is_empty() {
-            let mut clicked = false;
+        let mut clicked = false;
+        let mut row = |this: &mut Self, ui: &mut egui::Ui| {
             ui.horizontal(|ui| {
-                let response = ui.selectable_label(selected, &label);
+                let response = ui
+                    .selectable_label(selected, label.clone())
+                    .on_hover_text(format!("Entity {:?}", node.entity));
 
-                // Add context menu for entity actions
                 response.context_menu(|ui| {
                     if ui.button("Add Script").clicked() {
                         events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
                         ui.close();
                     }
+                    ui.separator();
+                    if ui.button("Delete").clicked() {
+                        events.push(SceneHierarchyEvent::DeleteEntity(entity));
+                        ui.close();
+                    }
                 });
 
                 if let Some(info) = &prefab_info {
-                    self.decorate_prefab_response(&response, info, workspace, events);
+                    this.decorate_prefab_response(&response, info, workspace, events);
                     if workspace.is_foreign_document(&info.document_id) {
                         ui.add_space(4.0);
-                        self.add_prefab_badge(ui, info);
+                        this.add_prefab_badge(ui, info);
                     }
                 }
                 if response.clicked() {
                     clicked = true;
                 }
-                if selected && self.pending_scroll_to_selection {
+                if selected && this.pending_scroll_to_selection {
                     response.scroll_to_me(Some(egui::Align::Center));
-                    self.pending_scroll_to_selection = false;
+                    this.pending_scroll_to_selection = false;
                 }
+            });
+        };
+
+        if node.children.is_empty() {
+            // Line leaf rows up with the labels of rows that have a collapse arrow.
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                row(self, ui);
             });
             if clicked {
                 self.update_selected_entity(Some(entity), false);
@@ -868,38 +923,7 @@ impl SceneHierarchyWindow {
 
         let id = egui::Id::new(("scene_hierarchy", self.active_scene, entity));
         let state = CollapsingState::load_with_default_open(ui.ctx(), id, true);
-
-        let mut clicked = false;
-        let header_response = state.show_header(ui, |ui| {
-            ui.horizontal(|ui| {
-                let response = ui.selectable_label(selected, &label);
-
-                // Add context menu for entity actions
-                response.context_menu(|ui| {
-                    if ui.button("Add Script").clicked() {
-                        events.push(SceneHierarchyEvent::AddScriptToEntity(entity));
-                        ui.close();
-                    }
-                });
-
-                if let Some(info) = &prefab_info {
-                    self.decorate_prefab_response(&response, info, workspace, events);
-                    if workspace.is_foreign_document(&info.document_id) {
-                        ui.add_space(4.0);
-                        self.add_prefab_badge(ui, info);
-                    }
-                }
-                if response.clicked() {
-                    clicked = true;
-                }
-                if selected && self.pending_scroll_to_selection {
-                    response.scroll_to_me(Some(egui::Align::Center));
-                    self.pending_scroll_to_selection = false;
-                }
-                response
-            })
-            .inner
-        });
+        let header_response = state.show_header(ui, |ui| row(self, ui));
 
         if clicked {
             self.update_selected_entity(Some(entity), false);
@@ -980,5 +1004,34 @@ impl SceneHierarchyWindow {
         };
 
         format!("Prefab from {}\n{}", info.document_id, path)
+    }
+}
+
+/// Icon and color for an entity in the tree, from its most telling component.
+#[cfg(feature = "egui")]
+fn entity_icon(components: Option<&SceneEntityComponentsSummary>) -> (&'static str, egui::Color32) {
+    use egui::Color32;
+    let Some(c) = components else {
+        return ("○", Color32::from_gray(140));
+    };
+    let light = Color32::from_rgb(0xf5, 0xd0, 0x5c);
+    if c.camera.is_some() {
+        ("🎥", Color32::from_rgb(0x7f, 0xb8, 0xe6))
+    } else if c.directional_light.is_some() {
+        ("☀", light)
+    } else if c.spot_light.is_some() {
+        ("🔦", light)
+    } else if c.point_light.is_some() {
+        ("💡", light)
+    } else if c.particle_system.is_some() {
+        ("✨", Color32::from_rgb(0xe8, 0x78, 0xc8))
+    } else if c.environment.is_some() {
+        ("🌐", Color32::from_rgb(0x5c, 0xc9, 0x8a))
+    } else if c.mesh.is_some() {
+        ("▣", Color32::from_rgb(0x4f, 0xc7, 0xd1))
+    } else if c.script.is_some() {
+        ("📜", Color32::from_rgb(0x6c, 0xa8, 0xff))
+    } else {
+        ("○", Color32::from_gray(140))
     }
 }

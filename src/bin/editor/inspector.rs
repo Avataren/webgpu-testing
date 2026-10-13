@@ -30,6 +30,8 @@ use wgpu_cube::scene::{
 use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInspectorData};
 
+use crate::theme::{self, icons};
+
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
@@ -120,8 +122,9 @@ pub enum InspectorAction {
         entity: Entity,
         script_path: PathBuf,
     },
-    OpenTextEditor {
-        path: PathBuf,
+    RemoveComponent {
+        entity: Entity,
+        component: RemovableComponent,
     },
     AddCamera {
         entity: Entity,
@@ -162,172 +165,205 @@ pub fn show_entity_inspector(
     content_root: Option<&Path>,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
+    let entity = data.entity;
 
-    // Editable name field
-    ui.horizontal(|ui| {
-        ui.label("Name:");
-        let mut name = data.name.clone();
-        let response = ui.text_edit_singleline(&mut name);
-        if response.lost_focus() && name != data.name {
-            actions.push(InspectorAction::RenameEntity {
-                entity: data.entity,
-                new_name: name,
-            });
-        }
-    });
+    // Editable name, committed on Enter or when focus leaves the field.
+    let mut name = data.name.clone();
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut name)
+            .font(egui::FontId::proportional(16.0))
+            .desired_width(f32::INFINITY)
+            .hint_text("Entity name"),
+    );
+    if response.lost_focus() && name != data.name {
+        actions.push(InspectorAction::RenameEntity {
+            entity,
+            new_name: name,
+        });
+    }
+    ui.label(theme::hint(format!("Entity {entity:?}")).small());
+    ui.add_space(6.0);
 
-    ui.label(format!("Entity: {:?}", data.entity));
-    ui.add_space(8.0);
+    let components = &data.components;
 
-    let mut first_section = true;
-
-    if let Some(transform) = data.components.transform {
-        begin_section(ui, &mut first_section);
-        show_transform_section(ui, data.entity, transform, &mut actions);
+    if let Some(transform) = components.transform {
+        show_transform_section(ui, entity, transform, &mut actions);
     }
 
-    if let Some(camera) = data.components.camera {
-        begin_section(ui, &mut first_section);
-        show_camera_section(ui, data.entity, camera, &mut actions);
+    if let Some(camera) = components.camera {
+        let header = show_camera_section(ui, entity, camera, &mut actions);
+        removable(&header, entity, RemovableComponent::Camera, &mut actions);
     }
 
-    if let Some(mesh) = data.components.mesh {
-        begin_section(ui, &mut first_section);
-        show_mesh_section(ui, mesh);
+    if let Some(mesh) = components.mesh {
+        let header = show_mesh_section(ui, mesh);
+        removable(&header, entity, RemovableComponent::Mesh, &mut actions);
     }
 
-    if let Some(material) = data.components.material.clone() {
-        begin_section(ui, &mut first_section);
-        show_material_section(
-            ui,
-            data.entity,
-            &data.name,
-            material,
-            content_root,
+    if let Some(material) = components.material.clone() {
+        show_material_section(ui, entity, &data.name, material, content_root, &mut actions);
+    }
+
+    show_light_sections(ui, entity, components, &mut actions);
+
+    if let Some(environment) = components.environment.clone() {
+        let header = show_environment_section(ui, entity, environment, &mut actions);
+        removable(
+            &header,
+            entity,
+            RemovableComponent::Environment,
             &mut actions,
         );
     }
 
-    let has_light = data.components.point_light.is_some()
-        || data.components.directional_light.is_some()
-        || data.components.spot_light.is_some();
-    if has_light {
-        begin_section(ui, &mut first_section);
-        show_light_sections(ui, data.entity, &data.components, &mut actions);
-    }
-
-    if let Some(environment) = data.components.environment.clone() {
-        begin_section(ui, &mut first_section);
-        show_environment_section(ui, data.entity, environment, &mut actions);
-    }
-
-    if let Some(component) = data.components.particle_system.clone() {
-        begin_section(ui, &mut first_section);
-        let emitter = data.components.particle_emitter.clone();
-        show_particle_system_section(
+    if let Some(component) = components.particle_system.clone() {
+        let header = show_particle_system_section(
             ui,
-            data.entity,
+            entity,
             component,
-            emitter,
-            data.components.billboard,
+            components.particle_emitter.clone(),
+            components.billboard,
+            &mut actions,
+        );
+        removable(
+            &header,
+            entity,
+            RemovableComponent::ParticleSystem,
             &mut actions,
         );
     }
 
-    if let Some(script) = data.components.script.clone() {
-        begin_section(ui, &mut first_section);
-        if let Some(action) = show_script_section(ui, data.entity, &script) {
-            actions.push(action);
-        }
+    if let Some(script) = components.script.clone() {
+        let (header, action) = show_script_section(ui, entity, &script, content_root);
+        removable(&header, entity, RemovableComponent::Script, &mut actions);
+        actions.extend(action);
     }
 
-    // Add context menu for adding missing components
-    begin_section(ui, &mut first_section);
-    ui.add_space(4.0);
-    let mut remaining = ui.available_size();
-    if remaining.x <= 0.0 {
-        remaining.x = ui.available_width();
-    }
-    if remaining.y <= 0.0 {
-        remaining.y = ui.spacing().interact_size.y * 3.0;
-    }
-    let response = ui.allocate_response(remaining, egui::Sense::click());
-
-    response.context_menu(|ui| {
-        ui.label("Add Component");
-        ui.separator();
-
-        if data.components.camera.is_none() && ui.button("Camera").clicked() {
-            actions.push(InspectorAction::AddCamera {
-                entity: data.entity,
-            });
-            ui.close();
-        }
-
-        if data.components.mesh.is_none() && ui.button("Mesh").clicked() {
-            actions.push(InspectorAction::AddMesh {
-                entity: data.entity,
-            });
-            ui.close();
-        }
-
-        let has_light = data.components.point_light.is_some()
-            || data.components.directional_light.is_some()
-            || data.components.spot_light.is_some();
-        if !has_light {
-            ui.menu_button("Light", |ui| {
-                if ui.button("Point Light").clicked() {
-                    actions.push(InspectorAction::AddPointLight {
-                        entity: data.entity,
-                    });
-                    ui.close();
-                }
-                if ui.button("Directional Light").clicked() {
-                    actions.push(InspectorAction::AddDirectionalLight {
-                        entity: data.entity,
-                    });
-                    ui.close();
-                }
-                if ui.button("Spot Light").clicked() {
-                    actions.push(InspectorAction::AddSpotLight {
-                        entity: data.entity,
-                    });
-                    ui.close();
-                }
-            });
-        }
-
-        if data.components.environment.is_none() && ui.button("Environment").clicked() {
-            actions.push(InspectorAction::AddEnvironment {
-                entity: data.entity,
-            });
-            ui.close();
-        }
-
-        if data.components.particle_system.is_none() && ui.button("Particle System").clicked() {
-            actions.push(InspectorAction::AddParticleSystem {
-                entity: data.entity,
-            });
-            ui.close();
-        }
-
-        if data.components.script.is_none() && ui.button("Script").clicked() {
-            actions.push(InspectorAction::AddScript {
-                entity: data.entity,
-            });
-            ui.close();
-        }
+    ui.add_space(10.0);
+    ui.vertical_centered_justified(|ui| {
+        ui.menu_button(format!("{}  Add Component", icons::ADD), |ui| {
+            add_component_menu(ui, entity, components, &mut actions);
+        });
     });
+    ui.add_space(6.0);
 
     actions
 }
 
-fn begin_section(ui: &mut egui::Ui, first_section: &mut bool) {
-    if *first_section {
-        *first_section = false;
-    } else {
-        ui.add_space(6.0);
+/// Components the inspector can remove from an entity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemovableComponent {
+    Camera,
+    Mesh,
+    PointLight,
+    DirectionalLight,
+    SpotLight,
+    Environment,
+    ParticleSystem,
+    Script,
+}
+
+impl RemovableComponent {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Camera => "Camera",
+            Self::Mesh => "Mesh",
+            Self::PointLight => "Point Light",
+            Self::DirectionalLight => "Directional Light",
+            Self::SpotLight => "Spot Light",
+            Self::Environment => "Environment",
+            Self::ParticleSystem => "Particle System",
+            Self::Script => "Script",
+        }
     }
+}
+
+/// Give a section header a context menu that removes its component.
+fn removable(
+    header: &egui::Response,
+    entity: Entity,
+    component: RemovableComponent,
+    actions: &mut Vec<InspectorAction>,
+) {
+    header.context_menu(|ui| {
+        let text = egui::RichText::new(format!("{}  Remove {}", icons::DELETE, component.label()))
+            .color(theme::colors::ERROR);
+        if ui.button(text).clicked() {
+            actions.push(InspectorAction::RemoveComponent { entity, component });
+            ui.close();
+        }
+    });
+}
+
+fn add_component_menu(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    components: &SceneEntityComponentsSummary,
+    actions: &mut Vec<InspectorAction>,
+) {
+    let mut add = |ui: &mut egui::Ui, enabled: bool, label: &str, action: InspectorAction| {
+        if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+            actions.push(action);
+            ui.close();
+        }
+    };
+
+    let has_light = components.point_light.is_some()
+        || components.directional_light.is_some()
+        || components.spot_light.is_some();
+
+    add(
+        ui,
+        components.mesh.is_none(),
+        &format!("{}  Mesh", icons::MESH),
+        InspectorAction::AddMesh { entity },
+    );
+    add(
+        ui,
+        components.camera.is_none(),
+        &format!("{}  Camera", icons::CAMERA),
+        InspectorAction::AddCamera { entity },
+    );
+    ui.add_enabled_ui(!has_light, |ui| {
+        ui.menu_button(format!("{}  Light", icons::LIGHT), |ui| {
+            add(
+                ui,
+                true,
+                "Point Light",
+                InspectorAction::AddPointLight { entity },
+            );
+            add(
+                ui,
+                true,
+                "Directional Light",
+                InspectorAction::AddDirectionalLight { entity },
+            );
+            add(
+                ui,
+                true,
+                "Spot Light",
+                InspectorAction::AddSpotLight { entity },
+            );
+        });
+    });
+    add(
+        ui,
+        components.environment.is_none(),
+        &format!("{}  Environment", icons::ENVIRONMENT),
+        InspectorAction::AddEnvironment { entity },
+    );
+    add(
+        ui,
+        components.particle_system.is_none(),
+        &format!("{}  Particle System", icons::PARTICLES),
+        InspectorAction::AddParticleSystem { entity },
+    );
+    add(
+        ui,
+        components.script.is_none(),
+        &format!("{}  Script", icons::SCRIPT),
+        InspectorAction::AddScript { entity },
+    );
 }
 
 fn show_transform_section(
@@ -335,8 +371,8 @@ fn show_transform_section(
     entity: Entity,
     transform: Transform,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Transform", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::TRANSFORM, "Transform", |ui| {
         let mut updated = transform;
         let mut changed = false;
 
@@ -379,7 +415,7 @@ fn show_transform_section(
                 transform: updated,
             });
         }
-    });
+    })
 }
 
 fn show_camera_section(
@@ -387,14 +423,14 @@ fn show_camera_section(
     entity: Entity,
     component: CameraComponent,
     actions: &mut Vec<InspectorAction>,
-) {
+) -> egui::Response {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum ProjectionMode {
         Perspective,
         Orthographic,
     }
 
-    ui.collapsing("Camera", |ui| {
+    theme::section(ui, icons::CAMERA, "Camera", |ui| {
         let mut updated = component;
         let mut changed = false;
 
@@ -540,13 +576,13 @@ fn show_camera_section(
                 component: updated,
             });
         }
-    });
+    })
 }
 
-fn show_mesh_section(ui: &mut egui::Ui, mesh: MeshComponent) {
-    ui.collapsing("Mesh", |ui| {
-        ui.label(format!("Handle index: {}", mesh.0.index()));
-    });
+fn show_mesh_section(ui: &mut egui::Ui, mesh: MeshComponent) -> egui::Response {
+    theme::section(ui, icons::MESH, "Mesh", |ui| {
+        ui.label(theme::hint(format!("Mesh asset #{}", mesh.0.index())));
+    })
 }
 
 fn show_material_section(
@@ -556,8 +592,8 @@ fn show_material_section(
     material_data: InspectorMaterial,
     content_root: Option<&Path>,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Material", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::MATERIAL, "Material", |ui| {
         let mut material = material_data.material;
         let mut changed = false;
 
@@ -677,93 +713,51 @@ fn show_material_section(
                     |value| material.emissive_strength = value,
                 );
 
-                ui.label("Flags");
-                ui.monospace(format!("0x{:08X}", material.flags.bits()));
-                ui.end_row();
-
-                ui.label("Base color texture");
-                ui.monospace(format!("{}", material.base_color_texture));
-                ui.end_row();
-
-                if let Some(reference) = reference_for(MaterialTextureSlot::BaseColor) {
-                    if let Some(name) = reference.display_name() {
-                        ui.label("   ↳ Name");
-                        ui.monospace(name.to_string());
-                        ui.end_row();
+                let slots = [
+                    (
+                        "Base color map",
+                        MaterialTextureSlot::BaseColor,
+                        material.base_color_texture,
+                    ),
+                    (
+                        "Metal/rough map",
+                        MaterialTextureSlot::MetallicRoughness,
+                        material.metallic_roughness_texture,
+                    ),
+                    (
+                        "Normal map",
+                        MaterialTextureSlot::Normal,
+                        material.normal_texture,
+                    ),
+                    (
+                        "Emissive map",
+                        MaterialTextureSlot::Emissive,
+                        material.emissive_texture,
+                    ),
+                    (
+                        "Occlusion map",
+                        MaterialTextureSlot::Occlusion,
+                        material.occlusion_texture,
+                    ),
+                ];
+                for (label, slot, index) in slots {
+                    ui.label(label);
+                    let reference = reference_for(slot);
+                    let name = reference
+                        .and_then(|reference| {
+                            reference.display_name().map(str::to_string).or_else(|| {
+                                reference.canonical_path().and_then(|path| {
+                                    path.file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                })
+                            })
+                        })
+                        .unwrap_or_else(|| default_texture_name(index));
+                    let response = ui.label(theme::hint(name));
+                    if let Some(path) = reference.and_then(|reference| reference.canonical_path()) {
+                        response.on_hover_text(path.display().to_string());
                     }
-                    if let Some(path) = reference.canonical_path() {
-                        ui.label("   ↳ Path");
-                        ui.monospace(path.display().to_string());
-                        ui.end_row();
-                    }
-                }
-
-                ui.label("Metallic/Roughness texture");
-                ui.monospace(format!("{}", material.metallic_roughness_texture));
-                ui.end_row();
-
-                if let Some(reference) = reference_for(MaterialTextureSlot::MetallicRoughness) {
-                    if let Some(name) = reference.display_name() {
-                        ui.label("   ↳ Name");
-                        ui.monospace(name.to_string());
-                        ui.end_row();
-                    }
-                    if let Some(path) = reference.canonical_path() {
-                        ui.label("   ↳ Path");
-                        ui.monospace(path.display().to_string());
-                        ui.end_row();
-                    }
-                }
-
-                ui.label("Normal texture");
-                ui.monospace(format!("{}", material.normal_texture));
-                ui.end_row();
-
-                if let Some(reference) = reference_for(MaterialTextureSlot::Normal) {
-                    if let Some(name) = reference.display_name() {
-                        ui.label("   ↳ Name");
-                        ui.monospace(name.to_string());
-                        ui.end_row();
-                    }
-                    if let Some(path) = reference.canonical_path() {
-                        ui.label("   ↳ Path");
-                        ui.monospace(path.display().to_string());
-                        ui.end_row();
-                    }
-                }
-
-                ui.label("Emissive texture");
-                ui.monospace(format!("{}", material.emissive_texture));
-                ui.end_row();
-
-                if let Some(reference) = reference_for(MaterialTextureSlot::Emissive) {
-                    if let Some(name) = reference.display_name() {
-                        ui.label("   ↳ Name");
-                        ui.monospace(name.to_string());
-                        ui.end_row();
-                    }
-                    if let Some(path) = reference.canonical_path() {
-                        ui.label("   ↳ Path");
-                        ui.monospace(path.display().to_string());
-                        ui.end_row();
-                    }
-                }
-
-                ui.label("Occlusion texture");
-                ui.monospace(format!("{}", material.occlusion_texture));
-                ui.end_row();
-
-                if let Some(reference) = reference_for(MaterialTextureSlot::Occlusion) {
-                    if let Some(name) = reference.display_name() {
-                        ui.label("   ↳ Name");
-                        ui.monospace(name.to_string());
-                        ui.end_row();
-                    }
-                    if let Some(path) = reference.canonical_path() {
-                        ui.label("   ↳ Path");
-                        ui.monospace(path.display().to_string());
-                        ui.end_row();
-                    }
+                    ui.end_row();
                 }
             });
 
@@ -774,7 +768,7 @@ fn show_material_section(
                 material,
             });
         }
-    });
+    })
 }
 
 fn show_particle_system_section(
@@ -784,8 +778,8 @@ fn show_particle_system_section(
     emitter: Option<ParticleEmitterComponent>,
     billboard: Option<Billboard>,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Particle System", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::PARTICLES, "Particle System", |ui| {
         let mut system_component = component;
         let mut emitter_component = emitter;
         let mut emitter_changed = false;
@@ -1129,7 +1123,7 @@ fn show_particle_system_section(
                 billboard: billboard_component,
             });
         }
-    });
+    })
 }
 
 fn show_light_sections(
@@ -1139,17 +1133,26 @@ fn show_light_sections(
     actions: &mut Vec<InspectorAction>,
 ) {
     if let Some(light) = components.point_light {
-        show_point_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        let header =
+            show_point_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        removable(&header, entity, RemovableComponent::PointLight, actions);
     }
 
     if let Some(light) = components.directional_light {
-        ui.add_space(6.0);
-        show_directional_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        let header =
+            show_directional_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        removable(
+            &header,
+            entity,
+            RemovableComponent::DirectionalLight,
+            actions,
+        );
     }
 
     if let Some(light) = components.spot_light {
-        ui.add_space(6.0);
-        show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        let header =
+            show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        removable(&header, entity, RemovableComponent::SpotLight, actions);
     }
 }
 
@@ -1770,8 +1773,8 @@ fn show_environment_section(
     entity: Entity,
     component: EnvironmentComponent,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Environment", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::ENVIRONMENT, "Environment", |ui| {
         let mut edited = component.clone();
         let mut changed = false;
 
@@ -1883,7 +1886,7 @@ fn show_environment_section(
                 component: edited,
             });
         }
-    });
+    })
 }
 
 fn show_point_light_section(
@@ -1892,8 +1895,8 @@ fn show_point_light_section(
     mut light: PointLight,
     casts_shadow: Option<CanCastShadow>,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Point Light", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::LIGHT, "Point Light", |ui| {
         let mut changed = false;
 
         Grid::new("point_light_component_grid")
@@ -1923,7 +1926,7 @@ fn show_point_light_section(
         if changed {
             actions.push(InspectorAction::UpdatePointLight { entity, light });
         }
-    });
+    })
 }
 
 fn show_directional_light_section(
@@ -1932,8 +1935,8 @@ fn show_directional_light_section(
     mut light: DirectionalLight,
     casts_shadow: Option<CanCastShadow>,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Directional Light", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::SUN, "Directional Light", |ui| {
         let mut changed = false;
 
         Grid::new("directional_light_component_grid")
@@ -1969,7 +1972,7 @@ fn show_directional_light_section(
         if changed {
             actions.push(InspectorAction::UpdateDirectionalLight { entity, light });
         }
-    });
+    })
 }
 
 fn show_spot_light_section(
@@ -1978,8 +1981,8 @@ fn show_spot_light_section(
     mut light: SpotLight,
     casts_shadow: Option<CanCastShadow>,
     actions: &mut Vec<InspectorAction>,
-) {
-    ui.collapsing("Spot Light", |ui| {
+) -> egui::Response {
+    theme::section(ui, icons::SPOT, "Spot Light", |ui| {
         let mut changed = false;
 
         Grid::new("spot_light_component_grid")
@@ -2016,65 +2019,61 @@ fn show_spot_light_section(
         if changed {
             actions.push(InspectorAction::UpdateSpotLight { entity, light });
         }
-    });
+    })
 }
 
 fn show_script_section(
     ui: &mut egui::Ui,
     entity: Entity,
     script: &LuaScriptComponent,
-) -> Option<InspectorAction> {
+    content_root: Option<&Path>,
+) -> (egui::Response, Option<InspectorAction>) {
     let mut action = None;
-    ui.collapsing("Script", |ui| {
-        let source_label = match script.source() {
-            LuaScriptSource::Inline { name, .. } => format!("Inline script: {}", name),
-            LuaScriptSource::File { path } => format!("File: {}", path.display()),
+    let header = theme::section(ui, icons::SCRIPT, "Script", |ui| {
+        let current_path = match script.source() {
+            LuaScriptSource::File { path } => Some(path.clone()),
+            LuaScriptSource::Inline { .. } => None,
         };
-        ui.label(source_label);
 
-        if ui.button("Edit").clicked() {
-            match script.source() {
-                LuaScriptSource::File { path } => {
-                    action = Some(InspectorAction::OpenTextEditor { path: path.clone() });
-                }
-                _ => {
+        ui.horizontal(|ui| {
+            let source_label = match script.source() {
+                LuaScriptSource::Inline { name, .. } => format!("{name} (inline)"),
+                LuaScriptSource::File { path } => display_relative(path, content_root),
+            };
+            ui.add(egui::Label::new(egui::RichText::new(source_label).monospace()).truncate());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(theme::primary_button(format!("{}  Edit", icons::RENAME)))
+                    .on_hover_text("Open in the code editor")
+                    .clicked()
+                {
                     action = Some(InspectorAction::EditScript {
                         entity,
                         component: script.clone(),
                     });
                 }
-            }
-        }
+            });
+        });
 
-        ui.separator();
-        ui.label("Select existing script:");
-
-        let available_scripts = list_available_scripts();
-        if available_scripts.is_empty() {
-            ui.label("No script files found under scripts/ or examples/scripts/");
-        } else {
-            let current_path = match script.source() {
-                LuaScriptSource::File { path } => Some(path.clone()),
-                _ => None,
-            };
-
-            egui::ScrollArea::vertical()
-                .max_height(500.0)
-                .show(ui, |ui| {
+        ui.add_space(2.0);
+        let available_scripts = list_available_scripts(content_root);
+        let selected_text = current_path
+            .as_deref()
+            .map(|path| display_relative(path, content_root))
+            .unwrap_or_else(|| "Inline script".to_string());
+        ui.horizontal(|ui| {
+            ui.label("Source");
+            ComboBox::from_id_salt(("script_source", entity))
+                .selected_text(selected_text)
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    if available_scripts.is_empty() {
+                        ui.label(theme::hint("No .lua files in the project yet."));
+                    }
                     for script_path in available_scripts {
-                        let file_name = script_path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown");
-
                         let is_current = current_path.as_ref() == Some(&script_path);
-                        let button_text = if is_current {
-                            format!("● {}", file_name)
-                        } else {
-                            file_name.to_string()
-                        };
-
-                        if ui.button(button_text).clicked() && !is_current {
+                        let label = display_relative(&script_path, content_root);
+                        if ui.selectable_label(is_current, label).clicked() && !is_current {
                             action = Some(InspectorAction::ChangeScriptSource {
                                 entity,
                                 script_path,
@@ -2082,13 +2081,38 @@ fn show_script_section(
                         }
                     }
                 });
-        }
+        });
     });
-    action
+    (header, action)
+}
+
+/// Label for a texture slot that has no named texture assigned.
+fn default_texture_name(index: u32) -> String {
+    use wgpu_cube::renderer::texture::{
+        DEFAULT_CHECKER_TEXTURE_INDEX, DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX,
+        DEFAULT_NORMAL_TEXTURE_INDEX, DEFAULT_WHITE_TEXTURE_INDEX,
+    };
+    match index {
+        DEFAULT_WHITE_TEXTURE_INDEX
+        | DEFAULT_NORMAL_TEXTURE_INDEX
+        | DEFAULT_METALLIC_ROUGHNESS_TEXTURE_INDEX => "None".to_string(),
+        DEFAULT_CHECKER_TEXTURE_INDEX => "Checker (default)".to_string(),
+        other => format!("Texture #{other}"),
+    }
+}
+
+/// `path` relative to the project content folder when it is inside it.
+fn display_relative(path: &Path, content_root: Option<&Path>) -> String {
+    content_root
+        .and_then(|root| path.strip_prefix(root).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 struct ScriptListCache {
+    root: Option<PathBuf>,
     scripts: Vec<PathBuf>,
     last_update: Instant,
 }
@@ -2099,54 +2123,52 @@ static SCRIPT_LIST_CACHE: Mutex<Option<ScriptListCache>> = Mutex::new(None);
 #[cfg(not(target_arch = "wasm32"))]
 const CACHE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Lua files under the project content folder, refreshed every couple of seconds.
 #[cfg(not(target_arch = "wasm32"))]
-fn list_available_scripts() -> Vec<PathBuf> {
-    // Check cache first
-    if let Ok(mut cache) = SCRIPT_LIST_CACHE.lock() {
-        if let Some(cached) = cache.as_ref() {
-            if cached.last_update.elapsed() < CACHE_REFRESH_INTERVAL {
-                return cached.scripts.clone();
-            }
-        }
-        // Cache miss or expired, refresh from filesystem
-        let mut scripts = Vec::new();
-        let candidate_dirs = [PathBuf::from("scripts"), PathBuf::from("examples/scripts")];
-
-        for scripts_dir in candidate_dirs {
-            if scripts_dir.exists() && scripts_dir.is_dir() {
-                if let Ok(entries) = fs::read_dir(&scripts_dir) {
-                    for entry in entries.flatten() {
-                        if let Ok(file_type) = entry.file_type() {
-                            if file_type.is_file() {
-                                let path = entry.path();
-                                if path.extension().and_then(|s| s.to_str()) == Some("lua") {
-                                    scripts.push(path);
-                                }
-                            }
-                        }
-                    }
+fn list_available_scripts(content_root: Option<&Path>) -> Vec<PathBuf> {
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if depth < 8 {
+                    collect(&path, out, depth + 1);
                 }
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("lua") {
+                out.push(path);
             }
         }
-
-        scripts.sort();
-        scripts.dedup();
-
-        // Update cache
-        *cache = Some(ScriptListCache {
-            scripts: scripts.clone(),
-            last_update: Instant::now(),
-        });
-
-        scripts
-    } else {
-        // Fallback if mutex is poisoned
-        Vec::new()
     }
+
+    let Ok(mut cache) = SCRIPT_LIST_CACHE.lock() else {
+        return Vec::new();
+    };
+    if let Some(cached) = cache.as_ref() {
+        if cached.root.as_deref() == content_root
+            && cached.last_update.elapsed() < CACHE_REFRESH_INTERVAL
+        {
+            return cached.scripts.clone();
+        }
+    }
+
+    let mut scripts = Vec::new();
+    if let Some(root) = content_root {
+        collect(root, &mut scripts, 0);
+    }
+    scripts.sort();
+
+    *cache = Some(ScriptListCache {
+        root: content_root.map(Path::to_path_buf),
+        scripts: scripts.clone(),
+        last_update: Instant::now(),
+    });
+    scripts
 }
 
 #[cfg(target_arch = "wasm32")]
-fn list_available_scripts() -> Vec<PathBuf> {
+fn list_available_scripts(_content_root: Option<&Path>) -> Vec<PathBuf> {
     // File system access is not available on wasm32
     Vec::new()
 }

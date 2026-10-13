@@ -32,7 +32,7 @@ use self::core::GameViewDisplayMode;
 pub use self::core::{EditorApplication, EditorSharedState};
 use self::project_system::ProjectSystem;
 use self::scene_tabs_panel::SceneTabAction;
-use crate::asset_browser::AssetBrowserState;
+use crate::asset_browser::{AssetBrowserAction, AssetBrowserState};
 use glam::{Quat, Vec3};
 use hecs::Entity;
 use std::collections::HashMap;
@@ -78,12 +78,11 @@ use wgpu_cube::scene::{
     PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset,
     SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
-use wgpu_cube::scripting::lua::api::enqueue_text_editor_request;
 use wgpu_cube::scripting::lua::api::ui::{merge_ui_responses, UiCommand, UiResponse};
 use wgpu_cube::scripting::LuaScriptingPlugin;
 use wgpu_cube::{
     DefaultUI, RenderApplication, SceneHierarchyEvent, SceneHierarchySceneDescriptor,
-    ScenePrimitivePreset,
+    ScenePrimitivePreset, UiStyle,
 };
 
 use crate::inspector::InspectorAction;
@@ -97,6 +96,10 @@ impl RenderApplication for EditorApplication {
 
     fn name(&self) -> &str {
         "Engine Editor"
+    }
+
+    fn ui_style(&self) -> UiStyle {
+        UiStyle::with_theme(crate::theme::apply_editor_style)
     }
 
     fn install_runtime_state_handle(&mut self, handle: RuntimeStateHandle) {
@@ -394,7 +397,15 @@ impl EditorApplication {
         let scene_tabs_handle = default_ui.scene_tabs_handle();
         self.shared.set_scene_tabs_handle(scene_tabs_handle);
 
-        let tabs = self.scene_tabs();
+        let mut tabs = self.scene_tabs();
+        // Tabs know only document ids; show the names from the project manifest.
+        for tab in &mut tabs {
+            if let Some(doc) = self.project_system().scene_document(&tab.document_id) {
+                if !doc.name.is_empty() {
+                    tab.title = doc.name.clone();
+                }
+            }
+        }
         let active_tab_handle = tabs.iter().find(|tab| tab.active).map(|tab| tab.handle);
 
         let available_scene_docs: Vec<_> = self
@@ -436,6 +447,7 @@ impl EditorApplication {
         }
         let mut inspector_actions = Vec::new();
         let mut hierarchy_events = Vec::new();
+        let mut asset_actions = Vec::new();
         let transparent_frame =
             egui::Frame::central_panel(ui.style()).fill(egui::Color32::TRANSPARENT);
         {
@@ -460,6 +472,7 @@ impl EditorApplication {
                             inspector_actions: &mut inspector_actions,
                             scene_events: &mut hierarchy_events,
                             asset_browser: asset_browser_state,
+                            asset_actions: &mut asset_actions,
                             content_root,
                             workspace_info,
                         };
@@ -487,17 +500,6 @@ impl EditorApplication {
             && scene_tile_active
         {
             self.shared.runtime_state.request_mode(RuntimeMode::Editor);
-        }
-
-        if !has_pending_transition
-            && !is_playing
-            && !matches!(
-                self.shared.runtime_state.desired_mode(),
-                RuntimeMode::Playing
-            )
-            && game_tile_active
-        {
-            self.shared.runtime_state.request_mode(RuntimeMode::Playing);
         }
 
         self.selection_system_mut()
@@ -531,6 +533,9 @@ impl EditorApplication {
                 SceneHierarchyEvent::OpenScene(document_id) => {
                     scene_tab_actions.push(SceneTabAction::Activate(document_id));
                 }
+                SceneHierarchyEvent::DeleteEntity(entity) => {
+                    self.enqueue_command(EditorCommand::DeleteEntity(entity));
+                }
                 SceneHierarchyEvent::AddScriptToEntity(entity) => {
                     self.enqueue_command(EditorCommand::Inspector(InspectorAction::AddScript {
                         entity,
@@ -539,10 +544,31 @@ impl EditorApplication {
             }
         }
 
+        for action in asset_actions {
+            match action {
+                AssetBrowserAction::EditFile(path) => {
+                    self.script_editor_system_mut().open_file(&path);
+                }
+                AssetBrowserAction::OpenScene(path) => match self.scene_document_for_path(&path) {
+                    Some(document_id) => {
+                        scene_tab_actions.push(SceneTabAction::Activate(document_id));
+                    }
+                    None => log::warn!(
+                        "{} is not a scene listed in the project manifest",
+                        path.display()
+                    ),
+                },
+                AssetBrowserAction::Import(path) => {
+                    self.enqueue_command(EditorCommand::ImportPath(path));
+                }
+            }
+        }
+
         for action in scene_tab_actions.drain(..) {
             self.handle_scene_tab_action(action);
         }
 
+        self.handle_global_shortcuts(ctx);
         if !is_playing {
             self.capture_viewport_pick_input(ctx);
             self.handle_history_shortcuts(ctx);
@@ -552,8 +578,10 @@ impl EditorApplication {
             self.selection_system_mut().clear_pending_pick();
         }
 
-        self.script_editor_system_mut()
-            .set_window_enabled(!show_fullscreen_game);
+        let content_root = self.project_system().content_root();
+        let script_editor = self.script_editor_system_mut();
+        script_editor.set_window_enabled(!show_fullscreen_game);
+        script_editor.set_content_root(content_root);
         self.shader_editor_system_mut()
             .set_window_enabled(!show_fullscreen_game);
 
@@ -854,37 +882,6 @@ impl EditorApplication {
         welcome_screen_visible
     }
 
-    pub(super) fn open_text_editor_with_path(&mut self, path: &Path) -> bool {
-        let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
-            log::warn!(
-                "Cannot open Text Editor plugin for {} - plugin manager not initialized",
-                path.display()
-            );
-            return false;
-        };
-
-        let mut plugin_found = false;
-        for plugin in manager.plugins_mut() {
-            if plugin.metadata.name == TEXT_EDITOR_PLUGIN {
-                plugin.visible = true;
-                plugin_found = true;
-                break;
-            }
-        }
-
-        if !plugin_found {
-            log::warn!(
-                "Text Editor plugin not registered or disabled (needed for {}).",
-                path.display()
-            );
-            return false;
-        }
-
-        enqueue_text_editor_request(path);
-        log::info!("Queued {} for the Text Editor plugin", path.display());
-        true
-    }
-
     fn apply_welcome_screen_visibility(&mut self, project_loaded: bool) {
         let Some(manager) = self.shared.ui_plugin_manager.as_mut() else {
             return;
@@ -903,8 +900,9 @@ impl EditorApplication {
         }
     }
 
-    /// Render reload notifications as toasts in the bottom-right corner
+    /// Render notifications as toasts in the bottom-right corner
     fn render_reload_notifications(&mut self, ctx: &egui::Context) {
+        use crate::theme::colors;
         use core::NotificationSeverity;
 
         // Remove expired notifications
@@ -914,64 +912,69 @@ impl EditorApplication {
 
         let screen_rect = ctx.viewport_rect();
         let toast_width = 300.0;
-        let toast_height = 60.0;
-        let margin = 10.0;
-        let spacing = 5.0;
+        let margin = 14.0;
+        let mut bottom = screen_rect.max.y - margin;
 
-        // Render toasts from bottom to top
-        for (index, notification) in self.shared.reload_notifications.iter().enumerate() {
-            let y_offset = margin + (toast_height + spacing) * index as f32;
-            let pos = egui::pos2(
-                screen_rect.max.x - toast_width - margin,
-                screen_rect.max.y - y_offset - toast_height,
-            );
-
-            let (bg_color, text_color) = match notification.severity {
-                NotificationSeverity::Success => {
-                    (egui::Color32::from_rgb(40, 180, 40), egui::Color32::WHITE)
-                }
-                NotificationSeverity::Warning => {
-                    (egui::Color32::from_rgb(220, 180, 20), egui::Color32::BLACK)
-                }
-                NotificationSeverity::Error => {
-                    (egui::Color32::from_rgb(200, 40, 40), egui::Color32::WHITE)
-                }
+        // Newest at the bottom, older ones stacked above.
+        for (index, notification) in self.shared.reload_notifications.iter().enumerate().rev() {
+            let accent = match notification.severity {
+                NotificationSeverity::Success => colors::SUCCESS,
+                NotificationSeverity::Warning => colors::WARNING,
+                NotificationSeverity::Error => colors::ERROR,
             };
 
-            egui::Area::new(format!("reload_notification_{}", index).into())
-                .fixed_pos(pos)
+            let response = egui::Area::new(egui::Id::new(("editor_toast", index)))
+                .pivot(egui::Align2::RIGHT_BOTTOM)
+                .fixed_pos(egui::pos2(screen_rect.max.x - margin, bottom))
+                .order(egui::Order::Foreground)
+                .interactable(false)
                 .show(ctx, |ui| {
-                    egui::Frame::default()
-                        .fill(bg_color)
-                        .corner_radius(4.0)
-                        .inner_margin(8.0)
+                    egui::Frame::popup(ui.style())
+                        .inner_margin(egui::Margin {
+                            left: 14,
+                            right: 12,
+                            top: 8,
+                            bottom: 8,
+                        })
                         .show(ui, |ui| {
-                            ui.set_width(toast_width - 16.0);
-                            ui.set_height(toast_height - 16.0);
-
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.add_space(4.0);
-                                    ui.label(
-                                        egui::RichText::new(&notification.message)
-                                            .color(text_color)
-                                            .size(14.0),
-                                    );
-
-                                    // Show age of notification
-                                    let age_secs = notification.timestamp.elapsed().as_secs();
-                                    if age_secs > 0 {
-                                        ui.label(
-                                            egui::RichText::new(format!("{}s ago", age_secs))
-                                                .color(text_color.gamma_multiply(0.7))
-                                                .size(11.0),
-                                        );
-                                    }
-                                });
-                            });
-                        });
+                            ui.set_width(toast_width);
+                            ui.label(
+                                egui::RichText::new(&notification.message)
+                                    .color(colors::TEXT_STRONG),
+                            );
+                        })
+                        .response
                 });
+            let rect = response.inner.rect;
+            // Severity bar along the left edge.
+            ctx.layer_painter(response.response.layer_id).rect_filled(
+                egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height())),
+                egui::CornerRadius {
+                    nw: 6,
+                    sw: 6,
+                    ne: 0,
+                    se: 0,
+                },
+                accent,
+            );
+            bottom = rect.min.y - 6.0;
         }
+    }
+
+    /// The project scene document stored at `path`, if any.
+    fn scene_document_for_path(&self, path: &Path) -> Option<SceneDocumentId> {
+        let project_dir = self.project_system().controller().current_dir()?;
+        let wanted = path.canonicalize().ok()?;
+        self.project_system()
+            .scene_documents()
+            .iter()
+            .find(|doc| {
+                project_dir
+                    .join(&doc.relative_path)
+                    .canonicalize()
+                    .is_ok_and(|candidate| candidate == wanted)
+            })
+            .map(|doc| doc.id.clone())
     }
 
     fn handle_scene_tab_action(&mut self, action: SceneTabAction) {

@@ -511,6 +511,13 @@ impl EditorApplication {
             .expect("project system registered")
     }
 
+    pub(super) fn script_editor_system(&self) -> &ScriptEditorSystem {
+        self.systems[self.script_editor_system_index]
+            .as_any()
+            .downcast_ref::<ScriptEditorSystem>()
+            .expect("script editor system registered")
+    }
+
     pub(super) fn script_editor_system_mut(&mut self) -> &mut ScriptEditorSystem {
         self.systems[self.script_editor_system_index]
             .as_any_mut()
@@ -1236,10 +1243,6 @@ pub(super) enum PendingScriptAction {
         entity: Entity,
         name: String,
         contents: String,
-        message: String,
-    },
-    ReloadRuntime {
-        entity: Entity,
         message: String,
     },
 }
