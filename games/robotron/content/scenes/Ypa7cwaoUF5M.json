@@ -1,0 +1,2218 @@
+{
+  "name": "robotron",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "Environment",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": 1,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": {
+        "clear_color": [
+          0.007843138,
+          0.011764706,
+          0.039215688,
+          1.0
+        ],
+        "ambient_intensity": 0.35,
+        "color_grading": {
+          "exposure": 1.05,
+          "saturation": 1.2,
+          "contrast": 1.1
+        },
+        "hdr": null
+      },
+      "camera": null
+    },
+    {
+      "name": "Sun",
+      "transform": {
+        "translation": [
+          0.0,
+          6.0,
+          0.0
+        ],
+        "rotation": [
+          -0.4924039,
+          0.15038374,
+          0.0868241,
+          0.85286856
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": {
+        "color": [
+          0.75,
+          0.8,
+          1.0
+        ],
+        "intensity": 1.1,
+        "shadow_size": 30.0
+      },
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 2,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GameCamera",
+      "transform": {
+        "translation": [
+          0.0,
+          40.0,
+          12.0
+        ],
+        "rotation": [
+          -0.6015367,
+          0.0,
+          0.0,
+          0.7988452
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": 3,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": {
+        "projection": {
+          "kind": "perspective",
+          "fov_y_radians": 0.6981317,
+          "near": 0.5,
+          "far": 200.0
+        }
+      }
+    },
+    {
+      "name": "Floor",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          -0.7071068,
+          0.0,
+          0.0,
+          0.7071068
+        ],
+        "scale": [
+          220.0,
+          220.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Plane",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          0.0
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      },
+      "material": "content/materials/material_iUEuwpz1rKGu.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 4,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Arena",
+      "transform": {
+        "translation": [
+          0.0,
+          0.01,
+          0.0
+        ],
+        "rotation": [
+          -0.7071068,
+          0.0,
+          0.0,
+          0.7071068
+        ],
+        "scale": [
+          38.0,
+          22.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Plane",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          0.0
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.0
+        ]
+      },
+      "material": "content/materials/material_8paauYLw1iuT.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 5,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Wall_N",
+      "transform": {
+        "translation": [
+          0.0,
+          0.3,
+          -11.25
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          39.0,
+          0.6,
+          0.5
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_kj1m5DZWBzJd.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 6,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Wall_S",
+      "transform": {
+        "translation": [
+          0.0,
+          0.3,
+          11.25
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          39.0,
+          0.6,
+          0.5
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_hSfA2Wngo9Bt.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 7,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Wall_W",
+      "transform": {
+        "translation": [
+          -19.25,
+          0.3,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.5,
+          0.6,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_AIxUXyqJM4Xz.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 8,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Wall_E",
+      "transform": {
+        "translation": [
+          19.25,
+          0.3,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.5,
+          0.6,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_7fTBA1CCDUb9.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 9,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV",
+      "transform": {
+        "translation": [
+          -18.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_STxtjo72ccIF.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 46,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 1",
+      "transform": {
+        "translation": [
+          -16.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_pckJH53aU1Fi.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 47,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 2",
+      "transform": {
+        "translation": [
+          -14.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_akoEy3gxIjZ1.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 48,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 3",
+      "transform": {
+        "translation": [
+          -12.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_G1ucVXDulSjk.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 49,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 4",
+      "transform": {
+        "translation": [
+          -10.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_KTkzq2UJKv71.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 50,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 5",
+      "transform": {
+        "translation": [
+          -8.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_WNZ2CoMUbFjf.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 51,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 6",
+      "transform": {
+        "translation": [
+          -6.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_Ab7dPK5Kz181.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 52,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 7",
+      "transform": {
+        "translation": [
+          -4.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_Velig3ASWRG6.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 53,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 8",
+      "transform": {
+        "translation": [
+          -2.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_aml8WEKcxp1s.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 54,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 9",
+      "transform": {
+        "translation": [
+          0.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_Fb7iJF0fecln.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 55,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 10",
+      "transform": {
+        "translation": [
+          2.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_HvoS9EWoEMEa.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 56,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 11",
+      "transform": {
+        "translation": [
+          4.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_HuFu2j0AVlPO.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 57,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 12",
+      "transform": {
+        "translation": [
+          6.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_CO4Ghuf0SMrj.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 58,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 13",
+      "transform": {
+        "translation": [
+          8.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_JuHIwT3zG6u9.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 59,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 14",
+      "transform": {
+        "translation": [
+          10.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_r71vns7XyZEL.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 60,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 15",
+      "transform": {
+        "translation": [
+          12.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_ByWq8sznTqkS.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 61,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 16",
+      "transform": {
+        "translation": [
+          14.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_8RTqGzaNtiZ7.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 62,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 17",
+      "transform": {
+        "translation": [
+          16.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_enQ4HPH7lByu.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 63,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridV 18",
+      "transform": {
+        "translation": [
+          18.0,
+          0.03,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.04,
+          0.02,
+          22.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_CMVUexFJ7jrt.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 64,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          -10.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_FEpLSy35eXZJ.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 65,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          -8.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_eNBG3yyqvl8y.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 66,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          -6.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_V3EmeruPgvOr.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 67,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          -4.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_HjzdxjlL1v6c.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 68,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 4",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          -2.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_qDWdQ5DRUHQ3.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 69,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 5",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_v6E0VN9UIRzp.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 70,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 6",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          2.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_6WMpkuc7CuhJ.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 71,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 7",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          4.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_sApslIBcxLvS.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 72,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 8",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          6.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_RK85sp31AtEx.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 73,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 9",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          8.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_cwNjqx4zQ17N.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 74,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GridH 10",
+      "transform": {
+        "translation": [
+          0.0,
+          0.035,
+          10.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          38.0,
+          0.02,
+          0.04
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": "Cube",
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        "max": [
+          0.5,
+          0.5,
+          0.5
+        ]
+      },
+      "material": "content/materials/material_4sRDso5L03te.mat.json",
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": false,
+      "billboard": null,
+      "editor_id": 75,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GameController",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": {
+        "source": {
+          "File": {
+            "path": "content/scripts/robotron.lua"
+          }
+        }
+      },
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": 45,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": 2
+}
