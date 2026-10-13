@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "engine": {
+      "command": "tools/engine-mcp/run.sh",
+      "args": []
+    }
+  }
+}

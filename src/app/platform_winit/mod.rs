@@ -462,6 +462,14 @@ where
             window.as_ref().request_redraw();
         }
 
+        if let Some(hub) = self.core.remote_hub() {
+            log::info!(
+                target: "remote",
+                "Remote control listening on 127.0.0.1:{}",
+                hub.borrow().port()
+            );
+        }
+
         if self.platform.renderer_initialized() {
             log::info!("Application initialized");
         } else {
@@ -531,6 +539,11 @@ where
                 let Some(frame) = self.core.begin_frame() else {
                     return;
                 };
+                let remote = self.core.remote_hub();
+                if let Some(hub) = &remote {
+                    // Injected input lands before scripts run, like window events.
+                    self.update_input_state(|input| hub.borrow_mut().apply_input(input));
+                }
                 let mut active_handle = self.core.run_update_stage(&frame);
 
                 if let Some(mut renderer) = self.platform.take_renderer() {
@@ -549,6 +562,14 @@ where
                         {
                             let mut scene = self.core.scene_mut();
                             self.editor.apply_environment_settings(&mut scene);
+                        }
+                        // Remote changes must reach the UI's copy, which is pushed to
+                        // the renderer every frame.
+                        if let Some(effects) = remote
+                            .as_ref()
+                            .and_then(|hub| hub.borrow_mut().take_postprocess_override())
+                        {
+                            self.editor.set_postprocess_effects(effects);
                         }
                         self.editor.apply_postprocess_effects(&mut renderer);
                     }
@@ -584,6 +605,14 @@ where
                                 }
                             }
 
+                            if let Some(hub) = &remote {
+                                if hub.borrow().has_pending_captures() {
+                                    let capture =
+                                        crate::remote::capture_surface(&renderer, &render_frame);
+                                    hub.borrow_mut().complete_captures(capture, render_region);
+                                }
+                            }
+
                             renderer.present(render_frame);
                         }
                         Ok(RenderResult::Skipped) => {}
@@ -598,6 +627,9 @@ where
                     self.platform.put_renderer(renderer);
 
                     self.update_input_state(|input| input.update());
+                    if let Some(hub) = &remote {
+                        hub.borrow_mut().end_frame(frame.dt());
+                    }
 
                     if self.core.exit_requested() {
                         event_loop.exit();

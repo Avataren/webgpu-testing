@@ -5,6 +5,7 @@ pub mod gpu_particles;
 pub mod io;
 pub mod profiler;
 pub mod project;
+pub mod remote;
 pub mod render_application;
 pub mod renderer;
 pub mod scene;
@@ -40,9 +41,14 @@ fn init_logging() {
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "egui")))]
 fn init_logging() {
-    let _ = env_logger::Builder::from_default_env()
+    let logger = env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
-        .try_init();
+        .build();
+    let level = logger.filter();
+    // Records also go to the remote-control log tap.
+    if log::set_boxed_logger(Box::new(remote::log_tap::TeeLogger::new(logger))).is_ok() {
+        log::set_max_level(level);
+    }
 }
 
 #[cfg(all(target_arch = "wasm32", feature = "egui"))]

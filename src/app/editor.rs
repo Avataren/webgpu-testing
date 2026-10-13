@@ -183,6 +183,16 @@ impl EditorState {
         requested
     }
 
+    /// Replace the post-processing settings shown in the UI and applied each frame.
+    pub fn set_postprocess_effects(
+        &self,
+        effects: crate::renderer::postprocess::PostProcessEffects,
+    ) {
+        if let Ok(mut current) = self.postprocess_effects.lock() {
+            *current = effects;
+        }
+    }
+
     pub fn apply_postprocess_effects(&self, renderer: &mut Renderer) {
         if let Ok(effects) = self.postprocess_effects.lock() {
             renderer.set_postprocess_effects(*effects);

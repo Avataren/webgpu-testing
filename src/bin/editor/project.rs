@@ -290,6 +290,11 @@ impl ProjectController {
         self.pending_build.take()
     }
 
+    /// Save the project to `dir` on the next frame, as File > Save Project does.
+    pub fn request_save_project(&mut self, dir: PathBuf) {
+        self.pending_save = Some(dir);
+    }
+
     pub fn request_load_project(&mut self, path: PathBuf) {
         self.pending_load = Some(path);
     }

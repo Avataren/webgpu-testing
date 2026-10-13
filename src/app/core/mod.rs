@@ -13,6 +13,7 @@ pub use scheduler::{
     UpdateSystem,
 };
 
+use crate::remote::RemoteHubHandle;
 use crate::renderer::{RenderBatcher, Renderer};
 use crate::scene::{Scene, SceneHandle, SceneWorkspace, SceneWorkspaceSceneMut};
 use crate::settings::RenderSettings;
@@ -34,6 +35,7 @@ pub struct AppBuilder {
     settings: RenderSettings,
     exit_on_escape: bool,
     workspace: Option<SceneWorkspace>,
+    remote: Option<RemoteHubHandle>,
 }
 
 impl Default for AppBuilder {
@@ -43,6 +45,7 @@ impl Default for AppBuilder {
             settings: RenderSettings::load(),
             exit_on_escape: true,
             workspace: None,
+            remote: None,
         }
     }
 }
@@ -116,25 +119,39 @@ impl AppBuilder {
         self
     }
 
+    /// Attach a remote-control hub. The frame loop then applies its injected input,
+    /// answers its screenshots and advances its frame counter; requests themselves are
+    /// handled by a GPU system calling [`crate::remote::process_requests`].
+    pub fn set_remote_hub(&mut self, hub: RemoteHubHandle) -> &mut Self {
+        self.remote = Some(hub);
+        self
+    }
+
     pub fn build(self) -> AppCore {
         let Self {
             scheduler,
             settings,
             exit_on_escape,
             mut workspace,
+            remote,
         } = self;
 
         let workspace = workspace.take().unwrap_or_else(default_workspace);
+        let runtime = RuntimeController::new();
+        if let Some(hub) = &remote {
+            hub.borrow_mut().set_runtime_handle(runtime.state_handle());
+        }
 
         AppCore {
             batcher: RenderBatcher::new(),
             scheduler,
-            runtime: RuntimeController::new(),
+            runtime,
             render_hooks: RenderHooks::new(),
             settings,
             workspace,
             exit_on_escape,
             exit_requested: false,
+            remote,
         }
     }
 }
@@ -148,6 +165,7 @@ pub struct AppCore {
     workspace: SceneWorkspace,
     exit_on_escape: bool,
     exit_requested: bool,
+    remote: Option<RemoteHubHandle>,
 }
 
 impl AppCore {
@@ -193,6 +211,11 @@ impl AppCore {
 
     pub fn exit_on_escape(&self) -> bool {
         self.exit_on_escape
+    }
+
+    /// The remote-control hub, if remote control is enabled.
+    pub fn remote_hub(&self) -> Option<RemoteHubHandle> {
+        self.remote.clone()
     }
 
     pub fn runtime_mode(&self) -> RuntimeMode {

@@ -41,6 +41,8 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/project.rs` | Project manifest (`project.json`), scene documents, active project root |
 | `src/bin/editor/` | The editor: `application/` (systems, commands, UI), inspector, asset browser, shader/script editors |
 | `src/bin/player/` | Standalone project player |
+| `src/remote/` | Remote control: TCP server, request hub, built-in handlers, frame capture, log tap |
+| `tools/engine-mcp/` | MCP server (separate crate) that exposes remote control to AI agents |
 | `examples/scripts/` | Built-in Lua scripts and the editor UI plugin manifest (`ui_plugins.toml`) |
 
 ## Frame lifecycle
@@ -202,6 +204,40 @@ boids, and "optimized boids", which uses a spatial grid and a GPU radix sort.
 - **Wiring**: `ParticleSystemComponent` and `ParticleEmitterComponent` configure systems
   from the ECS; the editor drives them through its particle system.
 
+## Remote control and MCP
+
+A running app can be driven over a local socket, which is how AI agents (through the
+MCP server in `tools/engine-mcp/`) inspect and edit scenes, run Lua, inject input and
+take screenshots.
+
+- **Enabling**: the editor listens on `127.0.0.1:47811`
+  (`remote::DEFAULT_EDITOR_PORT`). Other apps opt in through
+  `RenderApplication::remote_control_port` or the `ENGINE_REMOTE_PORT` environment
+  variable, which also overrides the port; `ENGINE_REMOTE_PORT=off` disables it.
+- **Protocol**: newline-delimited JSON, `{"id", "method", "params"}` in, one
+  `{"id", "result"}` or `{"id", "error": {"message"}}` out per request. `engine.methods`
+  lists what the running app supports.
+- **Threading**: `remote/server.rs` accepts connections on background threads and
+  forwards requests over a channel. Nothing touches the scene off the main thread.
+- **Execution**: `remote::process_requests` runs as a GPU system registered after the
+  app's own (see `build_winit_app_internal`). Each request goes first to
+  `RenderApplication::remote_command` (the editor handles projects, scene tabs,
+  undo/redo, selection and imports in `src/bin/editor/application/remote.rs`), then to
+  the built-in handlers in `remote/handlers/`. After requests change the scene,
+  `remote_scene_modified` runs once; the editor records an undo step there.
+- **Frame-loop hooks** (`app/platform_winit/mod.rs`): injected input is applied at the
+  start of a frame, before the update stage, so scripts see `just_pressed` exactly as
+  for real keys. Screenshots copy the swapchain image after egui is drawn and before
+  `present` (the surface is configured with `COPY_SRC` when supported). `end_frame`
+  advances the hub's frame counter and answers `wait` requests.
+- **Post-processing**: in egui builds the UI's settings are pushed to the renderer
+  every frame, so remote changes are also written into that handle
+  (`take_postprocess_override`).
+- **Logs**: every log record also goes to `remote::log_tap`, a ring buffer with
+  sequence numbers, so clients can poll for new lines. Panics are recorded there too.
+- **Lua console**: `ScriptingState::eval` runs code with the full scripting API, either
+  in a persistent console environment or inside one entity's script environment.
+
 ## Invariants and gotchas
 
 - **GPU structs** uploaded from Rust need `#[repr(C)]`, 16-byte alignment and explicit
@@ -251,6 +287,10 @@ boids, and "optimized boids", which uses a spatial grid and a GPU radix sort.
   or quick actions can't be written as plugins yet.
 - **Undo history** stores a full scene snapshot per change, which may get expensive for
   large scenes.
+- **Project environment is not restored on load**: `ProjectManifest` saves the scene
+  environment in `project.json`, but neither the editor nor the player applies it when
+  loading. Only an Environment entity in the scene round-trips; the remote
+  `environment.set` creates one for that reason.
 - **Recent projects** are stored in the repo (`examples/scripts/.recent_projects.txt`)
   rather than in a per-user config directory.
 - **Dependencies not yet upgraded**: mlua 0.12, glam 0.34, hecs 0.11, thiserror 2,

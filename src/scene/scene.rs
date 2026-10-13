@@ -692,6 +692,25 @@ impl Scene {
         }
     }
 
+    /// Run Lua `code` against the main world, like a console.
+    ///
+    /// See [`crate::scripting::lua::ScriptingState::eval`]; scripts can read input
+    /// state as they would in a hook.
+    pub fn eval_lua(
+        &mut self,
+        code: &str,
+        entity: Option<Entity>,
+    ) -> Result<crate::scripting::lua::LuaEvalOutput, crate::scripting::LuaScriptingError> {
+        let Some(main_node) = self.nodes.get_mut(self.main_scene) else {
+            return Err(crate::scripting::LuaScriptingError::Lua(
+                mlua::Error::RuntimeError("scene has no main world".into()),
+            ));
+        };
+        let world = main_node.instance_mut().world_mut();
+        let _input_guard = InputStateGuard::enter(&self.input_state);
+        self.runtime.scripting_mut().eval(world, code, entity)
+    }
+
     pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
         self.refresh_environment_state();
         let absolute_time = self.runtime.advance_time(dt);

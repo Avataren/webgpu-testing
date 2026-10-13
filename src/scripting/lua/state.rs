@@ -19,15 +19,19 @@ use std::rc::Rc;
 
 use hecs::{Entity, World};
 use log::{error, warn};
+use mlua::LuaSerdeExt;
 
 use super::api::ui::{UiCommand, UiContext, UiResponse};
+use super::api::CoroutineGuard;
 use super::commands::{entity_bits, PendingGltfImport, ScriptCommands};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
+use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
-use super::guards::WorldGuard;
+use super::guards::{CommandGuard, EntityGuard, EventQueueGuard, StateGuard, WorldGuard};
 use super::runtime::LuaScriptingRuntime;
 use super::types::{
-    EventSubscription, EventSubscriptions, LuaScriptSource, ScriptEvent, ScriptMode, ScriptStateMap,
+    CoroutineMap, EventSubscription, EventSubscriptions, LuaScriptSource, ScriptEvent, ScriptMode,
+    ScriptStateMap,
 };
 
 /// Maximum number of events dispatched in one frame. Anything beyond this is dropped,
@@ -220,6 +224,30 @@ fn invoke(
     }
 }
 
+/// Maximum number of `print` lines kept from one [`ScriptingState::eval`] call.
+const MAX_EVAL_PRINT_LINES: usize = 1000;
+
+/// Result of running a chunk with [`ScriptingState::eval`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LuaEvalOutput {
+    /// Values the chunk returned, converted to JSON. Values that have no JSON form
+    /// (functions, userdata) are returned as their `tostring` text.
+    pub values: Vec<serde_json::Value>,
+    /// Lines the chunk passed to `print`.
+    pub printed: Vec<String>,
+}
+
+/// Environment and per-instance state for console code that is not bound to a script.
+///
+/// It persists between [`ScriptingState::eval`] calls, so globals defined by one call
+/// are visible to the next, like a REPL.
+struct ConsoleScope {
+    env_registry_key: mlua::RegistryKey,
+    handles: Rc<RefCell<EntityHandleRegistry>>,
+    state_store: Rc<RefCell<ScriptStateMap>>,
+    coroutines: Rc<RefCell<CoroutineMap>>,
+}
+
 /// Owns the Lua runtime and the script instances of one ECS world.
 pub struct ScriptingState {
     runtime: LuaScriptingRuntime,
@@ -231,6 +259,8 @@ pub struct ScriptingState {
     deferred_ui_commands: Vec<(Entity, Rc<RefCell<ScriptCommands>>)>,
     /// UI responses from the previous frame.
     ui_responses: HashMap<Entity, HashMap<String, UiResponse>>,
+    /// Environment used by [`Self::eval`] when no entity is given; created on first use.
+    console: Option<ConsoleScope>,
 }
 
 impl ScriptingState {
@@ -243,6 +273,7 @@ impl ScriptingState {
             pending_state_restoration: HashMap::new(),
             deferred_ui_commands: Vec::new(),
             ui_responses: HashMap::new(),
+            console: None,
         })
     }
 
@@ -331,6 +362,158 @@ impl ScriptingState {
             .last_error
             .as_ref()
             .map(|(_, message)| message.as_str())
+    }
+
+    /// Entities that currently have a script instance, with their source and whether
+    /// it compiled. Useful for diagnostics.
+    pub fn script_entities(&self) -> Vec<(Entity, String, bool)> {
+        let mut entries: Vec<_> = self
+            .slots
+            .iter()
+            .map(|(entity, slot)| (*entity, slot.source.display_name(), slot.instance.is_some()))
+            .collect();
+        entries.sort_unstable_by_key(|(entity, ..)| entity.to_bits());
+        entries
+    }
+
+    /// Run `code` against `world` with the full scripting API, like a console.
+    ///
+    /// With `entity`, the code runs inside that entity's script environment: it reads
+    /// and assigns the script's globals, the state API uses the script's state and
+    /// `get_self()` returns the entity. Without it, the code runs in a console
+    /// environment that persists between calls.
+    ///
+    /// A single expression is evaluated and returned (`1 + 1` yields `2`). World changes
+    /// are recorded as commands and applied when the chunk returns, as for any hook;
+    /// emitted events are delivered on the next update.
+    pub fn eval(
+        &mut self,
+        world: &mut World,
+        code: &str,
+        entity: Option<Entity>,
+    ) -> Result<LuaEvalOutput, LuaScriptingError> {
+        let lua = self.runtime.lua();
+
+        let (base_env, handles, state_store, coroutines) = match entity {
+            Some(entity) => {
+                let instance = self
+                    .slots
+                    .get(&entity)
+                    .and_then(|slot| slot.instance.as_ref())
+                    .ok_or_else(|| {
+                        LuaScriptingError::Lua(mlua::Error::RuntimeError(format!(
+                            "entity {entity:?} has no loaded script instance"
+                        )))
+                    })?;
+                (
+                    lua.registry_value::<mlua::Table>(&instance.env_registry_key)?,
+                    instance.handles.clone(),
+                    instance.state_store.clone(),
+                    instance.coroutines.clone(),
+                )
+            }
+            None => {
+                if self.console.is_none() {
+                    let env = lua.create_table()?;
+                    let metatable = lua.create_table()?;
+                    metatable.set("__index", lua.globals())?;
+                    env.set_metatable(Some(metatable));
+                    self.console = Some(ConsoleScope {
+                        env_registry_key: lua.create_registry_value(env)?,
+                        handles: Rc::new(RefCell::new(EntityHandleRegistry::default())),
+                        state_store: Rc::new(RefCell::new(HashMap::new())),
+                        coroutines: Rc::new(RefCell::new(HashMap::new())),
+                    });
+                }
+                let console = self.console.as_ref().expect("console scope created above");
+                (
+                    lua.registry_value::<mlua::Table>(&console.env_registry_key)?,
+                    console.handles.clone(),
+                    console.state_store.clone(),
+                    console.coroutines.clone(),
+                )
+            }
+        };
+
+        // A scope over the base environment: reads fall through to it and assignments
+        // land in it, while `print` is captured for this call only.
+        // mlua is built with `send`, so callbacks must be Send.
+        let printed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let scope = lua.create_table()?;
+        let metatable = lua.create_table()?;
+        metatable.set("__index", base_env.clone())?;
+        metatable.set("__newindex", base_env)?;
+        scope.set_metatable(Some(metatable));
+        let sink = printed.clone();
+        scope.raw_set(
+            "print",
+            lua.create_function(move |lua, args: mlua::MultiValue| {
+                let mut parts = Vec::with_capacity(args.len());
+                for value in args {
+                    parts.push(lua_display(lua, &value));
+                }
+                if let Ok(mut sink) = sink.lock() {
+                    if sink.len() < MAX_EVAL_PRINT_LINES {
+                        sink.push(parts.join("\t"));
+                    }
+                }
+                Ok(())
+            })?,
+        )?;
+
+        // Try the code as an expression first so `1 + 1` returns its value.
+        let function = match lua
+            .load(format!("return {code}"))
+            .set_name("=console")
+            .set_environment(scope.clone())
+            .into_function()
+        {
+            Ok(function) => function,
+            Err(_) => lua
+                .load(code)
+                .set_name("=console")
+                .set_environment(scope)
+                .into_function()?,
+        };
+
+        let bits = entity.map_or(0, entity_bits);
+        let commands = Rc::new(RefCell::new(ScriptCommands::new(handles)));
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let result = {
+            if bits != 0 {
+                commands
+                    .borrow()
+                    .registry
+                    .borrow_mut()
+                    .resolve_bits(bits, bits as u64);
+            }
+            let _world_guard = WorldGuard::enter(world);
+            let _commands_guard = CommandGuard::enter(commands.clone());
+            let _state_guard = StateGuard::enter(&state_store);
+            let _event_guard = EventQueueGuard::enter(&events);
+            let _entity_guard = EntityGuard::enter(bits);
+            let _coroutine_guard = CoroutineGuard::enter(&coroutines);
+            function.call::<mlua::MultiValue>(())
+        };
+
+        self.outputs.apply_commands(world, &commands);
+        self.outputs.pending_events.extend(events.take());
+
+        let values = result?
+            .into_iter()
+            .map(|value| {
+                lua.from_value::<serde_json::Value>(value.clone())
+                    .unwrap_or_else(|_| serde_json::Value::String(lua_display(lua, &value)))
+            })
+            .collect();
+
+        Ok(LuaEvalOutput {
+            values,
+            printed: printed
+                .lock()
+                .map(|mut lines| std::mem::take(&mut *lines))
+                .unwrap_or_default(),
+        })
     }
 
     /// Process a single frame of script execution.
@@ -678,6 +861,14 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Text Lua's `tostring` would produce for `value`.
+fn lua_display(lua: &mlua::Lua, value: &mlua::Value) -> String {
+    lua.globals()
+        .get::<mlua::Function>("tostring")
+        .and_then(|tostring| tostring.call::<String>(value.clone()))
+        .unwrap_or_else(|_| format!("{value:?}"))
+}
+
 impl Default for ScriptingState {
     fn default() -> Self {
         Self::new().expect("Failed to create scripting state")
@@ -723,6 +914,82 @@ mod tests {
             panic!("Expected payload to be a table");
         };
         table.get("value").expect("Missing payload value")
+    }
+
+    #[test]
+    fn eval_returns_values_and_captures_print() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+
+        let output = state.eval(&mut world, "1 + 2", None).unwrap();
+        assert_eq!(output.values, vec![serde_json::json!(3)]);
+
+        let output = state
+            .eval(
+                &mut world,
+                "print('a', 1)\nprint('b')\nreturn 'x', true",
+                None,
+            )
+            .unwrap();
+        assert_eq!(output.printed, vec!["a\t1".to_string(), "b".to_string()]);
+        assert_eq!(
+            output.values,
+            vec![serde_json::json!("x"), serde_json::json!(true)]
+        );
+
+        assert!(state.eval(&mut world, "error('boom')", None).is_err());
+    }
+
+    #[test]
+    fn eval_console_persists_globals_and_applies_commands() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+
+        state
+            .eval(
+                &mut world,
+                "counter = 41\nspawn_entity('FromConsole')",
+                None,
+            )
+            .unwrap();
+        let output = state.eval(&mut world, "counter + 1", None).unwrap();
+        assert_eq!(output.values, vec![serde_json::json!(42)]);
+
+        let spawned = world
+            .query::<&crate::scene::Name>()
+            .iter()
+            .any(|(_, name)| name.0 == "FromConsole");
+        assert!(
+            spawned,
+            "spawn_entity from the console should reach the world"
+        );
+    }
+
+    #[test]
+    fn eval_with_entity_uses_the_script_environment() {
+        let mut state = ScriptingState::new().expect("Failed to create scripting state");
+        let mut world = World::new();
+        let entity = world.spawn((LuaScriptComponent::new(LuaScriptSource::inline(
+            "scoped",
+            "speed = 3\nfunction update(self_entity, dt) end",
+        )),));
+        state.process_scripts(&mut world, 0.016, false).unwrap();
+
+        let output = state.eval(&mut world, "speed", Some(entity)).unwrap();
+        assert_eq!(output.values, vec![serde_json::json!(3)]);
+
+        state
+            .eval(&mut world, "speed = 10", Some(entity))
+            .expect("assignment");
+        let speed = state.script_global(&world, entity, "speed").unwrap();
+        assert_eq!(speed.as_integer(), Some(10));
+
+        // Console globals stay separate from the script's.
+        let output = state.eval(&mut world, "speed", None).unwrap();
+        assert_eq!(output.values, vec![serde_json::Value::Null]);
+
+        let missing = world.spawn(());
+        assert!(state.eval(&mut world, "1", Some(missing)).is_err());
     }
 
     #[test]

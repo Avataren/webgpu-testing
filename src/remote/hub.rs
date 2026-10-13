@@ -1,0 +1,473 @@
+//! Per-application remote-control state shared by the frame loop and request handlers.
+
+use std::cell::RefCell;
+use std::io::Cursor;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::Instant;
+
+use glam::Vec2;
+use serde_json::{json, Value};
+
+use crate::app::{GpuUpdateContext, RuntimeStateHandle};
+use crate::renderer::postprocess::PostProcessEffects;
+use crate::renderer::RenderRegion;
+use crate::scene::InputState;
+
+use super::capture::FrameCapture;
+use super::handlers::{self, RemoteContext};
+use super::json::{opt_bool, opt_f64, opt_str, opt_u64};
+use super::RemoteApp;
+
+/// Shared handle to a [`RemoteHub`]; the frame loop and the dispatch system both hold one.
+pub type RemoteHubHandle = Rc<RefCell<RemoteHub>>;
+
+/// Default longest side of screenshots returned to clients, in pixels.
+const DEFAULT_SCREENSHOT_MAX_SIZE: u32 = 1280;
+
+/// Sends the answer to one request back to the connection that made it.
+pub(crate) struct Reply(Sender<Result<Value, String>>);
+
+impl Reply {
+    pub(crate) fn new(sender: Sender<Result<Value, String>>) -> Self {
+        Self(sender)
+    }
+
+    pub(crate) fn send(self, result: Result<Value, String>) {
+        // The client may have disconnected; there is nobody left to tell.
+        let _ = self.0.send(result);
+    }
+}
+
+/// A request received from a client, waiting to be handled on the main thread.
+pub(crate) struct RemoteRequest {
+    pub(crate) method: String,
+    pub(crate) params: Value,
+    pub(crate) reply: Reply,
+}
+
+/// An input event injected by a client.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum InputEvent {
+    KeyDown(String),
+    KeyUp(String),
+    MouseDown(u32),
+    MouseUp(u32),
+    MouseMove(Vec2),
+    Scroll(Vec2),
+}
+
+struct ScheduledInput {
+    /// Frame (see [`RemoteHub::frame`]) at whose start the event is applied.
+    frame: u64,
+    event: InputEvent,
+}
+
+struct CaptureRequest {
+    reply: Reply,
+    viewport_only: bool,
+    max_size: u32,
+    save_path: Option<PathBuf>,
+    inline: bool,
+}
+
+struct Waiter {
+    reply: Reply,
+    until_frame: u64,
+    deadline: Option<Instant>,
+    start_frame: u64,
+    start: Instant,
+}
+
+/// Remote-control state of one running application.
+pub struct RemoteHub {
+    port: u16,
+    requests: Option<Receiver<RemoteRequest>>,
+    runtime: Option<RuntimeStateHandle>,
+    /// Number of frames completed since the hub was created.
+    frame: u64,
+    started: Instant,
+    last_dt: f64,
+    input: Vec<ScheduledInput>,
+    captures: Vec<CaptureRequest>,
+    waiters: Vec<Waiter>,
+    postprocess_override: Option<PostProcessEffects>,
+}
+
+impl RemoteHub {
+    /// Start a server on `127.0.0.1:port` and return the hub that receives its requests.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start(port: u16) -> std::io::Result<RemoteHubHandle> {
+        let requests = super::server::start(port)?;
+        install_panic_logger();
+        log::info!(target: "remote", "Remote control listening on 127.0.0.1:{port}");
+        let mut hub = Self::detached();
+        hub.port = port;
+        hub.requests = Some(requests);
+        Ok(Rc::new(RefCell::new(hub)))
+    }
+
+    /// A hub without a server, for tests and embedding.
+    pub fn detached() -> Self {
+        Self {
+            port: 0,
+            requests: None,
+            runtime: None,
+            frame: 0,
+            started: Instant::now(),
+            last_dt: 0.0,
+            input: Vec::new(),
+            captures: Vec::new(),
+            waiters: Vec::new(),
+            postprocess_override: None,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Frames completed since the hub was created.
+    pub fn frame(&self) -> u64 {
+        self.frame
+    }
+
+    /// Seconds since the hub was created.
+    pub fn uptime(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    /// Duration of the last frame, in seconds.
+    pub fn last_dt(&self) -> f64 {
+        self.last_dt
+    }
+
+    pub fn set_runtime_handle(&mut self, handle: RuntimeStateHandle) {
+        self.runtime = Some(handle);
+    }
+
+    pub fn runtime_handle(&self) -> Option<&RuntimeStateHandle> {
+        self.runtime.as_ref()
+    }
+
+    /// Post-processing settings a client set, which the frame loop must push into any
+    /// UI that would otherwise overwrite the renderer's settings.
+    pub fn take_postprocess_override(&mut self) -> Option<PostProcessEffects> {
+        self.postprocess_override.take()
+    }
+
+    pub(crate) fn set_postprocess_override(&mut self, effects: PostProcessEffects) {
+        self.postprocess_override = Some(effects);
+    }
+
+    /// Queue `event` to be applied at the start of the frame `delay` frames after the
+    /// next one.
+    pub(crate) fn schedule_input(&mut self, delay: u64, event: InputEvent) {
+        self.input.push(ScheduledInput {
+            frame: self.frame + 1 + delay,
+            event,
+        });
+    }
+
+    /// Release every key and button and drop queued input.
+    pub(crate) fn clear_input(&mut self) {
+        self.input.clear();
+    }
+
+    pub(crate) fn pending_input(&self) -> usize {
+        self.input.len()
+    }
+
+    /// Apply injected input that is due. Call at the start of a frame, before the
+    /// update stage, like window events.
+    pub fn apply_input(&mut self, input: &mut InputState) {
+        if self.input.is_empty() {
+            return;
+        }
+        let frame = self.frame;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.input)
+            .into_iter()
+            .partition(|scheduled| scheduled.frame <= frame);
+        self.input = later;
+        for scheduled in due {
+            match scheduled.event {
+                InputEvent::KeyDown(key) => input.press_key(key),
+                InputEvent::KeyUp(key) => input.release_key(&key),
+                InputEvent::MouseDown(button) => input.press_mouse_button(button),
+                InputEvent::MouseUp(button) => input.release_mouse_button(button),
+                InputEvent::MouseMove(position) => {
+                    let previous = input.mouse_position();
+                    input.add_mouse_delta(position - previous);
+                    input.set_mouse_position(position);
+                }
+                InputEvent::Scroll(delta) => input.add_scroll_delta(delta),
+            }
+        }
+    }
+
+    /// Whether a screenshot is waiting for the current frame.
+    pub fn has_pending_captures(&self) -> bool {
+        !self.captures.is_empty()
+    }
+
+    /// Answer pending screenshot requests with the frame that is about to be presented.
+    ///
+    /// `region` is the scene viewport within the window, used by viewport-only captures.
+    pub fn complete_captures(
+        &mut self,
+        capture: Result<FrameCapture, String>,
+        region: Option<RenderRegion>,
+    ) {
+        for request in std::mem::take(&mut self.captures) {
+            let result = capture
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|capture| encode_capture(capture, region, &request));
+            request.reply.send(result);
+        }
+    }
+
+    /// Finish a frame: advance the frame counter and answer waits that are due.
+    pub fn end_frame(&mut self, dt: f64) {
+        self.frame += 1;
+        self.last_dt = dt;
+        if self.waiters.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let frame = self.frame;
+        let (done, pending): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiters)
+            .into_iter()
+            .partition(|waiter| {
+                waiter.until_frame <= frame
+                    && waiter.deadline.is_none_or(|deadline| now >= deadline)
+            });
+        self.waiters = pending;
+        for waiter in done {
+            waiter.reply.send(Ok(json!({
+                "frames_waited": frame - waiter.start_frame,
+                "seconds_waited": now.duration_since(waiter.start).as_secs_f64(),
+                "frame": frame,
+            })));
+        }
+    }
+
+    fn drain_requests(&mut self) -> Vec<RemoteRequest> {
+        self.requests
+            .as_ref()
+            .map(|requests| requests.try_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Handle one request that needs to answer on a later frame. Returns the request
+    /// back if it is not deferred.
+    fn try_defer(&mut self, request: RemoteRequest) -> Option<RemoteRequest> {
+        match request.method.as_str() {
+            "screenshot" => {
+                let params = &request.params;
+                let target = opt_str(params, "target").unwrap_or("window");
+                let viewport_only = match target {
+                    "window" => false,
+                    "viewport" => true,
+                    other => {
+                        request.reply.send(Err(format!(
+                            "unknown screenshot target {other:?}; use \"window\" or \"viewport\""
+                        )));
+                        return None;
+                    }
+                };
+                let max_size = opt_u64(params, "max_size")
+                    .map_or(DEFAULT_SCREENSHOT_MAX_SIZE, |size| {
+                        size.clamp(16, 8192) as u32
+                    });
+                self.captures.push(CaptureRequest {
+                    viewport_only,
+                    max_size,
+                    save_path: opt_str(params, "save_path").map(PathBuf::from),
+                    inline: opt_bool(params, "inline").unwrap_or(true),
+                    reply: request.reply,
+                });
+                None
+            }
+            "wait" => {
+                let params = &request.params;
+                let frames = opt_u64(params, "frames").unwrap_or(0).min(100_000);
+                let seconds = opt_f64(params, "seconds").unwrap_or(0.0).clamp(0.0, 240.0);
+                let start = Instant::now();
+                self.waiters.push(Waiter {
+                    reply: request.reply,
+                    // A wait always spans at least one full frame.
+                    until_frame: self.frame + frames.max(1),
+                    deadline: (seconds > 0.0)
+                        .then(|| start + std::time::Duration::from_secs_f64(seconds)),
+                    start_frame: self.frame,
+                    start,
+                });
+                None
+            }
+            _ => Some(request),
+        }
+    }
+}
+
+/// Handle every request that arrived since the last frame. Install as a GPU system.
+pub fn process_requests(
+    hub: &RemoteHubHandle,
+    ctx: &mut GpuUpdateContext<'_>,
+    app: &mut dyn RemoteApp,
+) {
+    let mut hub = hub.borrow_mut();
+    let requests = hub.drain_requests();
+    if requests.is_empty() {
+        return;
+    }
+
+    let app_methods = app.remote_methods();
+    let mut modified = false;
+    {
+        let mut remote = RemoteContext::new(ctx, &mut hub, app_methods);
+        for request in requests {
+            let Some(request) = remote.hub.try_defer(request) else {
+                continue;
+            };
+            let RemoteRequest {
+                method,
+                params,
+                reply,
+            } = request;
+            log::debug!(target: "remote", "Handling remote request {method}");
+            let result = app
+                .remote_command(&method, &params, &mut remote)
+                .unwrap_or_else(|| handlers::handle(&method, &params, &mut remote));
+            reply.send(result);
+        }
+        modified |= remote.take_modified();
+    }
+
+    if modified {
+        ctx.scene.mark_dirty();
+        app.remote_scene_modified(ctx);
+    }
+}
+
+fn encode_capture(
+    capture: &FrameCapture,
+    region: Option<RenderRegion>,
+    request: &CaptureRequest,
+) -> Result<Value, String> {
+    let mut image = image::RgbaImage::from_raw(capture.width, capture.height, capture.rgba.clone())
+        .ok_or("capture buffer has the wrong size")?;
+
+    if request.viewport_only {
+        if let Some(region) = region {
+            let x = region.x().min(capture.width.saturating_sub(1));
+            let y = region.y().min(capture.height.saturating_sub(1));
+            let width = region.width().min(capture.width - x).max(1);
+            let height = region.height().min(capture.height - y).max(1);
+            image = image::imageops::crop_imm(&image, x, y, width, height).to_image();
+        }
+    }
+
+    let (source_width, source_height) = image.dimensions();
+    let longest = source_width.max(source_height);
+    if longest > request.max_size {
+        let scale = request.max_size as f32 / longest as f32;
+        let width = ((source_width as f32 * scale).round() as u32).max(1);
+        let height = ((source_height as f32 * scale).round() as u32).max(1);
+        image =
+            image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
+    }
+
+    let mut png = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|err| format!("failed to encode PNG: {err}"))?;
+
+    let mut result = json!({
+        "width": image.width(),
+        "height": image.height(),
+        "source_width": source_width,
+        "source_height": source_height,
+    });
+
+    if let Some(path) = &request.save_path {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        }
+        std::fs::write(path, &png)
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        result["path"] = json!(path.display().to_string());
+    }
+    if request.inline {
+        result["png_base64"] = json!(base64::encode(&png));
+    }
+    Ok(result)
+}
+
+/// Record panics in the log tap so remote clients can see why the engine died.
+#[cfg(not(target_arch = "wasm32"))]
+fn install_panic_logger() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            super::log_tap::push(log::Level::Error, "panic", info.to_string());
+            previous(info);
+        }));
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheduled_input_applies_on_its_frame() {
+        let mut hub = RemoteHub::detached();
+        let mut input = InputState::new();
+        hub.schedule_input(0, InputEvent::KeyDown("W".into()));
+        hub.schedule_input(2, InputEvent::KeyUp("W".into()));
+
+        // Scheduled during frame 0, so the press lands at the start of frame 1.
+        hub.apply_input(&mut input);
+        assert!(!input.is_key_pressed("W"));
+        hub.end_frame(0.016);
+
+        hub.apply_input(&mut input);
+        assert!(input.is_key_just_pressed("W"));
+        hub.end_frame(0.016);
+        input.update();
+
+        hub.apply_input(&mut input);
+        assert!(input.is_key_pressed("W"));
+        hub.end_frame(0.016);
+        input.update();
+
+        hub.apply_input(&mut input);
+        assert!(!input.is_key_pressed("W"));
+        assert_eq!(hub.pending_input(), 0);
+    }
+
+    #[test]
+    fn waits_answer_after_their_frames() {
+        let mut hub = RemoteHub::detached();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let request = RemoteRequest {
+            method: "wait".into(),
+            params: json!({ "frames": 2 }),
+            reply: Reply::new(sender),
+        };
+        assert!(hub.try_defer(request).is_none());
+
+        hub.end_frame(0.016);
+        assert!(receiver.try_recv().is_err());
+        hub.end_frame(0.016);
+        let reply = receiver.try_recv().expect("wait answered").unwrap();
+        assert_eq!(reply["frames_waited"], 2);
+    }
+}

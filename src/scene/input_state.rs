@@ -110,6 +110,16 @@ impl InputState {
     }
 
     /// Check if a key is currently pressed
+    /// Keys currently held down.
+    pub fn keys_down(&self) -> impl Iterator<Item = &str> {
+        self.keys_down.iter().map(String::as_str)
+    }
+
+    /// Mouse buttons currently held down.
+    pub fn mouse_buttons_down(&self) -> impl Iterator<Item = u32> + '_ {
+        self.mouse_buttons_down.iter().copied()
+    }
+
     pub fn is_key_pressed(&self, key: &str) -> bool {
         self.keys_down.contains(key) || self.keys_just_pressed.contains(key)
     }

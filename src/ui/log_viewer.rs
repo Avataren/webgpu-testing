@@ -121,6 +121,7 @@ impl Log for LogRouter {
         if let Ok(mut buffer) = self.buffer.lock() {
             buffer.push(LogEntry::from_record(record));
         }
+        crate::remote::log_tap::record(record);
 
         self.logger.log(record);
     }

@@ -10,6 +10,7 @@ use crate::app::{
 use crate::scene::SceneHandle;
 use crate::scene::SceneWorkspace;
 
+use crate::remote::{RemoteApp, RemoteContext, RemoteResult};
 use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
 use crate::ui::{
@@ -86,6 +87,58 @@ pub trait RenderApplication: Sized + 'static {
     #[cfg(feature = "egui")]
     fn ui_style(&self) -> UiStyle {
         UiStyle::default()
+    }
+
+    /// Port for the remote-control server (see [`crate::remote`]).
+    ///
+    /// `None` leaves it off unless the `ENGINE_REMOTE_PORT` environment variable is set;
+    /// the variable also overrides the port returned here.
+    fn remote_control_port(&self) -> Option<u16> {
+        None
+    }
+
+    /// Handle a remote request before the built-in handlers. Return `None` to fall
+    /// through to them.
+    fn remote_command(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        ctx: &mut RemoteContext<'_, '_>,
+    ) -> Option<RemoteResult> {
+        let _ = (method, params, ctx);
+        None
+    }
+
+    /// Methods [`Self::remote_command`] handles, listed by `engine.methods`.
+    fn remote_methods(&self) -> Vec<&'static str> {
+        Vec::new()
+    }
+
+    /// Called once per frame after remote requests changed the active scene.
+    fn remote_scene_modified(&mut self, ctx: &mut GpuUpdateContext) {
+        let _ = ctx;
+    }
+}
+
+/// Forwards [`RemoteApp`] calls to a [`RenderApplication`].
+struct RemoteAppAdapter<'a, T>(&'a mut T);
+
+impl<T: RenderApplication> RemoteApp for RemoteAppAdapter<'_, T> {
+    fn remote_command(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        ctx: &mut RemoteContext<'_, '_>,
+    ) -> Option<RemoteResult> {
+        self.0.remote_command(method, params, ctx)
+    }
+
+    fn remote_methods(&self) -> Vec<&'static str> {
+        self.0.remote_methods()
+    }
+
+    fn remote_scene_modified(&mut self, ctx: &mut GpuUpdateContext<'_>) {
+        self.0.remote_scene_modified(ctx);
     }
 }
 
@@ -246,6 +299,24 @@ where
         builder.add_gpu_system(move |ctx| {
             app.borrow_mut().gpu_update(ctx);
         });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(port) = crate::remote::resolve_port(app_rc.borrow().remote_control_port()) {
+        match crate::remote::RemoteHub::start(port) {
+            Ok(hub) => {
+                builder.set_remote_hub(hub.clone());
+                let app = app_rc.clone();
+                builder.add_gpu_system(move |ctx| {
+                    let mut app = app.borrow_mut();
+                    crate::remote::process_requests(&hub, ctx, &mut RemoteAppAdapter(&mut *app));
+                });
+            }
+            // Logging is not initialized yet; make sure the failure is visible.
+            Err(err) => {
+                eprintln!("Remote control disabled: cannot listen on 127.0.0.1:{port}: {err}")
+            }
+        }
     }
 
     let core = builder.build();

@@ -21,3 +21,6 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       # GPU-backed tests skip themselves when no adapter is available.
       - run: cargo test --all-features
+      # The MCP bridge is a separate crate (tools/engine-mcp).
+      - run: cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+        working-directory: tools/engine-mcp

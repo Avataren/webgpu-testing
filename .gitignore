@@ -2,3 +2,4 @@
 /assets
 /web/pkg
 /.claude/settings.local.json
+/tools/engine-mcp/target

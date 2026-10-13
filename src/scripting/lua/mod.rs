@@ -139,5 +139,5 @@ pub use error::LuaScriptingError;
 pub use guards::InputStateGuard;
 pub use plugin::LuaScriptingPlugin;
 pub use runtime::LuaScriptingRuntime;
-pub use state::{ScriptingState, UiViewportInfo};
+pub use state::{LuaEvalOutput, ScriptingState, UiViewportInfo};
 pub use types::{LuaScriptSource, ScriptMode};

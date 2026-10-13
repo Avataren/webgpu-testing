@@ -9,6 +9,7 @@ mod input;
 mod particle_system;
 mod picking;
 mod project_system;
+mod remote;
 mod runtime_mode;
 mod scene_creation_system;
 mod scene_tabs_panel;
@@ -158,6 +159,27 @@ impl RenderApplication for EditorApplication {
 
     fn render_region(&self) -> Option<RenderRegion> {
         self.render_region_for_mode(self.shared.runtime_state.active_mode())
+    }
+
+    fn remote_control_port(&self) -> Option<u16> {
+        Some(wgpu_cube::remote::DEFAULT_EDITOR_PORT)
+    }
+
+    fn remote_command(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+        ctx: &mut wgpu_cube::remote::RemoteContext<'_, '_>,
+    ) -> Option<wgpu_cube::remote::RemoteResult> {
+        self.handle_remote_command(method, params, ctx)
+    }
+
+    fn remote_methods(&self) -> Vec<&'static str> {
+        remote::EDITOR_METHODS.to_vec()
+    }
+
+    fn remote_scene_modified(&mut self, ctx: &mut GpuUpdateContext) {
+        self.handle_remote_scene_modified(ctx);
     }
 }
 
