@@ -88,9 +88,7 @@ impl SlotAllocator {
     pub fn initialize_with_count(&mut self, count: u32) {
         let count = count.min(self.capacity);
 
-        for word in &mut self.occupied {
-            *word = 0;
-        }
+        self.occupied.fill(0);
 
         let full_words = (count / Self::BITS_PER_WORD) as usize;
         for word in &mut self.occupied[..full_words] {

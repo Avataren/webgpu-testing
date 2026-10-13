@@ -782,13 +782,13 @@ impl GpuParticleSystem {
         }
 
         let mut reclaimed = 0u32;
-        for chunk in bytes[4..]
-            .chunks_exact(std::mem::size_of::<u32>())
+        for index_bytes in bytes[4..]
+            .as_chunks::<{ std::mem::size_of::<u32>() }>()
+            .0
+            .iter()
             .take(to_process as usize)
         {
-            let mut index_bytes = [0u8; 4];
-            index_bytes.copy_from_slice(chunk);
-            let index = u32::from_ne_bytes(index_bytes);
+            let index = u32::from_ne_bytes(*index_bytes);
 
             if index >= self.max_particles {
                 log::warn!(
