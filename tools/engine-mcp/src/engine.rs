@@ -443,6 +443,7 @@ impl Engine {
         target: &str,
         binary: &Path,
         args: &[String],
+        monitor: Option<&str>,
         timeout: Duration,
     ) -> Result<Value, String> {
         if !binary.exists() {
@@ -461,7 +462,12 @@ impl Engine {
             File::create(&log_path).map_err(|err| err.to_string())?,
         ));
 
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        if let Some(monitor) = monitor {
+            // Read by the engine's RenderSettings; overrides settings.json.
+            command.env("ENGINE_MONITOR", monitor);
+        }
+        let mut child = command
             .args(args)
             .current_dir(&self.repo)
             .env("ENGINE_REMOTE_PORT", self.port.to_string())

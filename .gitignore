@@ -3,3 +3,5 @@
 /web/pkg
 /.claude/settings.local.json
 /tools/engine-mcp/target
+/settings.json
+/.cargo/config.toml

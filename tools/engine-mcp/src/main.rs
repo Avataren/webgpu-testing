@@ -415,7 +415,14 @@ impl Server {
                     process_args.push(project.display().to_string());
                 }
             }
-            let process = self.engine.spawn(target, &binary, &process_args, timeout)?;
+            let monitor = args.get("monitor").and_then(|monitor| match monitor {
+                Value::String(name) => Some(name.clone()),
+                Value::Number(number) => Some(number.to_string()),
+                _ => None,
+            });
+            let process =
+                self.engine
+                    .spawn(target, &binary, &process_args, monitor.as_deref(), timeout)?;
             report.insert("process".into(), process);
         }
 

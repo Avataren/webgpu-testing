@@ -11,7 +11,15 @@ pub struct RenderSettings {
     pub resolution: Resolution,
     #[serde(default)]
     pub present_mode: PresentModeSetting,
+    /// Monitor to open the window on: a 1-based index, an output name such as
+    /// `HDMI-A-0`, or `primary`. `None` lets the window manager choose. The
+    /// `ENGINE_MONITOR` environment variable overrides it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<String>,
 }
+
+/// Environment variable that overrides [`RenderSettings::monitor`].
+pub const MONITOR_ENV_VAR: &str = "ENGINE_MONITOR";
 
 impl Default for RenderSettings {
     fn default() -> Self {
@@ -20,6 +28,7 @@ impl Default for RenderSettings {
             shadow_map_size: Self::default_shadow_map_size(),
             resolution: Resolution::default(),
             present_mode: PresentModeSetting::default(),
+            monitor: None,
         }
     }
 }
@@ -34,8 +43,32 @@ impl RenderSettings {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            Self::load_from_path("settings.json")
+            let mut settings = Self::load_from_path("settings.json");
+            if let Ok(monitor) = std::env::var(MONITOR_ENV_VAR) {
+                let monitor = monitor.trim();
+                if !monitor.is_empty() {
+                    settings.monitor = Some(monitor.to_owned());
+                }
+            }
+            settings
         }
+    }
+
+    /// Index into `monitors` (output names in enumeration order) that
+    /// [`Self::monitor`] selects. `primary` is the index of the primary monitor.
+    pub fn select_monitor(&self, monitors: &[String], primary: Option<usize>) -> Option<usize> {
+        let wanted = self.monitor.as_deref()?.trim();
+        if wanted.eq_ignore_ascii_case("primary") {
+            return primary;
+        }
+        if let Ok(number) = wanted.parse::<usize>() {
+            return (1..=monitors.len()).contains(&number).then(|| number - 1);
+        }
+        monitors.iter().position(|name| name == wanted).or_else(|| {
+            monitors
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(wanted))
+        })
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -176,6 +209,7 @@ mod tests {
                 height: 0,
             },
             present_mode: PresentModeSetting::Immediate,
+            monitor: None,
         }
     }
 
@@ -205,6 +239,7 @@ mod tests {
                 height: 1080,
             },
             present_mode: PresentModeSetting::Mailbox,
+            monitor: None,
         };
 
         let validated = valid.clone().validate();
@@ -213,6 +248,34 @@ mod tests {
         assert_eq!(validated.shadow_map_size, valid.shadow_map_size);
         assert_eq!(validated.resolution.width, valid.resolution.width);
         assert_eq!(validated.resolution.height, valid.resolution.height);
+    }
+
+    #[test]
+    fn select_monitor_by_number_name_or_primary() {
+        let monitors = vec!["DisplayPort-0".to_string(), "HDMI-A-0".to_string()];
+        let with = |monitor: &str| RenderSettings {
+            monitor: Some(monitor.to_string()),
+            ..RenderSettings::default()
+        };
+
+        assert_eq!(
+            RenderSettings::default().select_monitor(&monitors, Some(0)),
+            None
+        );
+        assert_eq!(with("2").select_monitor(&monitors, Some(0)), Some(1));
+        assert_eq!(with("3").select_monitor(&monitors, Some(0)), None);
+        assert_eq!(with("0").select_monitor(&monitors, Some(0)), None);
+        assert_eq!(with("hdmi-a-0").select_monitor(&monitors, Some(0)), Some(1));
+        assert_eq!(with("primary").select_monitor(&monitors, Some(0)), Some(0));
+        assert_eq!(with("VGA-1").select_monitor(&monitors, Some(0)), None);
+    }
+
+    #[test]
+    fn monitor_is_optional_in_settings_files() {
+        let settings: RenderSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.monitor, None);
+        let settings: RenderSettings = serde_json::from_str(r#"{"monitor": "2"}"#).unwrap();
+        assert_eq!(settings.monitor.as_deref(), Some("2"));
     }
 
     #[test]

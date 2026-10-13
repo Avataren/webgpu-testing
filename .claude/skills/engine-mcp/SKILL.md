@@ -16,6 +16,8 @@ restart Claude Code in the repo root and approve it.
    editor and waits until it accepts commands. If the user already has an editor open
    on port 47811, it attaches to that one instead; never restart an editor you did not
    launch, because the user may have unsaved work in it.
+   Don't pass `monitor` unless the user asks: their `settings.json` chooses which monitor
+   engine windows open on (they may be using the other one).
 2. `engine_info`: runtime mode, active scene, value conventions and, in the editor,
    `editor.project` and `editor.startup_dialog_visible`.
 3. No project open? Use `project_create {name, location}` or `project_open {path}`, then

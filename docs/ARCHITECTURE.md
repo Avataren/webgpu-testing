@@ -21,6 +21,11 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
   - About 23 examples under `examples/`. Some need the glTF assets in `web/assets/`.
 - Run binaries from the repo root. Plugin manifests, built-in scripts and example assets
   are resolved relative to the working directory.
+- **Per-machine settings** (`settings.json` in the working directory, gitignored;
+  `RenderSettings` in `src/settings.rs`): MSAA, shadow map size, resolution, present
+  mode and `monitor` (1-based index, output name like `HDMI-A-0`, or `primary`). The
+  `ENGINE_MONITOR` environment variable overrides the monitor. The window is centered on
+  that monitor and shrunk to fit; positioning only works on X11, not Wayland.
 - The web/WASM build is currently broken; see [Known issues](#known-issues-and-roadmap).
 
 ## Source map

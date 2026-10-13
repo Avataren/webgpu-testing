@@ -172,6 +172,7 @@ pub fn tools() -> Vec<Tool> {
                 "build": { "type": "boolean", "description": "Run cargo build first (default true)" },
                 "release": { "type": "boolean", "description": "Optimized build (default false)" },
                 "restart": { "type": "boolean", "description": "Stop an engine this server started before launching" },
+                "monitor": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Monitor for the window: 1-based number, output name (e.g. HDMI-A-0) or primary. Defaults to settings.json / ENGINE_MONITOR; respect the user's choice and don't override it without reason." },
                 "timeout_seconds": { "type": "number", "description": "How long to wait for the engine to start (default 120)" }
             }), &[]),
             action: Action::Local,

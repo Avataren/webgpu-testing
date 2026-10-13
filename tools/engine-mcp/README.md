@@ -29,6 +29,7 @@ Options and environment:
 | `--port PORT` / `ENGINE_REMOTE_PORT` | Port of the engine's remote control (default 47811) |
 | `ENGINE_CARGO` | cargo to build the engine with (default: first toolchain satisfying `rust-version`, stable first) |
 | `ENGINE_RUST_LOG` | `RUST_LOG` for launched engines (default `info`) |
+| `ENGINE_MONITOR` | Monitor for launched engine windows (inherited; `engine_launch {monitor}` overrides). The engine also reads `monitor` from `settings.json`. |
 
 ## How it works
 
