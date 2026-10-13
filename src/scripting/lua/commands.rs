@@ -181,6 +181,14 @@ impl ScriptCommands {
         component_name: String,
         value: serde_json::Value,
     ) -> Result<(), mlua::Error> {
+        // An entity spawned in this chunk has no world entity yet: keep the value with the
+        // pending entity, exactly as `add_component` does (setting and adding are the same
+        // operation).
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.components.insert(component_name, value);
+            return Ok(());
+        }
+
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::SetComponent {
@@ -218,6 +226,12 @@ impl ScriptCommands {
         handle: i64,
         component_name: String,
     ) -> Result<(), mlua::Error> {
+        // For an entity spawned in this chunk, drop any component queued for it so far.
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.components.remove(&component_name);
+            return Ok(());
+        }
+
         let entity_bits = self.resolve_entity_bits(handle)?;
 
         self.existing.push(ExistingCommand::RemoveComponent {
@@ -1234,6 +1248,42 @@ mod tests {
         assert_eq!(transform.0.translation, Vec3::new(1.0, 6.0, 0.0));
         let forward = transform.0.rotation * Vec3::NEG_Z;
         assert!(forward.abs_diff_eq(Vec3::NEG_Y, 1e-5), "{forward}");
+    }
+
+    #[test]
+    fn set_and_remove_component_accept_entities_spawned_in_the_same_frame() {
+        let mut commands =
+            ScriptCommands::new(Rc::new(RefCell::new(EntityHandleRegistry::default())));
+        let hidden = commands.spawn_entity(Some("Hidden".into()));
+        commands
+            .set_component(hidden, "Visible".into(), json!(false))
+            .unwrap();
+        let shadowless = commands.spawn_entity(Some("Shadowless".into()));
+        commands
+            .set_component(shadowless, "CanCastShadow".into(), json!(false))
+            .unwrap();
+        // A component that is set and then removed in the same chunk is never added.
+        commands
+            .remove_component(shadowless, "CanCastShadow".into())
+            .unwrap();
+
+        let mut world = World::new();
+        commands.apply(&mut world).unwrap();
+
+        let mut visible = None;
+        let mut can_cast = None;
+        for (_, (name, vis, cast)) in world
+            .query::<(&Name, Option<&Visible>, Option<&CanCastShadow>)>()
+            .iter()
+        {
+            match name.0.as_str() {
+                "Hidden" => visible = vis.map(|v| v.0),
+                "Shadowless" => can_cast = Some(cast.map(|c| c.0)),
+                _ => {}
+            }
+        }
+        assert_eq!(visible, Some(false));
+        assert_eq!(can_cast, Some(None));
     }
 
     #[test]
