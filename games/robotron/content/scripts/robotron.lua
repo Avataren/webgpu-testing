@@ -95,7 +95,7 @@ local g = {
     dying_t = 0, over_t = 0, clear_t = 0, banner_t = 0, banner = "", rescue_n = 0,
     wave_t = 0, grunt_speed = 1.0, shake = 0, nid = 0, mat_mode = "v",
     trans_t = 0, trans_after = nil, tcx = 0, tcz = 0,
-    bmx = 0, bmz = 0, bfx = 0, bfz = 0, bot_t = 0, aim_t = 0, bprev = 0, aprev = 0,
+    bmx = 0, bmz = 0, bfx = 0, bfz = 0, bot_t = 0, aim_t = 0, bprev = 0, aprev = 0, hold_t = 0, b_humans = 0, b_killers = 0,
     popups = {}, stats = { kills = 0, rescued = 0, lost = 0, deaths = 0, shots = 0, waves = 0, games = 0, cleared = 0 },
     ready = false, cam = nil, cam_fit = nil, walls = {}, wall_hue = 0, demo_t = 0, paused = false,
 }
@@ -1895,12 +1895,16 @@ local DIRS = {
     { 0, 1 }, { -0.7071, 0.7071 }, { -1, 0 }, { -0.7071, -0.7071 },
 }
 local SIM_K, SIM_DT = 8, 0.09
+-- with the family on screen, the last KEEP enemies are left alive while it collects them, unless
+-- they get within SPARE_R (or, for a brain, near a human); after HOLD_MAX seconds it finishes the wave
+local KEEP, SPARE_R, HOLD_MAX = 2, 1.8, 25
 
 local tx, tz, tvx, tvz, tr, tw, tch = {}, {}, {}, {}, {}, {}, {}
 local wx, wz = {}, {}
 local nthr = 0
 local gx, gz, gvx, gvz, gr, gw = {}, {}, {}, {}, {}, {}   -- shootable targets
 local bx_, bz_, br_ = {}, {}, {}                            -- blockers (hulks, electrodes)
+local sx_, sz_, sr_ = {}, {}, {}                            -- spared enemies: keep out of the line of fire
 
 local function gather_threats()
     local n = 0
@@ -1947,7 +1951,7 @@ local function pick_rescue()
                     local o = units[j]
                     if o.alive and (o.k.hulk or o.kind == "brain") then
                         local ex, ez = o.x - h.x, o.z - h.z
-                        local lim = o.k.hulk and 3.0 or 2.0
+                        local lim = o.k.hulk and 1.6 or 2.0
                         if ex * ex + ez * ez < lim * lim then safe = false break end
                     end
                 end
@@ -1964,9 +1968,17 @@ local function eval_dir(c, hx, hz, hw)
     local px, pz = g.px, g.pz
     for i = 1, nthr do wx[i], wz[i] = tx[i], tz[i] end
     local cost = 0
+    -- closest approach to the human and the step that reaches them (the end point alone would
+    -- overshoot one nearby and make standing still look best)
+    local hmin, hstep = 1e9, nil
     for s = 1, SIM_K do
         px = clamp(px + dxm, -LX, LX)
         pz = clamp(pz + dzm, -LZ, LZ)
+        if hx and not hstep then
+            local hd = sqrt((px - hx) ^ 2 + (pz - hz) ^ 2)
+            if hd < hmin then hmin = hd end
+            if hd < 0.9 then hstep = s end
+        end
         local disc = 1.3 - 0.11 * s
         for i = 1, nthr do
             local ch = tch[i]
@@ -2001,8 +2013,8 @@ local function eval_dir(c, hx, hz, hw)
     end
     if hx then
         local d0 = sqrt((g.px - hx) ^ 2 + (g.pz - hz) ^ 2)
-        local d1 = sqrt((px - hx) ^ 2 + (pz - hz) ^ 2)
-        cost = cost - hw * (d0 - d1)
+        cost = cost - hw * (d0 - hmin)
+        if hstep then cost = cost - hw * 0.5 * (SIM_K + 1 - hstep) end
     else
         cost = cost + 0.04 * sqrt(px * px + pz * pz)
     end
@@ -2017,6 +2029,7 @@ local function bot_move()
     if h then
         hx, hz = h.x, h.z
         hw = 3.6 + 0.4 * min(g.rescue_n, 4)
+        if g.b_killers <= KEEP then hw = hw + 3 end
     end
     local best, bc = 0, 1e18
     for c = 0, 8 do
@@ -2027,26 +2040,36 @@ local function bot_move()
     g.bmx, g.bmz = DIRS[best][1], DIRS[best][2]
 end
 
-local function bot_aim()
-    local n, nb = 0, 0
-    local px, pz = g.px, g.pz
-    -- with family left to rescue and the wave nearly over, do not finish it off from afar
-    local humans, killers = 0, 0
+local function human_within(x, z, r)
     for i = 1, #units do
-        local u = units[i]
-        if u.alive then
-            if u.k.human then humans = humans + 1 elseif u.k.need then killers = killers + 1 end
-        end
+        local h = units[i]
+        if free_human(h) and (h.x - x) ^ 2 + (h.z - z) ^ 2 < r * r then return true end
     end
-    local hold = humans > 0 and killers <= 9 and g.state == "running"
+    return false
+end
+
+local function bot_aim()
+    local n, nb, ns = 0, 0, 0
+    local px, pz = g.px, g.pz
+    -- with family left to rescue and the wave nearly over, do not finish it off from afar,
+    -- and spare the last few so the wave stays open until they are collected
+    local hold = g.b_humans > 0 and g.b_killers <= 9 and g.state == "running" and g.hold_t < HOLD_MAX
+    local keep = hold and g.b_killers <= KEEP
     for i = 1, #units do
         local u = units[i]
         if u.alive and u.spawn_t <= 0 then
             local k = u.k
             local dx, dz = u.x - px, u.z - pz
-            local far = hold and dx * dx + dz * dz > 10 * 10 and u.kind ~= "brain" and u.kind ~= "missile"
-            if dx * dx + dz * dz < 34 * 34 then
-                if k.shoot and k.bw and not far then
+            local d2 = dx * dx + dz * dz
+            local far = hold and d2 > 10 * 10 and u.kind ~= "brain" and u.kind ~= "missile"
+            local spare = keep and k.need and d2 > SPARE_R * SPARE_R
+                and not (u.kind == "brain" and human_within(u.x, u.z, 5.0))
+            if spare then
+                ns = ns + 1
+                sx_[ns], sz_[ns], sr_[ns] = u.x, u.z, k.r
+            end
+            if d2 < 34 * 34 then
+                if k.shoot and k.bw and not far and not spare then
                     n = n + 1
                     gx[n], gz[n], gr[n], gw[n] = u.x, u.z, k.r, k.bw
                     local vx, vz = u.vx, u.vz
@@ -2101,6 +2124,10 @@ local function bot_aim()
                 end
             end
         end
+        for i = 1, ns do
+            local rx, rz = sx_[i] - px, sz_[i] - pz
+            if rx * ux + rz * uz > 0 and abs(rx * uz - rz * ux) < sr_[i] + 0.6 then v = 0 break end
+        end
         if d == g.aprev then v = v * 1.15 end
         if v > bv then best, bv = d, v end
     end
@@ -2113,6 +2140,15 @@ local function bot_aim()
 end
 
 function bot_think(dt)
+    local humans, killers = 0, 0
+    for i = 1, #units do
+        local u = units[i]
+        if u.alive then
+            if u.k.human and not u.mut then humans = humans + 1 elseif u.k.need then killers = killers + 1 end
+        end
+    end
+    g.b_humans, g.b_killers = humans, killers
+    if humans > 0 and killers <= KEEP then g.hold_t = g.hold_t + dt else g.hold_t = 0 end
     g.bot_t = g.bot_t - dt
     if g.bot_t <= 0 then
         g.bot_t = 0.07
@@ -2324,6 +2360,7 @@ RT = {
     kill = function() g.invuln, g.god, g.p_spawn = 0, false, 0 kill_player() end,
     lives = function(n) g.lives = n end,
     bot = function(on) g.bot = on end,
+    botinfo = function() return g.b_humans, g.b_killers, g.hold_t, g.px, g.pz, g.state, g.wave end,
     new = function(demo) new_game(demo) end,
     clear = function() clear_all_units() end,
     count = function()

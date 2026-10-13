@@ -85,16 +85,19 @@ frames and pixels. The player covers one arcade pixel a frame, as in the arcade.
 
 `bot_think` in the script plays the game: every 70 ms it simulates the player's eight moves 0.7 s
 ahead against predicted enemy and projectile positions and picks the safest one, leaning toward
-the nearest family member that no hulk or brain is near; every 50 ms it picks the firing direction
+the nearest family member that no hulk or brain is right next to (scored by how close the path
+comes to them, so it does not overshoot one nearby); every 50 ms it picks the firing direction
 that lines up the most valuable targets (leading moving ones, skipping those a hulk or electrode
-blocks). With family left and the wave nearly over it stops shooting at distant enemies so there
-is time to rescue them.
+blocks). With family left and the wave nearly over it stops shooting at distant enemies, and
+spares the last two (keeping them out of its line of fire) unless one gets within 1.8 m or is a
+brain near a human, so the wave stays open while it collects the family; after 25 s it gives up
+and finishes the wave.
 
 ## Testing hooks
 
 `GAME` holds the state and cumulative `GAME.stats`. A global `RT` table (use
 `lua_eval {entity: "GameController"}`) has `RT.jump(wave)`, `RT.spawn(kind, x, z)`, `RT.god(true)`,
-`RT.bot(false)`, `RT.kill()`, `RT.lives(n)`, `RT.units(kind)`, `RT.count()`, `RT.new(demo)`,
+`RT.bot(false)`, `RT.botinfo()` (the autopilot's human and enemy counts, hold time, position), `RT.kill()`, `RT.lives(n)`, `RT.units(kind)`, `RT.count()`, `RT.new(demo)`,
 `RT.pooled()` (pool sizes and cube count) and `RT.lineup()` (one of every actor in a row, for
 screenshots with `runtime_set {time_scale: 0}`).
 A soak test: `playtest {seconds: 45, time_scale: 16, lean: true, entity: "GameController",
