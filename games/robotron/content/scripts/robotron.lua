@@ -1,4 +1,4 @@
--- ROBOTRON 2084, a modern take. One controller script drives everything.
+-- ROBOTRON 2084, in voxels. One controller script drives everything.
 -- Attached to the GameController entity; runs in play mode only.
 --
 -- The game boots into ATTRACT MODE: an AI pilot plays a demo game under the title.
@@ -10,30 +10,49 @@
 --   P            pause
 --   Escape       back to the demo
 --
--- Rules follow the 1982 original: one hit kills you, the last human family members are worth
--- 1000..5000 points each (rising within a wave), hulks cannot be killed (only pushed), brains turn
--- humans into progs and fire homing missiles, spheroids spawn enforcers, quarks spawn tanks,
--- and a wave ends when every killable enemy is gone. An extra life comes every 25,000 points.
+-- Every actor is a voxel model of its 1982 sprite (sprites.lua): one cube per same-coloured
+-- rectangle of pixels, standing on a lit floor so it casts a real shadow. The same pixels drive
+-- the effects from the original: enemies MATERIALIZE out of spread-apart pixel lines that close
+-- up into the sprite, shot enemies STRETCH APART along the line of fire, a RECTANGLE ZOOM runs
+-- between waves, and on death everything freezes while the player flashes through colours, then
+-- the surviving enemies materialize again in new places.
 --
--- The arena (floor, grid, border), lights and camera are placed in the scene; every actor,
--- projectile and spark is spawned here, lazily, and reused. Everything this script spawns is
--- despawned in on_destroyed, so hot reloads do not leak entities.
+-- Rules follow the original: one hit kills you, the family is worth 1000..5000 points each (rising
+-- within a wave, reset when you die), hulks cannot be killed (only pushed), grunts that walk into
+-- electrodes are destroyed, brains turn humans into progs and fire cruise missiles, spheroids spawn
+-- enforcers, quarks spawn tanks, and a wave ends when every killable enemy is gone. An extra life
+-- comes every 25,000 points.
+--
+-- The arena (floor and border), the sun and the camera are scene entities; every actor, projectile
+-- and effect is spawned here, lazily, and reused. on_destroyed despawns all of it, so hot reloads do
+-- not leak entities.
 
-local HW, HD = 19.0, 11.0                -- arena half extents inside the border (x, z)
-local P_R = 0.34                         -- player hit radius
+local SPR = require("sprites")
+local COLORS = SPR.COLORS
+
+local HW, HD = 19.0, 12.0                -- arena half extents inside the border (x, z)
+local P_R = 0.42                         -- player hit radius
 local LX, LZ = HW - 0.45, HD - 0.45      -- player position limits
-local P_SPEED = 10.0
-local FIRE_INT = 0.095
-local B_SPEED, B_R = 36.0, 0.16
-local N_PBULLETS = 26
+local P_SPEED = 9.0
+local FIRE_INT = 0.085
+local B_SPEED, B_R = 38.0, 0.16
+local N_PBULLETS = 24
 local START_LIVES = 3
 local EXTRA_LIFE = 25000
-local SFX_VOLUME, MUSIC_VOLUME = 0.55, 0.16
-local FOV = 40.0
-local TILT = math.rad(16.0)
-local SPARKS_PER_COLOR = 28
+local SFX_VOLUME = 0.55
+local PLAY_MUSIC = false                 -- the original has no music during play
+local MUSIC_VOLUME = 0.12
+local VOX = 0.125                        -- one sprite pixel, in meters
+local LEAN = math.rad(16)                -- actors lean back toward the camera so the sprite reads
+local CAM_PITCH = math.rad(60)           -- camera angle below the horizon
+local FOV = 26.0
+local MAT_T = 0.75                       -- materialize time
+local SPREAD = 10.0                      -- how far apart the pixel lines start
+local TRANS_T = 0.95                     -- rectangle zoom
+local GRUNT_STEP = 0.3
 
 local atan, sqrt, sin, cos, abs, floor, min, max = math.atan, math.sqrt, math.sin, math.cos, math.abs, math.floor, math.min, math.max
+local CL, SL = cos(LEAN), sin(LEAN)
 
 -- ---------------------------------------------------------------- helpers
 
@@ -43,39 +62,41 @@ local function clamp(v, lo, hi)
 end
 
 local function frand(a, b) return a + (b - a) * math.random() end
+local function sign(v) if v > 0 then return 1 elseif v < 0 then return -1 end return 0 end
 local function wrap_pi(a)
     while a > math.pi do a = a - 2 * math.pi end
     while a < -math.pi do a = a + 2 * math.pi end
     return a
 end
 
-local PAL = {
-    red = { 1.0, 0.12, 0.18 }, orange = { 1.0, 0.55, 0.1 }, yellow = { 1.0, 0.95, 0.3 },
-    green = { 0.2, 1.0, 0.35 }, cyan = { 0.2, 0.9, 1.0 }, blue = { 0.3, 0.4, 1.0 },
-    magenta = { 1.0, 0.2, 0.9 }, white = { 1.0, 1.0, 1.0 }, pink = { 1.0, 0.45, 0.75 },
-    purple = { 0.65, 0.3, 1.0 },
-}
+-- glowing unlit colours for the transition rectangles and the death flash
 local FLASH = { "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "white" }
+for _, n in ipairs(FLASH) do
+    local c = COLORS[n == "green" and "lgreen" or n]
+    COLORS["fx_" .. n] = { c[1], c[2], c[3], 1.6, true }
+end
 
 local g = {
     state = "running", demo = true, bot = true, god = false,
     time = 0, score = 0, hi = 0, lives = START_LIVES, wave = 0, next_life = EXTRA_LIFE,
     px = 0.0, pz = 0.0, pvx = 0.0, pvz = 0.0, face = 0.0, fire_cd = 0, invuln = 0, p_alive = true,
+    p_spawn = 0, p_anim = 0, p_yaw = 0,
     dying_t = 0, over_t = 0, clear_t = 0, banner_t = 0, banner = "", rescue_n = 0,
-    wspd = 1.0, grunt_speed = 3.6, shake = 0, nid = 0, pending = 0,
+    wave_t = 0, step_int = 0.16, grunt_speed = 2.0, shake = 0, nid = 0, mat_mode = "v",
+    trans_t = 0, trans_after = nil, tcx = 0, tcz = 0,
     bmx = 0, bmz = 0, bfx = 0, bfz = 0, bot_t = 0, aim_t = 0, bprev = 0, aprev = 0,
     popups = {}, stats = { kills = 0, rescued = 0, lost = 0, deaths = 0, shots = 0, waves = 0, games = 0, cleared = 0 },
-    ready = false, cam = nil, walls = {}, wall_hue = 0, demo_t = 0, paused = false,
+    ready = false, cam = nil, cam_fit = nil, walls = {}, wall_hue = 0, demo_t = 0, paused = false,
 }
 GAME = g -- global so lua_eval can inspect and poke the game state while testing
 
-local units = {}       -- every actor / hostile projectile, alive or pooled
-local pools = {}       -- kind -> list of units
-local pbullets = {}    -- player bullets
-local sparks = {}      -- color -> { items, i }
-local all_entities = {} -- everything this script spawned, for on_destroyed
+local units = {}        -- every actor / hostile projectile, alive or pooled
+local pools = {}        -- model key -> list of units
+local pbullets = {}     -- player bullets
+local all_entities = {} -- roots this script spawned, for on_destroyed
 local player = nil
 local sfx_last = {}
+local rects = {}        -- transition rectangles, 4 bars each
 
 local function reg(e)
     all_entities[#all_entities + 1] = e
@@ -96,243 +117,221 @@ end
 
 local function set_vis(e, v) set_component(e, "Visible", v) end
 
--- ---------------------------------------------------------------- actor definitions
+-- ---------------------------------------------------------------- voxel models
 
-local function P(mesh, px, py, pz, sx, sy, sz, col, em, o)
-    o = o or {}
-    return { mesh = mesh, pos = { px, py, pz }, scale = { sx, sy, sz }, col = col, em = em or 1.0,
-        unlit = o.unlit, rot = o.rot, alpha = o.alpha, metal = o.metal or 0.0, rough = o.rough or 0.5 }
-end
-
-local K = {}
-
-K.grunt = {
-    r = 0.5, pts = 100, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "red",
-    burst = 11, walk = true, bw = 1.0, danger = 1.0,
-    parts = {
-        P("cube", 0, 0.5, 0, 1.1, 0.85, 0.7, { 1.0, 0.06, 0.1 }, 0.9, { metal = 0.3, rough = 0.4 }),
-        P("cube", 0, 1.13, 0, 0.52, 0.4, 0.46, { 1.0, 0.5, 0.1 }, 2.4),
-    },
-}
-
-K.electrode = {
-    r = 0.52, pts = 0, hostile = true, shoot = true, sfx = "electrode_die", col = "yellow",
-    burst = 14, spin = 1.6, pulse = true, bw = 0.12, danger = 1.1, flash = true,
-    parts = {
-        P("cube", 0, 0.65, 0, 0.55, 0.55, 0.55, { 1.0, 0.9, 0.2 }, 1.8, { unlit = true }),
-        P("cube", 0, 0.65, 0, 0.55, 0.55, 0.55, { 1.0, 0.9, 0.2 }, 1.8, { rot = { 0.785, 0.785, 0.0 }, unlit = true }),
-    },
-}
-
-K.hulk = {
-    r = 1.0, pts = 0, hostile = true, hulk = true, sfx = "hulk_hit", col = "green",
-    burst = 16, walk = true, danger = 1.5, margin = 0.45,
-    parts = {
-        P("cube", 0, 0.95, 0, 1.55, 1.3, 1.1, { 0.04, 0.5, 0.12 }, 0.5, { metal = 0.6, rough = 0.35 }),
-        P("cube", 0, 1.85, -0.05, 0.75, 0.55, 0.65, { 0.3, 1.0, 0.4 }, 1.6),
-        P("cube", -1.05, 1.0, 0, 0.5, 1.15, 0.5, { 0.1, 0.7, 0.25 }, 0.8, { metal = 0.5 }),
-        P("cube", 1.05, 1.0, 0, 0.5, 1.15, 0.5, { 0.1, 0.7, 0.25 }, 0.8, { metal = 0.5 }),
-    },
-}
-
-local HUMANS = {
-    mommy = { 1.0, 0.35, 0.75 }, daddy = { 0.3, 0.6, 1.0 }, mikey = { 0.75, 1.0, 0.3 },
-}
-for name, c in pairs(HUMANS) do
-    K[name] = {
-        r = 0.42, human = true, ai = "human", sfx = "human_die", col = "white", burst = 10, walk = true,
-        parts = {
-            P("cube", 0, 0.62, 0, 0.58, 0.95, 0.36, c, 0.8),
-            P("sphere", 0, 1.38, 0, 0.26, 0.26, 0.26, { 1.0, 0.8, 0.6 }, 0.5),
-            P("cube", 0, 1.05, 0, 1.25, 0.14, 0.2, c, 1.0),
-            P("cylinder", 0, 0.05, 0, 0.62, 0.62, 0.05, c, 2.2, { unlit = true, rot = { 0, math.pi / 2, 0 } }),
-        },
-    }
-end
-
-K.prog = {
-    r = 0.46, pts = 100, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "red",
-    burst = 10, walk = true, bw = 1.5, danger = 1.1,
-    parts = {
-        P("cube", 0, 0.62, 0, 0.58, 0.95, 0.36, { 0.5, 0.1, 0.16 }, 0.6),
-        P("sphere", 0, 1.38, 0, 0.26, 0.26, 0.26, { 1.0, 0.1, 0.1 }, 4.0, { unlit = true }),
-        P("cube", 0, 1.05, 0, 1.25, 0.14, 0.2, { 0.7, 0.12, 0.2 }, 0.9),
-        P("cylinder", 0, 0.05, 0, 0.62, 0.62, 0.05, { 1.0, 0.1, 0.1 }, 2.2, { unlit = true, rot = { 0, math.pi / 2, 0 } }),
-    },
-}
-
-K.brain = {
-    r = 0.62, pts = 500, hostile = true, shoot = true, kill = true, sfx = "brain_die", col = "pink",
-    burst = 22, bob = { 0.25, 3.0 }, bw = 3.0, danger = 1.1,
-    parts = {
-        P("sphere", -0.24, 1.0, 0, 0.44, 0.4, 0.5, { 1.0, 0.25, 0.6 }, 1.0, { metal = 0.2 }),
-        P("sphere", 0.24, 1.0, 0, 0.44, 0.4, 0.5, { 1.0, 0.25, 0.6 }, 1.0, { metal = 0.2 }),
-        P("cube", 0, 0.5, 0, 0.22, 0.5, 0.22, { 0.6, 0.2, 0.9 }, 1.4),
-        P("cube", -0.17, 0.9, -0.42, 0.14, 0.14, 0.14, { 0.3, 1.0, 0.6 }, 5.0, { unlit = true }),
-        P("cube", 0.17, 0.9, -0.42, 0.14, 0.14, 0.14, { 0.3, 1.0, 0.6 }, 5.0, { unlit = true }),
-    },
-}
-
-K.spheroid = {
-    r = 0.72, pts = 1000, hostile = true, shoot = true, kill = true, sfx = "big_boom", col = "cyan",
-    burst = 30, spin = 3.0, bob = { 0.3, 2.0 }, bw = 2.2, danger = 1.0, flash = true,
-    parts = {
-        P("torus", 0, 0.95, 0, 0.52, 0.52, 0.52, { 0.2, 0.9, 1.0 }, 3.0, { unlit = true }),
-        P("torus", 0, 0.95, 0, 0.52, 0.52, 0.52, { 1.0, 0.2, 0.9 }, 3.0, { rot = { math.pi / 2, 0, 0 }, unlit = true }),
-        P("sphere", 0, 0.95, 0, 0.3, 0.3, 0.3, { 1.0, 1.0, 1.0 }, 4.0, { unlit = true }),
-    },
-}
-
-K.enforcer = {
-    r = 0.5, pts = 150, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "blue",
-    burst = 14, spin = 4.0, bob = { 0.35, 4.0 }, bw = 1.6, danger = 1.0,
-    parts = {
-        P("cube", 0, 0.95, 0, 0.5, 0.5, 0.5, { 0.4, 0.4, 1.0 }, 3.0, { rot = { 0.785, 0.785, 0 }, unlit = true }),
-        P("sphere", 0, 0.95, 0, 0.22, 0.22, 0.22, { 1.0, 1.0, 1.0 }, 4.0, { unlit = true }),
-    },
-}
-
-K.quark = {
-    r = 0.7, pts = 1000, hostile = true, shoot = true, kill = true, sfx = "big_boom", col = "cyan",
-    burst = 30, tumble = true, bob = { 0.3, 2.5 }, bw = 2.2, danger = 1.0,
-    parts = {
-        P("cube", 0, 1.0, 0, 1.1, 1.1, 1.1, { 0.2, 1.0, 0.9 }, 2.2, { alpha = 0.4 }),
-        P("cube", 0, 1.0, 0, 0.55, 0.55, 0.55, { 1.0, 1.0, 1.0 }, 4.0, { unlit = true }),
-    },
-}
-
-K.tank = {
-    r = 0.85, pts = 200, hostile = true, shoot = true, kill = true, sfx = "brain_die", col = "green",
-    burst = 20, bw = 1.2, danger = 1.0,
-    parts = {
-        P("cube", 0, 0.45, 0, 1.35, 0.6, 1.75, { 0.12, 0.65, 0.2 }, 0.9, { metal = 0.5, rough = 0.4 }),
-        P("cube", 0, 0.98, 0.1, 0.75, 0.42, 0.75, { 0.4, 1.0, 0.45 }, 2.0),
-        P("cylinder", 0, 0.98, -0.85, 0.13, 0.13, 1.1, { 0.8, 1.0, 0.5 }, 2.5),
-    },
-}
-
-K.missile = {
-    r = 0.3, pts = 50, hostile = true, shoot = true, sfx = "grunt_die", col = "orange", burst = 8,
-    bw = 2.4, danger = 1.2, margin = 0.05, proj = true,
-    parts = {
-        P("cube", 0, 0.7, 0, 0.2, 0.2, 0.8, { 1.0, 0.5, 0.1 }, 4.5, { unlit = true }),
-        P("cube", 0, 0.7, 0.55, 0.12, 0.12, 0.3, { 1.0, 0.9, 0.5 }, 5.0, { unlit = true }),
-    },
-}
-
-K.spark = {
-    r = 0.22, hostile = true, sfx = "grunt_die", col = "purple", burst = 5, spin = 9.0,
-    danger = 1.2, margin = 0.05, proj = true,
-    parts = {
-        P("cube", 0, 0.7, 0, 0.3, 0.3, 0.3, { 0.9, 0.5, 1.0 }, 5.0, { rot = { 0.78, 0.78, 0 }, unlit = true }),
-    },
-}
-
-K.shell = {
-    r = 0.28, hostile = true, sfx = "bounce", col = "yellow", burst = 6,
-    danger = 1.2, margin = 0.05, proj = true,
-    parts = {
-        P("sphere", 0, 0.7, 0, 0.28, 0.28, 0.28, { 1.0, 0.85, 0.2 }, 5.0, { unlit = true }),
-    },
-}
-
--- ---------------------------------------------------------------- pooled objects
-
-local function make_unit(kind)
-    local k = K[kind]
-    local root = reg(spawn_entity(uname("RT_" .. kind .. "_")))
-    local parts = {}
-    for i, p in ipairs(k.parts) do
-        local e = reg(spawn_primitive(p.mesh, uname("RT_" .. kind .. "_part")))
-        set_parent(e, root)
-        set_translation(e, p.pos[1], p.pos[2], p.pos[3])
-        set_scale(e, p.scale[1], p.scale[2], p.scale[3])
-        if p.rot then set_rotation(e, p.rot[1], p.rot[2], p.rot[3]) end
-        local col = { p.col[1], p.col[2], p.col[3] }
-        if p.alpha then col[4] = p.alpha end
-        set_material(e, { color = col, emissive = p.em, unlit = p.unlit or false, metallic = p.metal,
-            roughness = p.rough, transparent = p.alpha ~= nil })
-        set_component(e, "CanCastShadow", false)
-        set_component(e, "Visible", false)
-        parts[i] = e
-    end
-    set_translation(root, 0, -50, 0)
-    local u = { kind = kind, k = k, e = root, parts = parts, vis = false, alive = false, x = 0, z = 0,
-        vx = 0, vz = 0, kx = 0, kz = 0, spawn_t = 0, spawn_total = 1, age = 0, face = 0, ph = math.random() * 6.28, sc = 1 }
-    units[#units + 1] = u
-    return u
-end
-
-local function show_unit(u, v)
-    if u.vis == v then return end
-    u.vis = v
-    for i = 1, #u.parts do set_vis(u.parts[i], v) end
-    if not v then set_translation(u.e, 0, -50, 0) end
-end
-
-local function acquire(kind)
-    local pool = pools[kind]
-    if not pool then
-        pool = {}
-        pools[kind] = pool
-    end
-    for i = 1, #pool do
-        if not pool[i].alive then return pool[i] end
-    end
-    local u = make_unit(kind)
-    pool[#pool + 1] = u
-    return u
-end
-
--- palette-coloured spark cubes: one pool per colour so a spark never needs a material change
-local function new_spark(col)
-    local e = reg(spawn_primitive("cube", uname("RT_spark")))
-    set_material(e, { color = PAL[col], emissive = 3.0, unlit = true })
-    set_component(e, "CanCastShadow", false)
+-- one hidden template entity per colour; every cube of that colour draws with its material
+local mats = {}
+local function mat_of(name)
+    local m = mats[name]
+    if m then return m end
+    local c = COLORS[name]
+    local e = reg(spawn_primitive("cube", "RT_mat_" .. name))
+    set_material(e, { color = { c[1], c[2], c[3] }, emissive = c[4], unlit = c[5] or false, roughness = 0.55, metallic = 0.05 })
     set_component(e, "Visible", false)
-    set_translation(e, 0, -50, 0)
-    return { e = e, alive = false, vis = false, x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0, life = 0, max = 1, size = 0.2 }
+    set_component(e, "CanCastShadow", false)
+    set_translation(e, 0, -80, 0)
+    mats[name] = e
+    return e
 end
 
-local function spark(col, x, y, z, vx, vy, vz, life, size, grav)
-    local pool = sparks[col]
-    if not pool then
-        pool = { i = 0 }
-        sparks[col] = pool
+-- merge same-coloured pixels into rectangles (grid[r][c] = colour or nil)
+local function greedy(grid, W, H)
+    local used, out = {}, {}
+    for r = 1, H do used[r] = {} end
+    for r = 1, H do
+        for c = 1, W do
+            local col = grid[r][c]
+            if col and not used[r][c] then
+                local w = 1
+                while c + w <= W and grid[r][c + w] == col and not used[r][c + w] do w = w + 1 end
+                local h, ok = 1, true
+                while ok and r + h <= H do
+                    for i = 0, w - 1 do
+                        if grid[r + h][c + i] ~= col or used[r + h][c + i] then ok = false break end
+                    end
+                    if ok then h = h + 1 end
+                end
+                for rr = r, r + h - 1 do
+                    for cc = c, c + w - 1 do used[rr][cc] = true end
+                end
+                out[#out + 1] = { c = c, r = r, w = w, h = h, col = col }
+            end
+        end
     end
-    local o
-    if #pool < SPARKS_PER_COLOR then
-        o = new_spark(col)
-        pool[#pool + 1] = o
-    else
-        pool.i = pool.i % #pool + 1
-        o = pool[pool.i]
+    return out
+end
+
+local function prep_model(key, def)
+    local frames = def.frames
+    local H, W = #frames[1], #frames[1][1]
+    local grids = {}
+    for f, rows in ipairs(frames) do
+        if #rows ~= H then error(string.format("sprite %s frame %d has %d rows, expected %d", key, f, #rows, H)) end
+        local gr = {}
+        for r, line in ipairs(rows) do
+            if #line ~= W then error(string.format("sprite %s frame %d row %d is %d wide, expected %d", key, f, r, #line, W)) end
+            gr[r] = {}
+            for c = 1, W do
+                local ch = line:sub(c, c)
+                if ch ~= "." then
+                    local col = def.legend[ch]
+                    if not col or not COLORS[col] then error(string.format("sprite %s: no colour for '%s'", key, ch)) end
+                    gr[r][c] = col
+                end
+            end
+        end
+        grids[f] = gr
     end
-    o.alive, o.x, o.y, o.z, o.vx, o.vy, o.vz, o.life, o.max, o.size = true, x, y, z, vx, vy, vz, life, life, size
-    o.grav = grav or 16
-    set_translation(o.e, x, y, z)
-    if not o.vis then
-        o.vis = true
-        set_vis(o.e, true)
+    local nf = #frames
+    local static, per = {}, {}
+    for f = 1, nf do per[f] = {} end
+    for r = 1, H do
+        static[r] = {}
+        for f = 1, nf do per[f][r] = {} end
+        for c = 1, W do
+            local v = grids[1][r][c]
+            local same = v ~= nil
+            for f = 2, nf do
+                if grids[f][r][c] ~= v then same = false break end
+            end
+            if same then
+                static[r][c] = v
+            else
+                for f = 1, nf do per[f][r][c] = grids[f][r][c] end
+            end
+        end
+    end
+    local m = { key = key, W = W, H = H, depth = def.depth or 3, nf = nf, static = greedy(static, W, H), frames = {}, px = {} }
+    if nf > 1 then
+        for f = 1, nf do m.frames[f] = greedy(per[f], W, H) end
+    end
+    -- frame-1 pixels in model space (x, height, colour) for the particle effects
+    for r = 1, H do
+        for c = 1, W do
+            local col = grids[1][r][c]
+            if col then m.px[#m.px + 1] = { (c - 0.5 - W / 2) * VOX, (H - r + 0.5) * VOX, col } end
+        end
+    end
+    m.height = H * VOX
+    return m
+end
+
+local models = {}
+local function model(key)
+    local m = models[key]
+    if m then return m end
+    local def
+    local v = key:match("^electrode(%d+)$")
+    if v then def = SPR.electrode(tonumber(v)) else def = SPR[key] end
+    m = prep_model(key, def)
+    models[key] = m
+    return m
+end
+
+-- builds the cubes of model m under root; returns the frame nodes and every cube with its colour
+local function build_model(root, m, cast)
+    local cubes = {}
+    local function add(parent, list)
+        for _, rc in ipairs(list) do
+            local e = spawn_primitive("cube", "RT_v", { material_of = mat_of(rc.col) })
+            set_parent(e, parent)
+            set_translation(e, (rc.c - 1 + rc.w / 2 - m.W / 2) * VOX, (m.H - (rc.r - 1) - rc.h / 2) * VOX, 0)
+            set_scale(e, rc.w * VOX, rc.h * VOX, m.depth * VOX)
+            if not cast then set_component(e, "CanCastShadow", false) end
+            cubes[#cubes + 1] = { e, rc.col }
+        end
+    end
+    add(root, m.static)
+    local fnodes = {}
+    if m.nf > 1 then
+        for f = 1, m.nf do
+            local n = spawn_entity("RT_frame")
+            set_parent(n, root)
+            if f ~= 1 then set_component(n, "Visible", false) end
+            add(n, m.frames[f])
+            fnodes[f] = n
+        end
+    end
+    return fnodes, cubes
+end
+
+-- model-space point (x, height) of an upright, leaning, camera-facing actor at (wx, wy, wz) -> world
+local function lean_pt(wx, wy, wz, x, h)
+    return wx + x, wy + h * CL, wz - h * SL
+end
+
+-- one pixel as a GPU particle: no drag, so it travels in a straight line for `life` seconds
+local function px_particle(x, y, z, col, vx, vy, vz, life, inten, fade)
+    local c = COLORS[col]
+    local cs = { c[1], c[2], c[3], 1 }
+    emit_particles(x, y, z, {
+        count = 1, color = cs, color_end = fade and { c[1] * 0.4, c[2] * 0.4, c[3] * 0.4, 0 } or cs,
+        intensity = inten or 1.6, speed = 0, life = life, size = VOX * 1.1, size_end = fade and VOX * 0.7 or VOX * 1.1,
+        velocity = { vx, vy, vz }, drag = 0,
+    })
+end
+
+-- MATERIALIZE: the sprite's pixel rows (mode "v") or columns ("h") start far apart and close up;
+-- "r" spreads both ways a little (an enforcer growing out of a spheroid)
+local function materialize(m, wx, wy, wz, mode, t)
+    local hc = m.height * 0.5
+    for i = 1, #m.px do
+        local p = m.px[i]
+        local fx, fy, fz = lean_pt(wx, wy, wz, p[1], p[2])
+        local ox, oz = 0, 0
+        if mode == "h" then
+            ox = p[1] * SPREAD * 1.6
+        elseif mode == "v" then
+            oz = -(p[2] - hc) * SPREAD
+        else
+            ox, oz = p[1] * 3.5, -(p[2] - hc) * 3.5
+        end
+        px_particle(fx + ox, fy, fz + oz, p[3], -ox / t, 0, -oz / t, t, 1.7, false)
+    end
+end
+
+-- EXPLODE: the sprite stretches apart along the line of fire (dx, dz), or every way (no direction)
+local function explode(m, wx, wy, wz, dx, dz, life, k)
+    life = life or 0.55
+    k = k or 9.0
+    local hc = m.height * 0.5
+    local horiz = dx and abs(dx) >= abs(dz)
+    local vert = dx and not horiz
+    for i = 1, #m.px do
+        local p = m.px[i]
+        local fx, fy, fz = lean_pt(wx, wy, wz, p[1], p[2])
+        local vx, vz = 0, 0
+        if horiz then
+            vx = p[1] * k * 1.6 + dx * 3.0
+        elseif vert then
+            vz = -(p[2] - hc) * k + dz * 3.0
+        else
+            vx, vz = p[1] * k, -(p[2] - hc) * k
+        end
+        px_particle(fx, fy, fz, p[3], vx, 0, vz, life * frand(0.8, 1.1), 2.0, true)
+    end
+end
+
+-- a prog's afterimage: every pixel in one colour, left behind for a moment
+local function afterimage(m, wx, wy, wz, col)
+    for i = 1, #m.px, 2 do
+        local p = m.px[i]
+        local fx, fy, fz = lean_pt(wx, wy, wz, p[1], p[2])
+        px_particle(fx, fy, fz - 0.05, col, 0, 0, 0, 0.22, 1.1, true)
     end
 end
 
 local function burst(col, x, y, z, count, speed, size)
-    for _ = 1, count do
-        local a = math.random() * 6.2832
-        local s = frand(speed * 0.25, speed)
-        spark(col, x, y, z, cos(a) * s, frand(1.5, 7.0), sin(a) * s, frand(0.35, 0.85), (size or 0.2) * frand(0.6, 1.4))
-    end
+    local c = COLORS[col] or COLORS.white
+    emit_particles(x, y, z, { count = count, color = { c[1], c[2], c[3], 1 }, intensity = 2.2, speed = { speed * 0.25, speed },
+        life = { 0.25, 0.6 }, size = (size or 0.12), size_end = 0.0, gravity = -12, drag = 1.5 })
 end
 
--- an expanding ring of sparks lying on the floor (a shockwave)
+-- an expanding ring of glowing particles on the floor (a shockwave)
 local function ring(x, z, maxr, dur, col)
-    local n = floor(10 + maxr * 5)
-    local sp = maxr / dur * 0.85
-    for i = 1, n do
-        local a = (i / n) * 6.2832
-        spark(col, x, 0.15, z, cos(a) * sp, 0, sin(a) * sp, dur, 0.22, 0)
-    end
+    local c = COLORS[col] or COLORS.white
+    emit_particles(x, 0.15, z, { count = floor(24 + maxr * 10), shape = "ring", color = { c[1], c[2], c[3], 1 }, intensity = 2.5,
+        speed = maxr / dur, life = dur, size = 0.14, size_end = 0.04, drag = 0 })
 end
 
 local function add_shake(a) g.shake = min(1.0, max(g.shake, a)) end
@@ -342,43 +341,90 @@ local function popup(x, z, text, col, size)
     g.popups[#g.popups + 1] = { x = x, z = z, text = text, col = col or "white", t = 0, size = size or 22 }
 end
 
+-- ---------------------------------------------------------------- actor definitions
+-- r: hit radius; pts: score; y: hover height; flags drive AI, collisions and the autopilot
+
+local K = {}
+K.grunt = { r = 0.6, pts = 100, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "red", walk = true, stepper = true, bw = 1.0, danger = 1.0 }
+K.electrode = { r = 0.58, pts = 0, hostile = true, shoot = true, sfx = "electrode_die", col = "yellow", bw = 0.12, danger = 1.1 }
+K.hulk = { r = 0.91, pts = 0, hostile = true, hulk = true, sfx = "hulk_hit", col = "green", walk = true, danger = 1.5, margin = 0.45 }
+for _, name in ipairs({ "mommy", "daddy", "mikey" }) do
+    K[name] = { r = name == "mikey" and 0.46 or 0.54, human = true, ai = "human", sfx = "human_die", col = "white", walk = true }
+end
+K.prog = { r = 0.54, pts = 100, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "magenta", walk = true, trail = true, bw = 1.5, danger = 1.1 }
+K.brain = { r = 0.74, pts = 500, hostile = true, shoot = true, kill = true, sfx = "brain_die", col = "pink", walk = true, bw = 3.0, danger = 1.1 }
+K.spheroid = { r = 0.67, pts = 1000, hostile = true, shoot = true, kill = true, sfx = "big_boom", col = "orange", y = 0.35, bob = { 0.2, 2.0 }, cycle = 9, bw = 2.2, danger = 1.0 }
+K.enforcer = { r = 0.6, pts = 150, hostile = true, shoot = true, kill = true, sfx = "grunt_die", col = "white", y = 0.5, bob = { 0.3, 4.0 }, cycle = 6, bw = 1.6, danger = 1.0 }
+K.quark = { r = 0.67, pts = 1000, hostile = true, shoot = true, kill = true, sfx = "big_boom", col = "cyan", y = 0.35, bob = { 0.2, 2.5 }, cycle = 8, spin = 7.0, bw = 2.2, danger = 1.0 }
+K.tank = { r = 0.82, pts = 200, hostile = true, shoot = true, kill = true, sfx = "brain_die", col = "blue", cycle = 0, bw = 1.2, danger = 1.0 }
+K.missile = { r = 0.26, pts = 50, hostile = true, shoot = true, sfx = "grunt_die", col = "magenta", y = 0.45, bw = 2.4, danger = 1.2, margin = 0.05, proj = true }
+K.spark = { r = 0.26, hostile = true, sfx = "spark", col = "purple", y = 0.45, cycle = 14, spin = 9.0, danger = 1.2, margin = 0.05, proj = true }
+K.shell = { r = 0.24, hostile = true, sfx = "bounce", col = "yellow", y = 0.45, danger = 1.2, margin = 0.05, proj = true }
+K.skull = { r = 0.36, deco = true, ai = "skull", col = "white" }
+
+-- ---------------------------------------------------------------- pooled actors
+
+local function make_unit(kind, mkey)
+    local m = model(mkey)
+    local root = reg(spawn_entity(uname("RT_" .. kind .. "_")))
+    set_component(root, "Visible", false)
+    set_translation(root, 0, -50, 0)
+    local fnodes, cubes = build_model(root, m, not K[kind].proj)
+    local u = { kind = kind, mkey = mkey, k = K[kind], m = m, e = root, fnodes = fnodes, cubes = cubes, frame = 1,
+        vis = false, alive = false, x = 0, z = 0, vx = 0, vz = 0, kx = 0, kz = 0, spawn_t = 0, age = 0, face = 0,
+        yaw = 0, ph = math.random() * 6.28, sc = 1, anim = 0 }
+    units[#units + 1] = u
+    return u
+end
+
+local function show_unit(u, v)
+    if u.vis == v then return end
+    u.vis = v
+    set_vis(u.e, v)
+    if not v then set_translation(u.e, 0, -50, 0) end
+end
+
+local function set_frame(u, f)
+    if u.frame == f or not u.fnodes[f] then return end
+    set_vis(u.fnodes[u.frame], false)
+    set_vis(u.fnodes[f], true)
+    u.frame = f
+end
+
+local function acquire(kind, mkey)
+    mkey = mkey or kind
+    local pool = pools[mkey]
+    if not pool then
+        pool = {}
+        pools[mkey] = pool
+    end
+    for i = 1, #pool do
+        if not pool[i].alive then return pool[i] end
+    end
+    local u = make_unit(kind, mkey)
+    pool[#pool + 1] = u
+    return u
+end
+
 -- ---------------------------------------------------------------- player
 
 local function build_player()
     local root = reg(spawn_entity("RT_player"))
-    local parts = {}
-    local function part(mesh, x, y, z, sx, sy, sz, col, em, unlit)
-        local e = reg(spawn_primitive(mesh, uname("RT_player_part")))
-        set_parent(e, root)
-        set_translation(e, x, y, z)
-        set_scale(e, sx, sy, sz)
-        set_material(e, { color = col, emissive = em, unlit = unlit or false })
-        set_component(e, "CanCastShadow", false)
-        parts[#parts + 1] = e
-    end
-    part("cube", 0, 0.62, 0, 0.56, 0.95, 0.36, { 0.35, 0.8, 1.0 }, 0.9)
-    part("sphere", 0, 1.38, 0, 0.26, 0.26, 0.26, { 1.0, 1.0, 1.0 }, 2.0, true)
-    part("cube", -0.42, 0.75, -0.2, 0.13, 0.13, 0.6, { 0.4, 0.9, 1.0 }, 2.5, true)
-    part("cube", 0.42, 0.75, -0.2, 0.13, 0.13, 0.6, { 0.4, 0.9, 1.0 }, 2.5, true)
-    local disc = reg(spawn_primitive("cylinder", uname("RT_player_part")))
-    set_parent(disc, root)
-    set_translation(disc, 0, 0.06, 0)
-    set_scale(disc, 0.85, 0.85, 0.05)
-    set_rotation(disc, 0, math.pi / 2, 0)
-    set_material(disc, { color = { 0.2, 0.9, 1.0 }, emissive = 2.5, unlit = true })
-    set_component(disc, "CanCastShadow", false)
-    parts[#parts + 1] = disc
-    local light = reg(spawn_light("point", { color = { 0.5, 0.9, 1.0 }, intensity = 18, range = 8 }, uname("RT_player_light")))
-    set_parent(light, root)
-    set_translation(light, 0, 2.2, 0)
-    player = { e = root, parts = parts, vis = true }
+    local m = model("player")
+    local fnodes, cubes = build_model(root, m, true)
+    player = { e = root, m = m, fnodes = fnodes, cubes = cubes, frame = 1, vis = true, flash = false }
 end
 
 local function show_player(v)
     if player.vis == v then return end
     player.vis = v
-    for i = 1, #player.parts do set_vis(player.parts[i], v) end
+    set_vis(player.e, v)
     if not v then set_translation(player.e, 0, -50, 0) end
+end
+
+local function flash_player(col)
+    for _, c in ipairs(player.cubes) do share_material(c[1], mat_of(col or c[2])) end
+    player.flash = col ~= nil
 end
 
 -- ---------------------------------------------------------------- scoring and kills
@@ -390,52 +436,59 @@ local function add_score(n)
         g.next_life = g.next_life + EXTRA_LIFE
         g.lives = g.lives + 1
         sfx("extra_life", 1.0, 1.0)
-        popup(g.px, g.pz - 1.5, "EXTRA LIFE", "yellow", 30)
+        popup(g.px, g.pz - 1.5, "EXTRA MAN", "yellow", 30)
     end
 end
 
-local function kill_unit(u, by_player)
+local function unit_y(u) return u.k.y or 0 end
+
+-- dx, dz: direction of the shot that killed it (nil explodes every way)
+local function kill_unit(u, by_player, dx, dz)
     local k = u.k
     u.alive = false
     show_unit(u, false)
-    local col = k.col
-    burst(col, u.x, 0.7, u.z, k.burst or 10, 8 + (k.r or 0.5) * 4)
-    if k.pts and k.pts >= 500 then
-        ring(u.x, u.z, 3.4, 0.5, col)
-        add_shake(0.5)
-    elseif k.hulk then
-        add_shake(0.1)
+    if k.proj then
+        burst(k.col, u.x, unit_y(u) + 0.2, u.z, 10, 5, 0.1)
     else
-        add_shake(0.1)
+        explode(u.m, u.x, unit_y(u), u.z, dx, dz)
+    end
+    if k.pts and k.pts >= 500 then
+        ring(u.x, u.z, 3.4, 0.5, k.col)
+        add_shake(0.45)
     end
     if k.sfx then sfx(k.sfx, frand(0.92, 1.12), (k.pts or 0) >= 500 and 1.0 or 0.75, 0.035) end
     if by_player and k.pts and k.pts > 0 then
         add_score(k.pts)
-        popup(u.x, u.z, tostring(k.pts), col)
+        if k.pts >= 500 then popup(u.x, u.z, tostring(k.pts), k.col) end
         g.stats.kills = g.stats.kills + 1
     end
 end
 
 -- ---------------------------------------------------------------- spawning
 
-local function spawn_unit(kind, x, z, spawn_t, extra)
-    local u = acquire(kind)
+-- spawn_t: delay + materialize time; the actor is drawn (and dangerous) once it reaches 0
+local function spawn_unit(kind, x, z, delay, extra, mode, mkey, mat_t)
+    local u = acquire(kind, mkey)
     u.alive = true
     u.x, u.z, u.vx, u.vz, u.kx, u.kz = x, z, 0, 0, 0, 0
-    u.spawn_t = spawn_t or 0.0
-    u.spawn_total = max(u.spawn_t, 0.01)
+    u.mat_t = mat_t or MAT_T
+    u.mode = mode or g.mat_mode
+    u.spawn_t = (delay or 0) + u.mat_t
+    if delay == false then u.spawn_t = 0 end
+    u.emitted = false
     u.age = 0
     u.face = frand(-math.pi, math.pi)
+    u.yaw = 0
     u.sc = -1
     u.st = frand(0, 0.3)
-    u.moving = false
+    u.at = 0
     u.turn_t = 0
     u.fire_t = frand(1.5, 3.2)
     u.life = 6
     u.n_left = 0
     u.bounces = 0
-    u.flash_i = math.random(1, #FLASH)
-    u.flash_t = 0
+    u.dx, u.dz = 0, 0
+    u.trail_t = 0
     u.ang = frand(-math.pi, math.pi)
     u.tid, u.hdg, u.spd, u.target = nil, nil, nil, nil
     if kind == "spheroid" then
@@ -450,8 +503,13 @@ local function spawn_unit(kind, x, z, spawn_t, extra)
     if extra then
         for key, val in pairs(extra) do u[key] = val end
     end
-    show_unit(u, true)
-    set_translation(u.e, x, 0, z)
+    set_frame(u, 1)
+    if u.spawn_t <= 0 then
+        show_unit(u, true)
+        set_translation(u.e, x, unit_y(u), z)
+    else
+        show_unit(u, false)
+    end
     return u
 end
 
@@ -465,13 +523,13 @@ local function alive_count(pred)
 end
 
 local function killable(u) return u.k.kill end
-local function is_human(u) return u.k.human end
 
-local function free_pos(min_center, margin, spacing, others)
+local function free_pos(min_center, margin, spacing, others, cx, cz)
+    cx, cz = cx or 0, cz or 0
     for _ = 1, 40 do
         local x = frand(-HW + margin, HW - margin)
         local z = frand(-HD + margin, HD - margin)
-        local ok = (x * x + z * z) >= min_center * min_center
+        local ok = ((x - cx) ^ 2 + (z - cz) ^ 2) >= min_center * min_center
         if ok and spacing and others then
             for i = 1, #others do
                 local o = others[i]
@@ -484,35 +542,39 @@ local function free_pos(min_center, margin, spacing, others)
     return frand(-HW + margin, HW - margin), frand(-HD + margin, HD - margin)
 end
 
--- ---------------------------------------------------------------- waves
+-- ---------------------------------------------------------------- waves (after the original's table)
 
 local WAVES = {
-    { grunt = 15, electrode = 5, family = 1 },
-    { grunt = 18, electrode = 10, hulk = 2, family = 2 },
-    { grunt = 12, spheroid = 3, electrode = 6, hulk = 2, family = 2 },
-    { grunt = 6, brain = 4, electrode = 3, hulk = 1, family = 3 },
-    { grunt = 10, quark = 3, electrode = 8, hulk = 3, family = 2 },
-    { grunt = 28, electrode = 10, hulk = 5, family = 1 },
-    { grunt = 10, spheroid = 5, brain = 2, electrode = 6, hulk = 2, family = 2 },
-    { grunt = 8, brain = 7, electrode = 4, hulk = 2, family = 3 },
-    { grunt = 14, quark = 4, spheroid = 2, electrode = 8, hulk = 4, family = 2 },
-    { grunt = 35, electrode = 14, hulk = 8, brain = 2, family = 1 },
+    { grunt = 15, electrode = 5, mommy = 1, daddy = 1, mikey = 1 },
+    { grunt = 17, electrode = 15, hulk = 5, spheroid = 1, mommy = 1, daddy = 1, mikey = 1 },
+    { grunt = 22, electrode = 25, hulk = 6, spheroid = 3, mommy = 2, daddy = 2, mikey = 2 },
+    { grunt = 34, electrode = 20, hulk = 7, spheroid = 4, mommy = 2, daddy = 2, mikey = 2 },
+    { grunt = 20, electrode = 15, brain = 12, spheroid = 1, mommy = 4, daddy = 4, mikey = 4 },
+    { grunt = 32, electrode = 25, hulk = 7, spheroid = 4, mommy = 3, daddy = 3, mikey = 3 },
+    { hulk = 12, quark = 9, mommy = 3, daddy = 3, mikey = 3 },
+    { grunt = 35, electrode = 25, hulk = 8, spheroid = 5, mommy = 3, daddy = 3, mikey = 3 },
+    { grunt = 60, hulk = 4, spheroid = 5, mommy = 3, daddy = 3, mikey = 3 },
+    { grunt = 25, electrode = 15, hulk = 2, brain = 18, spheroid = 1, daddy = 8 },
+    { grunt = 35, electrode = 25, hulk = 8, spheroid = 5, quark = 1, mommy = 3, daddy = 3, mikey = 3 },
+    { hulk = 13, quark = 10, spheroid = 1, mommy = 3, daddy = 3, mikey = 3 },
 }
 
 local function wave_def(w)
     if w <= #WAVES then return WAVES[w] end
-    local base = WAVES[6 + (w - 11) % 5]
-    local s = 1 + 0.06 * (w - 10)
+    local base = WAVES[6 + (w - 13) % 7]
+    local s = 1 + 0.05 * (w - 12)
     local d = {}
     for key, n in pairs(base) do d[key] = n end
     d.grunt = min(64, floor((d.grunt or 0) * s))
     d.hulk = min(14, floor((d.hulk or 0) * s + 0.5))
-    d.brain = min(12, floor((d.brain or 0) * s))
+    d.brain = min(20, floor((d.brain or 0) * s))
     d.spheroid = min(8, floor((d.spheroid or 0) * s))
-    d.quark = min(6, floor((d.quark or 0) * s))
+    d.quark = min(10, floor((d.quark or 0) * s))
     d.electrode = min(30, floor((d.electrode or 0) * s))
     return d
 end
+
+local function electrode_key(w) return "electrode" .. ((w - 1) % SPR.ELECTRODE_VARIANTS + 1) end
 
 local function clear_all_units()
     for i = 1, #units do
@@ -524,24 +586,33 @@ local function clear_all_units()
     end
 end
 
--- Hidden pooled entities still cost frame time, so a new game despawns a large surplus left by the last one.
-local function trim_pools(d)
-    local fam = (d.family or 0)
+local function clear_bullets()
+    for i = 1, #pbullets do
+        local b = pbullets[i]
+        b.alive = false
+        if b.vis then
+            b.vis = false
+            set_vis(b.e, false)
+        end
+    end
+end
+
+-- Hidden pooled models still cost frame time, so drop a large surplus (and last wave's electrodes).
+local function trim_pools(d, ekey)
+    local fam = max(d.mommy or 0, d.daddy or 0, d.mikey or 0)
     local keep = {
-        grunt = d.grunt or 0, electrode = d.electrode or 0, hulk = d.hulk or 0, brain = d.brain or 0,
-        spheroid = d.spheroid or 0, quark = d.quark or 0, mommy = fam, daddy = fam, mikey = fam,
-        enforcer = 4 * (d.spheroid or 0), tank = 3 * (d.quark or 0), prog = 3 * fam,
-        missile = 4, spark = 4, shell = 4,
+        grunt = d.grunt or 0, hulk = d.hulk or 0, brain = d.brain or 0, spheroid = d.spheroid or 0, quark = d.quark or 0,
+        mommy = fam, daddy = fam, mikey = fam, enforcer = 4 * (d.spheroid or 0), tank = 3 * (d.quark or 0),
+        prog = 3 * fam, missile = 4, spark = 4, shell = 4, skull = 2,
     }
+    keep[ekey] = d.electrode or 0
     local removed = false
-    for kind, pool in pairs(pools) do
-        -- despawned entities leak their materials in this engine, so only trim a big surplus
-        local lim = (keep[kind] or 0) + 16
+    for mkey, pool in pairs(pools) do
+        local lim = keep[mkey] and keep[mkey] + 12 or 0
         for i = #pool, lim + 1, -1 do
             local u = pool[i]
             if not u.alive then
                 despawn_entity(u.e)
-                for _, pe in ipairs(u.parts) do despawn_entity(pe) end
                 u.gone = true
                 removed = true
                 table.remove(pool, i)
@@ -557,68 +628,84 @@ local function trim_pools(d)
     end
 end
 
+local function materialize_player(delay)
+    g.p_spawn = delay + MAT_T * 0.8
+    g.p_emitted = false
+    show_player(false)
+end
+
 local function start_wave(w)
     g.wave = w
+    g.wave_t = 0
     g.rescue_n = 0
     g.stats.waves = max(g.stats.waves, w)
-    if w > 1 then g.stats.cleared = g.stats.cleared + 1 end
-    g.wspd = min(2.1, 1.0 + 0.045 * (w - 1))
-    g.grunt_speed = min(9.0, 4.0 + 0.2 * (w - 1))
+    g.mat_mode = (w % 2 == 1) and "v" or "h"
     clear_all_units()
-    if w == 1 then trim_pools(wave_def(w)) end
+    local d = wave_def(w)
+    local ekey = electrode_key(w)
+    trim_pools(d, ekey)
     g.px, g.pz, g.pvx, g.pvz = 0.0, 0.0, 0.0, 0.0
-    g.invuln = 2.2
+    g.p_alive = true
+    g.invuln = 1.6
     g.fire_cd = 0
     g.state = "running"
-    g.banner, g.banner_t = "WAVE " .. w, 2.2
-    for i = 1, #pbullets do
-        pbullets[i].alive = false
-        if pbullets[i].vis then
-            pbullets[i].vis = false
-            set_vis(pbullets[i].e, false)
-        end
-    end
+    g.banner, g.banner_t = "", 0
+    clear_bullets()
+    materialize_player(0.0)
 
-    local d = wave_def(w)
     local taken = {}
-    local function put(kind, count, min_c, margin, spacing, t0, t1, extra_fn)
+    local function put(kind, count, min_c, margin, spacing, mkey)
         for _ = 1, count do
             local x, z = free_pos(min_c, margin, spacing, spacing and taken or nil)
             if spacing then taken[#taken + 1] = { x, z } end
-            local u = spawn_unit(kind, x, z, frand(t0, t1), extra_fn and extra_fn() or nil)
-            u.face = atan(-(0 - x), -(0 - z))
+            spawn_unit(kind, x, z, frand(0.0, 0.55), nil, nil, mkey)
         end
     end
-    put("hulk", d.hulk or 0, 9.0, 2.5, 4.0, 0.5, 1.4)
-    put("electrode", d.electrode or 0, 4.5, 1.5, 2.6, 0.4, 1.6)
-    for _ = 1, d.family or 0 do
-        for _, name in ipairs({ "mommy", "daddy", "mikey" }) do
-            put(name, 1, 4.0, 1.5, nil, 0.5, 1.2)
-        end
+    put("electrode", d.electrode or 0, 4.5, 1.5, 2.2, ekey)
+    put("hulk", d.hulk or 0, 8.0, 2.0, 3.0)
+    put("mommy", d.mommy or 0, 3.5, 1.5)
+    put("daddy", d.daddy or 0, 3.5, 1.5)
+    put("mikey", d.mikey or 0, 3.5, 1.5)
+    put("grunt", d.grunt or 0, 7.0, 1.0)
+    put("brain", d.brain or 0, 7.5, 1.5)
+    put("spheroid", d.spheroid or 0, 8.0, 1.5)
+    put("quark", d.quark or 0, 8.0, 1.5)
+    sfx("materialize", 1.0, 0.9)
+end
+
+-- the rectangle zoom; `after` runs when it has filled the arena. keep: hide the actors but keep
+-- them for `after` (a death replays the wave with the survivors)
+local function begin_transition(after, keep)
+    g.state = "trans"
+    g.trans_t = 0
+    g.trans_after = after
+    g.tcx, g.tcz = g.px, g.pz
+    if keep then
+        for i = 1, #units do show_unit(units[i], false) end
+    else
+        clear_all_units()
     end
-    put("grunt", d.grunt or 0, 7.0, 1.2, nil, 0.6, 1.6)
-    put("brain", d.brain or 0, 8.0, 2.0, nil, 0.8, 1.6)
-    put("spheroid", d.spheroid or 0, 8.0, 2.0, nil, 0.8, 1.8)
-    put("quark", d.quark or 0, 8.0, 2.0, nil, 0.8, 1.8)
-    sfx("wave_start", 1.0, 0.9)
+    clear_bullets()
+    show_player(false)
+    sfx("transition", 1.0, 0.8)
 end
 
 local function finish_wave()
     g.state = "clearing"
-    g.clear_t = 2.0
-    g.banner, g.banner_t = "WAVE " .. g.wave .. " CLEARED", 2.0
-    sfx("wave_clear", 1.0, 0.9)
+    g.clear_t = 0.7
+    g.stats.cleared = g.stats.cleared + 1
+    sfx("wave_clear", 1.0, 0.7)
+    -- the hulks, electrodes and any family left vanish with the wave
     for i = 1, #units do
         local u = units[i]
-        if u.alive then
-            if u.k.human then
-                u.alive = false
-                show_unit(u, false)
-                g.stats.left = (g.stats.left or 0) + 1
-                burst("white", u.x, 0.7, u.z, 8, 5)
-            else
-                kill_unit(u, false)
-            end
+        if u.alive and u.spawn_t <= 0 and not u.k.proj and not u.k.deco then
+            if u.k.human then g.stats.left = (g.stats.left or 0) + 1 end
+            u.alive = false
+            show_unit(u, false)
+            explode(u.m, u.x, unit_y(u), u.z, nil, nil, 0.45, 6)
+        elseif u.alive then
+            u.alive = false
+            show_unit(u, false)
         end
     end
 end
@@ -632,9 +719,9 @@ local function new_game(demo)
     g.popups = {}
     g.paused = false
     g.demo_t = 0
-    show_player(true)
+    if player.flash then flash_player(nil) end
     if not demo then sfx("start", 1.0, 1.0) end
-    start_wave(1)
+    begin_transition(function() start_wave(1) end)
 end
 
 -- ---------------------------------------------------------------- bots helpers (decls)
@@ -649,19 +736,18 @@ local function fire_bullet(fx, fz)
     end
     if not b then
         if #pbullets >= N_PBULLETS then return end
-        local e = reg(spawn_primitive("cube", uname("RT_bullet")))
-        set_material(e, { color = { 1.0, 0.95, 0.5 }, emissive = 4.0, unlit = true })
-        set_scale(e, 0.13, 0.13, 0.8)
+        local e = reg(spawn_primitive("cube", uname("RT_bullet"), { material_of = mat_of("glow_white") }))
+        set_scale(e, 0.07, 0.07, 1.1)
         set_component(e, "CanCastShadow", false)
         set_component(e, "Visible", false)
         b = { e = e, alive = false, vis = false, x = 0, z = 0, vx = 0, vz = 0, life = 0 }
         pbullets[#pbullets + 1] = b
     end
     b.alive = true
-    b.x, b.z = g.px + fx * 0.55, g.pz + fz * 0.55
+    b.x, b.z = g.px + fx * 0.5, g.pz + fz * 0.5
     b.vx, b.vz = fx * B_SPEED, fz * B_SPEED
     b.life = 1.4
-    set_translation(b.e, b.x, 0.75, b.z)
+    set_translation(b.e, b.x, 0.8, b.z)
     set_rotation(b.e, atan(-fx, -fz), 0, 0)
     if not b.vis then
         b.vis = true
@@ -687,7 +773,7 @@ local function read_input(dt)
         if is_key_pressed("ArrowUp") then fz = fz - 1 end
         if fx == 0 and fz == 0 and is_mouse_button_pressed(0) then
             local m = get_mouse_position()
-            local gp = m and screen_to_ground(m.x, m.y, 0.7)
+            local gp = m and screen_to_ground(m.x, m.y, 0.8)
             if gp then
                 local dx, dz = gp.x - g.px, gp.z - g.pz
                 local d = sqrt(dx * dx + dz * dz)
@@ -702,10 +788,48 @@ local function read_input(dt)
     return mx, mz, fx, fz
 end
 
+local function draw_player(mx, mz, dt)
+    local moving = mx ~= 0 or mz ~= 0
+    if moving then
+        g.p_anim = g.p_anim + dt * 9
+        local f = 2 + floor(g.p_anim) % 2
+        if player.frame ~= f then
+            set_vis(player.fnodes[player.frame], false)
+            set_vis(player.fnodes[f], true)
+            player.frame = f
+        end
+    elseif player.frame ~= 1 then
+        set_vis(player.fnodes[player.frame], false)
+        set_vis(player.fnodes[1], true)
+        player.frame = 1
+    end
+    -- turn a little toward the way the player moves (or fires)
+    local want = 0
+    local hx = (g.fx_last ~= 0 and g.fx_last) or mx
+    if hx ~= 0 then want = 0.55 * hx end
+    g.p_yaw = g.p_yaw + (want - g.p_yaw) * min(1, dt * 12)
+    set_translation(player.e, g.px, 0, g.pz)
+    set_rotation(player.e, g.p_yaw, -LEAN, 0)
+end
+
 local function update_player(dt)
     if g.invuln > 0 then g.invuln = g.invuln - dt end
     if not g.p_alive then return end
+    if g.p_spawn > 0 then
+        g.p_spawn = g.p_spawn - dt
+        if not g.p_emitted and g.p_spawn <= MAT_T * 0.8 then
+            g.p_emitted = true
+            materialize(player.m, g.px, 0, g.pz, g.mat_mode, MAT_T * 0.8)
+        end
+        if g.p_spawn <= 0 then
+            show_player(true)
+            g.p_yaw = 0
+            draw_player(0, 0, dt)
+        end
+        return
+    end
     local mx, mz, fx, fz = read_input(dt)
+    g.fx_last = fx
     g.pvx, g.pvz = mx * P_SPEED, mz * P_SPEED
     g.px = clamp(g.px + g.pvx * dt, -LX, LX)
     g.pz = clamp(g.pz + g.pvz * dt, -LZ, LZ)
@@ -719,55 +843,51 @@ local function update_player(dt)
         fire_bullet(fx, fz)
         g.fire_cd = FIRE_INT
     end
-    -- draw
-    local blink = g.invuln > 0 and (floor(g.time * 14) % 2 == 0)
-    show_player(not blink)
-    local bob = (mx ~= 0 or mz ~= 0) and abs(sin(g.time * 16)) * 0.08 or 0
-    set_translation(player.e, g.px, bob, g.pz)
-    set_rotation(player.e, g.face, 0, (mx ~= 0 or mz ~= 0) and sin(g.time * 16) * 0.08 or 0)
+    show_player(true)
+    draw_player(mx, mz, dt)
 end
 
 local function kill_player()
-    if not g.p_alive or g.invuln > 0 or g.god then return end
+    if g.state ~= "running" or not g.p_alive or g.invuln > 0 or g.god or g.p_spawn > 0 then return end
     g.p_alive = false
     g.lives = g.lives - 1
     g.stats.deaths = g.stats.deaths + 1
     g.state = "dying"
-    g.dying_t = 2.2
-    show_player(false)
-    burst("white", g.px, 0.8, g.pz, 40, 13, 0.24)
-    burst("cyan", g.px, 0.8, g.pz, 30, 9, 0.2)
-    ring(g.px, g.pz, 7.0, 0.8, "cyan")
-    ring(g.px, g.pz, 4.0, 0.5, "white")
-    add_shake(1.0)
+    g.dying_t = 0
+    g.exploded = false
+    g.flash_i = 0
     sfx("player_die", 1.0, 1.0)
 end
 
+-- after a death: the player and every surviving enemy materialize again; the family stays put
 local function respawn_player()
     g.p_alive = true
     g.state = "running"
     g.px, g.pz, g.pvx, g.pvz = 0.0, 0.0, 0.0, 0.0
-    g.invuln = 2.5
-    -- clear projectiles and push hostile units out of the respawn zone
+    g.invuln = 1.6
+    g.rescue_n = 0
+    g.wave_t = 0
+    materialize_player(0.0)
     for i = 1, #units do
         local u = units[i]
         if u.alive then
-            if u.k.proj then
+            if u.k.proj or u.k.deco then
                 u.alive = false
                 show_unit(u, false)
-            elseif u.k.hostile then
-                local d = sqrt(u.x * u.x + u.z * u.z)
-                if d < 8.0 then
-                    local ux, uz = 1.0, 0.0
-                    if d > 0.01 then ux, uz = u.x / d, u.z / d end
-                    local r = u.k.r
-                    u.x = clamp(ux * 8.5, -HW + r, HW - r)
-                    u.z = clamp(uz * 8.5, -HD + r, HD - r)
-                end
+            elseif u.k.hostile and u.kind ~= "electrode" then
+                local m = u.k.hulk and 2.0 or 1.0
+                u.x, u.z = free_pos(8.0, m, nil, nil)
+                u.kx, u.kz = 0, 0
+                u.mode = g.mat_mode
+                u.spawn_t = frand(0.0, 0.5) + u.mat_t
+                u.emitted = false
+                show_unit(u, false)
+            elseif u.spawn_t <= 0 then
+                show_unit(u, true)
             end
         end
     end
-    sfx("wave_start", 1.3, 0.7)
+    sfx("materialize", 1.0, 0.8)
 end
 
 -- ---------------------------------------------------------------- actor AI
@@ -797,81 +917,92 @@ local function wander(u, dt, speed_lo, speed_hi, t_lo, t_hi)
     u.turn_t = u.turn_t - dt
     if u.turn_t <= 0 then
         u.turn_t = frand(t_lo, t_hi)
-        u.ang = frand(-math.pi, math.pi)
+        -- the family walks in the eight joystick directions, like everything else in 1982
+        u.ang = floor(math.random() * 8) * (math.pi / 4)
         u.spd = (math.random() < 0.2) and 0 or frand(speed_lo, speed_hi)
     end
     u.spd = u.spd or speed_lo
     u.vx, u.vz = cos(u.ang) * u.spd, sin(u.ang) * u.spd
-    -- turn away from walls
     local m = 1.6
     if (u.x > HW - m and u.vx > 0) or (u.x < -HW + m and u.vx < 0) then u.ang = math.pi - u.ang end
     if (u.z > HD - m and u.vz > 0) or (u.z < -HD + m and u.vz < 0) then u.ang = -u.ang end
-    if u.spd > 0 then u.face = atan(-u.vx, -u.vz) end
 end
 
+-- grunts march at the player in quick 8-way steps that come faster the longer the wave lasts
 function AI.grunt(u, dt)
     u.st = u.st - dt
     if u.st <= 0 then
-        u.moving = not u.moving
-        u.st = u.moving and frand(0.2, 0.42) or frand(0.04, 0.14)
-    end
-    if u.moving then
-        local ux, uz = dir_to_player(u)
-        local sp = g.grunt_speed * 1.45
-        u.vx, u.vz = ux * sp, uz * sp
-        u.face = atan(-ux, -uz)
-    else
-        u.vx, u.vz = 0, 0
+        u.st = g.step_int * frand(0.8, 1.2)
+        local dx, dz = g.px - u.x, g.pz - u.z
+        local sx = (dx > 0.3 and 1) or (dx < -0.3 and -1) or 0
+        local sz = (dz > 0.3 and 1) or (dz < -0.3 and -1) or 0
+        if sx ~= 0 and sz ~= 0 then sx, sz = sx * 0.7071, sz * 0.7071 end
+        u.x, u.z = u.x + sx * GRUNT_STEP, u.z + sz * GRUNT_STEP
+        u.vx, u.vz = sx * g.grunt_speed, sz * g.grunt_speed
+        u.anim = (u.anim % 2) + 1
+        set_frame(u, 1 + u.anim)
     end
 end
 
 function AI.prog(u, dt)
     local ux, uz = dir_to_player(u)
-    local sp = min(8.5, 4.6 + 0.12 * g.wave) * (0.8 + 0.3 * sin(u.age * 5 + u.ph))
-    u.vx, u.vz = ux * sp, uz * sp
-    u.face = atan(-ux, -uz)
+    local sp = min(8.0, 4.6 + 0.12 * g.wave) * (0.8 + 0.3 * sin(u.age * 5 + u.ph))
+    -- progs snap to eight directions too
+    local a = floor(atan(uz, ux) / (math.pi / 4) + 0.5) * (math.pi / 4)
+    u.vx, u.vz = cos(a) * sp, sin(a) * sp
+    u.trail_t = u.trail_t - dt
+    if u.trail_t <= 0 then
+        u.trail_t = 0.07
+        u.trail_i = ((u.trail_i or 0) % 4) + 1
+        afterimage(u.m, u.x, 0, u.z, ({ "fx_cyan", "fx_magenta", "fx_yellow", "fx_red" })[u.trail_i]:sub(4))
+    end
 end
 
 function AI.human(u, dt)
-    wander(u, dt, 1.6, 2.7, 0.6, 2.2)
+    wander(u, dt, 1.4, 2.4, 0.6, 2.2)
 end
 
-function AI.electrode(u, dt)
-    u.flash_t = u.flash_t - dt
-    if u.flash_t <= 0 then
-        u.flash_t = 0.11
-        u.flash_i = u.flash_i % #FLASH + 1
-        local c = PAL[FLASH[u.flash_i]]
-        for n = 1, #u.parts do set_material(u.parts[n], { color = c }) end
-    end
-end
-
+-- hulks lumber along one axis at a time, toward the family or the player
 function AI.hulk(u, dt)
     u.turn_t = u.turn_t - dt
     if u.turn_t <= 0 then
-        u.turn_t = frand(0.8, 2.2)
+        u.turn_t = frand(0.7, 1.8)
         local tx, tz = g.px, g.pz
-        if math.random() < 0.55 then
-            local h = nearest_human(u.x, u.z, 30)
+        if math.random() < 0.4 then
+            local h = nearest_human(u.x, u.z, 12)
             if h then tx, tz = h.x, h.z end
         end
-        u.ang = atan(tz - u.z, tx - u.x) + frand(-0.9, 0.9)
-        u.spd = frand(0.6, 1.0)
+        local dx, dz = tx - u.x, tz - u.z
+        if math.random() < 0.2 then
+            if math.random() < 0.5 then u.dx, u.dz = (math.random() < 0.5) and 1 or -1, 0
+            else u.dx, u.dz = 0, (math.random() < 0.5) and 1 or -1 end
+        elseif abs(dx) > abs(dz) then
+            u.dx, u.dz = sign(dx), 0
+        else
+            u.dx, u.dz = 0, sign(dz)
+        end
     end
-    local sp = (2.7 + 0.05 * g.wave) * (u.spd or 0.8)
-    u.vx, u.vz = cos(u.ang) * sp, sin(u.ang) * sp
-    local m = 2.2
-    if (u.x > HW - m and u.vx > 0) or (u.x < -HW + m and u.vx < 0) then u.ang = math.pi - u.ang end
-    if (u.z > HD - m and u.vz > 0) or (u.z < -HD + m and u.vz < 0) then u.ang = -u.ang end
-    u.face = atan(-u.vx, -u.vz)
+    local sp = 2.3 + 0.05 * g.wave
+    u.vx, u.vz = u.dx * sp, u.dz * sp
+    local m = 1.2
+    if (u.x > HW - m and u.vx > 0) or (u.x < -HW + m and u.vx < 0) then u.dx = -u.dx end
+    if (u.z > HD - m and u.vz > 0) or (u.z < -HD + m and u.vz < 0) then u.dz = -u.dz end
+end
+
+function AI.skull(u, dt)
+    u.life = u.life - dt
+    if u.life <= 0 then
+        u.alive = false
+        show_unit(u, false)
+    end
 end
 
 local function fire_missile(u)
     local ux, uz = dir_to_player(u)
-    local m = spawn_unit("missile", u.x, u.z, 0.0)
+    local m = spawn_unit("missile", u.x, u.z, false)
     m.hdg = atan(uz, ux) + frand(-0.5, 0.5)
     m.life = 4.5
-    m.spd = 7.5 + 0.25 * g.wave
+    m.spd = 7.0 + 0.2 * g.wave
     sfx("missile", frand(0.95, 1.1), 0.8, 0.12)
 end
 
@@ -888,9 +1019,8 @@ function AI.brain(u, dt)
     end
     local dx, dz = tx - u.x, tz - u.z
     local d = sqrt(dx * dx + dz * dz) + 1e-6
-    local sp = min(6.0, 3.0 + 0.1 * g.wave) * (0.8 + 0.3 * sin(u.age * 3 + u.ph))
+    local sp = min(5.0, 2.6 + 0.1 * g.wave) * (0.8 + 0.3 * sin(u.age * 3 + u.ph))
     u.vx, u.vz = dx / d * sp, dz / d * sp
-    u.face = atan(-dx, -dz)
     u.fire_t = u.fire_t - dt
     if u.fire_t <= 0 and g.p_alive then
         u.fire_t = max(1.4, frand(2.8, 4.8) - 0.1 * g.wave)
@@ -900,39 +1030,37 @@ function AI.brain(u, dt)
     end
 end
 
+-- cruise missiles home in on the player along a zig-zag
 function AI.missile(u, dt)
     u.life = u.life - dt
-    local want = atan(g.pz - u.z, g.px - u.x)
+    local want = atan(g.pz - u.z, g.px - u.x) + sin(u.age * 14) * 0.9
     local diff = wrap_pi(want - u.hdg)
-    u.hdg = u.hdg + clamp(diff, -1.5 * dt, 1.5 * dt)
+    u.hdg = u.hdg + clamp(diff, -3.0 * dt, 3.0 * dt)
     u.vx, u.vz = cos(u.hdg) * u.spd, sin(u.hdg) * u.spd
-    u.face = atan(-u.vx, -u.vz)
-    if u.age % 0.06 < dt then
-        spark("orange", u.x - cos(u.hdg) * 0.5, 0.7, u.z - sin(u.hdg) * 0.5, frand(-0.6, 0.6), frand(0.2, 1.0), frand(-0.6, 0.6), 0.3, 0.14)
+    if u.age % 0.04 < dt then
+        px_particle(u.x, 0.6, u.z, (floor(u.age * 20) % 2 == 0) and "magenta" or "white", 0, 0, 0, 0.35, 1.8, true)
     end
     if u.life <= 0 then kill_unit(u, false) end
 end
 
-local function wander_spawner(u, dt, speed, child, child_t, gap_lo, gap_hi)
+local function wander_spawner(u, dt, speed, child, gap_lo, gap_hi)
     u.turn_t = u.turn_t - dt
     if u.turn_t <= 0 then
-        u.turn_t = frand(1.0, 2.2)
+        u.turn_t = frand(0.8, 2.0)
         u.ang = atan(frand(-HD + 2, HD - 2) - u.z, frand(-HW + 3, HW - 3) - u.x)
     end
     u.hdg = u.hdg or u.ang
-    u.hdg = u.hdg + clamp(wrap_pi(u.ang - u.hdg), -2.2 * dt, 2.2 * dt)
+    u.hdg = u.hdg + clamp(wrap_pi(u.ang - u.hdg), -2.6 * dt, 2.6 * dt)
     u.vx, u.vz = cos(u.hdg) * speed, sin(u.hdg) * speed
     local m = 2.0
     if (u.x > HW - m and u.vx > 0) or (u.x < -HW + m and u.vx < 0) then u.ang = math.pi - u.ang u.hdg = math.pi - u.hdg end
     if (u.z > HD - m and u.vz > 0) or (u.z < -HD + m and u.vz < 0) then u.ang = -u.ang u.hdg = -u.hdg end
-    u.face = u.face + dt * 3
     u.fire_t = u.fire_t - dt
     if u.fire_t <= 0 then
         if u.n_left > 0 then
             u.n_left = u.n_left - 1
-            spawn_unit(child, u.x, u.z, child_t)
+            spawn_unit(child, u.x, u.z, 0, nil, "r", nil, 0.4)
             sfx("spawn", 0.8, 0.8, 0.05)
-            ring(u.x, u.z, 2.2, 0.4, K[u.kind].col)
             u.fire_t = frand(gap_lo, gap_hi)
         else
             -- spent: vanishes without a score
@@ -942,22 +1070,21 @@ local function wander_spawner(u, dt, speed, child, child_t, gap_lo, gap_hi)
 end
 
 function AI.spheroid(u, dt)
-    wander_spawner(u, dt, 5.5 + 0.05 * g.wave, "enforcer", 0.6, 1.0, 1.8)
+    wander_spawner(u, dt, 6.0 + 0.05 * g.wave, "enforcer", 1.0, 1.8)
 end
 
 function AI.quark(u, dt)
-    wander_spawner(u, dt, 3.6, "tank", 0.8, 2.4, 3.6)
+    wander_spawner(u, dt, 4.0, "tank", 2.2, 3.4)
 end
 
 function AI.enforcer(u, dt)
     local ux, uz, d = dir_to_player(u)
-    local sp = (3.2 + 0.06 * g.wave) * (0.6 + 0.7 * (0.5 + 0.5 * sin(u.age * 2.3 + u.ph)))
+    local sp = (3.4 + 0.06 * g.wave) * (0.6 + 0.7 * (0.5 + 0.5 * sin(u.age * 2.3 + u.ph)))
     local want = 0.35
     if d > 9 then want = 1.0 elseif d < 5 then want = -0.7 end
     local side = (u.ph > 3.14) and 1 or -1
     u.vx = (ux * want + -uz * side * 0.55) * sp
     u.vz = (uz * want + ux * side * 0.55) * sp
-    u.face = u.face + dt * 4
     u.fire_t = u.fire_t - dt
     if u.fire_t <= 0 and g.p_alive and d > 2.5 then
         u.fire_t = max(0.9, frand(1.6, 3.2) - 0.05 * g.wave)
@@ -965,7 +1092,7 @@ function AI.enforcer(u, dt)
         local t = d / sp2
         local ax, az = g.px + g.pvx * t * 0.7 - u.x, g.pz + g.pvz * t * 0.7 - u.z
         local al = sqrt(ax * ax + az * az) + 1e-6
-        local s = spawn_unit("spark", u.x, u.z, 0.0)
+        local s = spawn_unit("spark", u.x, u.z, false)
         s.vx, s.vz = ax / al * sp2, az / al * sp2
         s.life = 4.0
         sfx("spark", frand(0.95, 1.1), 0.6, 0.08)
@@ -988,13 +1115,17 @@ function AI.tank(u, dt)
     end
     local sp = (u.moving and d > 4) and (2.6 + 0.04 * g.wave) or 0
     u.vx, u.vz = ux * sp, uz * sp
-    u.face = u.face + clamp(wrap_pi(atan(-ux, -uz) - u.face), -3 * dt, 3 * dt)
     u.fire_t = u.fire_t - dt
     if u.fire_t <= 0 and g.p_alive and d > 3 then
         u.fire_t = max(1.2, frand(2.2, 3.8) - 0.05 * g.wave)
         local sp2 = 11.0 + 0.1 * g.wave
-        local fx, fz = -sin(u.face), -cos(u.face)
-        local s = spawn_unit("shell", u.x + fx * 1.2, u.z + fz * 1.2, 0.0)
+        -- shells are aimed off a wall half the time, the way tanks bank them in the original
+        local fx, fz = ux, uz
+        if math.random() < 0.5 then
+            local a = atan(uz, ux) + frand(-0.7, 0.7)
+            fx, fz = cos(a), sin(a)
+        end
+        local s = spawn_unit("shell", u.x + fx * 0.9, u.z + fz * 0.9, false)
         s.vx, s.vz = fx * sp2, fz * sp2
         s.life = 5.0
         s.bounces = 0
@@ -1010,14 +1141,12 @@ function AI.shell(u, dt)
     if bounced then
         u.bounces = u.bounces + 1
         sfx("bounce", frand(0.9, 1.2), 0.5, 0.05)
-        burst("yellow", u.x, 0.7, u.z, 4, 5, 0.12)
+        burst("yellow", u.x, 0.5, u.z, 6, 5, 0.08)
     end
-    u.face = u.face + dt * 6
     if u.life <= 0 or u.bounces > 3 then kill_unit(u, false) end
 end
 
 local function update_units(dt)
-    local grunts = nil
     for i = 1, #units do
         local u = units[i]
         if u.alive then
@@ -1025,19 +1154,25 @@ local function update_units(dt)
             u.age = u.age + dt
             if u.spawn_t > 0 then
                 u.spawn_t = u.spawn_t - dt
-                u.face = u.face + dt * 10
+                if not u.emitted and u.spawn_t <= u.mat_t then
+                    u.emitted = true
+                    materialize(u.m, u.x, unit_y(u), u.z, u.mode, max(0.05, u.spawn_t))
+                end
                 if u.spawn_t <= 0 then
-                    ring(u.x, u.z, 1.8, 0.35, k.col)
-                    burst(k.col, u.x, 0.6, u.z, 8, 5, 0.14)
-                    sfx("spawn", frand(0.9, 1.3), 0.5, 0.06)
+                    u.yaw = 0
+                    show_unit(u, true)
                 end
             else
                 local ai = AI[k.ai or u.kind]
                 if ai then ai(u, dt) end
                 if u.alive then
-                    -- move
-                    u.x = u.x + (u.vx + u.kx) * dt
-                    u.z = u.z + (u.vz + u.kz) * dt
+                    if k.stepper then
+                        u.x = u.x + u.kx * dt
+                        u.z = u.z + u.kz * dt
+                    else
+                        u.x = u.x + (u.vx + u.kx) * dt
+                        u.z = u.z + (u.vz + u.kz) * dt
+                    end
                     local f = max(0, 1 - 7 * dt)
                     u.kx, u.kz = u.kx * f, u.kz * f
                     if not k.proj then
@@ -1054,12 +1189,12 @@ local function update_units(dt)
     -- soft separation for crowds (every unit pair that overlaps pushes apart)
     for i = 1, #units - 1 do
         local a = units[i]
-        if a.alive and a.spawn_t <= 0 and not a.k.proj and a.kind ~= "electrode" then
+        if a.alive and a.spawn_t <= 0 and not a.k.proj and not a.k.deco and a.kind ~= "electrode" then
             for j = i + 1, #units do
                 local b = units[j]
-                if b.alive and b.spawn_t <= 0 and not b.k.proj and b.kind ~= "electrode" then
+                if b.alive and b.spawn_t <= 0 and not b.k.proj and not b.k.deco and b.kind ~= "electrode" then
                     local dx, dz = b.x - a.x, b.z - a.z
-                    if dx < 1.6 and dx > -1.6 and dz < 1.6 and dz > -1.6 then
+                    if dx < 1.4 and dx > -1.4 and dz < 1.4 and dz > -1.4 then
                         local rr = (a.k.r + b.k.r) * 0.8
                         local d2 = dx * dx + dz * dz
                         if d2 < rr * rr and d2 > 1e-6 then
@@ -1076,39 +1211,51 @@ local function update_units(dt)
     end
 end
 
-local function render_units()
+local function render_units(dt)
     local t = g.time
     for i = 1, #units do
         local u = units[i]
-        if u.alive then
+        if u.alive and u.spawn_t <= 0 then
             local k = u.k
-            local y, sc = 0, 1
-            if u.spawn_t > 0 then
-                local p = 1 - u.spawn_t / u.spawn_total
-                sc = (0.15 + 0.85 * p) * (1 + 0.25 * sin(t * 55))
-                y = (1 - p) * 2.0
+            local y = k.y or 0
+            if k.bob then y = y + k.bob[1] * (0.5 + 0.5 * sin(t * k.bob[2] + u.ph)) end
+            local moving = u.vx ~= 0 or u.vz ~= 0
+            -- animation frames
+            if k.walk and not k.stepper then
+                if moving then
+                    u.at = u.at + dt * (k.hulk and 5 or 8)
+                    set_frame(u, 2 + floor(u.at) % 2)
+                else
+                    set_frame(u, 1)
+                end
+            elseif k.cycle then
+                if k.cycle > 0 then
+                    u.at = u.at + dt * k.cycle
+                    local n = #u.fnodes
+                    if n > 1 then
+                        if u.kind == "spheroid" then
+                            local p = floor(u.at) % 4 -- 1 2 3 2: the rings pulse in and out
+                            set_frame(u, p == 3 and 2 or p + 1)
+                        else
+                            set_frame(u, floor(u.at) % n + 1)
+                        end
+                    end
+                elseif moving then
+                    u.at = u.at + dt * 10
+                    set_frame(u, floor(u.at) % 2 + 1)
+                end
+            end
+            -- facing: sprites face the camera and turn a little toward the way they move
+            if k.spin then
+                u.yaw = u.yaw + k.spin * dt
             else
-                if k.bob then y = k.bob[1] * (0.5 + 0.5 * sin(t * k.bob[2] + u.ph)) end
-                if k.pulse then sc = 1 + 0.14 * sin(t * 9 + u.ph) end
+                local want = 0
+                local sp = sqrt(u.vx * u.vx + u.vz * u.vz)
+                if sp > 0.1 then want = 0.5 * u.vx / sp end
+                u.yaw = u.yaw + (want - u.yaw) * min(1, dt * 8)
             end
-            local roll, pitch = 0, 0
-            if k.walk and (u.vx ~= 0 or u.vz ~= 0) then
-                roll = sin(t * 17 + u.ph) * (k.hulk and 0.05 or 0.14)
-                y = y + abs(sin(t * 17 + u.ph)) * (k.hulk and 0.05 or 0.1)
-            end
-            if k.spin then u.face = u.face + k.spin * 0.016 end
-            if k.tumble then
-                pitch = u.age * 1.4 + u.ph
-                roll = u.age * 0.9
-                u.face = u.face + 0.03
-            end
-            if k.proj and not k.spin then pitch = 0 end
             set_translation(u.e, u.x, y, u.z)
-            set_rotation(u.e, u.face, pitch, roll)
-            if sc ~= u.sc then
-                u.sc = sc
-                set_scale(u.e, sc, sc, sc)
-            end
+            set_rotation(u.e, u.yaw, -LEAN, 0)
         end
     end
 end
@@ -1146,54 +1293,62 @@ local function update_bullets(dt)
             local dead = b.life <= 0
             if best then
                 dead = true
+                local l = sqrt(b.vx * b.vx + b.vz * b.vz)
                 if best.k.hulk then
-                    local l = sqrt(b.vx * b.vx + b.vz * b.vz)
-                    best.kx = best.kx + b.vx / l * 7.0
-                    best.kz = best.kz + b.vz / l * 7.0
-                    burst("green", b.x, 0.8, b.z, 3, 4, 0.12)
+                    best.kx = best.kx + b.vx / l * 6.0
+                    best.kz = best.kz + b.vz / l * 6.0
+                    burst("lgreen", b.x, 0.8, b.z, 4, 4, 0.08)
                     sfx("hulk_hit", frand(0.9, 1.1), 0.5, 0.06)
                 else
-                    kill_unit(best, true)
+                    kill_unit(best, true, b.vx / l, b.vz / l)
                 end
             elseif abs(b.x) > HW or abs(b.z) > HD then
                 dead = true
-                burst("yellow", clamp(b.x, -HW, HW), 0.7, clamp(b.z, -HD, HD), 3, 4, 0.1)
+                burst("white", clamp(b.x, -HW, HW), 0.7, clamp(b.z, -HD, HD), 4, 4, 0.07)
             end
             if dead then
                 b.alive = false
                 b.vis = false
                 set_vis(b.e, false)
             else
-                set_translation(b.e, b.x, 0.75, b.z)
+                set_translation(b.e, b.x, 0.8, b.z)
             end
         end
     end
 end
 
+local function human_lost(h, by)
+    h.alive = false
+    show_unit(h, false)
+    g.stats.lost = g.stats.lost + 1
+    g.stats["lost_" .. by] = (g.stats["lost_" .. by] or 0) + 1
+end
+
 local function update_interactions(dt)
     local px, pz = g.px, g.pz
+    local pready = g.p_alive and g.p_spawn <= 0
     for i = 1, #units do
         local u = units[i]
         if u.alive and u.spawn_t <= 0 then
             local k = u.k
             if k.hostile then
-                if g.p_alive then
+                if pready then
                     local dx, dz = u.x - px, u.z - pz
-                    local rr = k.r * 0.9 + P_R
+                    local rr = k.r * 0.85 + P_R
                     if dx * dx + dz * dz < rr * rr then kill_player() end
                 end
                 if k.hulk then
-                    -- hulks crush humans
+                    -- hulks crush the family and leave a skull behind
                     for j = 1, #units do
                         local h = units[j]
                         if h.alive and h.k.human and h.spawn_t <= 0 then
                             local dx, dz = h.x - u.x, h.z - u.z
-                            local rr = k.r + h.k.r * 0.7
+                            local rr = (k.r + h.k.r) * 0.6
                             if dx * dx + dz * dz < rr * rr then
-                                kill_unit(h, false)
-                                g.stats.lost = g.stats.lost + 1
-                                g.stats.lost_hulk = (g.stats.lost_hulk or 0) + 1
-                                popup(h.x, h.z, "X", "red")
+                                human_lost(h, "hulk")
+                                local s = spawn_unit("skull", h.x, h.z, false)
+                                s.life = 1.6
+                                sfx("human_die", frand(0.95, 1.05), 0.9, 0.1)
                             end
                         end
                     end
@@ -1204,19 +1359,28 @@ local function update_interactions(dt)
                             local dx, dz = h.x - u.x, h.z - u.z
                             local rr = k.r + h.k.r * 0.8
                             if dx * dx + dz * dz < rr * rr then
-                                h.alive = false
-                                show_unit(h, false)
-                                spawn_unit("prog", h.x, h.z, 0.5)
-                                burst("red", h.x, 0.7, h.z, 14, 6)
-                                ring(h.x, h.z, 2.4, 0.5, "red")
+                                human_lost(h, "brain")
+                                explode(h.m, h.x, 0, h.z, nil, nil, 0.4, 4)
+                                spawn_unit("prog", h.x, h.z, 0.15, nil, "r", nil, 0.5)
                                 sfx("convert", 1.0, 0.9, 0.1)
-                                g.stats.lost = g.stats.lost + 1
-                                g.stats.lost_brain = (g.stats.lost_brain or 0) + 1
+                            end
+                        end
+                    end
+                elseif u.kind == "grunt" then
+                    -- grunts that blunder into an electrode are destroyed
+                    for j = 1, #units do
+                        local el = units[j]
+                        if el.alive and el.kind == "electrode" and el.spawn_t <= 0 then
+                            local dx, dz = el.x - u.x, el.z - u.z
+                            local rr = el.k.r + k.r * 0.7
+                            if dx * dx + dz * dz < rr * rr then
+                                kill_unit(u, false)
+                                break
                             end
                         end
                     end
                 end
-            elseif k.human and g.p_alive then
+            elseif k.human and pready then
                 local dx, dz = u.x - px, u.z - pz
                 local rr = k.r + P_R + 0.15
                 if dx * dx + dz * dz < rr * rr then
@@ -1227,9 +1391,6 @@ local function update_interactions(dt)
                     add_score(pts)
                     g.stats.rescued = g.stats.rescued + 1
                     popup(u.x, u.z, tostring(pts), "yellow", 30)
-                    burst("white", u.x, 0.9, u.z, 18, 7, 0.16)
-                    burst("yellow", u.x, 0.9, u.z, 12, 5, 0.16)
-                    ring(u.x, u.z, 3.0, 0.5, "yellow")
                     sfx("rescue", 0.9 + 0.08 * min(g.rescue_n, 5), 1.0)
                 end
             end
@@ -1240,30 +1401,6 @@ end
 -- ---------------------------------------------------------------- effects
 
 local function update_effects(dt)
-    for _, pool in pairs(sparks) do
-        for i = 1, #pool do
-            local o = pool[i]
-            if o.alive then
-                o.life = o.life - dt
-                if o.life <= 0 then
-                    o.alive = false
-                    o.vis = false
-                    set_vis(o.e, false)
-                else
-                    o.vy = o.vy - o.grav * dt
-                    o.x, o.y, o.z = o.x + o.vx * dt, o.y + o.vy * dt, o.z + o.vz * dt
-                    if o.grav > 0 and o.y < 0.08 then
-                        o.y = 0.08
-                        o.vy = -o.vy * 0.4
-                        o.vx, o.vz = o.vx * 0.7, o.vz * 0.7
-                    end
-                    local s = o.size * (0.25 + 0.75 * o.life / o.max)
-                    set_translation(o.e, o.x, o.y, o.z)
-                    set_scale(o.e, s, s, s)
-                end
-            end
-        end
-    end
     local keep = {}
     for i = 1, #g.popups do
         local p = g.popups[i]
@@ -1273,6 +1410,68 @@ local function update_effects(dt)
     g.popups = keep
     g.shake = max(0, g.shake - dt * 2.4)
     if g.banner_t > 0 then g.banner_t = g.banner_t - dt end
+end
+
+local N_RECTS = 9
+local function build_rects()
+    for i = 1, N_RECTS do
+        local r = {}
+        for s = 1, 4 do
+            local e = reg(spawn_primitive("cube", uname("RT_rect"), { material_of = mat_of("fx_red") }))
+            set_component(e, "CanCastShadow", false)
+            set_component(e, "Visible", false)
+            r[s] = e
+        end
+        r.vis = false
+        r.col = 0
+        rects[i] = r
+    end
+end
+
+local function show_rect(r, v)
+    if r.vis == v then return end
+    r.vis = v
+    for s = 1, 4 do set_vis(r[s], v) end
+end
+
+-- concentric rectangles in cycling colours zoom out from the player to the border
+local function update_transition(dt)
+    g.trans_t = g.trans_t + dt
+    local t = g.trans_t
+    for i = 1, N_RECTS do
+        local r = rects[i]
+        local ti = t - (i - 1) * 0.055
+        local p = ti / 0.42
+        if p > 0 and p < 1.15 then
+            p = min(1, p)
+            local e = p * p * (3 - 2 * p)
+            local cx, cz = g.tcx * (1 - e), g.tcz * (1 - e)
+            local hx, hz = 0.3 + (HW + 0.15 - 0.3) * e, 0.25 + (HD + 0.15 - 0.25) * e
+            local th, y = 0.14, 0.08
+            set_translation(r[1], cx, y, cz - hz)
+            set_scale(r[1], hx * 2 + th, 0.1, th)
+            set_translation(r[2], cx, y, cz + hz)
+            set_scale(r[2], hx * 2 + th, 0.1, th)
+            set_translation(r[3], cx - hx, y, cz)
+            set_scale(r[3], th, 0.1, hz * 2)
+            set_translation(r[4], cx + hx, y, cz)
+            set_scale(r[4], th, 0.1, hz * 2)
+            local col = (i + floor(t * 26)) % #FLASH + 1
+            if r.col ~= col then
+                r.col = col
+                for s = 1, 4 do share_material(r[s], mat_of("fx_" .. FLASH[col])) end
+            end
+            show_rect(r, true)
+        else
+            show_rect(r, false)
+        end
+    end
+    if t >= TRANS_T then
+        for i = 1, N_RECTS do show_rect(rects[i], false) end
+        local f = g.trans_after
+        g.trans_after = nil
+        if f then f() end
+    end
 end
 
 local function update_walls(dt)
@@ -1288,28 +1487,69 @@ local function update_walls(dt)
     elseif i == 3 then r, gg, b = 0, q, 1
     elseif i == 4 then r, gg, b = f, 0, 1
     else r, gg, b = 1, 0, q end
-    -- keep the border bright but not white: mix toward saturated colours
-    local glow = 1.3 + g.shake * 3
+    local glow = 1.4 + g.shake * 3
     for n = 1, #g.walls do
         set_material(g.walls[n], { color = { r, gg, b }, emissive = glow })
     end
+end
+
+-- ---------------------------------------------------------------- camera
+
+-- normalized device coordinates of a world point for a camera at c looking at t
+local function project(cx, cy, cz, tx, ty, tz, px, py, pz, tanf, aspect)
+    local fx, fy, fz = tx - cx, ty - cy, tz - cz
+    local fl = sqrt(fx * fx + fy * fy + fz * fz)
+    fx, fy, fz = fx / fl, fy / fl, fz / fl
+    local rx, rz = -fz, fx
+    local rl = sqrt(rx * rx + rz * rz)
+    rx, rz = rx / rl, rz / rl
+    local ux, uy, uz = -rz * fy, rz * fx - rx * fz, rx * fy
+    local dx, dy, dz = px - cx, py - cy, pz - cz
+    local x = dx * rx + dz * rz
+    local y = dx * ux + dy * uy + dz * uz
+    local z = dx * fx + dy * fy + dz * fz
+    return x / (z * tanf * aspect), y / (z * tanf)
+end
+
+-- the closest camera (and its aim point) that shows the whole arena with room for the HUD
+local function fit_camera(aspect)
+    local tanf = math.tan(math.rad(FOV) * 0.5)
+    local ex, ez = HW + 0.7, HD + 0.7
+    local function fits(dist, tz)
+        local cx, cy, cz = 0, dist * sin(CAM_PITCH), tz + dist * cos(CAM_PITCH)
+        for _, p in ipairs({ { -ex, 0, -ez }, { ex, 0, -ez }, { -ex, 0, ez }, { ex, 0, ez }, { ex, 1.6, -ez }, { -ex, 1.6, -ez } }) do
+            local nx, ny = project(cx, cy, cz, 0, 0, tz, p[1], p[2], p[3], tanf, aspect)
+            if abs(nx) > 0.97 or ny > 0.86 or ny < -0.88 then return false end
+        end
+        return true
+    end
+    local best_d, best_z = 1e9, 0
+    for tz = -3.0, 3.0, 0.25 do
+        local lo, hi = 5, 200
+        if fits(hi, tz) then
+            for _ = 1, 28 do
+                local mid = (lo + hi) * 0.5
+                if fits(mid, tz) then hi = mid else lo = mid end
+            end
+            if hi < best_d then best_d, best_z = hi, tz end
+        end
+    end
+    return { aspect = aspect, dist = best_d, tz = best_z }
 end
 
 local function update_camera(dt)
     if not g.cam then return end
     local vp = get_viewport_size()
     local aspect = (vp and vp.height and vp.height > 0) and (vp.width / vp.height) or 1.78
-    local t = math.tan(math.rad(FOV) * 0.5)
-    local dist = max((HW + 3.0) / (aspect * t), (HD + 2.6) / t * 0.93)
+    if not g.cam_fit or abs(g.cam_fit.aspect - aspect) > 0.01 then g.cam_fit = fit_camera(aspect) end
+    local f = g.cam_fit
     local sx, sz = 0, 0
     if g.shake > 0 then
-        local s = g.shake * g.shake * 0.9
+        local s = g.shake * g.shake * 0.5
         sx, sz = frand(-s, s), frand(-s, s)
     end
-    -- the view leans a little toward the player, which gives the flat arena some depth
-    local lx, lz = g.px * 0.05, g.pz * 0.05
-    set_translation(g.cam, sx + lx, dist * cos(TILT), dist * sin(TILT) + sz + lz)
-    look_at(g.cam, sx + lx, 0, 0.5 + lz)
+    set_translation(g.cam, sx, f.dist * sin(CAM_PITCH), f.tz + f.dist * cos(CAM_PITCH) + sz)
+    look_at(g.cam, sx, 0, f.tz + sz)
 end
 
 -- ---------------------------------------------------------------- the autopilot
@@ -1324,9 +1564,7 @@ local tx, tz, tvx, tvz, tr, tw, tch = {}, {}, {}, {}, {}, {}, {}
 local wx, wz = {}, {}
 local nthr = 0
 local gx, gz, gvx, gvz, gr, gw = {}, {}, {}, {}, {}, {}   -- shootable targets
-local ngt = 0
 local bx_, bz_, br_ = {}, {}, {}                            -- blockers (hulks, electrodes)
-local nbl = 0
 
 local function gather_threats()
     local n = 0
@@ -1345,10 +1583,10 @@ local function gather_threats()
                 if u.spawn_t > 0 then
                     tvx[n], tvz[n] = 0, 0
                 elseif u.kind == "grunt" then
-                    tch[n] = g.grunt_speed * 1.1
+                    tch[n] = g.grunt_speed * 1.15
                     tvx[n], tvz[n] = 0, 0
                 elseif u.kind == "prog" then
-                    tch[n] = min(8.5, 4.6 + 0.12 * g.wave) * 0.95
+                    tch[n] = min(8.0, 4.6 + 0.12 * g.wave) * 0.95
                     tvx[n], tvz[n] = 0, 0
                 else
                     tvx[n], tvz[n] = u.vx + u.kx, u.vz + u.kz
@@ -1373,7 +1611,7 @@ local function pick_rescue()
                     local o = units[j]
                     if o.alive and (o.k.hulk or o.kind == "brain") then
                         local ex, ez = o.x - h.x, o.z - h.z
-                        local lim = o.k.hulk and 3.2 or 2.0
+                        local lim = o.k.hulk and 3.0 or 2.0
                         if ex * ex + ez * ez < lim * lim then safe = false break end
                     end
                 end
@@ -1501,7 +1739,6 @@ local function bot_aim()
             end
         end
     end
-    ngt, nbl = n, nb
     local best, bv = 0, 0.05
     for d = 1, 8 do
         local ux, uz = DIRS[d][1], DIRS[d][2]
@@ -1556,23 +1793,38 @@ end
 
 local function step_game(dt)
     if g.state == "running" then
+        g.wave_t = g.wave_t + dt
+        g.step_int = max(0.045, 0.16 - 0.005 * (g.wave - 1) - 0.0022 * g.wave_t)
+        g.grunt_speed = GRUNT_STEP / g.step_int
         update_player(dt)
         update_units(dt)
         update_bullets(dt)
         update_interactions(dt)
-        render_units()
+        render_units(dt)
         if g.state == "running" and alive_count(killable) == 0 then
             finish_wave()
         end
     elseif g.state == "dying" then
-        update_player(dt)
-        update_units(dt)
+        -- everything freezes while the player flashes through the colours, then bursts
+        g.dying_t = g.dying_t + dt
         update_bullets(dt)
-        render_units()
-        g.dying_t = g.dying_t - dt
-        if g.dying_t <= 0 then
+        if g.dying_t < 1.3 then
+            local i = floor(g.dying_t * 22) % #FLASH + 1
+            if i ~= g.flash_i then
+                g.flash_i = i
+                flash_player("fx_" .. FLASH[i])
+            end
+        elseif not g.exploded then
+            g.exploded = true
+            flash_player(nil)
+            show_player(false)
+            explode(player.m, g.px, 0, g.pz, nil, nil, 1.0, 7)
+            ring(g.px, g.pz, 6.0, 0.7, "cyan")
+            add_shake(0.8)
+        end
+        if g.dying_t > 2.2 then
             if g.lives > 0 then
-                respawn_player()
+                begin_transition(respawn_player, true)
             else
                 g.state = "over"
                 g.over_t = g.demo and 2.5 or 5.0
@@ -1583,12 +1835,12 @@ local function step_game(dt)
     elseif g.state == "clearing" then
         update_player(dt)
         update_bullets(dt)
-        render_units()
         g.clear_t = g.clear_t - dt
-        if g.clear_t <= 0 then start_wave(g.wave + 1) end
+        if g.clear_t <= 0 then begin_transition(function() start_wave(g.wave + 1) end) end
+    elseif g.state == "trans" then
+        update_transition(dt)
     elseif g.state == "over" then
-        update_units(dt)
-        render_units()
+        render_units(dt)
         g.over_t = g.over_t - dt
         if g.over_t <= 0 then new_game(true) end
     end
@@ -1610,12 +1862,15 @@ function on_created(self_entity)
     local ok, t = pcall(os.time)
     math.randomseed(ok and t or 2084)
     g.cam = find_entity_by_name("GameCamera")
+    if g.cam then set_camera(g.cam, { fov_deg = FOV, near = 1.0, far = 200 }) end
     for _, n in ipairs({ "Wall_N", "Wall_S", "Wall_W", "Wall_E" }) do
         local e = find_entity_by_name(n)
         if e then g.walls[#g.walls + 1] = e end
     end
+    g.hi = tonumber(load_data("highscore") or "0") or 0
     build_player()
-    g.music = play_sound("content/audio/music.wav", { volume = MUSIC_VOLUME, loop = true })
+    build_rects()
+    if PLAY_MUSIC then g.music = play_sound("content/audio/music.wav", { volume = MUSIC_VOLUME, loop = true }) end
     g.ready = true
     new_game(true)
 end
@@ -1627,7 +1882,7 @@ function on_destroyed(self_entity, reason)
     g.ready = false
 end
 
--- GAME.prof: moving average of the milliseconds Lua spends per section of update (about 0.5 ms in total)
+-- GAME.prof: moving average of the milliseconds Lua spends per section of update
 local clock = os.clock
 local prof = { step = 0, fx = 0, cam = 0, walls = 0, total = 0 }
 g.prof = prof
@@ -1651,6 +1906,10 @@ function update(self_entity, dt)
     local c3 = clock()
     update_walls(dt)
     local c4 = clock()
+    if not g.demo and g.score >= g.hi and g.score > 0 and g.time - (g.hi_saved or 0) > 5 then
+        g.hi_saved = g.time
+        save_data("highscore", tostring(g.hi))
+    end
     local k = 0.05
     prof.step = prof.step + ((c1 - c0) * 1000 - prof.step) * k
     prof.fx = prof.fx + ((c2 - c1) * 1000 - prof.fx) * k
@@ -1661,41 +1920,48 @@ end
 
 -- ---------------------------------------------------------------- HUD
 
-local function colv(name, a) local c = PAL[name] or PAL.white return { c[1], c[2], c[3], a or 1.0 } end
+local function colv(name, a)
+    local c = COLORS[name] or COLORS.white
+    return { min(1, c[1] * 1.1), min(1, c[2] * 1.1), min(1, c[3] * 1.1), a or 1.0 }
+end
+local HUD_RED = { 1.0, 0.25, 0.2, 1 }
 
 function on_ui(self_entity, ui)
     if not g.ready then return end
-    local score = string.format("%07d", g.score)
-    ui:screen_label("top_left", 24, 14, "SCORE " .. score, { size = 30, color = { 1, 0.95, 0.5, 1 } })
-    ui:screen_label("top_left", 24, 52, "HIGH  " .. string.format("%07d", g.hi), { size = 18, color = { 0.6, 0.8, 1, 0.9 } })
-    ui:screen_label("top_center", 0, 14, "WAVE " .. g.wave, { size = 30, color = { 0.4, 1, 0.9, 1 } })
-    local lives = ""
-    for _ = 1, min(g.lives, 12) do lives = lives .. "I " end
-    ui:screen_label("top_right", 24, 14, "LIVES " .. lives, { size = 30, color = { 0.6, 1, 1, 1 } })
+    ui:screen_label("top_left", 24, 12, string.format("%d", g.score), { size = 34, color = HUD_RED })
+    local men = ""
+    for _ = 1, min(max(g.lives - (g.p_alive and 1 or 0), 0), 10) do men = men .. "I" end
+    ui:screen_label("top_left", 24, 52, men ~= "" and ("MEN " .. men) or "", { size = 18, color = { 1, 0.85, 0.3, 1 } })
+    ui:screen_label("top_right", 24, 12, "HIGH " .. g.hi, { size = 22, color = { 0.6, 0.8, 1, 0.9 } })
+    if g.wave > 0 then
+        ui:screen_label("bottom_center", 0, 8, g.wave .. " WAVE", { size = 26, color = HUD_RED })
+    end
     if g.bot and not g.demo then
-        ui:screen_label("top_right", 24, 52, "AUTOPILOT", { size = 18, color = { 1, 0.6, 0.2, 1 } })
+        ui:screen_label("top_right", 24, 42, "AUTOPILOT", { size = 18, color = { 1, 0.6, 0.2, 1 } })
     end
 
     if g.demo then
-        if g.demo_t < 7.0 then
-            ui:screen_label("center", 0, -150, "ROBOTRON 2084", { size = 64, color = colv(FLASH[floor(g.time * 6) % #FLASH + 1], min(0.9, (7.0 - g.demo_t) * 0.5)) })
+        if g.demo_t < 8.0 then
+            local a = min(1, (8.0 - g.demo_t) * 0.5)
+            ui:screen_label("center", 0, -170, "ROBOTRON: 2084", { size = 72, color = colv(FLASH[floor(g.time * 8) % #FLASH + 1], a) })
+            ui:screen_label("center", 0, -105, "SAVE THE LAST HUMAN FAMILY", { size = 24, color = { 1, 1, 1, a * 0.9 } })
         end
         if floor(g.time * 2) % 2 == 0 then
-            ui:screen_label("bottom_center", 0, 60, "PRESS ENTER TO PLAY", { size = 34, color = { 1, 1, 1, 1 } })
+            ui:screen_label("bottom_center", 0, 70, "PRESS ENTER TO PLAY", { size = 34, color = { 1, 1, 1, 1 } })
         end
-        ui:screen_label("bottom_center", 0, 24, "DEMO  -  AUTOPILOT   |   WASD move   ARROWS or mouse fire", { size = 16, color = { 0.7, 0.8, 1, 0.9 } })
+        ui:screen_label("bottom_center", 0, 44, "WASD move   ARROWS or mouse fire", { size = 16, color = { 0.7, 0.8, 1, 0.9 } })
     end
     if g.paused then
         ui:screen_label("center", 0, -40, "PAUSED", { size = 56, color = { 1, 1, 1, 1 } })
     end
     if g.banner_t > 0 and g.banner ~= "" and not g.paused then
         local a = min(1, g.banner_t * 2)
-        ui:screen_label("center", 0, -40, g.banner, { size = 56, color = { 1, 1, 1, a } })
+        ui:screen_label("center", 0, -40, g.banner, { size = 60, color = { 1, 0.2, 0.15, a } })
     end
     for i = 1, #g.popups do
         local p = g.popups[i]
         local c = colv(p.col, 1 - p.t / 1.3)
-        ui:world_label(p.x, 1.2 + p.t * 1.6, p.z, p.text, { size = p.size, color = c })
+        ui:world_label(p.x, 1.4 + p.t * 1.2, p.z, p.text, { size = p.size, color = c })
     end
 end
 
@@ -1703,13 +1969,13 @@ end
 -- Globals for lua_eval {entity = "GameController"}: RT.jump(5), RT.spawn("brain", 3, 2), RT.god(true) ...
 RT = {
     jump = function(w)
-        g.p_alive, g.state = true, "running"
-        show_player(true)
+        g.p_alive = true
+        if player.flash then flash_player(nil) end
         start_wave(w)
     end,
-    spawn = function(kind, x, z) return spawn_unit(kind, x, z, 0.2) end,
+    spawn = function(kind, x, z) return spawn_unit(kind, x, z, 0.0, nil, nil, kind == "electrode" and electrode_key(max(1, g.wave)) or nil) end,
     god = function(on) g.god = on end,
-    kill = function() g.invuln, g.god = 0, false kill_player() end,
+    kill = function() g.invuln, g.god, g.p_spawn = 0, false, 0 kill_player() end,
     lives = function(n) g.lives = n end,
     bot = function(on) g.bot = on end,
     new = function(demo) new_game(demo) end,
@@ -1723,6 +1989,15 @@ RT = {
         return c
     end,
     entities = function() return #all_entities end,
+    pooled = function()
+        local c, cubes = {}, 0
+        for key, pool in pairs(pools) do
+            c[key] = #pool
+            for _, u in ipairs(pool) do cubes = cubes + #u.cubes end
+        end
+        c.cubes = cubes
+        return c
+    end,
     units = function(kind)
         local out = {}
         for i = 1, #units do
@@ -1732,5 +2007,17 @@ RT = {
             end
         end
         return out
+    end,
+    -- line up one of everything in front of the camera (for screenshots)
+    lineup = function()
+        clear_all_units()
+        local kinds = { "grunt", "hulk", "brain", "mommy", "daddy", "mikey", "prog", "enforcer", "spheroid", "quark", "tank", "electrode", "skull" }
+        for i, kind in ipairs(kinds) do
+            local u = RT.spawn(kind, -12 + (i - 1) * 2.0, 2.0)
+            u.spawn_t, u.emitted = 0, true
+            u.life = 1e9
+            u.frozen = true
+            show_unit(u, true)
+        end
     end,
 }

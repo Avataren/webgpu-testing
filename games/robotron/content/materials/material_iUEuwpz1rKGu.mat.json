@@ -1,8 +1,8 @@
 {
   "base_color": [
-    1,
-    2,
-    4,
+    5,
+    5,
+    6,
     255
   ],
   "flags": 128,
@@ -12,7 +12,7 @@
   "emissive_texture": 0,
   "occlusion_texture": 0,
   "metallic_factor": 0,
-  "roughness_factor": 230,
+  "roughness_factor": 255,
   "emissive_strength": 0,
   "kind": {
     "type": "pbr"

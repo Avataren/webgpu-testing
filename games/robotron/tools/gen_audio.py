@@ -202,4 +202,22 @@ for b in range(n_beats):
         d = beat / 4
         put(note(fa, d, decay=6.0, shape="square") * 0.5, b * beat + s * d, 0.18)
 save("music", mix, gain=0.6)
+
+# materialize: the wave-start warble, a rising pitch made of fast stepped square chirps
+dur = 1.0
+t = t_axis(dur)
+step = np.floor(t * 28) / 28                         # 28 pitch steps a second
+chirp = (t * 9.0) % 1.0                              # nine little upward chirps
+f = 180 * (6.0 ** (step / dur)) * (1 + 0.6 * chirp)
+w = np.sign(np.sin(2 * np.pi * np.cumsum(f) / SR)) * 0.6 + 0.4 * np.sin(2 * np.pi * np.cumsum(f * 0.5) / SR)
+w = lowpass(w, 0.35) * np.clip(t / 0.02, 0, 1) * np.clip((dur - t) / 0.15, 0, 1)
+save("materialize", w, gain=0.55)
+
+# transition: the rectangle zoom between waves, a falling stepped buzz
+dur = 0.7
+t = t_axis(dur)
+f = 1600 * (0.12 ** (np.floor(t * 40) / 40 / dur))
+w = np.sign(np.sin(2 * np.pi * np.cumsum(f) / SR)) * (0.7 + 0.3 * np.sign(np.sin(2 * np.pi * 30 * t)))
+w = lowpass(w, 0.3) * env(len(w), attack=0.005, decay=2.0)
+save("transition", w, gain=0.5)
 print("ok")
