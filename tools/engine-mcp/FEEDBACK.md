@@ -228,3 +228,40 @@ How to read the sections:
 - ✅ `screenshot {entity}` or `camera: "game"` to render through the scene's active camera
   while editing.
 - ✅ Return `{"discarded_on_stop": true}` on mutating calls made during play.
+
+## Open: Lua scripting on the web
+
+Web builds do not compile. `cargo check --lib --target wasm32-unknown-unknown` fails in
+the `mlua-sys` build script: `lua-src` cannot build the C Lua VM for that target. The C VM
+needs `setjmp`/`longjmp` and a libc, and `wasm32-unknown-unknown` has neither. mlua only
+supports `wasm32-unknown-emscripten`, which wgpu, winit and wasm-bindgen do not use. The
+problem is the VM build, not the Lua language.
+
+**Recommendation: keep Lua and fix the VM build, rather than switching languages.**
+
+- **Cost of switching:** the bindings are about 9k lines (`src/scripting/lua`), plus the
+  Lua guide, the MCP tooling (`lua_eval`, `playtest`, `lua_api_reference`), the example
+  scripts and Breakout. A second language means writing and maintaining all of that twice.
+- **Agents:** LLMs write correct Lua game code far more reliably than Rhai, Koto or Rune,
+  which matters for games built through the MCP.
+- **History:** the project already moved from Rune to Lua once.
+- **Alternatives looked at:**
+  - Rhai: mature, pure Rust and works on wasm, but a slow tree-walking interpreter with
+    less familiar syntax, and a full API rewrite.
+  - Koto: Lua-like and pure Rust, but a small ecosystem.
+  - piccolo: a pure-Rust Lua VM, but experimental, with an incomplete stdlib and an API
+    unlike mlua's, so also a rewrite.
+  - rquickjs (JS) and Luau: C/C++ VMs with the same wasm build problem.
+
+Plan:
+
+1. ⬜ Spike: compile Lua 5.4's C sources for `wasm32-unknown-unknown` with clang (installed:
+   clang 23, wasm32 backend). Map `setjmp`/`longjmp` to wasm exception handling
+   (`-mllvm -wasm-enable-sjlj`, supported by all current browsers) and provide a small libc
+   shim backed by Rust's allocator. Link it into mlua's external-library mode so the
+   binding code stays unchanged.
+2. ⬜ If the spike fails: put a thin backend trait in front of scripting and use Rhai only
+   on web. This doubles the API surface, so it is the fallback.
+
+Related web gaps: audio records plays but is silent on the web (rodio would need cpal's
+WebAudio backend), and file hot-reload is native only.
