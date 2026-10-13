@@ -229,6 +229,18 @@ where
         }
 
         if let Some(mut renderer) = self.platform.take_renderer() {
+            // On the web the renderer is created asynchronously from the canvas size at
+            // spawn time (0x0 before layout, so a 1x1 surface), and a Resized event that
+            // arrives meanwhile finds no renderer and is dropped. Catch up here.
+            if let Some(size) = self
+                .platform
+                .window()
+                .map(|window_handle| window_handle.as_ref().inner_size())
+            {
+                if size.width > 0 && size.height > 0 && size != renderer.surface_size() {
+                    renderer.resize(size);
+                }
+            }
             self.on_renderer_ready(&mut renderer);
             self.platform.mark_renderer_initialized();
             self.platform.put_renderer(renderer);

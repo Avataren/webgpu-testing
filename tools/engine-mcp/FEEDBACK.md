@@ -276,10 +276,13 @@ Plan:
 2. ⬜ ~~If the spike fails: put a thin backend trait in front of scripting and use Rhai only
    on web.~~ Not needed.
 
-Found while testing (not Lua): web builds sometimes start with the view filled by the
-nearest object's colour, as if the camera sat inside it. It happens about half the time,
-for `minimal` too, and lasts the whole session. Probably a startup race in the async
-renderer init or surface sizing. Not investigated yet.
+Found while testing (not Lua, fixed): web builds sometimes started with the view filled
+by one colour, in about 5 of 12 page loads for `minimal` too. The canvas's backing store
+was 1x1 and the browser stretched that pixel. The async renderer took the canvas size
+before layout (0x0, clamped to 1x1), and the Resized event that followed was dropped
+when it arrived before the renderer existed. The renderer now resizes to the window's
+current size when it becomes ready (`ensure_renderer_ready`); 10 of 10 loads render
+correctly.
 
 Note: `build_web.sh` needs the wasm-bindgen CLI to match `Cargo.lock` (0.2.129); it now
 checks and prints the install command. The CLI that was installed (0.2.114) also cannot
