@@ -61,7 +61,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
             "color": color("Base color"),
             "metallic": { "type": "number", "minimum": 0, "maximum": 1 },
             "roughness": { "type": "number", "minimum": 0, "maximum": 1 },
-            "emissive": { "type": "number", "minimum": 0, "maximum": 1, "description": "Emission strength (uses the base color)" },
+            "emissive": { "type": "number", "minimum": 0, "maximum": 64, "description": "Emission strength: the surface glows in its own base color. 1 is full color; above 1 is HDR, which is what makes bloom pick a lit surface up (try 2-5)" },
             "unlit": { "type": "boolean" },
             "transparent": { "type": "boolean", "description": "Alpha blending; set the color's alpha below 1" },
             "double_sided": { "type": "boolean" },
@@ -151,7 +151,7 @@ pub fn tools() -> Vec<Tool> {
             "type": "string",
             "enum": ["empty", "cube", "sphere", "plane", "cylinder", "cone", "torus",
                      "point_light", "directional_light", "spot_light", "camera", "particles", "environment"],
-            "description": "What to create (default empty). Primitive sizes differ: the cube spans -0.5..0.5, the sphere has radius 1, cylinder and cone lie along the Z axis; entity_get shows local_bounds. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor."
+            "description": "What to create (default empty). Primitive sizes differ: the cube spans -0.5..0.5, the sphere has radius 1, the cylinder (z -0.5..0.5) and cone lie along the Z axis; the cone's tip is at the origin and its base at z = -1, so it points toward +Z, opposite to forward: give ships and arrows a 180 degree yaw. entity_get shows local_bounds. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor."
         }),
     );
     spawn_props.insert(
@@ -237,8 +237,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "lua_api_reference",
-            description: "The engine's Lua scripting guide: lifecycle hooks (on_created, update, on_destroyed, on_ui), entity/transform/hierarchy/input/component/query/event/state/UI functions, coroutines and script modes. Read it before writing game scripts.",
-            schema: empty(),
+            description: "The engine's Lua scripting guide: lifecycle hooks (on_created, update, on_destroyed, on_ui), entity/transform/hierarchy/input/component/query/event/state/UI functions, coroutines and script modes. Read it before writing game scripts. The whole guide is about 6k tokens; pass section (a heading, e.g. \"UI API\" or \"Lights\"), search (text to find, with the heading each hit is under) or outline for just the part you need.",
+            schema: object(json!({
+                "section": { "type": "string", "description": "Return the sections whose heading contains this (case-insensitive), with their subsections" },
+                "search": { "type": "string", "description": "Return the guide's lines containing this text, each with its heading path" },
+                "outline": { "type": "boolean", "description": "Return only the list of headings" }
+            }), &[]),
             action: Action::Local,
         },
         Tool {
@@ -263,7 +267,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Overview ----
         Tool {
             name: "engine_info",
-            description: "Snapshot of the running engine: frame, fps, runtime mode, active scene, window size, project root, value conventions and, in the editor, project/scene/selection state. Start here.",
+            description: "Snapshot of the running engine: frame, fps, runtime mode, active scene, window size, project root, value conventions and, in the editor, project/scene/selection state, plus mcp_server (whether this server is older than its sources and needs a restart, and the repo's commit). Start here.",
             schema: empty(),
             action: Action::Local,
         },
@@ -388,7 +392,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "playtest",
-            description: "One-call playtest: enter play (optionally sped up with time_scale), send scripted input, run for `seconds`, then report failing scripts, new warnings/errors, the sounds played, what changed in the scene (added/removed entities and changed fields), the result of an `eval` Lua expression and a viewport screenshot, and stop again (the scene is restored). Replaces runtime_set + input_send + wait + lua_eval + screenshot + runtime_set.",
+            description: "One-call playtest: enter play (optionally sped up with time_scale), send scripted input, run for `seconds`, then report failing scripts, new warnings/errors, the sounds played (grouped by file; sounds: list for every play), what changed in the scene (added/removed entities and changed fields), the result of an `eval` Lua expression and a viewport screenshot, and stop again (the scene is restored). Replaces runtime_set + input_send + wait + lua_eval + screenshot + runtime_set.",
             schema: object(json!({
                 "seconds": { "type": "number", "description": "Real seconds to play (default 3, up to 240); game time is seconds * time_scale" },
                 "time_scale": { "type": "number", "minimum": 0, "maximum": 16, "description": "Play speed (default 1)" },
@@ -398,6 +402,8 @@ pub fn tools() -> Vec<Tool> {
                 "screenshot": { "type": "boolean", "description": "Include a viewport screenshot (default true)" },
                 "max_size": { "type": "integer", "description": "Screenshot longest side (default 1280)" },
                 "diff": { "type": "boolean", "description": "Report what play changed in the scene (default true)" },
+                "sounds": { "anyOf": [{ "type": "string", "enum": ["summary", "list"] }, { "type": "boolean" }], "description": "Sounds played: \"summary\" (default) groups them by file with counts and first/last time, \"list\" gives every play, false leaves them out" },
+                "lean": { "type": "boolean", "description": "For long soak tests: no screenshot, scene diff or sounds; just failing scripts, warnings and the eval result. Explicit screenshot/diff/sounds settings still win" },
                 "diff_limit": { "type": "integer", "description": "Most changed entities listed (default 30)" },
                 "stop": { "type": "boolean", "description": "Stop play at the end (default true); false keeps the game running for further inspection" }
             }), &[]),
@@ -444,8 +450,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "audio_status",
-            description: "Sounds playing now and the recently played ones (id, path, volume, pitch, time, audible). You cannot hear the game, so use this (or playtest's sounds_played) to check that scripts play the right sounds at the right moments.",
-            schema: object(json!({ "since": { "type": "integer", "description": "Only plays with an id at least this (next_id from an earlier call)" } }), &[]),
+            description: "Sounds playing now and the recently played ones (id, path, volume, pitch, time, audible). You cannot hear the game, so use this (or playtest's sounds) to check that scripts play the right sounds at the right moments. A busy game plays the same few files hundreds of times; pass summary for one entry per file.",
+            schema: object(json!({
+                "since": { "type": "integer", "description": "Only plays with an id at least this (next_id from an earlier call)" },
+                "summary": { "type": "boolean", "description": "Group the plays by file: count, first and last time, volume and pitch ranges, and how many were silent, instead of listing each play" }
+            }), &[]),
             action: Action::Engine("audio.status"),
         },
         // ---- Input ----
@@ -489,10 +498,21 @@ pub fn tools() -> Vec<Tool> {
         // ---- Viewing ----
         Tool {
             name: "screenshot",
-            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos and without moving the view.",
+            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame. In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos or the editor grid and without moving the view. camera can also be a one-off pose {position, target, fov_deg} that looks around without editing anything. aspect previews the framing at another window shape (e.g. \"16:9\", \"4:3\").",
             schema: object(json!({
-                "camera": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "\"game\" for the scene's active camera, or a camera entity id/name. Only this capture's frame uses it." },
-                "target": { "type": "string", "enum": ["window", "viewport"], "description": "Default viewport in the editor is usually what you want to judge the game's look" },
+                "camera": { "anyOf": [
+                    { "type": "integer" },
+                    { "type": "string" },
+                    { "type": "object", "properties": {
+                        "position": vec3("Eye position"),
+                        "target": vec3("Point to look at (alone, it keeps the current distance and direction)"),
+                        "fov_deg": { "type": "number" },
+                        "near": { "type": "number" },
+                        "far": { "type": "number" }
+                    }}
+                ], "description": "\"game\" for the scene's active camera, a camera entity id/name, or a one-off view {position, target, fov_deg, near, far} starting from the view camera. Only this capture's frame uses it; nothing is moved." },
+                "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Render at this width/height, as a number (1.78) or \"16:9\", in the largest region of that shape that fits the viewport (the image is cropped to it). Use it to check that a game camera frames the game at 16:9 and 4:3, not only at the editor's shape. Implies target viewport." },
+                "target": { "type": "string", "enum": ["window", "viewport"], "description": "window (the default) is the whole engine window; viewport is just the scene view. With camera or aspect the default is viewport." },
                 "max_size": { "type": "integer", "description": "Longest side in pixels (default 1280)" },
                 "save_path": { "type": "string", "description": "Also write the PNG here" }
             }), &[]),
@@ -506,7 +526,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "camera_set",
-            description: "Move the view camera. Give position and/or target, or focus on an entity (frames it at a distance based on its size). In the editor this moves the active camera entity too.",
+            description: "Move the view camera. Give position and/or target, or focus on an entity (frames it at a distance based on its size). While the scene has an active camera entity this moves that entity too (the view is driven by it), so it edits scene data: to just look around, use screenshot with camera {position, target} instead.",
             schema: object(json!({
                 "position": vec3("Eye position"),
                 "target": vec3("Point to look at"),
@@ -566,6 +586,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Recent engine log lines (scripts log with target \"script\"; script errors appear here too). Pass after = latest_seq from a previous call to get only new lines.",
             schema: object(json!({
                 "after": { "type": "integer" },
+                "since_play_start": { "type": "boolean", "description": "Only lines logged since the most recent play session started, so errors from before it (already fixed) do not show up" },
                 "min_level": { "type": "string", "enum": ["error", "warn", "info", "debug", "trace"], "description": "Default info" },
                 "contains": { "type": "string" },
                 "target": { "type": "string", "description": "Log target prefix, e.g. script, remote, wgpu" },

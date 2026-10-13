@@ -39,8 +39,11 @@ Options and environment:
   engine's stdout/stderr go to `target/engine-mcp/engine.log` and `engine_output`.
 - Every other tool is one request to the engine (see `src/tools.rs` for the mapping),
   except `engine_info` (which combines several), `screenshot` (returns an image),
-  `lua_api_reference` (reads `scripts/LUA_SCRIPTING_README.md`), `batch` (runs several
-  tools in one call) and `playtest` (play, input, wait, report, screenshot, stop).
+  `lua_api_reference` (reads `scripts/LUA_SCRIPTING_README.md`; `outline`, `section` and
+  `search` return just a part of it), `batch` (runs several tools in one call) and
+  `playtest` (play, input, wait, report, screenshot, stop; `lean` for soak tests).
+  `engine_info` also reports whether this server is older than its sources
+  (`mcp_server.restart_needed`).
 - Closing the MCP server leaves a launched engine running, so unsaved work in the
   editor is never lost; use `engine_stop` to end it.
 

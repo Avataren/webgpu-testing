@@ -8,11 +8,12 @@
 //! this binary was built in; the port defaults to `ENGINE_REMOTE_PORT` or 47811.
 
 mod engine;
+mod guide;
 mod tools;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{json, Value};
 
@@ -77,6 +78,7 @@ fn main() {
     let mut server = Server {
         engine: Engine::new(repo, port),
         tools: tools::tools(),
+        started: SystemTime::now(),
     };
 
     let stdin = std::io::stdin();
@@ -129,6 +131,17 @@ fn find_repo() -> Option<PathBuf> {
 struct Server {
     engine: Engine,
     tools: Vec<Tool>,
+    /// When this process started; sources or a binary newer than this mean the tools
+    /// this server offers are out of date.
+    started: SystemTime,
+}
+
+/// How `playtest` reports the sounds a run played.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SoundReport {
+    Off,
+    Summary,
+    List,
 }
 
 /// Content returned from a tool call.
@@ -314,7 +327,7 @@ impl Server {
                 let path = self.engine.repo.join("scripts/LUA_SCRIPTING_README.md");
                 let guide = std::fs::read_to_string(&path)
                     .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
-                Ok(Output::Text(format!(
+                let guide = format!(
                     "{guide}\n\n## Notes for remote control\n\n\
                      - Entity ids returned by the engine tools are the same i64 handles Lua uses. They stay valid across play/stop and undo.\n\
                      - lua_eval runs with this whole API; `return` a value (or write a bare expression) to get it back.\n\
@@ -322,7 +335,27 @@ impl Server {
                      To inspect game state while testing, keep it in a global table (e.g. `GAME = {{ score = 0 }}`) or in the state API (`set_i32`, ...).\n\
                      - Example scripts: scripts/*.lua and examples/scripts/*.lua in {}.\n",
                     self.engine.repo.display()
-                )))
+                );
+                if args.get("outline").and_then(Value::as_bool) == Some(true) {
+                    return Ok(Output::Text(format!(
+                        "Sections of the Lua guide (ask for one with section, or grep with search):\n{}",
+                        guide::outline(&guide)
+                    )));
+                }
+                if let Some(query) = args.get("search").and_then(Value::as_str) {
+                    return Ok(Output::Text(guide::search(&guide, query, 40)));
+                }
+                if let Some(query) = args.get("section").and_then(Value::as_str) {
+                    return guide::section(&guide, query)
+                        .map(Output::Text)
+                        .ok_or_else(|| {
+                            format!(
+                                "no section title contains {query:?}; the sections are:\n{}",
+                                guide::outline(&guide)
+                            )
+                        });
+                }
+                Ok(Output::Text(guide))
             }
             "engine_info" => {
                 let mut info = self
@@ -340,6 +373,7 @@ impl Server {
                         }
                     }
                 }
+                info["mcp_server"] = self.server_status();
                 Ok(Output::Json(info))
             }
             "engine_call" => {
@@ -403,6 +437,54 @@ impl Server {
         }
     }
 
+    /// Whether this server is older than its sources, and the repository's commit, so a
+    /// tool description that disagrees with the source can be explained.
+    fn server_status(&self) -> Value {
+        let crate_dir = self.engine.repo.join("tools/engine-mcp");
+        let modified = |path: &Path| {
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok()
+        };
+        let newest_source = std::fs::read_dir(crate_dir.join("src"))
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| modified(&entry.path()))
+            .chain(modified(&crate_dir.join("Cargo.toml")))
+            .max();
+        let binary = std::env::current_exe().ok().and_then(|exe| modified(&exe));
+        let newer = |time: Option<SystemTime>| time.is_some_and(|time| time > self.started);
+        let restart_needed = newer(newest_source) || newer(binary);
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.engine.repo)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        };
+        let seconds_ago = |time: SystemTime| {
+            SystemTime::now()
+                .duration_since(time)
+                .map_or(0, |elapsed| elapsed.as_secs())
+        };
+        json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "started_seconds_ago": seconds_ago(self.started),
+            "restart_needed": restart_needed,
+            "note": if restart_needed {
+                "The server's sources or binary changed after it started, so its tool list and descriptions are out of date. Restart it (/mcp in Claude Code) to pick up new tools and parameters."
+            } else {
+                "The server is as new as its sources."
+            },
+            "repo_head": git(&["rev-parse", "--short", "HEAD"]),
+            "repo_dirty": git(&["status", "--porcelain", "--untracked-files=no"]).map(|status| !status.is_empty()),
+        })
+    }
+
     /// Play for a while with scripted input, then report errors, the state `eval`
     /// returns and a screenshot, and (by default) stop again.
     fn playtest(&mut self, args: &Value) -> Result<Output, String> {
@@ -412,6 +494,16 @@ impl Server {
             .unwrap_or(3.0)
             .clamp(0.0, 240.0);
         let stop = args.get("stop").and_then(Value::as_bool).unwrap_or(true);
+        // A lean run skips everything that costs tokens unless it is asked for.
+        let lean = args.get("lean").and_then(Value::as_bool).unwrap_or(false);
+        let sounds = match args.get("sounds") {
+            Some(Value::Bool(false)) => SoundReport::Off,
+            Some(Value::Bool(true)) => SoundReport::List,
+            Some(Value::String(mode)) if mode == "list" => SoundReport::List,
+            Some(Value::String(mode)) if mode == "summary" => SoundReport::Summary,
+            _ if lean => SoundReport::Off,
+            _ => SoundReport::Summary,
+        };
         let call = |engine: &mut Engine, method: &str, params: Value| {
             engine.call(method, params).map_err(|err| err.to_string())
         };
@@ -423,7 +515,7 @@ impl Server {
             .call("audio.status", json!({}))
             .ok()
             .map(|status| status["next_id"].clone());
-        let diff = args.get("diff").and_then(Value::as_bool).unwrap_or(true);
+        let diff = args.get("diff").and_then(Value::as_bool).unwrap_or(!lean);
         if diff {
             call(&mut self.engine, "scene.mark", json!({}))?;
         }
@@ -494,9 +586,17 @@ impl Server {
             })
             .unwrap_or_default();
         report.insert("warnings".into(), json!(warnings));
-        if let Some(since) = sounds_since {
-            if let Ok(status) = self.engine.call("audio.status", json!({ "since": since })) {
-                report.insert("sounds_played".into(), status["recent"].clone());
+        if let (Some(since), true) = (sounds_since, sounds != SoundReport::Off) {
+            let summary = sounds == SoundReport::Summary;
+            if let Ok(status) = self.engine.call(
+                "audio.status",
+                json!({ "since": since, "summary": summary }),
+            ) {
+                if summary {
+                    report.insert("sounds_summary".into(), status["summary"].clone());
+                } else {
+                    report.insert("sounds_played".into(), status["recent"].clone());
+                }
             }
         }
         if diff {
@@ -510,7 +610,7 @@ impl Server {
         let screenshot = if args
             .get("screenshot")
             .and_then(Value::as_bool)
-            .unwrap_or(true)
+            .unwrap_or(!lean)
         {
             let mut params = json!({ "target": "viewport", "inline": true });
             if let Some(size) = args.get("max_size") {

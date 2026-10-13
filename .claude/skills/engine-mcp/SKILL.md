@@ -10,6 +10,13 @@ engine's remote-control socket (`src/remote/`). Its tools appear as `mcp__engine
 If they are missing, the server has not been approved or loaded; ask the user to
 restart Claude Code in the repo root and approve it.
 
+In clients that load tools on demand (Claude Code does), fetch the ones you will need in
+one `ToolSearch` call rather than one by one. A good starting set:
+`engine_launch`, `engine_info`, `engine_status`, `editor_state`, `project_open`,
+`entity_spawn`, `entity_update`, `entity_get`, `scene_list_entities`, `lua_eval`,
+`lua_api_reference`, `script_status`, `runtime_set`, `wait`, `playtest`, `screenshot`,
+`logs`, `input_send`, `project_save`, `engine_stop`.
+
 ## Start every session the same way
 
 1. `engine_launch` (target `editor`, the default). It builds incrementally, starts the
@@ -59,18 +66,30 @@ engine you launched; save first).
 - `camera_set {focus: <entity>}` or `{position, target}` to frame the shot, then
   `screenshot {target: "viewport"}` (just the 3D view) or `"window"` (with the editor
   UI). `screenshot {camera: "game"}` (or a camera entity) renders that one frame through
-  the game camera without moving the editor view. **Look at the screenshot after visual changes** instead of assuming they worked.
+  the game camera (viewport only, no gizmos or editor grid) without moving the editor
+  view. `camera` can also be a one-off pose `{position, target, fov_deg}` for looking
+  around, and `aspect: "16:9"` (or `"4:3"`, `1.5`) previews the framing at another window
+  shape, so check the game camera at both. `camera_set` edits the game camera entity
+  while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
 - `environment_set` controls background, ambient light, HDR sky and grading;
   `postprocess_set` toggles SSAO, bloom and FXAA.
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`
   (or the editor's file watcher) shows the new version under the same path.
-- `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it).
+- `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it). A
+  busy game plays the same files hundreds of times, so pass `summary: true` for one entry
+  per file.
+- Material `emissive` makes a surface glow in its own color; above 1 it is HDR, which is
+  what lets bloom pick up a lit surface (try 2 to 5 with bloom on).
+- The cone's tip points toward +Z, opposite to forward: ships and arrows made from cones
+  need a 180 degree yaw.
 
 ## Gameplay with Lua
 
-Call `lua_api_reference` before writing scripts. Then:
+Call `lua_api_reference` before writing scripts. The whole guide is about 6k tokens;
+`lua_api_reference {outline: true}` lists its sections, `{section: "UI API"}` returns one
+and `{search: "despawn"}` finds lines. Then:
 
 1. Write the `.lua` file into `editor_state.project.scripts_dir` with your own file
    tools.
@@ -81,8 +100,9 @@ Call `lua_api_reference` before writing scripts. Then:
    `file.lua:LINE: message`.
 4. Playtest in one call: `playtest {seconds, time_scale, input, entity, eval}` plays,
    injects input, runs (faster than real time with `time_scale` up to 16), then reports
-   failing scripts, warnings, the sounds played, a `scene_diff` of what changed, the
-   `eval` result and a screenshot, and stops. Step by step: `runtime_set {mode: "play"}`,
+   failing scripts, warnings, the sounds played (grouped by file; `sounds: "list"` for
+   every play), a `scene_diff` of what changed, the `eval` result and a screenshot, and
+   stops. For long soak tests pass `lean: true` (no screenshot, diff or sounds). Step by step: `runtime_set {mode: "play"}`,
    `wait`, inject input, `wait`, then `entity_get`, `lua_eval`, `logs`, `screenshot`.
 5. `runtime_set {mode: "stop"}` restores the scene to its pre-play state with the same
    entity ids. Every change made during play (including your remote edits) is discarded;
@@ -97,8 +117,15 @@ Facts that change how you write scripts:
   materials (`set_mesh`, `set_material_color`, `set_material`), play sounds
   (`play_sound`), create and change lights and cameras (`spawn_light`, `set_light`,
   `spawn_camera`, `set_camera`, `set_active_camera`) and draw text at world positions
-  (`ui:world_label` in `on_ui`). Pools of pre-placed, hidden entities are still the
-  cheapest way to show many short-lived objects.
+  (`ui:world_label`, `ui:screen_label` in `on_ui`). `despawn_entity` removes entities, so
+  bullets and sparks can be spawned and removed; a script that spawns its own pool should
+  remove it in `on_destroyed(self, reason)`, which also runs before a hot reload (otherwise
+  every saved edit leaks a second pool). Reusing hidden entities is still cheapest for
+  very short-lived objects.
+- `get_time()` is game time since play started (it follows `time_scale`); `get_forward`,
+  `get_right`, `get_up` give an entity's world directions; `screen_to_ground`,
+  `screen_to_world_ray` and `world_to_screen` convert between mouse pixels and the world,
+  so mouse aiming does not need hand-written projection math.
 - Mutations from a hook are queued and applied after it returns, so reading back a
   value you just set in the same hook gives the old value.
 - Keep game state in the state API (`set_f64`/`get_f64`, `set_state`/`get_state`). It
@@ -154,7 +181,8 @@ printed.
 | Script error | `script_status` and `logs {min_level: "warn"}`; fix the file and it hot-reloads |
 | Object invisible | It needs a light, `visible: true`, a sensible scale, and must be in front of the camera; `camera_set {focus}` then screenshot |
 | Change vanished | It was made during play mode (stop restores), or the project was never saved |
-| New logs only | Pass `after: <latest_seq>` from the previous `logs` call |
+| New logs only | Pass `after: <latest_seq>` from the previous `logs` call, or `since_play_start: true` to skip what happened before the current play session |
+| A tool lacks a parameter this file mentions | The MCP server is older than its sources; `engine_info.mcp_server.restart_needed` says so (restart it with /mcp) |
 
 Close an engine you launched with `engine_stop` when done, after saving. Leave engines
 the user started alone.

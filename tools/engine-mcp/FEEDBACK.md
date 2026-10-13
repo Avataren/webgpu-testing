@@ -18,12 +18,21 @@ ends with a **Resolution** (bugs), **Done** / **Partly done** / **Open** (pain p
 ✅ / ⬜ mark (wish list).
 
 Third round (2026-10-13): a second game, `games/neon-rift` (a top-down arena shooter with an
-attract mode, driven by one Lua controller that spawns its own entity pools). The new
-findings are marked **Open** below (B9 is fixed): one bug (B10), the pain points from "Lua cannot delete
-entities" onward, and the wish-list items marked ⬜. What worked well: `lua_eval` with a
+attract mode, driven by one Lua controller that spawns its own entity pools). Its findings
+were one bug (B10), the pain points from "Lua cannot delete entities" onward, and the
+wish-list items that were ⬜. What worked well: `lua_eval` with a
 global `GAME` table, `runtime_set {time_scale: 16}` soak tests (300 s of game time in about
 20), `batch`, `entity_duplicate` and bulk `entity_update` for the arena, accurate Lua error
 line numbers, and `input_send` down/up events for human-control tests.
+
+Fourth round (2026-10-13): nearly everything the third round found is done (B10, despawn,
+screen/world conversion, HDR emissive, text size and color, sound summaries, the cone
+docs, player script hot reload, screenshot aspect and pose, guide sections, server
+staleness, log filtering); what is left is marked ⬜ or **Partly done**. Checked live in the
+editor and the player with Neon Rift, and by driving a freshly built MCP server over stdio.
+Two things the checking turned up: `emissive` did nothing at all without an emissive
+texture (the shader only added it for textured materials), and entities spawned and
+parented in one Lua hook got a `Parent` link but no entry in the parent's child list.
 
 MCP-server changes (new tool parameters, blocking project tools) only take effect after the
 MCP server is restarted; engine changes take effect after `engine_launch` rebuilds.
@@ -170,12 +179,18 @@ How to read the sections:
   gone). Still undocumented: the Lua guide does not list which commands accept a handle
   spawned in the same chunk.
 
-### B10. `screenshot {camera: "game"}` returns the whole editor window by default (observed, open, MCP)
+### B10. `screenshot {camera: "game"}` returns the whole editor window by default (fixed, engine)
 
 - With `camera: "game"` and no `target`, the result was the full editor window with the
   free-camera viewport inside it. Adding `target: "viewport"` gives just the game view. The
   tool description says the viewport is the default. Not investigated. The editor's ground
   grid also showed outside the arena in game-camera renders.
+- **Resolution:** the engine's default target was `window` while the tool schema promised the
+  viewport. A capture with `camera` (or `aspect`) now defaults to `viewport`, and the schema says
+  what each default is. The editor grid is an editor-only overlay that was drawn into every frame
+  regardless of the camera; the renderer now has an `editor_overlays` flag that is off for
+  frames rendered through another camera. Verified: a game-camera capture is the 1045x688
+  viewport with no grid outside the arena.
 
 ## Pain points
 
@@ -248,36 +263,67 @@ How to read the sections:
   has `spawn_entity` and `spawn_primitive` but no despawn, so short-lived objects (bullets,
   sparks, enemies) need fixed pools of hidden entities, and a script that spawns its own
   pool leaks a full set per saved edit. Neon Rift names every pooled entity and reuses it
-  with `find_entity_by_name`. **Open.**
+  with `find_entity_by_name`. **Done:** `despawn_entity(e)` removes an entity and its
+  descendants (applied when the hook returns; idempotent; an entity spawned in the same hook is
+  just never created), `entity_exists(e)` tells whether a handle is still alive, and
+  `on_destroyed(self_entity, reason)` now also runs before a hot reload (`reason` is `"reload"`;
+  `"removed"` otherwise), so scripts can clean up their pools. Reload hooks run at the start of
+  the next frame, because they need the world. Despawn follows `Parent` links as well as child
+  lists, so hierarchies built by scripts go away completely.
 - **No screen/world conversion in Lua, and the viewport size exists only in `on_ui`.**
   Mouse aiming on a ground plane needs the camera ray, which means re-deriving the
   projection in Lua. It is also unclear what `get_mouse_position()` is relative to inside
-  the editor viewport. Neon Rift is keyboard-only because of this. **Open.**
+  the editor viewport. Neon Rift is keyboard-only because of this. **Done:** `get_viewport_size()`,
+  `world_to_screen(x, y, z)`, `screen_to_world_ray(x, y)` and `screen_to_ground(x, y[, height])`
+  work in window pixels, the same space as `get_mouse_position()` (the editor's game view is a
+  part of the window, and `get_viewport_size()` gives its `{x, y, width, height}`). They use the
+  active camera and the area the renderer last drew into. Checked in the editor: a ground point
+  projected to the screen and back lands within 0.0002 m, and the view centre maps to the point
+  under the camera.
 - **`camera_set` also moves the game camera entity.** In the editor the view camera drives
   the active camera entity, so looking closer at something silently overwrote the
-  GameCamera's transform. **Open.**
+  GameCamera's transform. **Partly done:** while the scene has an active
+  camera entity the view is driven by that entity (every frame), so a view-only move cannot be
+  made without deactivating it. Instead `screenshot {camera: {position, target, fov_deg}}`
+  renders a one-off pose without moving anything, and the `camera_set` description says it
+  edits the game camera.
 - **`playtest` and `audio_status` return every sound that played.** A 5 second demo run
   gave about 65 entries (id, path, pitch, volume, time), thousands of tokens that say
-  "shoot.wav many times". **Open.**
+  "shoot.wav many times". **Done:** `audio_status {summary: true}` groups plays by file (count,
+  first and last time, volume and pitch ranges, silent plays), and `playtest` reports
+  `sounds_summary` by default (`sounds: "list"` for every play, `false` for none).
 - **The cone's orientation is undocumented.** "cylinder and cone lie along the Z axis" does
   not say which way. The cone's tip is at local +Z (bounds z in -1..0, base at -1), the
-  opposite of the engine's -Z forward, so ships and arrows need a 180 degree yaw. **Open**
-  (docs).
+  opposite of the engine's -Z forward, so ships and arrows need a 180 degree yaw. **Done**
+  (the Lua guide and the `entity_spawn` schema now say so).
 - **Emissive is capped at 1.0 and not HDR.** A lit material with `emissive: 1` and a
   saturated base color rendered dimmer than the same color `unlit`, and only the unlit ones
-  bloomed strongly at threshold 0.7. Neon looks want emissive above 1. **Open.**
+  bloomed strongly at threshold 0.7. Neon looks want emissive above 1. **Done.** Cause: the
+  shader only added emission for materials with an emissive texture, so `emissive` on a plain
+  material did nothing (the lit material was just lit). It now glows in the base color, and the
+  strength is stored as a `u16` (255 is 1.0, up to 64), so values above 1 are HDR. Saved
+  materials load unchanged. Verified: emissive 0, 1 and 4 on red spheres look dark, red and
+  blooming.
 - **`ui:label`/`ui:heading` cannot be sized or colored.** Neon Rift draws its big title, wave
   and game-over banners with `ui:world_label` (which takes `size`/`color` and centers on the
-  point), which works but is a trick. **Open.**
+  point), which works but is a trick. **Done:** `ui:label(text, {size, color})`,
+  `ui:heading(text, {size, color})` and `ui:screen_label(anchor, x, y, text, {size, color,
+  backdrop})` (text at a fixed viewport position, no panel).
 - **The player target does not hot-reload script edits** (observed). The editor does; the
   running player kept the old code after an edit until `engine_launch {restart: true}`.
-  **Open.**
+  **Done:** the native player polls the project's `.lua` files twice a second and
+  reloads edited ones (web builds have no filesystem to watch). Checked with Neon Rift: an edit
+  and its revert each reloaded the script, and the entity count stayed the same.
 - **The MCP server binary can be older than the repo without any sign.** The `lua_eval`
   description I was shown still said "Lua cannot create lights or cameras", but the source
   no longer does: the server binary was built before the lights and cameras commit.
-  `engine_launch` rebuilds the engine, not the MCP server. **Open.**
+  `engine_launch` rebuilds the engine, not the MCP server. **Done:** `engine_info` has an
+  `mcp_server` block with `restart_needed` (the server's sources or binary are newer than the
+  process), its version and the repo's commit and dirty flag.
 - **Framing is eyeballed across aspect ratios.** The editor viewport is about 1.5:1 and the
-  player window 16:9, so a camera that fits one can crop the other. **Open.**
+  player window 16:9, so a camera that fits one can crop the other. **Done:** `screenshot
+  {aspect: "16:9"}` (or `"4:3"`, `1.5`) renders in the largest region of that shape that fits
+  the viewport and crops to it.
 
 ## Wish list
 
@@ -311,26 +357,33 @@ How to read the sections:
   while editing.
 - ✅ Return `{"discarded_on_stop": true}` on mutating calls made during play.
 
-- ⬜ Lua `despawn_entity(e)`, plus a cleanup hook that also runs before a hot reload, so
-  scripts can own their pools without leaking.
-- ⬜ Lua `screen_to_world_ray(x, y)` and `world_to_screen(x, y, z)`, and the viewport size
-  outside `on_ui`, with the mouse position documented as viewport-relative.
-- ⬜ Lua `get_time()` / `elapsed()`, and `get_forward(entity)` (yaw 0 faces -Z, so
-  `forward = (-sin(yaw), 0, -cos(yaw))` has to be derived by hand).
-- ⬜ A `sounds: false | "summary"` option on `playtest` (counts per path with first and last
+- ✅ Lua `despawn_entity(e)`, plus a cleanup hook that also runs before a hot reload, so
+  scripts can own their pools without leaking. (`on_destroyed(self, "reload")`.)
+- ✅ Lua `screen_to_world_ray(x, y)` and `world_to_screen(x, y, z)`, and the viewport size
+  outside `on_ui`. (Plus `screen_to_ground`; coordinates are window pixels like the mouse
+  position, with `get_viewport_size()` giving the game view's rectangle.)
+- ✅ Lua `get_time()` / `elapsed()`, and `get_forward(entity)` (yaw 0 faces -Z, so
+  `forward = (-sin(yaw), 0, -cos(yaw))` has to be derived by hand). (`get_time()`,
+  `get_forward`, `get_right`, `get_up`.)
+- ✅ A `sounds: false | "summary"` option on `playtest` (counts per path with first and last
   time), and the same grouping in `audio_status`.
-- ⬜ `camera_set {view_only: true}` as the default (or a one-off `position`/`target` on
-  `screenshot`), so looking around never edits scene data.
-- ⬜ `screenshot {aspect}` or `{size}` to preview the game camera at 16:9 and 4:3.
-- ⬜ HDR emissive (`emissive` above 1) for bloom without losing shading.
-- ⬜ `ui:label_at(anchor, x, y, text, {size, color})`, or size and color on `ui:label`.
-- ⬜ `lua_api_reference {section}` or `{search}` (it is one ~6k-token blob), and a note in the
-  skill on which MCP tools to load up front (they are all deferred).
-- ⬜ A version or commit field in `engine_info` (MCP server build vs. repo HEAD).
-- ⬜ A `since_play_start` filter on `logs`: an error fixed minutes ago still tops
+- ✅ `camera_set {view_only: true}` as the default (or a one-off `position`/`target` on
+  `screenshot`), so looking around never edits scene data. (The one-off pose on `screenshot`;
+  see the `camera_set` pain point for why there is no view-only mode.)
+- ✅ `screenshot {aspect}` or `{size}` to preview the game camera at 16:9 and 4:3. (`aspect`.)
+- ✅ HDR emissive (`emissive` above 1) for bloom without losing shading.
+- ✅ `ui:label_at(anchor, x, y, text, {size, color})`, or size and color on `ui:label`. (Both:
+  `ui:screen_label` and options on `ui:label`/`ui:heading`.)
+- ✅ `lua_api_reference {section}` or `{search}` (it is one ~6k-token blob). (`section`,
+  `search` and `outline`.)
+- ✅ A note in the skill on which MCP tools to load up front (they are all deferred).
+- ✅ A version or commit field in `engine_info` (MCP server build vs. repo HEAD).
+  (`mcp_server`.)
+- ✅ A `since_play_start` filter on `logs`: an error fixed minutes ago still tops
   `logs {min_level: "warn"}`.
-- ⬜ A starter game scene (environment, bloom, camera, light, floor) for `project_create`,
-  and a lean `playtest` mode (no screenshot, diff or sound list) for long AI soak tests.
+- ✅ A lean `playtest` mode (no screenshot, diff or sound list) for long AI soak tests.
+  (`lean: true`.)
+- ⬜ A starter game scene (environment, bloom, camera, light, floor) for `project_create`.
 
 ## Open: Lua scripting on the web
 
