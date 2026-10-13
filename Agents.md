@@ -4,6 +4,11 @@
 
 This is a very large project, expect compile times and tests to take a very long time to complete! This is normal.
 
+**Start here:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains how a frame runs, where each
+subsystem lives, the invariants that are easy to break, and the current known issues
+(including the broken WASM build). After renderer, shader, egui or dependency changes, run the
+`smoke-test` skill (`.claude/skills/smoke-test/smoke.sh`) to exercise the binaries on the GPU.
+
 ## Mission
 
 This repository contains Rust code targeting native and the web (WebGPU) using `wgpu` and WGSL. Your job is to:
@@ -63,9 +68,10 @@ If `build_web.sh` or other scripts exist in the repo, prefer them for consistenc
 ```bash
 cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all
-cargo build --all
+cargo test --all-features
 ```
+
+These are the same checks CI runs (`.github/workflows/ci.yml`).
 
 ### WASM / Web build
 
