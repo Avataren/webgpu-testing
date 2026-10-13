@@ -9,7 +9,6 @@ use std::collections::{BTreeSet, VecDeque};
 #[cfg(feature = "egui")]
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(feature = "egui")]
-use std::time::SystemTime;
 
 #[cfg(all(feature = "egui", target_arch = "wasm32"))]
 use console_log as wasm_console_log;
@@ -39,7 +38,8 @@ const LOG_LEVELS: [Level; 5] = [
 /// A snapshot of a single log record captured by the in-app recorder.
 #[derive(Clone, Debug)]
 pub struct LogEntry {
-    pub timestamp: SystemTime,
+    /// Milliseconds since the Unix epoch.
+    pub timestamp: u64,
     pub level: Level,
     pub target: String,
     pub message: String,
@@ -49,7 +49,7 @@ pub struct LogEntry {
 impl LogEntry {
     fn from_record(record: &Record<'_>) -> Self {
         Self {
-            timestamp: SystemTime::now(),
+            timestamp: crate::time::unix_millis(),
             level: record.level(),
             target: record.target().to_string(),
             message: record.args().to_string(),
@@ -208,18 +208,13 @@ pub fn init_log_recorder() -> LogBufferHandle {
 }
 
 #[cfg(feature = "egui")]
-fn format_timestamp(ts: SystemTime) -> String {
-    match ts.duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(duration) => {
-            let total_seconds = duration.as_secs();
-            let hours = total_seconds / 3600;
-            let minutes = (total_seconds % 3600) / 60;
-            let seconds = total_seconds % 60;
-            let millis = duration.subsec_millis();
-            format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
-        }
-        Err(_) => "--:--:--.---".to_string(),
-    }
+fn format_timestamp(unix_millis: u64) -> String {
+    let total_seconds = unix_millis / 1000;
+    let hours = (total_seconds / 3600) % 24;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    let millis = unix_millis % 1000;
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
 }
 
 #[cfg(feature = "egui")]

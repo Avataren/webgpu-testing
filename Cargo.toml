@@ -84,7 +84,9 @@ tempfile = "3.10"
 
 
 
-# Lua for wasm32-unknown-unknown: crates.io lua-src cannot build Lua for that target.
-# The vendored copy adds a build against a minimal libc; see third_party/lua-src.
+# Vendored crates patched for wasm32-unknown-unknown; see third_party/*/README.md.
+# lua-src cannot build Lua for that target; the copy builds it against a minimal libc.
 [patch.crates-io]
 lua-src = { path = "third_party/lua-src" }
+# egui-winit 0.36.2 does not compile for wasm32 (missing DroppedFile::bytes_async).
+egui-winit = { path = "third_party/egui-winit" }

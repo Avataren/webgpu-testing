@@ -2,9 +2,6 @@ use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use std::ops::Deref;
-#[cfg(target_arch = "wasm32")]
-use std::rc::Rc;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
 use winit::raw_window_handle::{
@@ -41,18 +38,13 @@ pub(crate) struct RenderContext {
     pub(crate) _instance: wgpu::Instance,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-type SharedWindow = Arc<Window>;
-#[cfg(target_arch = "wasm32")]
-type SharedWindow = Rc<Window>;
-
 #[derive(Clone)]
 struct OwnedWindowHandle {
-    window: SharedWindow,
+    window: Arc<Window>,
 }
 
 impl OwnedWindowHandle {
-    fn new(window: SharedWindow) -> Self {
+    fn new(window: Arc<Window>) -> Self {
         Self { window }
     }
 }
@@ -78,18 +70,8 @@ impl HasDisplayHandle for OwnedWindowHandle {
 }
 
 impl RenderContext {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn new(
         window: Arc<Window>,
-        size: PhysicalSize<u32>,
-        settings: &RenderSettings,
-    ) -> Self {
-        Self::new_internal(OwnedWindowHandle::new(window), size, settings).await
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) async fn new(
-        window: Rc<Window>,
         size: PhysicalSize<u32>,
         settings: &RenderSettings,
     ) -> Self {

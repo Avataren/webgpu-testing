@@ -6,7 +6,6 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Number of entries kept; older ones are dropped.
 const CAPACITY: usize = 5000;
@@ -39,9 +38,7 @@ pub fn record(record: &log::Record<'_>) {
 
 /// Store a message as if it had been logged.
 pub fn push(level: log::Level, target: &str, message: String) {
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis() as u64);
+    let timestamp_ms = crate::time::unix_millis();
     let Ok(mut tap) = TAP.lock() else {
         return;
     };

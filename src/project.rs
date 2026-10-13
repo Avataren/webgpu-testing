@@ -774,7 +774,7 @@ impl SerializedEnvironment {
         Ok(())
     }
 
-    fn resolve_paths(&mut self, project_dir: &Path) -> Result<(), ProjectError> {
+    pub fn resolve_paths(&mut self, project_dir: &Path) -> Result<(), ProjectError> {
         if let Some(hdr) = self.hdr.as_mut() {
             if let Some(path) = hdr.image_path.clone() {
                 let absolute = if path.is_absolute() {

@@ -136,7 +136,7 @@ fn load_web_bytes(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn load_binary_from_str(path: &str) -> Result<Vec<u8>, String> {
+pub fn load_binary_from_str(path: &str) -> Result<Vec<u8>, String> {
     let path_buf = PathBuf::from(path);
     load_web_bytes(&path_buf)
 }
@@ -150,5 +150,20 @@ pub(crate) fn load_binary(path: &Path) -> Result<Vec<u8>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         std::fs::read(path).map_err(|err| format!("Failed to read {:?}: {}", path, err))
+    }
+}
+
+/// Reads a UTF-8 text file: from disk natively, and on the web with a request
+/// relative to the page (so a served project works like a project directory).
+pub fn read_to_string(path: &Path) -> std::io::Result<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bytes = load_web_bytes(path).map_err(std::io::Error::other)?;
+        String::from_utf8(bytes).map_err(std::io::Error::other)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::fs::read_to_string(path)
     }
 }

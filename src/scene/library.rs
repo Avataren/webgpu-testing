@@ -1,5 +1,4 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::project::{ProjectError, SceneDocument, SceneDocumentDependencies};
@@ -46,7 +45,7 @@ impl SceneLibrary {
 
         if !self.assets.contains_key(&document.id) {
             let path = project_root.join(&document.relative_path);
-            let json = fs::read_to_string(&path)?;
+            let json = crate::io::read_to_string(&path)?;
             let asset = SceneAsset::from_json(&json).map_err(ProjectError::Serialization)?;
             self.assets.insert(document.id.clone(), asset);
         }

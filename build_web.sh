@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Usage: ./build_web.sh [example]   (default: minimal)
-# Serves web/ on $PORT (default 8080); open http://localhost:$PORT/?example=<example>.
+# Usage: ./build_web.sh [example]           build an example (default: minimal), serve web/
+#        ./build_web.sh --project <dir>     build the player, stage <dir> as a web game
+#                                           in target/web/<name>/ and serve that
+# Serves on $PORT (default 8080).
 set -euo pipefail
 
-EXAMPLE="${1:-minimal}"
 PORT="${PORT:-8080}"
 
 # The CLI must match the wasm-bindgen crate in Cargo.lock exactly.
@@ -15,13 +16,30 @@ if [ "$WANT" != "$HAVE" ]; then
     exit 1
 fi
 
-RUSTFLAGS="--cfg=web_sys_unstable_apis" \
-    cargo build --target wasm32-unknown-unknown --release --example "$EXAMPLE"
+export RUSTFLAGS="--cfg=web_sys_unstable_apis"
 
-wasm-bindgen \
-    --target web \
-    --out-dir web/pkg \
+if [ "${1:-}" = "--project" ]; then
+    PROJECT="${2:?usage: $0 --project <dir>}"
+    [ -f "$PROJECT/project.json" ] || { echo "$PROJECT has no project.json" >&2; exit 1; }
+    OUT="target/web/$(basename "$(cd "$PROJECT" && pwd)")"
+
+    cargo build --target wasm32-unknown-unknown --release --bin player --features egui
+    rm -rf "$OUT"
+    mkdir -p "$OUT"
+    wasm-bindgen --target web --out-dir "$OUT/pkg" \
+        target/wasm32-unknown-unknown/release/player.wasm
+    # The player loads project.json and content/ relative to the page.
+    cp web/index.html "$PROJECT/project.json" "$OUT/"
+    cp -r "$PROJECT/content" "$OUT/"
+
+    echo "Staged $OUT; open http://localhost:$PORT/?example=player"
+    exec python3 -m http.server --directory "$OUT" "$PORT"
+fi
+
+EXAMPLE="${1:-minimal}"
+cargo build --target wasm32-unknown-unknown --release --example "$EXAMPLE"
+wasm-bindgen --target web --out-dir web/pkg \
     "target/wasm32-unknown-unknown/release/examples/$EXAMPLE.wasm"
 
 echo "Open http://localhost:$PORT/?example=$EXAMPLE"
-python3 -m http.server --directory web "$PORT"
+exec python3 -m http.server --directory web "$PORT"

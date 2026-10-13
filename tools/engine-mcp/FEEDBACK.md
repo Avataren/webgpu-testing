@@ -288,5 +288,12 @@ Note: `build_web.sh` needs the wasm-bindgen CLI to match `Cargo.lock` (0.2.129);
 checks and prints the install command. The CLI that was installed (0.2.114) also cannot
 process modules with exception handling.
 
+Breakout runs on the web (2026-10-13): `./build_web.sh --project games/breakout` builds the
+player with egui and stages the project in `target/web/breakout/`. Getting there needed
+a vendored egui-winit (0.36.2 does not compile for wasm32), `Arc<Window>` on the web,
+HTTP-backed reads for scenes, materials and scripts (`io::read_to_string`), no
+`exists()` checks for materials and sounds on the web, and a web-safe wall clock
+(`time::unix_millis`). The canvas now fills the window below the toolbar.
+
 Related web gaps: audio records plays but is silent on the web (rodio would need cpal's
 WebAudio backend), and file hot-reload is native only.

@@ -20,8 +20,6 @@ use crate::settings::RenderSettings;
 
 use glam::Vec3;
 use std::mem::size_of;
-#[cfg(target_arch = "wasm32")]
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use winit::{dpi::PhysicalSize, window::Window};
 
@@ -217,15 +215,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn new(window: Arc<Window>, settings: RenderSettings) -> Self {
-        let size = window.inner_size();
-        let context = RenderContext::new(window, size, &settings).await;
-        Self::from_context(context, settings)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub async fn new(window: Rc<Window>, settings: RenderSettings) -> Self {
         let size = window.inner_size();
         let context = RenderContext::new(window, size, &settings).await;
         Self::from_context(context, settings)

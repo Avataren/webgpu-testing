@@ -100,7 +100,9 @@ pub(crate) fn resolve_material_handle(
     }
 
     if let Some(path) = canonical_path.as_ref() {
-        if path.exists() {
+        // The web has no filesystem to ask (`exists()` is always false there), so try
+        // the request and let a missing file fail the load.
+        if cfg!(target_arch = "wasm32") || path.exists() {
             match assets.get_or_load_material(path, load_material_asset_from_file) {
                 Ok(handle) => {
                     if let Some(serialized) = material_data {

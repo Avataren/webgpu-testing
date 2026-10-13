@@ -14,9 +14,7 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        gap: 1.5rem;
-        min-height: 100vh;
+        height: 100vh;
       }
 
       #toolbar {
@@ -64,14 +62,13 @@
         border-color: rgba(74, 158, 255, 0.45);
       }
 
+      /* The canvas fills the window below the toolbar; the renderer follows its size. */
       canvas {
         display: block;
-        width: 90vw;
-        height: 80vh;
-        max-width: 1400px;
-        border-radius: 12px;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 0;
+        outline: none;
       }
       
       #loading {

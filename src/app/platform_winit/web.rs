@@ -1,6 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use wasm_bindgen_futures::spawn_local;
 use winit::{event_loop::ActiveEventLoop, window::Window};
@@ -15,21 +15,17 @@ pub struct WebWinitDriver {
 }
 
 impl WebWinitDriver {
-    fn window_attributes(
-        settings: &crate::settings::RenderSettings,
-    ) -> winit::window::WindowAttributes {
+    /// No inner size: the page's CSS sizes the canvas (a fixed size would be written
+    /// into its inline style and override the layout), and resizes follow it.
+    fn window_attributes() -> winit::window::WindowAttributes {
         use winit::platform::web::WindowAttributesExtWebSys;
 
         Window::default_attributes()
             .with_title("wgpu hecs Renderer")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                f64::from(settings.resolution.width),
-                f64::from(settings.resolution.height),
-            ))
             .with_append(true)
     }
 
-    fn try_finish_async_initialization(&mut self, state: &mut PlatformState<Rc<Window>>) {
+    fn try_finish_async_initialization(&mut self, state: &mut PlatformState<Arc<Window>>) {
         if state.has_renderer() {
             return;
         }
@@ -56,7 +52,7 @@ impl WebWinitDriver {
 }
 
 impl PlatformDriver for WebWinitDriver {
-    type WindowHandle = Rc<Window>;
+    type WindowHandle = Arc<Window>;
 
     fn initialize(
         &mut self,
@@ -65,10 +61,10 @@ impl PlatformDriver for WebWinitDriver {
         settings: &crate::settings::RenderSettings,
     ) {
         let window = event_loop
-            .create_window(Self::window_attributes(settings))
+            .create_window(Self::window_attributes())
             .expect("Failed to create window");
 
-        let window_handle = Rc::new(window);
+        let window_handle = Arc::new(window);
         let pending_renderer: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
         let renderer_cell = pending_renderer.clone();
         let window_for_renderer = window_handle.clone();

@@ -85,6 +85,11 @@ fn with_audio<R>(f: impl FnOnce(&mut Audio) -> R) -> R {
 /// project, or to its content folder.
 pub fn resolve_path(path: &str) -> Result<PathBuf, String> {
     let raw = Path::new(path);
+    if cfg!(target_arch = "wasm32") {
+        // The web has no filesystem to search, and plays are silent there anyway;
+        // keep the path as given so the play is still recorded.
+        return Ok(raw.to_path_buf());
+    }
     let mut candidates = vec![raw.to_path_buf()];
     if raw.is_relative() {
         if let Some(root) = crate::project::active_project_root() {

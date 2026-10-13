@@ -22,7 +22,6 @@ use hecs::{Entity, World};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -250,7 +249,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
 }
 
 pub(crate) fn load_material_asset_from_file(path: &Path) -> Result<MaterialAsset, String> {
-    let data = fs::read_to_string(path)
+    let data = crate::io::read_to_string(path)
         .map_err(|err| format!("failed to read material asset {:?}: {}", path, err))?;
     let serialized: SerializedMaterial = serde_json::from_str(&data)
         .map_err(|err| format!("failed to parse material asset {:?}: {}", path, err))?;

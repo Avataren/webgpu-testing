@@ -91,7 +91,7 @@ impl LuaScriptSource {
                 };
 
                 let contents =
-                    std::fs::read_to_string(&absolute).map_err(|source| LuaScriptingError::Io {
+                    crate::io::read_to_string(&absolute).map_err(|source| LuaScriptingError::Io {
                         path: absolute.clone(),
                         source,
                     })?;
