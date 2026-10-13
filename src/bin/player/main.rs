@@ -36,11 +36,88 @@ struct ScriptUi {
     viewport: Option<(f32, f32, f32)>,
 }
 
+/// Notices edited `.lua` files under a project by comparing modification times, so a
+/// running game picks up script changes like the editor does. Native builds only: a web
+/// build has no filesystem to watch.
+#[cfg(not(target_arch = "wasm32"))]
+struct ScriptPoller {
+    root: PathBuf,
+    modified: std::collections::HashMap<PathBuf, std::time::SystemTime>,
+    last_poll: Option<std::time::Instant>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ScriptPoller {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+    /// Directories deeper than this are not searched.
+    const MAX_DEPTH: usize = 8;
+
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            modified: std::collections::HashMap::new(),
+            last_poll: None,
+        }
+    }
+
+    /// Scripts that changed since the previous poll. The first poll only records the
+    /// current state, and polls happen at most twice a second.
+    fn changed(&mut self) -> Vec<PathBuf> {
+        let now = std::time::Instant::now();
+        if self
+            .last_poll
+            .is_some_and(|last| now.duration_since(last) < Self::INTERVAL)
+        {
+            return Vec::new();
+        }
+        let first = self.last_poll.is_none();
+        self.last_poll = Some(now);
+
+        let mut found = Vec::new();
+        Self::collect(&self.root, 0, &mut found);
+        let mut changed = Vec::new();
+        for (path, modified) in found {
+            let previous = self.modified.insert(path.clone(), modified);
+            if !first && previous != Some(modified) {
+                changed.push(path);
+            }
+        }
+        changed
+    }
+
+    fn collect(
+        dir: &std::path::Path,
+        depth: usize,
+        found: &mut Vec<(PathBuf, std::time::SystemTime)>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                if depth < Self::MAX_DEPTH {
+                    Self::collect(&path, depth + 1, found);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "lua") {
+                if let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) {
+                    found.push((path, modified));
+                }
+            }
+        }
+    }
+}
+
 struct ProjectPlayer {
     manifest: ProjectManifest,
     project_root: PathBuf,
     loaded: bool,
     library: SceneLibrary,
+    #[cfg(not(target_arch = "wasm32"))]
+    script_poller: ScriptPoller,
     #[cfg(feature = "egui")]
     script_ui: ScriptUi,
 }
@@ -49,12 +126,28 @@ impl ProjectPlayer {
     fn new(manifest: ProjectManifest, project_root: PathBuf) -> Self {
         Self {
             manifest,
+            #[cfg(not(target_arch = "wasm32"))]
+            script_poller: ScriptPoller::new(project_root.clone()),
             project_root,
             loaded: false,
             library: SceneLibrary::new(),
             #[cfg(feature = "egui")]
             script_ui: ScriptUi::default(),
         }
+    }
+
+    /// Reload scripts whose files changed on disk: `on_destroyed(self, "reload")` runs on
+    /// the old code, then the new code starts with its saved state.
+    fn reload_edited_scripts(&mut self, scene: &mut wgpu_cube::scene::Scene) {
+        #[cfg(not(target_arch = "wasm32"))]
+        for path in self.script_poller.changed() {
+            let reloaded = scene.reload_script_path(&path);
+            if reloaded > 0 {
+                log::info!("Reloaded {} ({reloaded} script(s))", path.display());
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = scene;
     }
 }
 
@@ -89,10 +182,13 @@ impl RenderApplication for ProjectPlayer {
     }
 
     #[cfg(not(feature = "egui"))]
-    fn update(&mut self, _ctx: &mut UpdateContext) {}
+    fn update(&mut self, ctx: &mut UpdateContext) {
+        self.reload_edited_scripts(&mut ctx.scene);
+    }
 
     #[cfg(feature = "egui")]
     fn update(&mut self, ctx: &mut UpdateContext) {
+        self.reload_edited_scripts(&mut ctx.scene);
         let ui = &mut self.script_ui;
         // Last frame's clicks and edits go back to the scripts before they build new UI.
         ctx.scene

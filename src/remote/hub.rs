@@ -74,6 +74,26 @@ struct CaptureRequest {
     camera: Option<Value>,
     /// `camera` resolved to a view, once the scene has been consulted.
     view: Option<Camera>,
+    /// Aspect ratio (width / height) to render at instead of the viewport's.
+    aspect: Option<f32>,
+}
+
+impl CaptureRequest {
+    /// Whether the capture needs a frame of its own: one rendered through another
+    /// camera or at another aspect ratio than what the window shows.
+    fn needs_own_frame(&self) -> bool {
+        self.view.is_some() || self.aspect.is_some()
+    }
+}
+
+/// How the next frame must differ from the normal one for a pending screenshot.
+#[derive(Clone, Copy, Debug)]
+pub struct CaptureOverride {
+    /// Render through this camera instead of the scene's.
+    pub camera: Option<Camera>,
+    /// Render the scene at this aspect ratio, in the largest region of that shape that
+    /// fits the viewport.
+    pub aspect: Option<f32>,
 }
 
 struct Waiter {
@@ -95,8 +115,8 @@ pub struct RemoteHub {
     last_dt: f64,
     input: Vec<ScheduledInput>,
     captures: Vec<CaptureRequest>,
-    /// Whether the frame being rendered uses the first capture's camera override.
-    capturing_with_view: bool,
+    /// Whether the frame being rendered is the first capture's own frame.
+    capturing_own_frame: bool,
     waiters: Vec<Waiter>,
     postprocess_override: Option<PostProcessEffects>,
     scene_baseline: Option<SceneBaseline>,
@@ -126,7 +146,7 @@ impl RemoteHub {
             last_dt: 0.0,
             input: Vec::new(),
             captures: Vec::new(),
-            capturing_with_view: false,
+            capturing_own_frame: false,
             waiters: Vec::new(),
             postprocess_override: None,
             scene_baseline: None,
@@ -247,14 +267,21 @@ impl RemoteHub {
         }
     }
 
-    /// The camera the next frame must render through for a pending screenshot, if any.
+    /// How the next frame must be rendered for a pending screenshot, if it differs from a
+    /// normal frame.
     ///
-    /// Call once per frame before rendering. A screenshot with its own camera gets a
-    /// frame to itself; [`Self::complete_captures`] then answers only that one.
-    pub fn capture_camera_override(&mut self) -> Option<Camera> {
-        let view = self.captures.first().and_then(|request| request.view);
-        self.capturing_with_view = view.is_some();
-        view
+    /// Call once per frame before rendering. A screenshot with its own camera or aspect
+    /// ratio gets a frame to itself; [`Self::complete_captures`] then answers only that one.
+    pub fn capture_frame_override(&mut self) -> Option<CaptureOverride> {
+        let request = self
+            .captures
+            .first()
+            .filter(|request| request.needs_own_frame());
+        self.capturing_own_frame = request.is_some();
+        request.map(|request| CaptureOverride {
+            camera: request.view,
+            aspect: request.aspect,
+        })
     }
 
     /// Answer pending screenshot requests with the frame that is about to be presented.
@@ -265,12 +292,12 @@ impl RemoteHub {
         capture: Result<FrameCapture, String>,
         region: Option<RenderRegion>,
     ) {
-        let due: Vec<CaptureRequest> = if std::mem::take(&mut self.capturing_with_view) {
+        let due: Vec<CaptureRequest> = if std::mem::take(&mut self.capturing_own_frame) {
             vec![self.captures.remove(0)]
         } else {
             let (due, later) = std::mem::take(&mut self.captures)
                 .into_iter()
-                .partition(|request| request.view.is_none());
+                .partition(|request| !request.needs_own_frame());
             self.captures = later;
             due
         };
@@ -321,7 +348,14 @@ impl RemoteHub {
         match request.method.as_str() {
             "screenshot" => {
                 let params = &request.params;
-                let target = opt_str(params, "target").unwrap_or("window");
+                // Rendering through a camera is a preview of the game, which only makes
+                // sense without the editor around it.
+                let has_camera = params.get("camera").is_some_and(|value| !value.is_null());
+                let target = opt_str(params, "target").unwrap_or(if has_camera {
+                    "viewport"
+                } else {
+                    "window"
+                });
                 let viewport_only = match target {
                     "window" => false,
                     "viewport" => true,
@@ -332,12 +366,23 @@ impl RemoteHub {
                         return None;
                     }
                 };
+                let aspect = match params.get("aspect").filter(|value| !value.is_null()) {
+                    Some(value) => match parse_aspect(value) {
+                        Ok(aspect) => Some(aspect),
+                        Err(message) => {
+                            request.reply.send(Err(message));
+                            return None;
+                        }
+                    },
+                    None => None,
+                };
                 let max_size = opt_u64(params, "max_size")
                     .map_or(DEFAULT_SCREENSHOT_MAX_SIZE, |size| {
                         size.clamp(16, 8192) as u32
                     });
                 self.captures.push(CaptureRequest {
-                    viewport_only,
+                    // An aspect ratio only describes the scene view, so crop to it.
+                    viewport_only: viewport_only || aspect.is_some(),
                     max_size,
                     save_path: opt_str(params, "save_path").map(PathBuf::from),
                     inline: opt_bool(params, "inline").unwrap_or(true),
@@ -346,6 +391,7 @@ impl RemoteHub {
                         .filter(|value| !value.is_null())
                         .cloned(),
                     view: None,
+                    aspect,
                     reply: request.reply,
                 });
                 None
@@ -422,8 +468,60 @@ pub fn process_requests(
 
 /// The view through the camera a screenshot asked for: a camera entity, or `"game"`
 /// for the scene's active camera (else its first camera).
+/// An aspect ratio given as a number (`1.777`) or text (`"16:9"`, `"1.5"`).
+fn parse_aspect(value: &Value) -> Result<f32, String> {
+    let parsed = match value {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) => match text.split_once(':') {
+            Some((width, height)) => width
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .zip(height.trim().parse::<f64>().ok())
+                .filter(|(_, height)| *height > 0.0)
+                .map(|(width, height)| width / height),
+            None => text.trim().parse::<f64>().ok(),
+        },
+        _ => None,
+    };
+    parsed
+        .filter(|aspect| (0.1..=10.0).contains(aspect))
+        .map(|aspect| aspect as f32)
+        .ok_or_else(|| {
+            format!(
+                "aspect must be a ratio between 0.1 and 10 such as 1.78 or \"16:9\", got {value}"
+            )
+        })
+}
+
+/// The largest region of shape `aspect` (width / height) that fits `base`, centered in it.
+pub fn fit_region(base: RenderRegion, aspect: f32) -> Option<RenderRegion> {
+    let (base_width, base_height) = (base.width() as f32, base.height() as f32);
+    let (width, height) = if aspect >= base_width / base_height {
+        (base_width, base_width / aspect)
+    } else {
+        (base_height * aspect, base_height)
+    };
+    let (width, height) = (
+        (width.floor() as u32).max(1),
+        (height.floor() as u32).max(1),
+    );
+    RenderRegion::new(
+        base.x() + (base.width() - width) / 2,
+        base.y() + (base.height() - height) / 2,
+        width,
+        height,
+    )
+}
+
 fn resolve_view(scene: &Scene, spec: &Value) -> Result<Camera, String> {
     let world = scene.main_world();
+    if spec.is_object() {
+        // A one-off pose: the view camera moved as `camera_set` would, without moving it.
+        let mut camera = *scene.camera();
+        super::handlers::adjust_camera(&mut camera, spec)?;
+        return Ok(camera);
+    }
     let entity = if spec.as_str() == Some("game") {
         scene
             .active_camera_entity()

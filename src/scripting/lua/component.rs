@@ -201,15 +201,20 @@ impl LuaScriptInstance {
         })
     }
 
+    /// Call `on_destroyed(self_entity, reason)`; `reason` is `"reload"` when the script is
+    /// about to be rebuilt after an edit and `"removed"` when the entity or its script
+    /// component is going away.
     pub(crate) fn call_on_destroyed(
         &mut self,
         lua: &Lua,
         entity_bits: i64,
+        reload: bool,
         commands: Rc<RefCell<ScriptCommands>>,
         event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
     ) -> Result<FunctionCallOutcome, LuaScriptingError> {
+        let reason = if reload { "reload" } else { "removed" };
         self.with_script_context(entity_bits, commands, event_queue, || {
-            self.call_function(lua, "on_destroyed", entity_bits)
+            self.call_function_with_args(lua, "on_destroyed", (entity_bits, reason))
         })
     }
 

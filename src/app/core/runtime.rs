@@ -152,6 +152,7 @@ impl RuntimeController {
             return;
         }
 
+        crate::remote::log_tap::mark_play_start();
         let snapshot = SceneSnapshot::capture(scene);
         self.editor_snapshot = Some(snapshot);
         scene.reset_script_runtime();

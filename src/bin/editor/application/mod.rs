@@ -132,6 +132,7 @@ impl RenderApplication for EditorApplication {
     fn custom_render(&mut self, ctx: &mut CustomRenderContext) {
         if !matches!(ctx.stage, CustomRenderStage::Shadow(_))
             && matches!(self.shared.runtime_state.active_mode(), RuntimeMode::Editor)
+            && ctx.renderer.editor_overlays()
         {
             let grid = self
                 .shared

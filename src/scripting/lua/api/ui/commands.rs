@@ -24,11 +24,35 @@ pub enum Anchor {
     BottomRight,
 }
 
+/// Optional size and color for a text widget; unset fields keep the theme's look.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextStyle {
+    /// Font size in points.
+    pub size: Option<f32>,
+    /// RGBA, not premultiplied.
+    pub color: Option<[u8; 4]>,
+}
+
+#[cfg(feature = "egui")]
+impl TextStyle {
+    fn rich_text(&self, text: &str) -> egui::RichText {
+        let mut rich = egui::RichText::new(text);
+        if let Some(size) = self.size {
+            rich = rich.size(size);
+        }
+        if let Some([r, g, b, a]) = self.color {
+            rich = rich.color(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+        }
+        rich
+    }
+}
+
 /// UI commands that are recorded during Lua script execution and replayed with real egui::Ui.
 #[derive(Debug, Clone)]
 pub enum UiCommand {
     Label {
         text: String,
+        style: TextStyle,
     },
     Button {
         id: String,
@@ -36,6 +60,7 @@ pub enum UiCommand {
     },
     Heading {
         text: String,
+        style: TextStyle,
     },
     Separator,
     TextEdit {
@@ -97,6 +122,16 @@ pub enum UiCommand {
         height: Option<f32>,
         items: Vec<UiCommand>,
     },
+    /// Text drawn over the game view at a fixed position (offsets are inset from the
+    /// anchored edge, as for anchored panels), without a panel around it.
+    ScreenLabel {
+        anchor: Anchor,
+        offset_x: f32,
+        offset_y: f32,
+        text: String,
+        style: TextStyle,
+        backdrop: bool,
+    },
     /// Text drawn over the scene at a world position, already projected to the
     /// viewport: `x`/`y` are fractions of its width and height from the top left.
     WorldLabel {
@@ -115,7 +150,9 @@ impl UiCommand {
     pub fn is_overlay(&self) -> bool {
         matches!(
             self,
-            UiCommand::AnchoredPanel { .. } | UiCommand::WorldLabel { .. }
+            UiCommand::AnchoredPanel { .. }
+                | UiCommand::ScreenLabel { .. }
+                | UiCommand::WorldLabel { .. }
         )
     }
 
@@ -189,6 +226,48 @@ impl UiCommand {
                         });
                     });
             }
+            UiCommand::ScreenLabel {
+                anchor,
+                offset_x,
+                offset_y,
+                text,
+                style,
+                backdrop,
+            } => {
+                let base_rect = viewport_rect.unwrap_or_else(|| ui.max_rect());
+                let painter = ui
+                    .ctx()
+                    .layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("script_screen_labels"),
+                    ))
+                    .with_clip_rect(base_rect);
+                let color = style.color.map_or(egui::Color32::WHITE, |[r, g, b, a]| {
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, a)
+                });
+                let galley = painter.layout_no_wrap(
+                    text.clone(),
+                    egui::FontId::proportional(style.size.unwrap_or(16.0)),
+                    color,
+                );
+                let position = anchored_position(
+                    base_rect,
+                    *anchor,
+                    *offset_x,
+                    *offset_y,
+                    Some(galley.size().x),
+                    Some(galley.size().y),
+                );
+                let text_rect = egui::Rect::from_min_size(position, galley.size());
+                if *backdrop {
+                    painter.rect_filled(
+                        text_rect.expand2(egui::vec2(6.0, 3.0)),
+                        4.0,
+                        egui::Color32::from_black_alpha(150),
+                    );
+                }
+                painter.galley(text_rect.min, galley, egui::Color32::WHITE);
+            }
             UiCommand::WorldLabel {
                 x,
                 y,
@@ -250,12 +329,16 @@ impl UiCommand {
         }
 
         match self {
-            UiCommand::Label { text } => {
-                ui.label(text);
+            UiCommand::Label { text, style } => {
+                ui.label(style.rich_text(text));
                 None
             }
-            UiCommand::Heading { text } => {
-                ui.heading(text);
+            UiCommand::Heading { text, style } => {
+                let mut rich = style.rich_text(text);
+                if style.size.is_none() {
+                    rich = rich.heading();
+                }
+                ui.label(rich);
                 None
             }
             UiCommand::Separator => {
@@ -379,6 +462,7 @@ impl UiCommand {
             | UiCommand::Horizontal { .. }
             | UiCommand::CenteredArea { .. }
             | UiCommand::AnchoredPanel { .. }
+            | UiCommand::ScreenLabel { .. }
             | UiCommand::WorldLabel { .. } => None,
         }
     }

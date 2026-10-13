@@ -329,6 +329,19 @@ impl ScriptCommands {
         Ok(())
     }
 
+    /// Queue the removal of an entity and its descendants. An entity spawned earlier in
+    /// the same chunk is simply never created.
+    pub fn despawn(&mut self, handle: i64) -> Result<(), mlua::Error> {
+        if self.pending.remove(&handle).is_some() {
+            self.assets.retain(|(target, _)| *target != handle);
+            return Ok(());
+        }
+
+        let entity_bits = self.resolve_entity_bits(handle)?;
+        self.existing.push(ExistingCommand::Despawn { entity_bits });
+        Ok(())
+    }
+
     pub fn subscribe_event(
         &mut self,
         handle: i64,
@@ -437,6 +450,22 @@ impl ScriptCommands {
 
             if let Some(parent_entity) = Entity::from_bits(parent_bits) {
                 world.insert_one(child_entity, Parent(parent_entity))?;
+                // Keep the parent's child list in step with the Parent links, like
+                // `SetParent` does for existing entities.
+                let listed = world
+                    .get::<&mut crate::scene::components::Children>(parent_entity)
+                    .map(|mut children| {
+                        if !children.0.contains(&child_entity) {
+                            children.0.push(child_entity);
+                        }
+                    })
+                    .is_ok();
+                if !listed && world.contains(parent_entity) {
+                    world.insert_one(
+                        parent_entity,
+                        crate::scene::components::Children(vec![child_entity]),
+                    )?;
+                }
             }
         }
 
@@ -719,6 +748,19 @@ impl ScriptCommands {
                     let _ = world.remove_one::<Parent>(entity);
                 }
             }
+            ExistingCommand::Despawn { entity_bits } => {
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+
+                // Despawning twice (or an entity something else already removed) is not
+                // an error: the entity is gone either way.
+                if world.contains(entity) {
+                    result
+                        .despawned
+                        .extend(Self::despawn_subtree(world, entity));
+                }
+            }
             ExistingCommand::SubscribeEvent {
                 entity_bits,
                 event_name,
@@ -756,6 +798,49 @@ impl ScriptCommands {
             }
         }
         Ok(())
+    }
+
+    /// Despawn `root` and all its descendants (children first), detaching `root` from its
+    /// parent. Returns the entities removed.
+    fn despawn_subtree(world: &mut World, root: Entity) -> Vec<Entity> {
+        use crate::scene::components::Children;
+
+        if let Ok(parent) = world.get::<&Parent>(root).map(|parent| parent.0) {
+            let mut now_empty = false;
+            if let Ok(mut siblings) = world.get::<&mut Children>(parent) {
+                siblings.0.retain(|&child| child != root);
+                now_empty = siblings.0.is_empty();
+            }
+            if now_empty {
+                let _ = world.remove_one::<Children>(parent);
+            }
+        }
+
+        // Descendants come from the Parent links as well as the child lists, so a
+        // hierarchy whose lists are out of step still goes away completely.
+        let mut children_of: HashMap<Entity, Vec<Entity>> = HashMap::new();
+        for (child, parent) in world.query::<&Parent>().iter() {
+            children_of.entry(parent.0).or_default().push(child);
+        }
+        let mut order = Vec::new();
+        let mut stack = vec![root];
+        while let Some(entity) = stack.pop() {
+            if !world.contains(entity) || order.contains(&entity) {
+                continue;
+            }
+            order.push(entity);
+            if let Some(children) = children_of.get(&entity) {
+                stack.extend(children.iter().copied());
+            }
+            if let Ok(children) = world.get::<&Children>(entity) {
+                stack.extend(children.0.iter().copied());
+            }
+        }
+
+        for entity in order.iter().rev() {
+            let _ = world.despawn(*entity);
+        }
+        order
     }
 
     /// Returns true if `candidate` is `entity` itself or sits below it in the hierarchy,
@@ -1402,6 +1487,8 @@ pub struct PendingAssetCommand {
 #[derive(Default)]
 pub(crate) struct ScriptApplyResult {
     pub scripts_added: Vec<Entity>,
+    /// Entities removed by `despawn_entity`, including descendants.
+    pub despawned: Vec<Entity>,
     pub gltf_imports: Vec<PendingGltfImport>,
     pub asset_commands: Vec<PendingAssetCommand>,
     pub event_subscriptions: Vec<PendingEventSubscription>,

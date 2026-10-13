@@ -60,6 +60,8 @@ use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 /// - `rotate(entity, axis_x, axis_y, axis_z, angle)` - Rotate around axis (radians)
 /// - `set_rotation(entity, yaw, pitch, roll)` - Set via Euler angles (YXZ, radians)
 /// - `get_world_rotation(entity)` - Get world rotation as {yaw, pitch, roll} table
+/// - `get_forward(entity)`, `get_right(entity)`, `get_up(entity)` - World-space unit
+///   direction the entity faces (-Z), its +X and its +Y, as {x, y, z} tables
 /// - `look_at(entity, target_x, target_y, target_z)` - Orient to look at point
 ///
 /// ### Scale
@@ -228,6 +230,38 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
             })
         })?,
     )?;
+
+    // get_forward / get_right / get_up(entity: number) -> {x, y, z} | nil
+    for (name, axis) in [
+        ("get_forward", Vec3::NEG_Z),
+        ("get_right", Vec3::X),
+        ("get_up", Vec3::Y),
+    ] {
+        globals.set(
+            name,
+            lua.create_function(move |lua, entity_bits: i64| {
+                with_active_world(|world| {
+                    let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                        return Ok(None);
+                    };
+                    let rotation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity)
+                    {
+                        world_transform.0.rotation
+                    } else if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+                        transform.0.rotation
+                    } else {
+                        return Ok(None);
+                    };
+                    let direction = rotation * axis;
+                    let table = lua.create_table()?;
+                    table.set("x", direction.x as f64)?;
+                    table.set("y", direction.y as f64)?;
+                    table.set("z", direction.z as f64)?;
+                    Ok(Some(table))
+                })
+            })?,
+        )?;
+    }
 
     Ok(())
 }

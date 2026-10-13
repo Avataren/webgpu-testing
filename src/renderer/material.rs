@@ -16,9 +16,10 @@ pub struct Material {
     pub occlusion_texture: u32,
 
     // PBR parameters (stored as u8, converted to f32 in shader)
-    pub metallic_factor: u8,   // 0-255 -> 0.0-1.0
-    pub roughness_factor: u8,  // 0-255 -> 0.0-1.0
-    pub emissive_strength: u8, // 0-255 -> 0.0-1.0
+    pub metallic_factor: u8,  // 0-255 -> 0.0-1.0
+    pub roughness_factor: u8, // 0-255 -> 0.0-1.0
+    /// 255 is 1.0; larger values give HDR emission for bloom, up to `MAX_EMISSIVE`.
+    pub emissive_strength: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -75,6 +76,9 @@ impl std::ops::BitOrAssign for MaterialFlags {
 }
 
 impl Material {
+    /// Largest emissive strength; values above 1 are HDR and make bloom pick the surface up.
+    pub const MAX_EMISSIVE: f32 = 64.0;
+
     pub fn new(color: [u8; 4]) -> Self {
         Self {
             base_color: color,
@@ -123,8 +127,13 @@ impl Material {
     }
 
     pub fn with_emissive(mut self, strength: f32) -> Self {
-        self.emissive_strength = (strength.clamp(0.0, 1.0) * 255.0) as u8;
+        self.emissive_strength = Self::encode_emissive(strength);
         self
+    }
+
+    /// Strength to its stored form: 255 per 1.0, clamped to `0..=MAX_EMISSIVE`.
+    pub fn encode_emissive(strength: f32) -> u16 {
+        (strength.clamp(0.0, Self::MAX_EMISSIVE) * 255.0).round() as u16
     }
 
     pub fn with_alpha(mut self) -> Self {

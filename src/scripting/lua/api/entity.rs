@@ -15,6 +15,7 @@
 //! - **Script attachment** - Dynamically attach scripts to entities
 //! - **GLTF import** - Load 3D models and attach them to entities
 
+use hecs::Entity;
 use mlua::{Lua, Result as LuaResult};
 
 use crate::scene::Name;
@@ -29,6 +30,8 @@ use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 /// ## Available Functions
 ///
 /// - `spawn_entity(name)` - Create new entity, returns handle (i64)
+/// - `despawn_entity(entity)` - Remove an entity and its children (applied when the hook returns)
+/// - `entity_exists(entity)` - Whether the entity is still in the world
 /// - `set_name(entity, name)` - Set entity name
 /// - `find_entity_by_name(name)` - Search by name, returns entity or nil
 /// - `attach_inline_script(entity, name, source)` - Attach Lua code to entity
@@ -75,6 +78,24 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
         "spawn_entity",
         lua.create_function(|_, name: Option<String>| {
             with_active_commands(|commands| Ok(commands.spawn_entity(name)))
+        })?,
+    )?;
+
+    // despawn_entity(entity: number)
+    globals.set(
+        "despawn_entity",
+        lua.create_function(|_, entity: i64| {
+            with_active_commands(|commands| commands.despawn(entity))
+        })?,
+    )?;
+
+    // entity_exists(entity: number) -> boolean
+    globals.set(
+        "entity_exists",
+        lua.create_function(|_, entity: i64| {
+            with_active_world(|world| {
+                Ok(Entity::from_bits(entity as u64).is_some_and(|entity| world.contains(entity)))
+            })
         })?,
     )?;
 

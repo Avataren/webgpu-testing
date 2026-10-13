@@ -436,3 +436,247 @@ fn bundled_lua_scripts_compile() {
     }
     assert!(checked > 0, "no bundled scripts found");
 }
+
+#[test]
+fn despawn_entity_removes_the_subtree_and_is_idempotent() {
+    use crate::scene::{Children, Name};
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let parent = world.spawn((Name::new("Parent"),));
+    let child = world.spawn((Name::new("Child"), Parent(parent)));
+    world.insert_one(parent, Children(vec![child])).unwrap();
+    let bystander = world.spawn((Name::new("Bystander"),));
+
+    let script = spawn_script(&mut world, "despawner", "function noop() end");
+    state.process_scripts(&mut world, DT, false).unwrap();
+    state
+        .eval(
+            &mut world,
+            &format!(
+                "despawn_entity({}); despawn_entity({})",
+                parent.to_bits().get() as i64,
+                parent.to_bits().get() as i64
+            ),
+            Some(script),
+        )
+        .unwrap();
+
+    assert!(!world.contains(parent), "the entity is gone");
+    assert!(!world.contains(child), "its children go with it");
+    assert!(world.contains(bystander));
+
+    let exists = state
+        .eval(
+            &mut world,
+            &format!(
+                "return entity_exists({}), entity_exists({})",
+                parent.to_bits().get() as i64,
+                bystander.to_bits().get() as i64
+            ),
+            Some(script),
+        )
+        .unwrap();
+    assert_eq!(
+        exists.values,
+        vec![serde_json::json!(false), serde_json::json!(true)]
+    );
+}
+
+#[test]
+fn despawn_detaches_the_entity_from_its_parent() {
+    use crate::scene::{Children, Name};
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let parent = world.spawn((Name::new("Parent"),));
+    let first = world.spawn((Name::new("First"), Parent(parent)));
+    let second = world.spawn((Name::new("Second"), Parent(parent)));
+    world
+        .insert_one(parent, Children(vec![first, second]))
+        .unwrap();
+
+    state
+        .eval(
+            &mut world,
+            &format!("despawn_entity({})", first.to_bits().get() as i64),
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(world.get::<&Children>(parent).unwrap().0, vec![second]);
+}
+
+#[test]
+fn despawning_an_entity_spawned_in_the_same_chunk_creates_nothing() {
+    use crate::scene::Name;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    state
+        .eval(
+            &mut world,
+            r#"
+                local keep = spawn_entity("Keep")
+                local drop = spawn_entity("Drop")
+                set_translation(drop, 1, 2, 3)
+                despawn_entity(drop)
+            "#,
+            None,
+        )
+        .unwrap();
+
+    let names: Vec<String> = world
+        .query::<&Name>()
+        .iter()
+        .map(|(_, name)| name.0.clone())
+        .collect();
+    assert_eq!(names, vec!["Keep".to_string()]);
+}
+
+#[test]
+fn get_time_counts_script_time_and_restarts_on_reset() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let entity = spawn_script(
+        &mut world,
+        "clock",
+        "function update(self_entity, dt) now = get_time() end",
+    );
+    for _ in 0..30 {
+        state.process_scripts(&mut world, 0.1, false).unwrap();
+    }
+    let now = match state.script_global(&world, entity, "now") {
+        Some(mlua::Value::Number(value)) => value,
+        other => panic!("now: {other:?}"),
+    };
+    assert!((now - 3.0).abs() < 1e-6, "got {now}");
+
+    state.reset_runtime();
+    state.process_scripts(&mut world, 0.1, false).unwrap();
+    let now = match state.script_global(&world, entity, "now") {
+        Some(mlua::Value::Number(value)) => value,
+        other => panic!("now: {other:?}"),
+    };
+    assert!((now - 0.1).abs() < 1e-6, "got {now}");
+}
+
+#[test]
+fn direction_helpers_follow_the_entity_rotation() {
+    use glam::Quat;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let ship = spawn_script(&mut world, "ship", "function noop() end");
+    // A quarter turn about Y (counter-clockwise from above) turns -Z toward -X.
+    world
+        .insert_one(
+            ship,
+            TransformComponent(Transform {
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..Transform::default()
+            }),
+        )
+        .unwrap();
+    state.process_scripts(&mut world, DT, false).unwrap();
+
+    let bits = ship.to_bits().get() as i64;
+    let result = state
+        .eval(
+            &mut world,
+            &format!(
+                "local f = get_forward({bits}); local r = get_right({bits}); \
+                 local u = get_up({bits}); return f.x, f.z, r.z, u.y"
+            ),
+            Some(ship),
+        )
+        .unwrap();
+    let values: Vec<f64> = result.values.iter().filter_map(|v| v.as_f64()).collect();
+    assert_eq!(values.len(), 4);
+    assert!((values[0] + 1.0).abs() < 1e-5, "forward.x {}", values[0]);
+    assert!(values[1].abs() < 1e-5, "forward.z {}", values[1]);
+    assert!((values[2] + 1.0).abs() < 1e-5, "right.z {}", values[2]);
+    assert!((values[3] - 1.0).abs() < 1e-5, "up.y {}", values[3]);
+}
+
+#[test]
+fn hot_reload_runs_on_destroyed_with_a_reason_before_recreating() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pool.lua");
+    std::fs::write(
+        &path,
+        r#"
+            function on_created(self_entity)
+                created = (created or 0) + 1
+                pool = spawn_entity("PoolMember")
+            end
+            function on_destroyed(self_entity, reason)
+                despawn_entity(pool)
+                destroyed_because = reason
+            end
+        "#,
+    )
+    .unwrap();
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let entity = world.spawn((LuaScriptComponent::new(
+        crate::scripting::LuaScriptSource::file(&path),
+    ),));
+    state.process_scripts(&mut world, DT, false).unwrap();
+    assert_eq!(count_named(&world, "PoolMember"), 1);
+
+    // Editing the script reloads it: the old instance cleans up, the new one spawns its
+    // own pool, so exactly one set exists afterwards.
+    assert_eq!(state.reload_path(&path), 1);
+    state.process_scripts(&mut world, DT, false).unwrap();
+    state.process_scripts(&mut world, DT, false).unwrap();
+    assert_eq!(state.last_error(entity), None);
+    assert_eq!(count_named(&world, "PoolMember"), 1, "no leaked pool");
+
+    // The new instance has not been destroyed, so remove the component to see the
+    // "removed" reason.
+    world.remove_one::<LuaScriptComponent>(entity).unwrap();
+    state.process_scripts(&mut world, DT, false).unwrap();
+    assert_eq!(count_named(&world, "PoolMember"), 0);
+}
+
+fn count_named(world: &World, wanted: &str) -> usize {
+    world
+        .query::<&crate::scene::Name>()
+        .iter()
+        .filter(|(_, name)| name.0 == wanted)
+        .count()
+}
+
+#[test]
+fn parenting_in_the_spawning_chunk_keeps_child_lists_so_despawn_takes_the_children() {
+    use crate::scene::Children;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    state
+        .eval(
+            &mut world,
+            r#"
+                local parent = spawn_entity("P")
+                local child = spawn_entity("C")
+                set_parent(child, parent)
+            "#,
+            None,
+        )
+        .unwrap();
+
+    let parent = world
+        .query::<&crate::scene::Name>()
+        .iter()
+        .find(|(_, name)| name.0 == "P")
+        .map(|(entity, _)| entity)
+        .unwrap();
+    assert_eq!(world.get::<&Children>(parent).unwrap().0.len(), 1);
+
+    state
+        .eval(&mut world, "despawn_entity(find_entity_by_name('P'))", None)
+        .unwrap();
+    assert_eq!(world.query::<&crate::scene::Name>().iter().count(), 0);
+}

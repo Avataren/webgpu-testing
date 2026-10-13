@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::renderer::postprocess::PostProcessEffects;
 use crate::scene::{
-    CameraComponent, CameraProjection, EnvironmentComponent, MeshBounds, Name, Parent,
+    Camera, CameraComponent, CameraProjection, EnvironmentComponent, MeshBounds, Name, Parent,
     TransformComponent, WorldTransform,
 };
 
@@ -56,29 +56,10 @@ pub(super) fn camera_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     }))
 }
 
-pub(super) fn camera_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
-    let scene = &mut *ctx.gpu.scene;
-    let mut camera = *scene.camera();
+/// Apply the `position`/`eye`, `target`, `fov_deg`, `near` and `far` fields of `params`
+/// to `camera`. Giving only a target keeps the camera's distance and direction.
+pub(crate) fn adjust_camera(camera: &mut Camera, params: &Value) -> Result<(), String> {
     let offset = camera.eye - camera.target;
-
-    if let Some(value) = params.get("focus") {
-        let entity = entity_from_json(scene.main_world(), value)?;
-        let world = scene.main_world();
-        let transform = world
-            .get::<&WorldTransform>(entity)
-            .map(|transform| transform.0)
-            .map_err(|_| "the focus entity has no transform")?;
-        let radius = world
-            .get::<&MeshBounds>(entity)
-            .map(|bounds| ((bounds.max - bounds.min) * transform.scale).length() * 0.5)
-            .unwrap_or(0.5);
-        let distance = opt_f64(params, "distance").map_or(radius.max(0.5) * 3.0, |d| d as f32);
-        let direction = offset
-            .try_normalize()
-            .unwrap_or(Vec3::new(0.0, 0.4, 1.0).normalize());
-        camera.target = transform.translation;
-        camera.eye = camera.target + direction * distance;
-    }
     if let Some(value) = params.get("target") {
         camera.target = vec3_from_json(value)?;
         if params.get("position").is_none() && params.get("focus").is_none() {
@@ -109,6 +90,33 @@ pub(super) fn camera_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Rem
             ));
         }
     }
+    Ok(())
+}
+
+pub(super) fn camera_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let scene = &mut *ctx.gpu.scene;
+    let mut camera = *scene.camera();
+    let offset = camera.eye - camera.target;
+
+    if let Some(value) = params.get("focus") {
+        let entity = entity_from_json(scene.main_world(), value)?;
+        let world = scene.main_world();
+        let transform = world
+            .get::<&WorldTransform>(entity)
+            .map(|transform| transform.0)
+            .map_err(|_| "the focus entity has no transform")?;
+        let radius = world
+            .get::<&MeshBounds>(entity)
+            .map(|bounds| ((bounds.max - bounds.min) * transform.scale).length() * 0.5)
+            .unwrap_or(0.5);
+        let distance = opt_f64(params, "distance").map_or(radius.max(0.5) * 3.0, |d| d as f32);
+        let direction = offset
+            .try_normalize()
+            .unwrap_or(Vec3::new(0.0, 0.4, 1.0).normalize());
+        camera.target = transform.translation;
+        camera.eye = camera.target + direction * distance;
+    }
+    adjust_camera(&mut camera, params)?;
 
     scene.set_camera(camera);
 

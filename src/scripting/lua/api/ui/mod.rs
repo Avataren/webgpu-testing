@@ -43,7 +43,7 @@
 mod commands;
 mod context;
 
-pub use commands::{merge_ui_responses, Anchor, UiCommand, UiResponse};
+pub use commands::{merge_ui_responses, Anchor, TextStyle, UiCommand, UiResponse};
 pub use context::{UiCameraGuard, UiContext};
 
 use mlua::{Lua, UserData, UserDataMethods};
@@ -57,8 +57,9 @@ use mlua::{Lua, UserData, UserDataMethods};
 ///
 /// ## Available UI Methods
 ///
-/// - `ui:label(text)` - Display text label
-/// - `ui:heading(text)` - Display heading
+/// - `ui:label(text[, {color = {r, g, b, a}, size = 16}])` - Display text label (colors 0..1)
+/// - `ui:heading(text[, {color, size}])` - Display heading
+/// - `ui:screen_label(anchor, offset_x, offset_y, text[, {color, size, backdrop}])` - Text at a fixed viewport position (anchors as for `anchored_panel`, offsets inset from the anchored edge), with no panel around it
 /// - `ui:separator()` - Display horizontal line
 /// - `ui:button(text, [id])` - Display button, returns true if clicked. Buttons are
 ///   identified by label (plus occurrence order); pass `id` to make it explicit
@@ -100,10 +101,38 @@ pub fn register_ui_api(_lua: &Lua) -> mlua::Result<()> {
 impl UserData for UiContext {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         // Display a text label
-        methods.add_method("label", |_, this, text: String| {
-            this.label(text);
-            Ok(())
-        });
+        methods.add_method(
+            "label",
+            |_, this, (text, options): (String, Option<mlua::Table>)| {
+                this.label(text, parse_text_options(options)?.style);
+                Ok(())
+            },
+        );
+
+        // Text at a fixed viewport position without a panel around it (titles, banners)
+        methods.add_method(
+            "screen_label",
+            |_,
+             this,
+             (anchor, offset_x, offset_y, text, options): (
+                String,
+                f32,
+                f32,
+                String,
+                Option<mlua::Table>,
+            )| {
+                let anchor = parse_anchor(&anchor)?;
+                let options = parse_text_options(options)?;
+                this.screen_label(
+                    anchor,
+                    [offset_x, offset_y],
+                    text,
+                    options.style,
+                    options.backdrop,
+                );
+                Ok(())
+            },
+        );
 
         // Display a button and return whether it was clicked. An optional id
         // distinguishes buttons that share a label.
@@ -112,10 +141,13 @@ impl UserData for UiContext {
         });
 
         // Display a heading
-        methods.add_method("heading", |_, this, text: String| {
-            this.heading(text);
-            Ok(())
-        });
+        methods.add_method(
+            "heading",
+            |_, this, (text, options): (String, Option<mlua::Table>)| {
+                this.heading(text, parse_text_options(options)?.style);
+                Ok(())
+            },
+        );
 
         // Display a separator
         methods.add_method("separator", |_, this, ()| {
@@ -152,23 +184,14 @@ impl UserData for UiContext {
         methods.add_method(
             "world_label",
             |_, this, (x, y, z, text, options): (f32, f32, f32, String, Option<mlua::Table>)| {
-                let mut color = [255u8; 4];
-                let mut size = 16.0;
-                let mut backdrop = false;
-                if let Some(options) = options {
-                    if let Some(rgba) = options.get::<Option<Vec<f32>>>("color")? {
-                        for (channel, value) in color.iter_mut().zip(rgba) {
-                            *channel = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-                        }
-                    }
-                    if let Some(value) = options.get::<Option<f32>>("size")? {
-                        size = value.clamp(4.0, 200.0);
-                    }
-                    if let Some(value) = options.get::<Option<bool>>("backdrop")? {
-                        backdrop = value;
-                    }
-                }
-                Ok(this.world_label([x, y, z], text, color, size, backdrop))
+                let options = parse_text_options(options)?;
+                Ok(this.world_label(
+                    [x, y, z],
+                    text,
+                    options.style.color.unwrap_or([255; 4]),
+                    options.style.size.unwrap_or(16.0),
+                    options.backdrop,
+                ))
             },
         );
 
@@ -257,6 +280,37 @@ impl UserData for UiContext {
             Ok(this.get_pixels_per_point())
         });
     }
+}
+
+/// Options shared by the text methods: `{color = {r, g, b, a}, size = 16, backdrop = false}`
+/// with colors in 0..1. `backdrop` only applies to text drawn over the scene.
+struct TextOptions {
+    style: TextStyle,
+    backdrop: bool,
+}
+
+fn parse_text_options(options: Option<mlua::Table>) -> mlua::Result<TextOptions> {
+    let mut parsed = TextOptions {
+        style: TextStyle::default(),
+        backdrop: false,
+    };
+    let Some(options) = options else {
+        return Ok(parsed);
+    };
+    if let Some(rgba) = options.get::<Option<Vec<f32>>>("color")? {
+        let mut color = [255u8; 4];
+        for (channel, value) in color.iter_mut().zip(rgba) {
+            *channel = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        parsed.style.color = Some(color);
+    }
+    if let Some(size) = options.get::<Option<f32>>("size")? {
+        parsed.style.size = Some(size.clamp(4.0, 200.0));
+    }
+    if let Some(backdrop) = options.get::<Option<bool>>("backdrop")? {
+        parsed.backdrop = backdrop;
+    }
+    Ok(parsed)
 }
 
 fn parse_anchor(anchor: &str) -> mlua::Result<Anchor> {

@@ -123,6 +123,10 @@ pub(crate) enum ExistingCommand {
         entity_bits: u64,
         component_name: String,
     },
+    /// Remove the entity and everything below it in the hierarchy.
+    Despawn {
+        entity_bits: u64,
+    },
     SubscribeEvent {
         entity_bits: u64,
         event_name: String,

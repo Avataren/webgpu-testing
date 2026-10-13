@@ -200,7 +200,7 @@ pub struct SerializedMaterial {
     pub occlusion_texture: SerializedTextureSlot,
     pub metallic_factor: u8,
     pub roughness_factor: u8,
-    pub emissive_strength: u8,
+    pub emissive_strength: u16,
     #[serde(default)]
     pub kind: SerializedMaterialKind,
 }

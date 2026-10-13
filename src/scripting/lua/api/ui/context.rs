@@ -1,4 +1,4 @@
-use super::commands::{Anchor, UiCommand, UiResponse};
+use super::commands::{Anchor, TextStyle, UiCommand, UiResponse};
 use glam::{Mat4, Vec4};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -182,8 +182,27 @@ impl UiContext {
     }
 
     /// Display a text label.
-    pub fn label(&self, text: String) {
-        self.push(UiCommand::Label { text });
+    pub fn label(&self, text: String, style: TextStyle) {
+        self.push(UiCommand::Label { text, style });
+    }
+
+    /// Draw `text` at a fixed viewport position, with no panel around it.
+    pub fn screen_label(
+        &self,
+        anchor: Anchor,
+        offset: [f32; 2],
+        text: String,
+        style: TextStyle,
+        backdrop: bool,
+    ) {
+        self.push(UiCommand::ScreenLabel {
+            anchor,
+            offset_x: offset[0],
+            offset_y: offset[1],
+            text,
+            style,
+            backdrop,
+        });
     }
 
     /// Display a button and return whether it was clicked.
@@ -197,8 +216,8 @@ impl UiContext {
     }
 
     /// Display a heading.
-    pub fn heading(&self, text: String) {
-        self.push(UiCommand::Heading { text });
+    pub fn heading(&self, text: String, style: TextStyle) {
+        self.push(UiCommand::Heading { text, style });
     }
 
     /// Display a separator line.
@@ -479,12 +498,66 @@ mod tests {
                 assert!(matches!(
                     items[0],
                     UiCommand::Label {
-                        ref text
+                        ref text, ..
                     } if text == "Hello HUD"
                 ));
             }
             other => panic!("Expected anchored panel, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn text_widgets_take_size_and_color_options() {
+        let lua = Lua::new();
+        let ui_context = UiContext::new();
+        let callback = lua
+            .load(
+                r#"
+                return function(panel)
+                    panel:label("plain")
+                    panel:label("big", { size = 30, color = { 1, 0, 0 } })
+                    panel:heading("title", { size = 500 })
+                    panel:screen_label("top_right", 12, 8, "GAME OVER", { backdrop = true })
+                end
+                "#,
+            )
+            .eval::<mlua::Function>()
+            .expect("Failed to build Lua callback");
+        ui_context
+            .anchored_panel(
+                "hud".into(),
+                Anchor::TopLeft,
+                0.0,
+                0.0,
+                None,
+                None,
+                callback,
+            )
+            .expect("Anchored panel failed");
+
+        let commands = ui_context.take_commands();
+        let UiCommand::AnchoredPanel { items, .. } = &commands[0] else {
+            panic!("expected an anchored panel");
+        };
+        assert!(
+            matches!(&items[0], UiCommand::Label { style, .. } if *style == Default::default())
+        );
+        match &items[1] {
+            UiCommand::Label { style, .. } => {
+                assert_eq!(style.size, Some(30.0));
+                // Missing channels keep their default (alpha 255).
+                assert_eq!(style.color, Some([255, 0, 0, 255]));
+            }
+            other => panic!("expected a label, got {other:?}"),
+        }
+        // Sizes are clamped to something egui can lay out.
+        assert!(matches!(&items[2], UiCommand::Heading { style, .. } if style.size == Some(200.0)));
+        assert!(matches!(
+            &items[3],
+            UiCommand::ScreenLabel { anchor: Anchor::TopRight, offset_x, offset_y, backdrop: true, .. }
+                if *offset_x == 12.0 && *offset_y == 8.0
+        ));
+        assert!(items[3].is_overlay());
     }
 
     #[test]
@@ -524,7 +597,7 @@ mod tests {
                 assert!(matches!(
                     items[0],
                     UiCommand::Label {
-                        ref text
+                        ref text, ..
                     } if text == "w=320.0 h=200.0"
                 ));
             }

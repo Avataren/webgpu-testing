@@ -88,6 +88,14 @@ end
 
 ### Entity Handles
 
+Commands you queue (`set_translation`, `set_component`, `set_material`, `look_at`,
+`set_parent`, `despawn_entity`, ...) apply when the hook returns. Most of them accept a
+handle spawned earlier in the same hook (`spawn_primitive`, `spawn_light`, `spawn_camera`,
+`spawn_entity`). The exceptions need an entity that already exists: `import_gltf`,
+`subscribe_event`, `unsubscribe_event`, and `set_parent` when the *child* already exists but
+the new parent was spawned in the same hook. Reading (`get_component`, `has_component`,
+`get_world_translation`) only sees entities from earlier frames.
+
 Entities are represented as **64-bit integers (i64)** in Lua. You can:
 - Store them in variables
 - Pass them to functions
@@ -148,9 +156,18 @@ end
 ### Runtime
 - `is_playing()` - `true` while scripts run for play mode, `false` in editor mode. Lets a
   `@tool` script keep game logic out of the editor.
+- `get_time()` - Seconds of script time: the sum of the frame steps scripts have been given.
+  It starts at 0 when play starts or stops, and follows `time_scale`. Use it for timers
+  (`if get_time() > spawn_at then ...`) instead of summing `dt` yourself.
 
 ### Entity Management
 - `spawn_entity(name)` - Create new entity
+- `despawn_entity(entity)` - Remove an entity and everything parented below it. Applied when
+  the hook returns; despawning twice, or an entity that is already gone, is harmless.
+  An entity spawned in the same hook is simply never created. Scripts attached to removed
+  entities get `on_destroyed`.
+- `entity_exists(entity)` - `true` if the entity is still in the world (handles of despawned
+  entities never get reused, so a stale handle stays `false`)
 - `set_name(entity, name)` - Set entity name
 - `find_entity_by_name(name)` - Find entity by name
 - `attach_inline_script(entity, name, source)` - Attach inline Lua script
@@ -160,11 +177,16 @@ end
 ### Meshes and Materials
 - `spawn_primitive(kind[, name])` → `entity` - Spawn a visible entity with a primitive mesh
   (`cube`, `sphere`, `plane`, `cylinder`, `cone`, `torus`) and its own material. `plane`
-  is a 1x1 quad in the XY plane facing +Z; rotate it -90° about X for a floor.
+  is a 1x1 quad in the XY plane facing +Z; rotate it -90° about X for a floor. The
+  `cylinder` (radius 1, z from -0.5 to 0.5) and `cone` lie along the Z axis. The cone's tip
+  is at the origin and its base (radius 1) at z = -1, so the tip points toward +Z, the
+  opposite of the engine's -Z forward: a ship or arrow made from a cone needs a 180° yaw
+  to point where `look_at` / `get_forward` say.
 - `set_mesh(entity, kind)` - Replace the geometry with a primitive, or `nil` to remove it
 - `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
 - `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
-  `"#rrggbb"`), `emissive`, `metallic`, `roughness` (0..1), `unlit`, `transparent`,
+  `"#rrggbb"`), `emissive` (strength; the surface glows in its own color, and values above 1
+  are HDR, so `emissive = 3` blooms strongly while staying lit), `metallic`, `roughness` (0..1), `unlit`, `transparent`,
   `double_sided`, `nearest_filtering` (booleans) and texture paths such as
   `base_color_texture` (`false` removes a texture)
 
@@ -240,6 +262,10 @@ Script descriptors include:
 - `get_world_rotation(entity)` - Get rotation (returns table with `yaw`, `pitch`, `roll` fields, radians)
 - `set_scale(entity, x, y, z)` - Set entity scale
 - `look_at(entity, target_x, target_y, target_z)` - Orient towards target
+- `get_forward(entity)`, `get_right(entity)`, `get_up(entity)` - World-space unit vectors
+  (tables with `x`, `y`, `z`) for the way the entity faces (-Z), its +X and its +Y. Use them
+  instead of deriving directions from yaw: `local f = get_forward(ship)`, then
+  `translate(ship, f.x * speed * dt, 0, f.z * speed * dt)`.
 
 ### Hierarchy API
 - `set_parent(entity, parent)` - Set parent entity (or nil to unparent)
@@ -256,6 +282,27 @@ Script descriptors include:
 - `get_mouse_position()` - Get mouse position (returns table with x, y)
 - `get_mouse_delta()` - Get mouse movement delta (returns table with x, y)
 - `get_mouse_scroll_delta()` - Get scroll wheel delta (returns table with x, y)
+
+### View API
+Conversions between the game view and the world, in the same window-pixel coordinates
+`get_mouse_position()` reports (physical pixels; in the editor the game view is a part of
+the window). They use the active camera and the area the renderer last drew into, and
+return `nil` before the first frame is drawn.
+
+- `get_viewport_size()` - `{x, y, width, height}` of the game view in window pixels
+- `world_to_screen(x, y, z)` - `{x, y, on_screen}` in window pixels, or `nil` when the
+  point is behind the camera
+- `screen_to_world_ray(x, y)` - `{ox, oy, oz, dx, dy, dz}`: the ray's start on the near
+  plane and its unit direction
+- `screen_to_ground(x, y[, height])` - `{x, y, z}` where that ray meets the plane
+  `y = height` (default 0), or `nil` when it never does
+
+```lua
+-- Aim a ship at the mouse on a flat arena
+local mouse = get_mouse_position()
+local target = screen_to_ground(mouse.x, mouse.y, 0)
+if target then look_at(ship, target.x, 0, target.z) end
+```
 
 ### Component API
 - `has_component(entity, component_name)` - Check if entity has component
@@ -336,8 +383,9 @@ into a window titled after the entity.
 
 #### Basic Widgets
 
-- `ui:label(text)` - Display static text label
-- `ui:heading(text)` - Display heading text (larger/bold)
+- `ui:label(text[, {color = {r, g, b, a}, size = 16}])` - Display static text label; colors
+  are 0..1
+- `ui:heading(text[, {color, size}])` - Display heading text (larger/bold unless `size` is given)
 - `ui:separator()` - Display horizontal separator line
 
 #### Interactive Widgets
@@ -358,6 +406,9 @@ into a window titled after the entity.
   `center_left`, `center`, `center_right`, `bottom_left`, `bottom_center`, `bottom_right`;
   offsets are logical points from that anchor; `width`/`height` may be `nil` to fit the
   content. `callback(panel)` builds the contents with the same widget methods.
+- `ui:screen_label(anchor, offset_x, offset_y, text[, {color, size, backdrop = false}])` -
+  Text pinned to the game view (same anchors and inset offsets as `anchored_panel`) with no
+  panel around it: big titles, wave banners, "GAME OVER".
 - `ui:world_label(x, y, z, text[, {color = {r, g, b, a}, size = 16, backdrop = false}])` →
   `boolean` - Text drawn over the game view at a world position (floating score, names).
   Returns `false` when the point is behind the camera or off screen. Labels are not hidden
@@ -476,14 +527,38 @@ function on_ui(self_entity, ui)
     -- Called every frame to build UI
 end
 
-function on_destroyed(self_entity)
-    -- Called when the script component or its entity is removed
+function on_destroyed(self_entity, reason)
+    -- Called when the script component or its entity is removed, and before a hot
+    -- reload. `reason` is "removed" or "reload". Despawn what on_created spawned here.
+end
+```
+
+A script that creates its own entities (bullet pools, effects) should remove them in
+`on_destroyed`; otherwise every hot reload runs `on_created` again and leaves a second set
+behind. Either despawn them, or have `on_created` look the entities up by name
+(`find_entity_by_name`) before spawning.
+
+```lua
+local pool = {}
+
+function on_created(self_entity)
+    for i = 1, 20 do
+        pool[i] = spawn_primitive("sphere", "Bullet" .. i)
+    end
+end
+
+function on_destroyed(self_entity, reason)
+    for _, bullet in ipairs(pool) do
+        despawn_entity(bullet)
+    end
+    pool = {}
 end
 ```
 
 Top-level code runs once when the script is loaded, with the full API available.
 
-When a script file changes on disk it is hot-reloaded: the new code is compiled,
+When a script file changes on disk it is hot-reloaded: `on_destroyed(self, "reload")` runs
+on the old code at the start of the next frame, then the new code is compiled,
 `on_created` runs again, and values stored with the state API (`set_f64`, `set_state`, ...)
 are restored afterwards. Errors are logged once per distinct message and shown in the
 editor; one failing script never stops the others.

@@ -205,6 +205,9 @@ pub struct Renderer {
     camera_projection: CameraProjection,
     camera_fov_y: f32,
     camera_aspect: f32,
+    /// Whether editor-only overlays (the viewport grid) are drawn this frame. Off while a
+    /// screenshot renders through a game camera.
+    editor_overlays: bool,
     settings: RenderSettings,
     pick_active: bool,
     pick_state: PickState,
@@ -262,6 +265,7 @@ impl Renderer {
             camera_projection: CameraProjection::default(),
             camera_fov_y: 60f32.to_radians(),
             camera_aspect: aspect,
+            editor_overlays: true,
             settings,
             pick_active: false,
             pick_state: PickState::default(),
@@ -276,6 +280,11 @@ impl Renderer {
     #[cfg(feature = "egui")]
     pub fn set_ui_hook(&mut self, hook: UiHook) {
         self.ui_hook = Some(hook);
+    }
+
+    /// The part of the surface the scene was last drawn into, if it is not all of it.
+    pub fn render_region(&self) -> Option<RenderRegion> {
+        self.render_region
     }
 
     pub fn set_render_region(&mut self, region: Option<RenderRegion>) {
@@ -491,6 +500,14 @@ impl Renderer {
 
     pub fn camera_aspect(&self) -> f32 {
         self.camera_aspect
+    }
+
+    pub fn editor_overlays(&self) -> bool {
+        self.editor_overlays
+    }
+
+    pub fn set_editor_overlays(&mut self, visible: bool) {
+        self.editor_overlays = visible;
     }
 
     pub fn set_lights(&mut self, lights: &LightsData) {

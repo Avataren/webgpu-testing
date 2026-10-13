@@ -44,7 +44,7 @@ mod server;
 
 pub use capture::{capture_surface, FrameCapture};
 pub use handlers::{RemoteContext, RemoteResult, CORE_METHODS};
-pub use hub::{process_requests, RemoteHub, RemoteHubHandle};
+pub use hub::{fit_region, process_requests, CaptureOverride, RemoteHub, RemoteHubHandle};
 pub use json::{entity_from_json, entity_id, transform_to_json};
 
 /// Port the editor listens on when `ENGINE_REMOTE_PORT` is not set.

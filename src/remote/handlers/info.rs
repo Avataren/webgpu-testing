@@ -231,7 +231,10 @@ pub(super) fn assets_list(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Re
 }
 
 pub(super) fn logs(params: &Value) -> RemoteResult {
-    let after = opt_u64(params, "after").unwrap_or(0);
+    let mut after = opt_u64(params, "after").unwrap_or(0);
+    if opt_bool(params, "since_play_start").unwrap_or(false) {
+        after = after.max(log_tap::play_start_seq());
+    }
     let min_level = match opt_str(params, "min_level").unwrap_or("info") {
         "error" => log::Level::Error,
         "warn" | "warning" => log::Level::Warn,
@@ -266,6 +269,7 @@ pub(super) fn logs(params: &Value) -> RemoteResult {
         .collect();
     Ok(json!({
         "latest_seq": log_tap::latest_seq(),
+        "play_start_seq": log_tap::play_start_seq(),
         "truncated": truncated,
         "entries": entries,
     }))

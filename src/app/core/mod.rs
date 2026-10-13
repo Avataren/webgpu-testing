@@ -382,6 +382,9 @@ impl AppCore {
             aspect,
         );
         renderer.set_render_region(params.render_region);
+        // A frame rendered through another camera (a game-camera screenshot) is a preview
+        // of the game, so the editor's grid stays out of it.
+        renderer.set_editor_overlays(params.camera_override.is_none());
 
         let render_result = scene.render(
             renderer,

@@ -228,6 +228,10 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     var emissive = vec3<f32>(0.0);
     if ((material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
         emissive = emissive_sample * in.material_factors.z;
+    } else {
+        // Without an emissive map the surface glows in its own color. The strength is
+        // not limited to 1, so bright values can push it past the bloom threshold.
+        emissive = base_color.rgb * in.material_factors.z;
     }
 
     // Calculate lighting using imported functions

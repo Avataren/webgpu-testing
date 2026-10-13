@@ -706,12 +706,7 @@ fn show_material_section(
                     material_float_editor(ui, "Roughness", material.roughness_factor, |value| {
                         material.roughness_factor = value
                     });
-                changed |= material_float_editor(
-                    ui,
-                    "Emissive strength",
-                    material.emissive_strength,
-                    |value| material.emissive_strength = value,
-                );
+                changed |= material_emissive_editor(ui, &mut material.emissive_strength);
 
                 let slots = [
                     (
@@ -2349,6 +2344,25 @@ fn material_float_editor(
     } else {
         false
     }
+}
+
+/// Emissive strength; values above 1 are HDR and make bloom pick the surface up.
+fn material_emissive_editor(ui: &mut egui::Ui, encoded_value: &mut u16) -> bool {
+    let mut value = f32::from(*encoded_value) / 255.0;
+    ui.label("Emissive strength");
+    let changed = ui
+        .add(
+            DragValue::new(&mut value)
+                .speed(0.02)
+                .range(0.0..=Material::MAX_EMISSIVE)
+                .fixed_decimals(3),
+        )
+        .changed();
+    ui.end_row();
+    if changed {
+        *encoded_value = Material::encode_emissive(value);
+    }
+    changed
 }
 
 fn float_drag_value(

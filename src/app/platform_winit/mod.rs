@@ -587,13 +587,23 @@ where
                     }
 
                     #[cfg(feature = "egui")]
-                    let render_region = self.editor.render_region();
+                    let mut render_region = self.editor.render_region();
                     #[cfg(not(feature = "egui"))]
-                    let render_region: Option<RenderRegion> = None;
+                    let mut render_region: Option<RenderRegion> = None;
 
-                    let camera_override = remote
+                    let capture_override = remote
                         .as_ref()
-                        .and_then(|hub| hub.borrow_mut().capture_camera_override());
+                        .and_then(|hub| hub.borrow_mut().capture_frame_override());
+                    let camera_override = capture_override.and_then(|over| over.camera);
+                    if let Some(aspect) = capture_override.and_then(|over| over.aspect) {
+                        // Render at the requested shape inside the viewport (or the
+                        // whole window when there is no editor viewport).
+                        let size = renderer.surface_size();
+                        let base =
+                            render_region.or_else(|| RenderRegion::full(size.width, size.height));
+                        render_region =
+                            base.and_then(|base| crate::remote::fit_region(base, aspect));
+                    }
                     let params = RenderParams {
                         render_region,
                         camera_override,

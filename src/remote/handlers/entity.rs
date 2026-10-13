@@ -1317,7 +1317,7 @@ pub(crate) fn patch_material(
         material.roughness_factor = unit_to_u8(roughness);
     }
     if let Some(emissive) = opt_f64(patch, "emissive") {
-        material.emissive_strength = unit_to_u8(emissive);
+        material.emissive_strength = Material::encode_emissive(emissive as f32);
     }
     for (key, flag) in [
         ("unlit", MaterialFlags::UNLIT),

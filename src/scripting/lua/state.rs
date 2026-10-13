@@ -61,7 +61,10 @@ enum Hook<'a> {
     Chunk,
     Created,
     Update(f64),
-    Destroyed,
+    /// `reload` is true when the script is being rebuilt rather than removed.
+    Destroyed {
+        reload: bool,
+    },
     Event {
         callback: &'a str,
         data: &'a serde_json::Value,
@@ -75,7 +78,7 @@ impl Hook<'_> {
             Hook::Chunk => "load",
             Hook::Created => "on_created",
             Hook::Update(_) => "update",
-            Hook::Destroyed => "on_destroyed",
+            Hook::Destroyed { .. } => "on_destroyed",
             Hook::Event { callback, .. } => callback,
             Hook::Coroutines(_) => "coroutine",
         }
@@ -142,6 +145,10 @@ impl ScriptOutputs {
         self.pending_gltf_imports.extend(result.gltf_imports);
         self.pending_asset_commands.extend(result.asset_commands);
 
+        for entity in result.despawned {
+            self.remove_subscriptions(entity);
+        }
+
         for sub in result.event_subscriptions {
             let subscribers = self.event_subscriptions.entry(sub.event_name).or_default();
             let already_subscribed = subscribers
@@ -200,7 +207,9 @@ fn invoke(
             Hook::Chunk => instance.run_chunk(lua, bits, cmds, evts),
             Hook::Created => instance.call_on_created(lua, bits, cmds, evts),
             Hook::Update(dt) => instance.call_update(lua, bits, *dt, cmds, evts),
-            Hook::Destroyed => instance.call_on_destroyed(lua, bits, cmds, evts),
+            Hook::Destroyed { reload } => {
+                instance.call_on_destroyed(lua, bits, *reload, cmds, evts)
+            }
             Hook::Event { callback, data } => {
                 instance.call_event(lua, bits, callback, (*data).clone(), cmds, evts)
             }
@@ -257,6 +266,14 @@ pub struct ScriptingState {
     outputs: ScriptOutputs,
     /// State to restore into scripts once they are re-created after a reload.
     pending_state_restoration: HashMap<Entity, ScriptStateMap>,
+    /// Scripts to rebuild: `on_destroyed` runs for them at the start of the next frame
+    /// (it needs the world), then they are recompiled and `on_created` runs again.
+    pending_reloads: Vec<Entity>,
+    /// Seconds of frame steps scripts have run for since the last reset.
+    elapsed: f64,
+    /// Where the game view is in the window (x, y, width, height in pixels), as of the
+    /// last rendered frame.
+    view_rect: Option<[f32; 4]>,
     /// Commands recorded by `on_ui`, applied at the start of the next update.
     deferred_ui_commands: Vec<(Entity, Rc<RefCell<ScriptCommands>>)>,
     /// UI responses from the previous frame.
@@ -273,6 +290,9 @@ impl ScriptingState {
             slots: HashMap::new(),
             outputs: ScriptOutputs::default(),
             pending_state_restoration: HashMap::new(),
+            pending_reloads: Vec::new(),
+            elapsed: 0.0,
+            view_rect: None,
             deferred_ui_commands: Vec::new(),
             ui_responses: HashMap::new(),
             console: None,
@@ -289,6 +309,30 @@ impl ScriptingState {
         &mut self.runtime
     }
 
+    /// Tell scripts where the game view is in the window, in pixels (x, y, width, height).
+    pub fn set_view_rect(&mut self, rect: Option<[f32; 4]>) {
+        self.view_rect = rect.filter(|rect| rect[2] > 0.0 && rect[3] > 0.0);
+    }
+
+    /// The game view's area, if the renderer has reported one.
+    pub fn view_rect(&self) -> Option<[f32; 4]> {
+        self.view_rect
+    }
+
+    /// Give scripts the camera to convert between the screen and the world with
+    /// (`view_proj` is built for the aspect ratio of [`Self::view_rect`]).
+    pub fn set_view_projection(&mut self, view_proj: Option<glam::Mat4>) {
+        let lua = self.runtime.lua();
+        match (view_proj, self.view_rect) {
+            (Some(view_proj), Some(rect)) => {
+                lua.set_app_data(super::api::ScriptView { view_proj, rect });
+            }
+            _ => {
+                lua.remove_app_data::<super::api::ScriptView>();
+            }
+        }
+    }
+
     /// Recompile every script and run `on_created` again on the next update.
     ///
     /// Values scripts stored with the state API (`set_f64`, `set_state`, ...) survive
@@ -299,6 +343,8 @@ impl ScriptingState {
             self.unload(entity);
         }
         self.outputs = ScriptOutputs::default();
+        self.pending_reloads.clear();
+        self.elapsed = 0.0;
         self.deferred_ui_commands.clear();
         self.ui_responses.clear();
     }
@@ -326,8 +372,7 @@ impl ScriptingState {
             .collect();
 
         for entity in &entities {
-            self.unload(*entity);
-            self.outputs.remove_subscriptions(*entity);
+            self.schedule_reload(*entity);
         }
         entities.len()
     }
@@ -339,9 +384,35 @@ impl ScriptingState {
         if !self.slots.contains_key(&entity) {
             return false;
         }
-        self.unload(entity);
-        self.outputs.remove_subscriptions(entity);
+        self.schedule_reload(entity);
         true
+    }
+
+    fn schedule_reload(&mut self, entity: Entity) {
+        if !self.pending_reloads.contains(&entity) {
+            self.pending_reloads.push(entity);
+        }
+    }
+
+    /// Run `on_destroyed` for scripts scheduled for a reload, then drop their instances
+    /// (keeping their state) so the next sync recompiles them.
+    fn run_pending_reloads(&mut self, world: &mut World) {
+        for entity in std::mem::take(&mut self.pending_reloads) {
+            if let Some(slot) = self.slots.get_mut(&entity) {
+                if slot.created {
+                    invoke(
+                        &self.runtime,
+                        &mut self.outputs,
+                        world,
+                        entity,
+                        slot,
+                        Hook::Destroyed { reload: true },
+                    );
+                }
+            }
+            self.unload(entity);
+            self.outputs.remove_subscriptions(entity);
+        }
     }
 
     /// Drop the instance for `entity` without running `on_destroyed`, keeping its state
@@ -532,9 +603,14 @@ impl ScriptingState {
             self.outputs.apply_commands(world, &commands);
         }
 
+        self.elapsed += dt.max(0.0);
         self.runtime
             .lua()
             .set_app_data(super::api::PlayMode(!editor_mode));
+        self.runtime
+            .lua()
+            .set_app_data(super::api::ScriptClock(self.elapsed));
+        self.run_pending_reloads(world);
         self.sync_instances(world);
 
         let active = self.active_entities(world, editor_mode);
@@ -654,7 +730,7 @@ impl ScriptingState {
                     world,
                     entity,
                     &mut slot,
-                    Hook::Destroyed,
+                    Hook::Destroyed { reload: false },
                 );
             }
             self.outputs.remove_subscriptions(entity);

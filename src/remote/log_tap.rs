@@ -5,6 +5,7 @@
 //! the last entry I saw" with [`entries_since`].
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Number of entries kept; older ones are dropped.
@@ -30,6 +31,21 @@ static TAP: Mutex<Tap> = Mutex::new(Tap {
     next_seq: 1,
     lines: VecDeque::new(),
 });
+
+/// Sequence number of the last entry logged before the most recent play session started.
+static PLAY_START_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Remember that play mode starts now, so clients can ask for the log "since play
+/// started" and skip everything an earlier session or the editor logged.
+pub fn mark_play_start() {
+    PLAY_START_SEQ.store(latest_seq(), Ordering::Relaxed);
+}
+
+/// Sequence number to pass as `after` to get only what was logged since the most recent
+/// play session started (0 if none has).
+pub fn play_start_seq() -> u64 {
+    PLAY_START_SEQ.load(Ordering::Relaxed)
+}
 
 /// Store a log record.
 pub fn record(record: &log::Record<'_>) {

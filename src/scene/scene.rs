@@ -689,11 +689,23 @@ impl Scene {
     /// Unlike [`Self::update`], this does not advance scene time or animations; it only
     /// gives editor-mode scripts their `update(self_entity, dt)` tick.
     pub fn run_editor_scripts(&mut self, dt: f64) {
+        self.refresh_script_view();
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
             self.runtime.run_scripts(world, dt, true);
         }
+    }
+
+    /// Scripts convert between the screen and the world through the camera as it is now,
+    /// in the shape of the view the renderer last drew into.
+    fn refresh_script_view(&mut self) {
+        let view_proj = self
+            .runtime
+            .scripting()
+            .view_rect()
+            .map(|rect| self.camera().view_proj(rect[2] / rect[3]));
+        self.runtime.scripting_mut().set_view_projection(view_proj);
     }
 
     /// Run Lua `code` against the main world, like a console.
@@ -705,6 +717,7 @@ impl Scene {
         code: &str,
         entity: Option<Entity>,
     ) -> Result<crate::scripting::lua::LuaEvalOutput, crate::scripting::LuaScriptingError> {
+        self.refresh_script_view();
         let Some(main_node) = self.nodes.get_mut(self.main_scene) else {
             return Err(crate::scripting::LuaScriptingError::Lua(
                 mlua::Error::RuntimeError("scene has no main world".into()),
@@ -724,6 +737,8 @@ impl Scene {
         }
 
         self.update_world_transforms();
+
+        self.refresh_script_view();
 
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
@@ -859,6 +874,19 @@ impl Scene {
     /// call. Rebuilds the renderer's texture bind group if a script loaded a new texture.
     pub fn apply_script_asset_commands(&mut self, renderer: &mut Renderer) {
         use crate::scripting::lua::AssetCommand;
+
+        // Where the game view is in the window, for scripts' screen/world conversions.
+        let size = renderer.surface_size();
+        let rect = match renderer.render_region() {
+            Some(region) => [
+                region.x() as f32,
+                region.y() as f32,
+                region.width() as f32,
+                region.height() as f32,
+            ],
+            None => [0.0, 0.0, size.width as f32, size.height as f32],
+        };
+        self.runtime.scripting_mut().set_view_rect(Some(rect));
 
         let commands = self.runtime.scripting_mut().take_pending_asset_commands();
         if commands.is_empty() {

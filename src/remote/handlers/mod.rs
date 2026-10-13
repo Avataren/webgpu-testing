@@ -18,6 +18,7 @@ use super::hub::RemoteHub;
 
 pub(crate) use diff::SceneBaseline;
 pub(crate) use entity::{patch_material, set_active_camera, set_camera, set_light, set_mesh};
+pub(crate) use rendering::adjust_camera;
 
 /// Outcome of a remote method: a JSON result or an error message.
 pub type RemoteResult = Result<Value, String>;
@@ -207,11 +208,19 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
                 Ok(json!({ "stopped": "all" }))
             }
         },
-        "audio.status" => Ok(json!({
-            "playing": crate::audio::playing(),
-            "next_id": crate::audio::next_id(),
-            "recent": crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0)),
-        })),
+        "audio.status" => {
+            let recent = crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0));
+            let mut status = json!({
+                "playing": crate::audio::playing(),
+                "next_id": crate::audio::next_id(),
+            });
+            if super::json::opt_bool(params, "summary").unwrap_or(false) {
+                status["summary"] = summarize_sounds(&recent);
+            } else {
+                status["recent"] = recent;
+            }
+            Ok(status)
+        }
         "input.send" => input::send(params, ctx),
         "input.state" => input::state(params, ctx),
         "input.clear" => input::clear(ctx),
@@ -219,6 +228,42 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             "unknown method {method:?}; call engine.methods for the list"
         )),
     }
+}
+
+/// Group a sound history by file: how often each played, when first and last, and the
+/// volumes and pitches used. Files are listed in the order they first played.
+pub(crate) fn summarize_sounds(history: &Value) -> Value {
+    let mut groups: Vec<Value> = Vec::new();
+    for played in history.as_array().into_iter().flatten() {
+        let path = played["path"].as_str().unwrap_or("");
+        let index = match groups.iter().position(|group| group["path"] == path) {
+            Some(index) => index,
+            None => {
+                groups.push(json!({
+                    "path": path,
+                    "count": 0,
+                    "first_time": played["time"],
+                    "last_time": played["time"],
+                    "pitch": [played["pitch"], played["pitch"]],
+                    "volume": [played["volume"], played["volume"]],
+                }));
+                groups.len() - 1
+            }
+        };
+        let group = &mut groups[index];
+        group["count"] = json!(group["count"].as_u64().unwrap_or(0) + 1);
+        group["last_time"] = played["time"].clone();
+        for key in ["pitch", "volume"] {
+            let value = played[key].as_f64().unwrap_or(0.0);
+            let low = group[key][0].as_f64().unwrap_or(value).min(value);
+            let high = group[key][1].as_f64().unwrap_or(value).max(value);
+            group[key] = json!([low, high]);
+        }
+        if played["audible"] == json!(false) {
+            group["silent"] = json!(group["silent"].as_u64().unwrap_or(0) + 1);
+        }
+    }
+    json!(groups)
 }
 
 fn audio_play(params: &Value) -> RemoteResult {
