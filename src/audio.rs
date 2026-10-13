@@ -6,13 +6,16 @@
 //! play is also recorded in a short history, which lets automated playtests check
 //! which sounds a game played without hearing them.
 //!
-//! On the web, and when no output device is available, sounds are recorded in the
-//! history but not heard.
+//! On the web, sounds go through the Web Audio API: files are fetched relative to
+//! the page and decoded by the browser, so the first play of a file starts once it
+//! has loaded, and a missing or undecodable file is logged rather than returned as an
+//! error. Browsers keep audio suspended until the user first clicks or presses a
+//! key; sounds played before that start then. Without an output device sounds are
+//! recorded in the history but not heard.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 
@@ -56,8 +59,7 @@ struct Audio {
     next_id: u64,
     master_volume: f32,
     history: VecDeque<Played>,
-    #[cfg(not(target_arch = "wasm32"))]
-    output: native::Output,
+    output: Output,
 }
 
 impl Audio {
@@ -67,8 +69,7 @@ impl Audio {
             next_id: 1,
             master_volume: 1.0,
             history: VecDeque::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            output: native::Output::default(),
+            output: Output::default(),
         }
     }
 }
@@ -86,8 +87,8 @@ fn with_audio<R>(f: impl FnOnce(&mut Audio) -> R) -> R {
 pub fn resolve_path(path: &str) -> Result<PathBuf, String> {
     let raw = Path::new(path);
     if cfg!(target_arch = "wasm32") {
-        // The web has no filesystem to search, and plays are silent there anyway;
-        // keep the path as given so the play is still recorded.
+        // The web has no filesystem to search; the path is fetched relative to the
+        // page, where the project is served.
         return Ok(raw.to_path_buf());
     }
     let mut candidates = vec![raw.to_path_buf()];
@@ -106,16 +107,13 @@ pub fn resolve_path(path: &str) -> Result<PathBuf, String> {
 
 /// Start playing the sound at `path` and return its id (for [`stop`]).
 ///
-/// Fails only when the file cannot be found or decoded. Without an output device the
-/// sound is recorded but silent.
+/// Fails only when the file cannot be found or decoded (on the web, only once a
+/// failed load is known). Without an output device the sound is recorded but silent.
 pub fn play(path: &str, options: PlayOptions) -> Result<u64, String> {
     let path = resolve_path(path)?;
     with_audio(|audio| {
         let id = audio.next_id;
-        #[cfg(not(target_arch = "wasm32"))]
         let audible = audio.output.play(id, &path, options, audio.master_volume)?;
-        #[cfg(target_arch = "wasm32")]
-        let audible = false;
         audio.next_id += 1;
         let time = audio.started.elapsed().as_secs_f64();
         audio.history.push_back(Played {
@@ -134,24 +132,15 @@ pub fn play(path: &str, options: PlayOptions) -> Result<u64, String> {
 
 /// Stop one sound. Returns whether it was still playing.
 pub fn stop(id: u64) -> bool {
-    with_audio(|audio| {
-        #[cfg(not(target_arch = "wasm32"))]
-        return audio.output.stop(id);
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = (audio, id);
-            false
-        }
-    })
+    with_audio(|audio| audio.output.stop(id))
 }
 
 /// Stop every sound, e.g. when play mode ends.
 pub fn stop_all() {
     // Nothing to stop if audio was never used; don't open a device just for this.
     AUDIO.with(|cell| {
-        if let Some(_audio) = cell.borrow_mut().as_mut() {
-            #[cfg(not(target_arch = "wasm32"))]
-            _audio.output.stop_all();
+        if let Some(audio) = cell.borrow_mut().as_mut() {
+            audio.output.stop_all();
         }
     });
 }
@@ -160,7 +149,6 @@ pub fn stop_all() {
 pub fn set_master_volume(volume: f32) {
     with_audio(|audio| {
         audio.master_volume = volume.max(0.0);
-        #[cfg(not(target_arch = "wasm32"))]
         audio.output.set_master_volume(audio.master_volume);
     });
 }
@@ -170,12 +158,7 @@ pub fn playing() -> Vec<u64> {
     AUDIO.with(|cell| {
         cell.borrow_mut()
             .as_mut()
-            .map(|_audio| {
-                #[cfg(not(target_arch = "wasm32"))]
-                return _audio.output.playing();
-                #[cfg(target_arch = "wasm32")]
-                Vec::new()
-            })
+            .map(|audio| audio.output.playing())
             .unwrap_or_default()
     })
 }
@@ -218,10 +201,16 @@ pub fn history(since: u64) -> Value {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+use native::Output;
+#[cfg(target_arch = "wasm32")]
+use web::Output;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
     use rodio::{Decoder, MixerDeviceSink, Player, Source};
     use std::io::Cursor;
+    use std::sync::Arc;
 
     /// The output device (opened lazily) and the sounds playing on it.
     #[derive(Default)]
@@ -313,6 +302,287 @@ mod native {
         pub(super) fn playing(&mut self) -> Vec<u64> {
             self.players.retain(|(_, player, _)| !player.empty());
             self.players.iter().map(|(id, _, _)| *id).collect()
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use super::*;
+    use js_sys::ArrayBuffer;
+    use wasm_bindgen::{closure::Closure, JsCast, JsValue};
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{
+        AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState,
+        AudioScheduledSourceNode, GainNode, Response,
+    };
+
+    /// A sound file, fetched and decoded once per path.
+    enum Clip {
+        Loading,
+        Ready(AudioBuffer),
+        Failed(String),
+    }
+
+    struct Voice {
+        id: u64,
+        path: PathBuf,
+        options: PlayOptions,
+        gain: GainNode,
+        /// `None` while the clip is still loading.
+        source: Option<AudioBufferSourceNode>,
+        /// Context time at which the sound ends; infinite for loops and pending sounds.
+        ends_at: f64,
+    }
+
+    impl Voice {
+        fn silence(&self) {
+            if let Some(source) = &self.source {
+                let _ = AudioScheduledSourceNode::stop(source);
+            }
+            let _ = self.gain.disconnect();
+        }
+    }
+
+    #[derive(Clone)]
+    struct Device {
+        context: AudioContext,
+        master: GainNode,
+    }
+
+    /// The audio context (opened lazily), the loaded clips and the sounds playing.
+    #[derive(Default)]
+    pub(super) struct Output {
+        /// `None` until first used; `Some(None)` if no context could be created.
+        device: Option<Option<Device>>,
+        clips: HashMap<PathBuf, Clip>,
+        voices: Vec<Voice>,
+    }
+
+    fn js_error(err: JsValue) -> String {
+        err.as_string().unwrap_or_else(|| format!("{err:?}"))
+    }
+
+    fn open_device() -> Result<Device, JsValue> {
+        let context = AudioContext::new()?;
+        let master = context.create_gain()?;
+        master.connect_with_audio_node(&context.destination())?;
+        resume_on_gesture(&context);
+        Ok(Device { context, master })
+    }
+
+    /// Browsers keep a page's audio suspended until the user interacts with it, so
+    /// resume the context on clicks, taps and key presses.
+    fn resume_on_gesture(context: &AudioContext) {
+        if context.state() == AudioContextState::Running {
+            return;
+        }
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let context = context.clone();
+        let resume = Closure::<dyn FnMut()>::new(move || {
+            if context.state() == AudioContextState::Suspended {
+                let _ = context.resume();
+            }
+        });
+        for event in ["pointerdown", "keydown", "touchend"] {
+            let _ = window.add_event_listener_with_callback(event, resume.as_ref().unchecked_ref());
+        }
+        // The listeners live as long as the page.
+        resume.forget();
+    }
+
+    fn start(
+        context: &AudioContext,
+        voice: &mut Voice,
+        buffer: &AudioBuffer,
+    ) -> Result<(), String> {
+        let source = context.create_buffer_source().map_err(js_error)?;
+        source.set_buffer(Some(buffer));
+        let speed = voice.options.pitch.max(0.01);
+        source.playback_rate().set_value(speed);
+        source.set_loop(voice.options.looped);
+        source
+            .connect_with_audio_node(&voice.gain)
+            .map_err(js_error)?;
+        source.start().map_err(js_error)?;
+        if !voice.options.looped {
+            // While the context is suspended its clock stands still, and so does the sound.
+            voice.ends_at = context.current_time() + buffer.duration() / speed as f64;
+        }
+        voice.source = Some(source);
+        Ok(())
+    }
+
+    async fn fetch_and_decode(context: &AudioContext, path: &Path) -> Result<AudioBuffer, String> {
+        let url = crate::io::web_url(path)?;
+        let window = web_sys::window().ok_or("no window")?;
+        let response: Response = JsFuture::from(window.fetch_with_str(&url))
+            .await
+            .and_then(|response| response.dyn_into())
+            .map_err(|err| format!("cannot read {}: {}", path.display(), js_error(err)))?;
+        if !response.ok() {
+            return Err(format!(
+                "cannot read {}: HTTP {}",
+                path.display(),
+                response.status()
+            ));
+        }
+        let data: ArrayBuffer = JsFuture::from(response.array_buffer().map_err(js_error)?)
+            .await
+            .and_then(|data| data.dyn_into())
+            .map_err(|err| format!("cannot read {}: {}", path.display(), js_error(err)))?;
+        JsFuture::from(context.decode_audio_data(&data).map_err(js_error)?)
+            .await
+            .and_then(|buffer| buffer.dyn_into())
+            .map_err(|err| format!("cannot decode {}: {}", path.display(), js_error(err)))
+    }
+
+    fn load(context: AudioContext, path: PathBuf) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = fetch_and_decode(&context, &path).await;
+            AUDIO.with(|cell| {
+                if let Some(audio) = cell.borrow_mut().as_mut() {
+                    audio.output.loaded(&context, path, result);
+                }
+            });
+        });
+    }
+
+    impl Output {
+        fn device(&mut self) -> Option<Device> {
+            self.device
+                .get_or_insert_with(|| match open_device() {
+                    Ok(device) => Some(device),
+                    Err(err) => {
+                        log::warn!(target: "audio", "No audio output, sounds will be silent: {}", js_error(err));
+                        None
+                    }
+                })
+                .clone()
+        }
+
+        /// Start the sounds that waited for `path` to load, or drop them if it failed.
+        fn loaded(
+            &mut self,
+            context: &AudioContext,
+            path: PathBuf,
+            result: Result<AudioBuffer, String>,
+        ) {
+            let clip = match result {
+                Ok(buffer) => Clip::Ready(buffer),
+                Err(err) => {
+                    log::warn!(target: "audio", "{err}");
+                    Clip::Failed(err)
+                }
+            };
+            self.voices.retain_mut(|voice| {
+                if voice.source.is_some() || voice.path != path {
+                    return true;
+                }
+                let started = match &clip {
+                    Clip::Ready(buffer) => match start(context, voice, buffer) {
+                        Ok(()) => true,
+                        Err(err) => {
+                            log::warn!(target: "audio", "cannot play {}: {err}", path.display());
+                            false
+                        }
+                    },
+                    _ => false,
+                };
+                if !started {
+                    voice.silence();
+                }
+                started
+            });
+            self.clips.insert(path, clip);
+        }
+
+        /// Forget sounds that have finished.
+        fn prune(&mut self) {
+            let Some(Some(device)) = &self.device else {
+                return;
+            };
+            let now = device.context.current_time();
+            self.voices.retain(|voice| {
+                let playing = voice.ends_at > now;
+                if !playing {
+                    voice.silence();
+                }
+                playing
+            });
+        }
+
+        /// Returns whether the sound is audible (an audio context exists).
+        pub(super) fn play(
+            &mut self,
+            id: u64,
+            path: &Path,
+            options: PlayOptions,
+            master_volume: f32,
+        ) -> Result<bool, String> {
+            if let Some(Clip::Failed(err)) = self.clips.get(path) {
+                return Err(err.clone());
+            }
+            self.prune();
+            let Some(device) = self.device() else {
+                return Ok(false);
+            };
+            device.master.gain().set_value(master_volume);
+            let gain = device.context.create_gain().map_err(js_error)?;
+            gain.gain().set_value(options.volume);
+            gain.connect_with_audio_node(&device.master)
+                .map_err(js_error)?;
+            let mut voice = Voice {
+                id,
+                path: path.to_path_buf(),
+                options,
+                gain,
+                source: None,
+                ends_at: f64::INFINITY,
+            };
+            match self.clips.get(path) {
+                Some(Clip::Ready(buffer)) => {
+                    if let Err(err) = start(&device.context, &mut voice, buffer) {
+                        voice.silence();
+                        return Err(format!("cannot play {}: {err}", path.display()));
+                    }
+                }
+                Some(Clip::Loading) => {}
+                Some(Clip::Failed(_)) | None => {
+                    self.clips.insert(path.to_path_buf(), Clip::Loading);
+                    load(device.context.clone(), path.to_path_buf());
+                }
+            }
+            self.voices.push(voice);
+            Ok(true)
+        }
+
+        pub(super) fn stop(&mut self, id: u64) -> bool {
+            self.prune();
+            let Some(index) = self.voices.iter().position(|voice| voice.id == id) else {
+                return false;
+            };
+            self.voices.remove(index).silence();
+            true
+        }
+
+        pub(super) fn stop_all(&mut self) {
+            for voice in self.voices.drain(..) {
+                voice.silence();
+            }
+        }
+
+        pub(super) fn set_master_volume(&mut self, master_volume: f32) {
+            if let Some(Some(device)) = &self.device {
+                device.master.gain().set_value(master_volume);
+            }
+        }
+
+        pub(super) fn playing(&mut self) -> Vec<u64> {
+            self.prune();
+            self.voices.iter().map(|voice| voice.id).collect()
         }
     }
 }

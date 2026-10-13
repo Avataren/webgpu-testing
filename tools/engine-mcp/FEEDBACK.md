@@ -145,8 +145,8 @@ How to read the sections:
   `Cargo.toml`, so "add sounds" cannot be done from the MCP side. **Done:** `rodio`
   playback (wav/ogg/mp3/flac) with Lua `play_sound`/`stop_sound`/`stop_all_sounds`/
   `set_master_volume`, MCP `sound_play`/`sound_stop`/`audio_status`. Sounds stop with
-  play mode. A play history lets agents check which sounds played. Native only; web
-  builds record plays but stay silent.
+  play mode. A play history lets agents check which sounds played. Web builds play
+  through the Web Audio API (see the end of this file).
 - **Lua cannot add or change meshes, materials or lights.** Anything that varies at
   runtime (brick colours, damage states) needs one pre-made entity per variant. **Done**
   for meshes and materials: `spawn_primitive`, `set_mesh`, `set_material_color`,
@@ -295,5 +295,16 @@ HTTP-backed reads for scenes, materials and scripts (`io::read_to_string`), no
 `exists()` checks for materials and sounds on the web, and a web-safe wall clock
 (`time::unix_millis`). The canvas now fills the window below the toolbar.
 
-Related web gaps: audio records plays but is silent on the web (rodio would need cpal's
-WebAudio backend), and file hot-reload is native only.
+Related web gaps: file hot-reload is native only.
+
+Web audio (2026-10-13, done): web builds play sounds through the Web Audio API
+(`src/audio.rs`, `mod web`) rather than rodio, which would have needed cpal's WebAudio
+backend and Rust-side decoding. Files are fetched relative to the page and decoded by
+the browser (`decodeAudioData`), cached per path, and played as
+`AudioBufferSourceNode`s with per-sound and master gain nodes; volume, pitch, loop, stop,
+`stop_all_sounds` and master volume behave as on native. The first play of a file starts
+once it has loaded. A missing file is logged and only makes later plays of that path
+fail. The context opens suspended (autoplay policy) and resumes on the first click, tap
+or key press; sounds queued before that play then. Checked in headless Brave with
+Breakout: the intro sound waited for the first input, then autopilot started 17 sounds
+with the right clip lengths and no audio warnings.

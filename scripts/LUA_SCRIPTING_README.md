@@ -189,6 +189,11 @@ set_material_color(hit_brick, 1, 1, 1) -- flash
 Sounds stop when play mode ends. Without an audio device sounds are silent but still
 recorded, so automated tests can check what played (engine tool `audio_status`).
 
+In web builds, files are fetched relative to the page and decoded by the browser. The
+first play of a file starts once it has loaded, and a missing file is logged instead of
+raising an error. Browsers hold audio back until the player first clicks or presses a
+key; sounds played before that start then.
+
 ### Script Access
 - `get_entity_scripts(entity)` - List script descriptors for an entity
 - `read_script_source(entity)` - Read script contents (inline or file-backed)

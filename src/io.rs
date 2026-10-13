@@ -129,6 +129,12 @@ fn fetch_bytes_sync(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// The URL, relative to the page, that a web build fetches `path` from.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn web_url(path: &Path) -> Result<String, String> {
+    normalize_web_path(path)
+}
+
 #[cfg(target_arch = "wasm32")]
 fn load_web_bytes(path: &Path) -> Result<Vec<u8>, String> {
     let url = normalize_web_path(path)?;
