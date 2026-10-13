@@ -154,8 +154,11 @@
     <script type="module">
       async function init() {
         try {
-          console.log("Loading wasm module...");
-          const wasm = await import("./pkg/minimal.js");
+          // ?example=<name> picks the module build_web.sh <name> produced.
+          const requested = new URLSearchParams(location.search).get("example") || "minimal";
+          const example = /^[a-z0-9_]+$/.test(requested) ? requested : "minimal";
+          console.log(`Loading wasm module ${example}...`);
+          const wasm = await import(`./pkg/${example}.js`);
           console.log("Wasm module loaded, initializing...");
           await wasm.default();
           console.log("✓ WASM module initialized");

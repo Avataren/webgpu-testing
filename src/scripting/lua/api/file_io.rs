@@ -388,7 +388,7 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                 #[cfg(target_arch = "wasm32")]
                 {
                     log::error!("File dialogs not supported on WASM");
-                    Ok(None)
+                    Ok(None::<String>)
                 }
             },
         )?,
@@ -448,7 +448,7 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
                 #[cfg(target_arch = "wasm32")]
                 {
                     log::error!("File dialogs not supported on WASM");
-                    Ok(None)
+                    Ok(None::<String>)
                 }
             },
         )?,
@@ -484,7 +484,7 @@ pub(crate) fn register_file_io_api(lua: &Lua) -> LuaResult<()> {
             #[cfg(target_arch = "wasm32")]
             {
                 log::error!("Folder dialogs not supported on WASM");
-                Ok(None)
+                Ok(None::<String>)
             }
         })?,
     )?;

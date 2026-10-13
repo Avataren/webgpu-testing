@@ -255,13 +255,35 @@ problem is the VM build, not the Lua language.
 
 Plan:
 
-1. ⬜ Spike: compile Lua 5.4's C sources for `wasm32-unknown-unknown` with clang (installed:
+1. ✅ Spike: compile Lua 5.4's C sources for `wasm32-unknown-unknown` with clang (installed:
    clang 23, wasm32 backend). Map `setjmp`/`longjmp` to wasm exception handling
    (`-mllvm -wasm-enable-sjlj`, supported by all current browsers) and provide a small libc
    shim backed by Rust's allocator. Link it into mlua's external-library mode so the
    binding code stays unchanged.
-2. ⬜ If the spike fails: put a thin backend trait in front of scripting and use Rhai only
-   on web. This doubles the API surface, so it is the fallback.
+   **Done** (2026-10-13), slightly differently: mlua refuses non-vendored wasm builds, so
+   `lua-src` is vendored in `third_party/lua-src` (via `[patch.crates-io]`) with a
+   `wasm32-unknown-unknown` build. It adds a C libc shim (`wasm/libc.c`), the sjlj runtime,
+   and Rust helpers for malloc, float formatting/parsing, console and clock
+   (`src/scripting/lua/wasm_libc.rs`). No binding code changed. `cargo build --target
+   wasm32-unknown-unknown` now builds and links. Checked with a 99-line Lua conformance
+   script (number formatting incl. `%a`/`%q`, hex `tonumber`, errors through Rust
+   callbacks, stack overflow, coroutines, `<close>`, `os.date`). Native, node and Chrome
+   give identical output apart from pointer addresses and `os.getenv`. The engine itself runs
+   Lua in the browser: `examples/lua_cube.rs` (`./build_web.sh lua_cube`) logs its
+   `on_created` line, and its `update` spins the cube and pulses its colour (headless
+   Brave with WebGPU on Vulkan, RX 7900 XTX). Web limits: no filesystem for `io`, `os.getenv` is nil,
+   local time is UTC. Building needs clang.
+2. ⬜ ~~If the spike fails: put a thin backend trait in front of scripting and use Rhai only
+   on web.~~ Not needed.
+
+Found while testing (not Lua): web builds sometimes start with the view filled by the
+nearest object's colour, as if the camera sat inside it. It happens about half the time,
+for `minimal` too, and lasts the whole session. Probably a startup race in the async
+renderer init or surface sizing. Not investigated yet.
+
+Note: `build_web.sh` needs the wasm-bindgen CLI to match `Cargo.lock` (0.2.129); it now
+checks and prints the install command. The CLI that was installed (0.2.114) also cannot
+process modules with exception handling.
 
 Related web gaps: audio records plays but is silent on the web (rodio would need cpal's
 WebAudio backend), and file hot-reload is native only.

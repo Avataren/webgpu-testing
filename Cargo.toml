@@ -83,3 +83,8 @@ rodio = { version = "0.23", default-features = false, features = ["playback", "w
 tempfile = "3.10"
 
 
+
+# Lua for wasm32-unknown-unknown: crates.io lua-src cannot build Lua for that target.
+# The vendored copy adds a build against a minimal libc; see third_party/lua-src.
+[patch.crates-io]
+lua-src = { path = "third_party/lua-src" }

@@ -126,6 +126,8 @@ pub mod plugin;
 pub mod runtime;
 pub mod state;
 pub mod types;
+#[cfg(target_arch = "wasm32")]
+mod wasm_libc;
 
 #[cfg(test)]
 mod integration_tests;
