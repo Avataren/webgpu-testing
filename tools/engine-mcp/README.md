@@ -15,6 +15,9 @@ The repository's `.mcp.json` registers it for Claude Code as the `engine` server
 starting Claude Code in the repo root is enough (approve the server when asked).
 `run.sh` builds the binary on first use and whenever its sources change.
 
+The `engine-mcp` skill (`.claude/skills/engine-mcp/SKILL.md`) teaches agents the
+workflow and the engine's gotchas; keep it in step with the tools.
+
 For other clients, run `tools/engine-mcp/run.sh` (or the built
 `tools/engine-mcp/target/release/engine-mcp --repo <repo>`) as a stdio MCP server.
 

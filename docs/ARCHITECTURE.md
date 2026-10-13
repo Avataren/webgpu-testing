@@ -208,7 +208,8 @@ boids, and "optimized boids", which uses a spatial grid and a GPU radix sort.
 
 A running app can be driven over a local socket, which is how AI agents (through the
 MCP server in `tools/engine-mcp/`) inspect and edit scenes, run Lua, inject input and
-take screenshots.
+take screenshots. The `engine-mcp` skill (`.claude/skills/engine-mcp/`) describes the
+agent workflow.
 
 - **Enabling**: the editor listens on `127.0.0.1:47811`
   (`remote::DEFAULT_EDITOR_PORT`). Other apps opt in through
