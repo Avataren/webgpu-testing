@@ -60,6 +60,10 @@ impl EditorApplication {
             snapshot.restore(&mut ctx.scene); // Changed from restore_without_assets
         }
 
+        // Refresh the hierarchy so the inspector shows the restored components
+        // (material handles and the like).
+        self.shared.mark_scene_hierarchy_dirty(ctx.scene_handle);
+
         // UI plugins own their world and Lua runtime, so they are unaffected by the
         // scene restore and keep their state.
 

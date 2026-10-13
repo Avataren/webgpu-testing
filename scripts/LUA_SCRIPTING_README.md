@@ -1,6 +1,6 @@
 # Lua Scripting Guide
 
-This document describes the Lua scripting integration and provides examples of common patterns.
+This document describes the Lua scripting API and provides examples of common patterns.
 
 ## Overview
 
@@ -430,4 +430,5 @@ Scripts declare where they run with an annotation in their leading comments:
 1. **Always provide default values** when using `get_state()` to handle first-time access
 2. **Use typed state functions** (`set_f64`, `set_bool`, etc.) for better performance with simple types
 3. **Clean up subscriptions** using `unsubscribe_event()` when no longer needed
-4. **Check for nil returns** when using functions that may fail (e.g., `find_entity_by_name`)
+4. **Test with `lua_api_test.lua`** to verify API functionality
+5. **Check for nil returns** when using functions that may fail (e.g., `find_entity_by_name`)

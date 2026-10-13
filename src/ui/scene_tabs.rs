@@ -32,6 +32,8 @@ pub struct SceneTabDescriptor {
     pub title: String,
     /// Indicates whether this tab represents the active scene.
     pub active: bool,
+    /// Indicates whether this tab can be closed (false when it's the last scene).
+    pub can_close: bool,
 }
 
 /// Shared state that tracks the list of open scenes to drive the tab UI.
@@ -58,6 +60,7 @@ impl SceneTabsState {
     /// [`SceneWorkspace`].
     pub fn refresh_from_workspace(&mut self, workspace: &SceneWorkspace) {
         let active = workspace.active_scene_handle();
+        let can_close = workspace.can_close_scene();
         self.tabs.clear();
 
         for handle in workspace.scene_handles() {
@@ -71,6 +74,7 @@ impl SceneTabsState {
                 document_id: document_id.clone(),
                 title,
                 active: Some(handle) == active,
+                can_close,
             });
         }
     }
