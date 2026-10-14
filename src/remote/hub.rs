@@ -11,7 +11,6 @@ use glam::Vec2;
 use serde_json::{json, Value};
 
 use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
-use crate::renderer::postprocess::PostProcessEffects;
 use crate::renderer::RenderRegion;
 use crate::scene::{Camera, CameraComponent, InputState, Scene};
 
@@ -118,7 +117,6 @@ pub struct RemoteHub {
     /// Whether the frame being rendered is the first capture's own frame.
     capturing_own_frame: bool,
     waiters: Vec<Waiter>,
-    postprocess_override: Option<PostProcessEffects>,
     scene_baseline: Option<SceneBaseline>,
 }
 
@@ -148,7 +146,6 @@ impl RemoteHub {
             captures: Vec::new(),
             capturing_own_frame: false,
             waiters: Vec::new(),
-            postprocess_override: None,
             scene_baseline: None,
         }
     }
@@ -180,22 +177,12 @@ impl RemoteHub {
         self.runtime.as_ref()
     }
 
-    /// Post-processing settings a client set, which the frame loop must push into any
-    /// UI that would otherwise overwrite the renderer's settings.
-    pub fn take_postprocess_override(&mut self) -> Option<PostProcessEffects> {
-        self.postprocess_override.take()
-    }
-
     pub(crate) fn set_scene_baseline(&mut self, baseline: SceneBaseline) {
         self.scene_baseline = Some(baseline);
     }
 
     pub(crate) fn scene_baseline(&self) -> Option<&SceneBaseline> {
         self.scene_baseline.as_ref()
-    }
-
-    pub(crate) fn set_postprocess_override(&mut self, effects: PostProcessEffects) {
-        self.postprocess_override = Some(effects);
     }
 
     /// Queue `event` to be applied at the start of the frame `delay` frames after the

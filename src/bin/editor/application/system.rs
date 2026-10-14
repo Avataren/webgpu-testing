@@ -241,6 +241,10 @@ impl<'shared> EditorAppAccess<'shared> {
         EditorApplication::create_environment(ctx)
     }
 
+    pub fn create_post_process_volume(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        EditorApplication::create_post_process_volume(ctx)
+    }
+
     pub fn pick_entity(
         &self,
         ctx: &UpdateContext<'_>,

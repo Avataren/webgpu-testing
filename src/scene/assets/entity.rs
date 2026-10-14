@@ -14,7 +14,7 @@ use crate::scene::components::{
     Billboard, CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
     EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
     MeshBounds, MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
+    PointLight, PostProcessVolume, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use crate::scene::transform::Transform;
 use crate::scripting::LuaScriptComponent;
@@ -69,6 +69,8 @@ pub struct SceneAssetEntity {
     pub particle_behavior: Option<SerializedParticleBehavior>,
     #[serde(default)]
     pub environment: Option<EnvironmentComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_process_volume: Option<PostProcessVolume>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,6 +152,8 @@ struct SceneAssetEntityData {
     particle_behavior: Option<SerializedParticleBehavior>,
     #[serde(default)]
     environment: Option<EnvironmentComponent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    post_process_volume: Option<PostProcessVolume>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -197,6 +201,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             particle_emitter: data.particle_emitter,
             particle_behavior: data.particle_behavior,
             environment: data.environment,
+            post_process_volume: data.post_process_volume,
             camera: data.camera,
             scene_ref: data.scene_ref,
             source_entity: None,
@@ -242,6 +247,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             particle_emitter: entity.particle_emitter,
             particle_behavior: entity.particle_behavior,
             environment: entity.environment,
+            post_process_volume: entity.post_process_volume,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
         }
@@ -518,6 +524,10 @@ impl SceneAssetEntity {
             .get::<&EnvironmentComponent>(entity)
             .ok()
             .map(|component| (*component).clone());
+        let post_process_volume = world
+            .get::<&PostProcessVolume>(entity)
+            .ok()
+            .map(|component| (*component).clone());
         let camera = world
             .get::<&CameraComponent>(entity)
             .ok()
@@ -549,6 +559,7 @@ impl SceneAssetEntity {
             particle_emitter,
             particle_behavior,
             environment,
+            post_process_volume,
             camera,
             scene_ref: None,
             source_entity: None,

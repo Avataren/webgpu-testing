@@ -186,7 +186,8 @@ impl RenderContext {
 
         let scene_texture_format = Self::scene_texture_format_for(format);
 
-        let format_features = adapter.get_texture_format_features(format);
+        // MSAA renders the HDR scene, so its sample count must suit the scene format.
+        let format_features = adapter.get_texture_format_features(scene_texture_format);
         let supported_sample_counts = format_features.flags.supported_sample_counts();
         let requested_samples = settings.sample_count.max(1);
         let mut sample_count =
@@ -204,7 +205,7 @@ impl RenderContext {
                 log::warn!(
                     "MSAA sample count {} is not supported for format {:?}. Using {} instead.",
                     requested_samples,
-                    format,
+                    scene_texture_format,
                     sample_count
                 );
             }
@@ -212,8 +213,8 @@ impl RenderContext {
 
         if sample_count > 1 && !format_features.flags.sample_count_supported(sample_count) {
             log::warn!(
-                "Surface format {:?} reports unsupported sample count {}. Falling back to 1 sample.",
-                format,
+                "Scene format {:?} reports unsupported sample count {}. Falling back to 1 sample.",
+                scene_texture_format,
                 sample_count
             );
             sample_count = 1;
@@ -268,8 +269,10 @@ impl RenderContext {
         self.scene_texture_format
     }
 
-    fn scene_texture_format_for(surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
-        surface_format.remove_srgb_suffix()
+    /// The lit scene renders in HDR whatever the surface format; post-processing
+    /// tonemaps it for the display.
+    fn scene_texture_format_for(_surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        crate::renderer::postprocess::HDR_FORMAT
     }
 
     fn choose_supported_sample_count(requested: u32, supported: &[u32]) -> u32 {

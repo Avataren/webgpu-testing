@@ -382,7 +382,6 @@ impl ProjectSystem {
             existing_document,
         ) {
             Ok(mut manifest) => {
-                manifest.postprocess = Some(gpu_ctx.renderer.postprocess_effects());
                 // Merge with existing scene documents from imports
                 let all_scenes = self.controller.scene_documents();
                 for doc in all_scenes {
@@ -552,8 +551,7 @@ impl ProjectSystem {
                     self.controller.metadata().clone(),
                     existing_document,
                 ) {
-                    Ok(mut manifest) => {
-                        manifest.postprocess = Some(gpu_ctx.renderer.postprocess_effects());
+                    Ok(manifest) => {
                         if let Err(err) = manifest.save_to_dir(&request.output_dir) {
                             error!(
                                 "Failed to save project manifest to {:?}: {err}",

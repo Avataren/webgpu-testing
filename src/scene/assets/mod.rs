@@ -72,6 +72,62 @@ mod tests {
     }
 
     #[test]
+    fn legacy_post_processing_moves_into_a_volume() {
+        use crate::renderer::postprocess::{LegacyColorGrading, PostProcessEffects};
+        use crate::scene::components::EnvironmentComponent;
+
+        let environment = EnvironmentComponent {
+            color_grading: Some(LegacyColorGrading {
+                exposure: 2.0,
+                saturation: 1.2,
+                contrast: 1.0,
+            }),
+            ..EnvironmentComponent::default()
+        };
+        let mut asset = SceneAsset::new(
+            "legacy",
+            SerializedTransform::from(Transform::IDENTITY),
+            vec![
+                SceneAssetEntity::builder(SerializedTransform::from(Transform::IDENTITY))
+                    .with_name("Environment")
+                    .with_environment(environment)
+                    .build(),
+            ],
+        );
+        let effects = PostProcessEffects {
+            bloom: false,
+            ..PostProcessEffects::default()
+        };
+
+        assert!(asset.migrate_legacy_post_processing(Some(&effects), None));
+        assert_eq!(asset.entities.len(), 2);
+        let volume = asset.entities[1].post_process_volume.as_ref().unwrap();
+        assert!(volume.shape.is_infinite());
+        assert!(!volume.settings.bloom.enabled);
+        assert!((volume.settings.exposure.compensation - 1.0).abs() < 1e-6);
+        assert_eq!(volume.settings.color.saturation, 1.2);
+        assert!(asset.entities[0]
+            .environment
+            .as_ref()
+            .unwrap()
+            .color_grading
+            .is_none());
+
+        // Running again (a scene that already has a volume) adds nothing.
+        assert!(!asset.migrate_legacy_post_processing(Some(&effects), None));
+        assert_eq!(asset.entities.len(), 2);
+
+        // A current scene with nothing to migrate stays as it is.
+        let mut fresh = SceneAsset::new(
+            "fresh",
+            SerializedTransform::from(Transform::IDENTITY),
+            Vec::new(),
+        );
+        assert!(!fresh.migrate_legacy_post_processing(None, None));
+        assert!(fresh.entities.is_empty());
+    }
+
+    #[test]
     fn serialized_transform_roundtrip() {
         let transform = Transform::from_trs(
             Vec3::new(1.0, 2.0, 3.0),
@@ -401,6 +457,7 @@ mod tests {
                 particle_emitter: None,
                 particle_behavior: None,
                 environment: None,
+                post_process_volume: None,
                 camera: None,
                 scene_ref: None,
                 source_entity: None,
@@ -468,6 +525,7 @@ mod tests {
                 particle_emitter: None,
                 particle_behavior: None,
                 environment: None,
+                post_process_volume: None,
                 camera: None,
                 scene_ref: None,
                 source_entity: None,
@@ -580,6 +638,7 @@ mod tests {
                 particle_emitter: None,
                 particle_behavior: None,
                 environment: None,
+                post_process_volume: None,
                 camera: None,
                 scene_ref: None,
                 source_entity: None,
@@ -681,6 +740,7 @@ mod tests {
                     particle_emitter: None,
                     particle_behavior: None,
                     environment: None,
+                    post_process_volume: None,
                     camera: None,
                     scene_ref: None,
                     source_entity: None,
@@ -711,6 +771,7 @@ mod tests {
                     particle_emitter: None,
                     particle_behavior: None,
                     environment: None,
+                    post_process_volume: None,
                     camera: None,
                     scene_ref: None,
                     source_entity: None,
@@ -786,6 +847,7 @@ mod tests {
                     particle_emitter: None,
                     particle_behavior: None,
                     environment: None,
+                    post_process_volume: None,
                     camera: None,
                     scene_ref: None,
                     source_entity: None,
@@ -816,6 +878,7 @@ mod tests {
                     particle_emitter: None,
                     particle_behavior: None,
                     environment: None,
+                    post_process_volume: None,
                     camera: None,
                     scene_ref: None,
                     source_entity: None,

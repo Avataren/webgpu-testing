@@ -1,100 +1,250 @@
-@group(1) @binding(50)
+// HDR composite: scene * AO + bloom, exposure, vignette, colour correction and
+// tonemapping. Writes display-referred linear colour (0-1) to the intermediate target the
+// final pass anti-aliases, sharpens and outputs.
+
+@group(1) @binding(90)
 var composite_scene : texture_2d<f32>;
-@group(1) @binding(51)
+@group(1) @binding(91)
 var composite_ssao : texture_2d<f32>;
-@group(1) @binding(52)
+@group(1) @binding(92)
 var composite_bloom : texture_2d<f32>;
-@group(1) @binding(53)
+@group(1) @binding(93)
 var composite_sampler : sampler;
+@group(1) @binding(94)
+var<storage, read> composite_exposure : ExposureState;
 
-const FXAA_REDUCE_MIN : f32 = 1.0 / 128.0;
-const FXAA_REDUCE_MUL : f32 = 1.0 / 8.0;
-const FXAA_SPAN_MAX : f32 = 8.0;
-
-fn sample_lit_color(uv : vec2<f32>) -> vec3<f32> {
-    let scene_uv = viewport_to_scene_uv(uv);
-    let uv_clamped = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let base = textureSampleLevel(composite_scene, composite_sampler, uv_clamped, 0.0);
-    let ssao_enabled = post_uniform.effects.x > 0.5;
-    let bloom_enabled = post_uniform.effects.y > 0.5;
-    var ssao = 1.0;
-    if ssao_enabled {
-        ssao = textureSampleLevel(composite_ssao, composite_sampler, uv_clamped, 0.0).r;
+fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
+    let uv = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    var color = textureSampleLevel(composite_scene, composite_sampler, uv, 0.0).rgb;
+    // Broken materials can produce NaN or inf; keep them from spreading.
+    color = select(color, vec3<f32>(0.0), color != color);
+    color = min(color, vec3<f32>(65000.0));
+    if post_uniform.effects.x > 0.5 {
+        color = color * textureSampleLevel(composite_ssao, composite_sampler, uv, 0.0).r;
     }
-    var bloom = vec3<f32>(0.0);
-    if bloom_enabled {
-        bloom = textureSampleLevel(composite_bloom, composite_sampler, uv_clamped, 0.0).rgb;
+    if post_uniform.effects.y > 0.5 {
+        let bloom = textureSampleLevel(composite_bloom, composite_sampler, uv, 0.0).rgb;
+        color = color + bloom * post_uniform.bloom_tint.rgb * post_uniform.bloom_params.w;
     }
-    return base.rgb * ssao + bloom;
+    return color;
 }
 
-fn luminance(color : vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.299, 0.587, 0.114));
+fn sample_with_aberration(viewport_uv : vec2<f32>) -> vec3<f32> {
+    let amount = post_uniform.lens.x;
+    let center = sample_hdr(viewport_to_scene_uv(viewport_uv));
+    if amount <= 0.0 {
+        return center;
+    }
+    // Red is pushed outward and blue inward, growing toward the edges.
+    let from_center = viewport_uv - vec2<f32>(0.5);
+    // About 1% of the frame width at the corners at full intensity.
+    let offset = from_center * dot(from_center, from_center) * amount * 0.02;
+    let red = sample_hdr(viewport_to_scene_uv(clamp(viewport_uv - offset, vec2<f32>(0.0), vec2<f32>(1.0)))).r;
+    let blue = sample_hdr(viewport_to_scene_uv(clamp(viewport_uv + offset, vec2<f32>(0.0), vec2<f32>(1.0)))).b;
+    return vec3<f32>(red, center.g, blue);
 }
 
-fn fxaa(uv : vec2<f32>) -> vec3<f32> {
-    let texel = safe_texel_size();
-
-    let rgb_m = sample_lit_color(uv);
-    let luma_m = luminance(rgb_m);
-
-    let rgb_nw = sample_lit_color(uv + texel * vec2<f32>(-1.0, -1.0));
-    let rgb_ne = sample_lit_color(uv + texel * vec2<f32>(1.0, -1.0));
-    let rgb_sw = sample_lit_color(uv + texel * vec2<f32>(-1.0, 1.0));
-    let rgb_se = sample_lit_color(uv + texel * vec2<f32>(1.0, 1.0));
-
-    let luma_nw = luminance(rgb_nw);
-    let luma_ne = luminance(rgb_ne);
-    let luma_sw = luminance(rgb_sw);
-    let luma_se = luminance(rgb_se);
-
-    let luma_min = min(luma_m, min(min(luma_nw, luma_ne), min(luma_sw, luma_se)));
-    let luma_max = max(luma_m, max(max(luma_nw, luma_ne), max(luma_sw, luma_se)));
-
-    var dir = vec2<f32>(
-        -((luma_nw + luma_ne) - (luma_sw + luma_se)),
-        ((luma_nw + luma_sw) - (luma_ne + luma_se)),
-    );
-
-    let dir_reduce = max(
-        (luma_nw + luma_ne + luma_sw + luma_se) * (0.25 * FXAA_REDUCE_MUL),
-        FXAA_REDUCE_MIN,
-    );
-    let rcp_dir_min = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
-    dir = clamp(
-        dir * rcp_dir_min,
-        vec2<f32>(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX),
-        vec2<f32>(FXAA_SPAN_MAX, FXAA_SPAN_MAX),
-    );
-    dir = dir * texel;
-
-    let rgb_a = 0.5
-        * (sample_lit_color(uv + dir * (1.0 / 3.0 - 0.5))
-            + sample_lit_color(uv + dir * (2.0 / 3.0 - 0.5)));
-    let rgb_b = rgb_a * 0.5
-        + 0.25
-            * (sample_lit_color(uv + dir * -0.5) + sample_lit_color(uv + dir * 0.5));
-    let luma_b = luminance(rgb_b);
-
-    if (luma_b < luma_min || luma_b > luma_max) {
-        return rgb_a;
+fn exposure_multiplier() -> f32 {
+    var exposure = post_uniform.exposure_params.x * post_uniform.exposure_params.y;
+    if post_uniform.effects.w > 0.5 && composite_exposure.initialized > 0.5 {
+        // Map the adapted average luminance to middle grey.
+        exposure = exposure * 0.18 / exp2(composite_exposure.average_ev);
     }
-    return rgb_b;
+    return exposure;
+}
+
+fn apply_vignette(color : vec3<f32>, viewport_uv : vec2<f32>) -> vec3<f32> {
+    let intensity = post_uniform.vignette.x;
+    if intensity <= 0.0 {
+        return color;
+    }
+    let smoothness = max(post_uniform.vignette.y, 0.01);
+    let roundness = post_uniform.vignette.z;
+    let aspect = post_uniform.vignette.w;
+    // Same shape as Unity's post-processing vignette.
+    var d = abs(viewport_uv - post_uniform.vignette_center.xy) * intensity * 3.0;
+    // Roundness 1 makes a circle on screen; 0 stretches it to the frame's shape.
+    d.x = d.x * mix(1.0, aspect, roundness);
+    d = pow(clamp(d, vec2<f32>(0.0), vec2<f32>(1.0)), vec2<f32>(mix(6.0, 1.0, roundness)));
+    let factor = pow(clamp(1.0 - dot(d, d), 0.0, 1.0), smoothness * 5.0);
+    return color * mix(post_uniform.vignette_color.rgb, vec3<f32>(1.0), factor);
+}
+
+const LINEAR_TO_LMS = mat3x3<f32>(
+    vec3<f32>(3.90405e-1, 7.08416e-2, 2.31082e-2),
+    vec3<f32>(5.49941e-1, 9.63172e-1, 1.28021e-1),
+    vec3<f32>(8.92632e-3, 1.35775e-3, 9.36245e-1),
+);
+const LMS_TO_LINEAR = mat3x3<f32>(
+    vec3<f32>(2.85847e+0, -2.10182e-1, -4.18120e-2),
+    vec3<f32>(-1.62879e+0, 1.15820e+0, -1.18169e-1),
+    vec3<f32>(-2.48910e-2, 3.24281e-4, 1.06867e+0),
+);
+
+fn rotate_hue(color : vec3<f32>, turns : f32) -> vec3<f32> {
+    // Rodrigues rotation around the grey axis keeps luminance roughly constant.
+    let angle = turns * 6.28318530718;
+    let k = vec3<f32>(0.57735026919);
+    let cos_a = cos(angle);
+    return color * cos_a + cross(k, color) * sin(angle) + k * dot(k, color) * (1.0 - cos_a);
+}
+
+// Colour correction in scene-referred (HDR) linear space, before tonemapping.
+fn grade_hdr(input : vec3<f32>) -> vec3<f32> {
+    var color = input;
+
+    let wb = post_uniform.white_balance.xyz;
+    if any(abs(wb - vec3<f32>(1.0)) > vec3<f32>(1e-4)) {
+        color = LMS_TO_LINEAR * ((LINEAR_TO_LMS * color) * wb);
+    }
+
+    color = color * post_uniform.color_filter.rgb;
+
+    let hue_turns = post_uniform.color_filter.w;
+    if abs(hue_turns) > 1e-5 {
+        color = max(rotate_hue(color, hue_turns), vec3<f32>(0.0));
+    }
+
+    // Contrast pivots on middle grey in log2 space, so it behaves the same at any
+    // exposure and never pushes values negative.
+    let contrast = post_uniform.grading.x;
+    if abs(contrast - 1.0) > 1e-4 {
+        let middle_grey = log2(0.18);
+        let log_color = log2(max(color, vec3<f32>(1e-6)));
+        color = exp2((log_color - middle_grey) * contrast + middle_grey);
+    }
+
+    let luma = luminance_rec709(color);
+    let vibrance = post_uniform.grading.z;
+    if abs(vibrance) > 1e-4 {
+        let max_c = max(color.r, max(color.g, color.b));
+        let min_c = min(color.r, min(color.g, color.b));
+        let current = (max_c - min_c) / max(max_c, 1e-5);
+        color = mix(vec3<f32>(luma), color, 1.0 + vibrance * (1.0 - current));
+    }
+
+    color = mix(vec3<f32>(luma), color, post_uniform.grading.y);
+    return max(color, vec3<f32>(0.0));
+}
+
+fn tonemap_reinhard(color : vec3<f32>) -> vec3<f32> {
+    let luma = luminance_rec709(color);
+    return color / (1.0 + luma);
+}
+
+// ACES filmic fit by Stephen Hill (BakingLab).
+const ACES_INPUT = mat3x3<f32>(
+    vec3<f32>(0.59719, 0.07600, 0.02840),
+    vec3<f32>(0.35458, 0.90834, 0.13383),
+    vec3<f32>(0.04823, 0.01566, 0.83777),
+);
+const ACES_OUTPUT = mat3x3<f32>(
+    vec3<f32>(1.60475, -0.10208, -0.00327),
+    vec3<f32>(-0.53108, 1.10813, -0.07276),
+    vec3<f32>(-0.07367, -0.00605, 1.07602),
+);
+
+fn tonemap_aces(color : vec3<f32>) -> vec3<f32> {
+    let v = ACES_INPUT * color;
+    let a = v * (v + 0.0245786) - 0.000090537;
+    let b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return ACES_OUTPUT * (a / b);
+}
+
+// AgX (Troy Sobotka), minimal fit by Benjamin Wrensch.
+const AGX_INSET = mat3x3<f32>(
+    vec3<f32>(0.842479062253094, 0.0423282422610123, 0.0423756549057051),
+    vec3<f32>(0.0784335999999992, 0.878468636469772, 0.0784336),
+    vec3<f32>(0.0792237451477643, 0.0791661274605434, 0.879142973793104),
+);
+const AGX_OUTSET = mat3x3<f32>(
+    vec3<f32>(1.19687900512017, -0.0528968517574562, -0.0529716355144438),
+    vec3<f32>(-0.0980208811401368, 1.15190312990417, -0.0980434501171241),
+    vec3<f32>(-0.0990297440797205, -0.0989611768448433, 1.15107367264116),
+);
+
+fn agx_contrast(x : vec3<f32>) -> vec3<f32> {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2
+        + 0.1191 * x - 0.00232;
+}
+
+fn tonemap_agx(color : vec3<f32>) -> vec3<f32> {
+    let min_ev = -12.47393;
+    let max_ev = 4.026069;
+    var c = AGX_INSET * max(color, vec3<f32>(1e-10));
+    c = clamp(log2(max(c, vec3<f32>(1e-10))), vec3<f32>(min_ev), vec3<f32>(max_ev));
+    c = (c - min_ev) / (max_ev - min_ev);
+    c = agx_contrast(c);
+    c = AGX_OUTSET * c;
+    // The curve outputs display-encoded values; return linear like the other curves.
+    return pow(max(c, vec3<f32>(0.0)), vec3<f32>(2.2));
+}
+
+// Khronos PBR Neutral: identity up to ~0.8, then compresses highlights toward white.
+fn tonemap_neutral(input : vec3<f32>) -> vec3<f32> {
+    let start_compression = 0.8 - 0.04;
+    let desaturation = 0.15;
+    var color = input;
+    let x = min(color.r, min(color.g, color.b));
+    let offset = select(0.04, x - 6.25 * x * x, x < 0.08);
+    color = color - offset;
+    let peak = max(color.r, max(color.g, color.b));
+    if peak < start_compression {
+        return color;
+    }
+    let d = 1.0 - start_compression;
+    let new_peak = 1.0 - d * d / (peak + d - start_compression);
+    color = color * (new_peak / peak);
+    let g = 1.0 - 1.0 / (desaturation * (peak - new_peak) + 1.0);
+    return mix(color, vec3<f32>(new_peak), g);
+}
+
+// Khronos PBR Neutral's shoulder without its toe: identity below 0.76.
+fn tonemap_rolloff(input : vec3<f32>) -> vec3<f32> {
+    let start_compression = 0.76;
+    let desaturation = 0.15;
+    var color = max(input, vec3<f32>(0.0));
+    let peak = max(color.r, max(color.g, color.b));
+    if peak < start_compression {
+        return color;
+    }
+    let d = 1.0 - start_compression;
+    let new_peak = 1.0 - d * d / (peak + d - start_compression);
+    color = color * (new_peak / peak);
+    let g = 1.0 - 1.0 / (desaturation * (peak - new_peak) + 1.0);
+    return mix(color, vec3<f32>(new_peak), g);
+}
+
+fn tonemap(color : vec3<f32>) -> vec3<f32> {
+    let mode = u32(post_uniform.grading.w + 0.5);
+    switch mode {
+        case 1u: { return tonemap_reinhard(color); }
+        case 2u: { return tonemap_aces(color); }
+        case 3u: { return tonemap_agx(color); }
+        case 4u: { return tonemap_neutral(color); }
+        case 5u: { return tonemap_rolloff(color); }
+        default: { return color; }
+    }
+}
+
+// Lift, gamma and gain on the display image (0-1).
+fn grade_ldr(input : vec3<f32>) -> vec3<f32> {
+    var color = clamp(input, vec3<f32>(0.0), vec3<f32>(1.0));
+    color = color * post_uniform.gain.xyz + post_uniform.lift.xyz * (1.0 - color);
+    color = pow(max(color, vec3<f32>(0.0)), post_uniform.gamma.xyz);
+    return clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @fragment
 fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     let viewport_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let scene_uv = viewport_to_scene_uv(viewport_uv);
-    let base = textureSampleLevel(
-        composite_scene,
-        composite_sampler,
-        clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0)),
-        0.0,
-    );
-    var color = sample_lit_color(viewport_uv);
-    if post_uniform.effects.z > 0.5 {
-        color = fxaa(viewport_uv);
-    }
-    return vec4<f32>(color, base.a);
+    var color = sample_with_aberration(viewport_uv);
+    color = color * exposure_multiplier();
+    color = apply_vignette(color, viewport_uv);
+    color = grade_hdr(color);
+    color = tonemap(color);
+    color = grade_ldr(color);
+    return vec4<f32>(color, 1.0);
 }

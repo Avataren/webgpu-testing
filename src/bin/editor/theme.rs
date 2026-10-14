@@ -71,6 +71,7 @@ pub mod icons {
     pub const SPOT: &str = "🔦";
     pub const PARTICLES: &str = "✨";
     pub const ENVIRONMENT: &str = "🌐";
+    pub const POST_PROCESS: &str = "🎞";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

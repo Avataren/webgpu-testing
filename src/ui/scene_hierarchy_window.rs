@@ -12,8 +12,9 @@ use crate::scene::workspace::SceneDocumentId;
 use crate::scene::{
     CameraComponent, CanCastShadow, Children, DirectionalLight, EnvironmentComponent,
     MaterialComponent, MeshComponent, Name, Parent, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, Scene, SceneHandle,
-    ScenePrefabEntityMetadata, SceneWorkspace, SpotLight, Transform, TransformComponent,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PostProcessVolume, Scene,
+    SceneHandle, ScenePrefabEntityMetadata, SceneWorkspace, SpotLight, Transform,
+    TransformComponent,
 };
 #[cfg(feature = "egui")]
 use crate::scripting::LuaScriptComponent;
@@ -75,6 +76,7 @@ pub enum SceneCreationAction {
     SpotLight,
     Camera,
     Environment,
+    PostProcessVolume,
     SceneInstance {
         document_id: SceneDocumentId,
         node_path: Vec<String>,
@@ -195,6 +197,7 @@ pub struct SceneEntityComponentsSummary {
     pub particle_system: Option<ParticleSystemComponent>,
     pub particle_emitter: Option<ParticleEmitterComponent>,
     pub environment: Option<EnvironmentComponent>,
+    pub post_process_volume: Option<PostProcessVolume>,
     pub billboard: Option<Billboard>,
 }
 
@@ -285,6 +288,9 @@ impl SceneHierarchySnapshot {
             let environment = entity_ref
                 .get::<&EnvironmentComponent>()
                 .map(|component| (*component).clone());
+            let post_process_volume = entity_ref
+                .get::<&PostProcessVolume>()
+                .map(|component| (*component).clone());
             let billboard = entity_ref.get::<&Billboard>().map(|component| *component);
 
             nodes.insert(
@@ -312,6 +318,7 @@ impl SceneHierarchySnapshot {
                     particle_system,
                     particle_emitter,
                     environment,
+                    post_process_volume,
                     billboard,
                 },
             );
@@ -780,6 +787,13 @@ impl SceneHierarchyWindow {
                     close_top_menu = true;
                     ui.close();
                 }
+                if ui.button("Post Process Volume").clicked() {
+                    events.push(SceneHierarchyEvent::Create(
+                        SceneCreationAction::PostProcessVolume,
+                    ));
+                    close_top_menu = true;
+                    ui.close();
+                }
             });
 
             if close_top_menu {
@@ -1056,6 +1070,8 @@ fn entity_icon(components: Option<&SceneEntityComponentsSummary>) -> (&'static s
         ("✨", Color32::from_rgb(0xe8, 0x78, 0xc8))
     } else if c.environment.is_some() {
         ("🌐", Color32::from_rgb(0x5c, 0xc9, 0x8a))
+    } else if c.post_process_volume.is_some() {
+        ("🎞", Color32::from_rgb(0xb4, 0x8c, 0xff))
     } else if c.mesh.is_some() {
         ("▣", Color32::from_rgb(0x4f, 0xc7, 0xd1))
     } else if c.script.is_some() {

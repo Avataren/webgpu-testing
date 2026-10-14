@@ -48,6 +48,9 @@ impl SceneCreationSystem {
                     SceneCreationAction::SpotLight => app.create_spot_light(gpu_ctx),
                     SceneCreationAction::Camera => app.create_camera(gpu_ctx),
                     SceneCreationAction::Environment => app.create_environment(gpu_ctx),
+                    SceneCreationAction::PostProcessVolume => {
+                        app.create_post_process_volume(gpu_ctx)
+                    }
                     SceneCreationAction::SceneInstance {
                         document_id,
                         node_path,

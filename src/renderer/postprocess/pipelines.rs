@@ -2,65 +2,43 @@ use crate::renderer::{PipelineBuilder, ShaderBuilder};
 
 use super::fullscreen_vertex;
 
-pub struct ColorGradingPipeline {
-    pub layout: wgpu::BindGroupLayout,
-    pub pipeline: wgpu::RenderPipeline,
-}
-
 pub struct DepthResolvePipeline {
     pub layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
 }
 
+/// HDR -> display: AO, bloom, exposure, colour correction and tonemapping.
 pub struct CompositePipeline {
     pub layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
 }
 
-pub fn build_color_grading(
-    device: &wgpu::Device,
-    uniform_layout: &wgpu::BindGroupLayout,
-    shader: &wgpu::ShaderModule,
-    scene_format: wgpu::TextureFormat,
-) -> ColorGradingPipeline {
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("ColorGradingLayout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 10,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 11,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-        ],
-    });
+/// Display image -> surface: anti-aliasing, sharpening, grain and dither.
+pub struct FinalPipeline {
+    pub layout: wgpu::BindGroupLayout,
+    pub pipeline: wgpu::RenderPipeline,
+}
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("ColorGradingPipelineLayout"),
-        bind_group_layouts: &[Some(uniform_layout), Some(&layout)],
-        immediate_size: 0,
-    });
+pub(super) fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
 
-    let pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
-        .with_label("ColorGradingPipeline")
-        .with_vertex_entry("vs_fullscreen")
-        .with_fragment_entry("fs_color_adjust")
-        .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
-        .with_vertex_state(fullscreen_vertex(shader))
-        .with_no_culling()
-        .build();
-
-    ColorGradingPipeline { layout, pipeline }
+pub(super) fn sampler_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        count: None,
+    }
 }
 
 pub fn build_depth_resolve(
@@ -86,8 +64,9 @@ pub fn build_depth_resolve(
         }],
     });
 
-    let depth_resolve_source =
-        ShaderBuilder::new().build(include_str!("../../shader/depth_resolve.wgsl"));
+    let depth_resolve_source = ShaderBuilder::new()
+        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
+        .build(include_str!("../../shader/depth_resolve.wgsl"));
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("DepthResolveShader"),
@@ -125,50 +104,18 @@ pub fn build_composite(
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("CompositeLayout"),
         entries: &[
+            texture_entry(90),
+            texture_entry(91),
+            texture_entry(92),
+            sampler_entry(93),
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
+                binding: 94,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 50,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 51,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 52,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 53,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],
@@ -190,4 +137,33 @@ pub fn build_composite(
         .build();
 
     CompositePipeline { layout, pipeline }
+}
+
+pub fn build_final(
+    device: &wgpu::Device,
+    uniform_layout: &wgpu::BindGroupLayout,
+    shader: &wgpu::ShaderModule,
+    output_format: wgpu::TextureFormat,
+) -> FinalPipeline {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("FinalLayout"),
+        entries: &[texture_entry(100), sampler_entry(101)],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("FinalPipelineLayout"),
+        bind_group_layouts: &[Some(uniform_layout), Some(&layout)],
+        immediate_size: 0,
+    });
+
+    let pipeline = PipelineBuilder::new(device, &pipeline_layout, shader)
+        .with_label("FinalPipeline")
+        .with_vertex_entry("vs_fullscreen")
+        .with_fragment_entry("fs_final")
+        .with_color_target(output_format, Some(wgpu::BlendState::REPLACE))
+        .with_vertex_state(fullscreen_vertex(shader))
+        .with_no_culling()
+        .build();
+
+    FinalPipeline { layout, pipeline }
 }

@@ -42,7 +42,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/asset/` | Shared `Assets` (meshes, materials, textures) and handles |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
-| `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, post-process) |
+| `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
 | `src/project.rs` | Project manifest (`project.json`), scene documents, active project root |
 | `src/bin/editor/` | The editor: `application/` (systems, commands, UI), inspector, asset browser, shader/script editors |
 | `src/bin/player/` | Standalone project player |
@@ -77,9 +77,17 @@ to `Editor`. The editor starts and stops play mode through `RuntimeStateHandle`.
 
 `Renderer::render` (`src/renderer/renderer_core.rs`) runs these passes in order:
 shadow maps → depth prepass → main colour pass → custom stage (`BeforePostprocess`) →
-post-processing (SSAO, bloom, FXAA, colour grading, MSAA depth resolve) →
-custom stage (`AfterPostprocess`) → surface passes (composite, transparent and overlay) →
-UI hook.
+transparent pass → post-processing → custom stage (`AfterPostprocess`) →
+surface passes (overlay, gizmos) → UI hook.
+
+The scene renders in HDR (`Rgba16Float`, `postprocess::HDR_FORMAT`), transparent
+surfaces included, so light above 1.0 survives to bloom and tonemapping. Post-processing
+(`src/renderer/postprocess/`) runs: MSAA depth resolve → SSAO → bloom (13-tap Karis
+downsample chain, tent upsample blended by scatter) → auto exposure (compute: luminance
+histogram, adapted EV in a storage buffer) → composite (AO, bloom, exposure, vignette,
+white balance and grading, tonemapping, lift/gamma/gain; into a half-float display
+target) → final (FXAA, CAS sharpening, film grain, dither; onto the surface). Overlays
+and gizmos draw after that, untonemapped.
 
 - **Bind groups** for the main pipeline: 0 = camera, 1 = objects, 2 = lights,
   3 = textures. Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
@@ -95,7 +103,14 @@ UI hook.
   `custom_render_stage`.
 - **Picking**: GPU picking renders entity ids and reads back one pixel asynchronously
   (`request_pick` / `poll_pick_result`).
-- **Bloom, SSAO and the other effects** are toggled through `PostProcessEffects`.
+- **Post-processing settings** (`PostProcessSettings`) come from `PostProcessVolume`
+  components: each frame `AppCore::render_scene` blends the scene's enabled volumes at
+  the camera (`scene::blend_post_process_volumes`, lowest priority first; infinite
+  volumes apply everywhere, box/sphere ones fade over `blend_distance`) and hands the
+  result to `Renderer::set_postprocess_settings`. A scene without volumes gets the
+  defaults. Projects saved before volumes stored effects in `project.json`
+  (`postprocess`) and grading in the environment; `SceneAsset::migrate_legacy_post_processing`
+  turns those into an infinite volume entity on load, and they are no longer written.
 
 ## Scenes, assets and projects
 
@@ -236,9 +251,8 @@ agent workflow.
   for real keys. Screenshots copy the swapchain image after egui is drawn and before
   `present` (the surface is configured with `COPY_SRC` when supported). `end_frame`
   advances the hub's frame counter and answers `wait` requests.
-- **Post-processing**: in egui builds the UI's settings are pushed to the renderer
-  every frame, so remote changes are also written into that handle
-  (`take_postprocess_override`).
+- **Post-processing**: `postprocess.set` edits a volume entity (the lowest-priority
+  infinite one by default, created if missing), so changes save with the scene.
 - **Logs**: every log record also goes to `remote::log_tap`, a ring buffer with
   sequence numbers, so clients can poll for new lines. Panics are recorded there too.
 - **Lua console**: `ScriptingState::eval` runs code with the full scripting API, either

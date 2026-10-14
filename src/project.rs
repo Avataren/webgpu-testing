@@ -1,5 +1,5 @@
-use crate::environment::{ColorGrading, Environment, HdrBackground};
-use crate::renderer::postprocess::PostProcessEffects;
+use crate::environment::{Environment, HdrBackground};
+use crate::renderer::postprocess::{LegacyColorGrading, PostProcessEffects};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
     Camera, CameraProjection, Scene, SceneAsset, SceneLibrary, SceneWorkspace,
@@ -284,9 +284,9 @@ pub struct ProjectManifest {
     #[serde(default)]
     pub scenes: Vec<SceneDocument>,
     pub environment: SerializedEnvironment,
-    /// Bloom, SSAO and FXAA settings; absent in projects saved before they were stored, which
-    /// then keep the engine defaults.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Bloom, SSAO and FXAA settings from projects saved before post-processing moved
+    /// into scene volumes. Read once to build a volume when the project loads; never saved.
+    #[serde(default, skip_serializing)]
     pub postprocess: Option<PostProcessEffects>,
     #[serde(default)]
     pub engine_camera: SerializedEngineCamera,
@@ -334,6 +334,11 @@ impl ProjectManifest {
 
     pub fn environment(&self) -> &SerializedEnvironment {
         &self.environment
+    }
+
+    /// Colour grading an old project stored in its environment, if any.
+    pub fn legacy_color_grading(&self) -> Option<LegacyColorGrading> {
+        self.environment.color_grading
     }
 
     pub fn postprocess(&self) -> Option<PostProcessEffects> {
@@ -712,7 +717,10 @@ impl Default for SerializedEngineCamera {
 pub struct SerializedEnvironment {
     clear_color: [f64; 4],
     ambient_intensity: f32,
-    color_grading: SerializedColorGrading,
+    /// Colour grading from projects saved before it moved into post-process volumes;
+    /// never saved.
+    #[serde(default, skip_serializing)]
+    color_grading: Option<LegacyColorGrading>,
     #[serde(default)]
     hdr: Option<SerializedHdrBackground>,
 }
@@ -720,7 +728,6 @@ pub struct SerializedEnvironment {
 impl SerializedEnvironment {
     fn from_environment(environment: &Environment) -> Self {
         let clear = environment.clear_color();
-        let grading = environment.color_grading();
         let hdr = environment
             .hdr_background()
             .map(|background| SerializedHdrBackground {
@@ -733,7 +740,7 @@ impl SerializedEnvironment {
         Self {
             clear_color: [clear.r, clear.g, clear.b, clear.a],
             ambient_intensity: environment.ambient_intensity(),
-            color_grading: SerializedColorGrading::from(grading),
+            color_grading: None,
             hdr,
         }
     }
@@ -814,7 +821,6 @@ impl SerializedEnvironment {
             a: self.clear_color[3],
         });
         environment.set_ambient_intensity(self.ambient_intensity);
-        environment.set_color_grading(self.color_grading.into());
 
         if let Some(hdr) = self.hdr {
             if let Some(path) = hdr
@@ -861,33 +867,6 @@ fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<boo
         let source_path = std::fs::canonicalize(source)?;
         let target_path = std::fs::canonicalize(target)?;
         Ok(source_path == target_path)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerializedColorGrading {
-    exposure: f32,
-    saturation: f32,
-    contrast: f32,
-}
-
-impl From<ColorGrading> for SerializedColorGrading {
-    fn from(grading: ColorGrading) -> Self {
-        Self {
-            exposure: grading.exposure(),
-            saturation: grading.saturation(),
-            contrast: grading.contrast(),
-        }
-    }
-}
-
-impl From<SerializedColorGrading> for ColorGrading {
-    fn from(serialized: SerializedColorGrading) -> Self {
-        let mut grading = ColorGrading::default();
-        grading.set_exposure(serialized.exposure);
-        grading.set_saturation(serialized.saturation);
-        grading.set_contrast(serialized.contrast);
-        grading
     }
 }
 
@@ -1009,26 +988,32 @@ mod tests {
     }
 
     #[test]
-    fn postprocess_settings_roundtrip_through_manifest() {
+    fn legacy_postprocess_fields_are_read_but_not_written() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let mut effects = PostProcessEffects::default();
-        effects.ssao = false;
-        effects.bloom_settings.threshold = 1.7;
-        effects.ssao_settings.radius = 0.6;
-
-        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
-        manifest.postprocess = Some(effects);
+        let manifest = ProjectManifest::new_empty(ProjectMetadata::default());
         manifest.save_to_dir(tmp_dir.path()).unwrap();
-        let loaded = ProjectManifest::load_from_dir(tmp_dir.path()).unwrap();
-        assert_eq!(loaded.postprocess(), Some(effects));
 
-        // a manifest written before the field existed loads without one
-        let json = fs::read_to_string(tmp_dir.path().join(PROJECT_FILE_NAME)).unwrap();
+        let path = tmp_dir.path().join(PROJECT_FILE_NAME);
+        let json = fs::read_to_string(&path).unwrap();
         let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        value.as_object_mut().unwrap().remove("postprocess");
-        fs::write(tmp_dir.path().join(PROJECT_FILE_NAME), value.to_string()).unwrap();
+        assert!(value.get("postprocess").is_none());
+        assert!(value["environment"].get("color_grading").is_none());
+
+        // An old manifest carries both; they load for migration...
+        value["postprocess"] = serde_json::json!({ "ssao": false });
+        value["environment"]["color_grading"] =
+            serde_json::json!({ "exposure": 2.0, "saturation": 1.1, "contrast": 1.0 });
+        fs::write(&path, value.to_string()).unwrap();
         let old = ProjectManifest::load_from_dir(tmp_dir.path()).unwrap();
-        assert_eq!(old.postprocess(), None);
+        assert!(!old.postprocess().unwrap().ssao);
+        assert_eq!(old.legacy_color_grading().unwrap().exposure, 2.0);
+
+        // ...and are gone once it is saved again.
+        old.save_to_dir(tmp_dir.path()).unwrap();
+        let resaved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(resaved.get("postprocess").is_none());
+        assert!(resaved["environment"].get("color_grading").is_none());
     }
 
     #[test]

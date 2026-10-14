@@ -15,8 +15,8 @@ use crate::renderer::{CustomRenderContext, CustomRenderStage, RenderRegion};
 #[cfg(feature = "egui")]
 use crate::ui::{
     init_log_recorder, EnvironmentSettingsHandle, EnvironmentWindow, FrameStatsHandle,
-    LogBufferHandle, LogWindow, PostProcessEffectsHandle, PostProcessWindow, SceneHierarchyHandle,
-    SceneHierarchyRegistryHandle, SceneHierarchyWindow, SceneTabsHandle, StatsWindow, UiStyle,
+    LogBufferHandle, LogWindow, SceneHierarchyHandle, SceneHierarchyRegistryHandle,
+    SceneHierarchyWindow, SceneTabsHandle, StatsWindow, UiStyle,
 };
 
 use std::cell::RefCell;
@@ -147,14 +147,12 @@ impl<T: RenderApplication> RemoteApp for RemoteAppAdapter<'_, T> {
 pub struct DefaultUI {
     stats_window: StatsWindow,
     log_window: LogWindow,
-    postprocess_window: PostProcessWindow,
     environment_window: EnvironmentWindow,
     scene_hierarchy_window: SceneHierarchyWindow,
     scene_hierarchy_registry: SceneHierarchyRegistryHandle,
     scene_tabs: SceneTabsHandle,
     stats_open: bool,
     log_open: bool,
-    postprocess_open: bool,
     environment_open: bool,
     scene_hierarchy_open: bool,
 }
@@ -164,7 +162,6 @@ impl DefaultUI {
     pub fn new(
         stats_handle: FrameStatsHandle,
         log_handle: LogBufferHandle,
-        post_handle: PostProcessEffectsHandle,
         env_handle: EnvironmentSettingsHandle,
         hierarchy_registry: SceneHierarchyRegistryHandle,
         hierarchy_handle: Option<(SceneHandle, SceneHierarchyHandle)>,
@@ -173,14 +170,12 @@ impl DefaultUI {
         Self {
             stats_window: StatsWindow::new(stats_handle),
             log_window: LogWindow::new(log_handle),
-            postprocess_window: PostProcessWindow::new(post_handle),
             environment_window: EnvironmentWindow::new(env_handle),
             scene_hierarchy_window: SceneHierarchyWindow::new(hierarchy_handle),
             scene_hierarchy_registry: hierarchy_registry,
             scene_tabs,
             stats_open: false,
             log_open: false,
-            postprocess_open: false,
             environment_open: false,
             scene_hierarchy_open: true,
         }
@@ -200,8 +195,6 @@ impl DefaultUI {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.environment_window
             .show(ctx, Some(&mut self.environment_open));
-        self.postprocess_window
-            .show(ctx, Some(&mut self.postprocess_open));
         self.log_window.show(ctx, Some(&mut self.log_open));
     }
 
@@ -219,7 +212,6 @@ impl DefaultUI {
                 ui.menu_button("Window", |ui| {
                     ui.checkbox(&mut self.stats_open, "Statistics");
                     ui.checkbox(&mut self.environment_open, "Environment");
-                    ui.checkbox(&mut self.postprocess_open, "Post-processing");
                     ui.checkbox(&mut self.scene_hierarchy_open, "Scene Hierarchy");
                     ui.checkbox(&mut self.log_open, "Log");
                 });
@@ -231,8 +223,6 @@ impl DefaultUI {
         self.stats_window.show(ctx, Some(&mut self.stats_open));
         self.environment_window
             .show(ctx, Some(&mut self.environment_open));
-        self.postprocess_window
-            .show(ctx, Some(&mut self.postprocess_open));
     }
 
     pub fn show_logs(&mut self, ctx: &egui::Context) {
@@ -251,10 +241,6 @@ impl DefaultUI {
         &mut self,
     ) -> (&mut SceneHierarchyWindow, &mut LogWindow) {
         (&mut self.scene_hierarchy_window, &mut self.log_window)
-    }
-
-    pub fn postprocess_window_mut(&mut self) -> &mut PostProcessWindow {
-        &mut self.postprocess_window
     }
 
     pub fn environment_window_mut(&mut self) -> &mut EnvironmentWindow {
@@ -363,7 +349,6 @@ where
         let ui_style = app_rc.borrow().ui_style();
         let stats_handle = app.frame_stats_handle();
         let log_handle = init_log_recorder();
-        let post_handle = app.postprocess_effects_handle();
         let env_handle = app.environment_settings_handle();
         let hierarchy_entry = app.active_scene_hierarchy();
         let hierarchy_registry = app.scene_hierarchy_registry();
@@ -373,7 +358,6 @@ where
             let mut default_ui = DefaultUI::new(
                 stats_handle,
                 log_handle,
-                post_handle,
                 env_handle.clone(),
                 hierarchy_registry.clone(),
                 hierarchy_entry.clone(),
@@ -390,7 +374,6 @@ where
             let mut default_ui = DefaultUI::new(
                 stats_handle,
                 log_handle,
-                post_handle,
                 env_handle.clone(),
                 hierarchy_registry,
                 hierarchy_entry,

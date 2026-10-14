@@ -115,8 +115,7 @@ impl TextureBundle {
 pub struct BloomMip {
     // CRITICAL: view must drop before texture
     pub view: wgpu::TextureView,
-    texture: wgpu::Texture,
-    size: wgpu::Extent3d,
+    _texture: wgpu::Texture,
 }
 
 impl BloomMip {
@@ -128,26 +127,14 @@ impl BloomMip {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: BLOOM_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             view,
-            texture,
-            size,
+            _texture: texture,
         }
-    }
-
-    pub fn extent(&self) -> wgpu::Extent3d {
-        self.size
-    }
-
-    pub fn texture(&self) -> &wgpu::Texture {
-        &self.texture
     }
 }
 

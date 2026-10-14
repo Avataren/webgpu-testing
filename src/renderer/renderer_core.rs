@@ -11,7 +11,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::{PostProcess, PostProcessCamera, PostProcessEffects},
+    postprocess::{PostProcess, PostProcessCamera, PostProcessSettings},
     CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
     RenderPass, RenderRegion, SamplerFilterMode, Vertex,
 };
@@ -573,6 +573,9 @@ impl Renderer {
             CustomRenderStage::BeforePostprocess,
             custom_render.as_deref_mut(),
         );
+        // Transparent surfaces are part of the lit HDR scene, so they get exposure,
+        // bloom and tonemapping like everything else.
+        self.run_transparent_pass(&mut frame_state, assets);
         self.execute_postprocess(&mut frame_state);
         self.run_custom_stage(
             &mut frame_state,
@@ -638,12 +641,21 @@ impl Renderer {
         }
     }
 
-    pub fn set_postprocess_effects(&mut self, effects: PostProcessEffects) {
-        self.postprocess.set_effects(&self.context.queue, effects);
+    /// Post-processing for the next frames, usually the scene's volumes blended at the
+    /// camera (see [`crate::scene::PostProcessVolume`]).
+    pub fn set_postprocess_settings(&mut self, settings: &PostProcessSettings) {
+        self.postprocess.set_settings(&self.context.queue, settings);
     }
 
-    pub fn postprocess_effects(&self) -> PostProcessEffects {
-        self.postprocess.effects()
+    /// The post-processing settings in effect (after clamping).
+    pub fn postprocess_settings(&self) -> &PostProcessSettings {
+        self.postprocess.settings()
+    }
+
+    /// Make auto exposure measure the next frame afresh instead of easing from the last
+    /// adapted value.
+    pub fn reset_auto_exposure(&self) {
+        self.postprocess.reset_exposure(&self.context.queue);
     }
 
     pub fn last_frame_stats(&self) -> RendererStats {
@@ -774,9 +786,6 @@ impl Renderer {
         let env_texture_changed =
             self.environment
                 .update(&self.context.device, &self.context.queue, environment);
-
-        self.postprocess
-            .set_color_grading(&self.context.queue, environment.color_grading());
 
         if env_texture_changed {
             self.lights_buffer.rebuild_bind_group(
@@ -926,25 +935,29 @@ impl Renderer {
         frame.resolved_depth_view = self.postprocess.after_postprocess_depth_view().cloned();
     }
 
+    fn run_transparent_pass(&mut self, frame: &mut FrameState, assets: &Assets) {
+        let transparent_draw_calls = passes::transparent_pass(
+            self,
+            assets,
+            &frame.prepared_batches,
+            &mut frame.encoder,
+            &frame.scene_view,
+            frame.scene_resolve_view.as_ref(),
+            &frame.depth_view,
+            frame.render_region,
+            frame.pick_active,
+            self.context.scene_texture_format(),
+        );
+        frame.stats.transparent_draw_calls += transparent_draw_calls;
+    }
+
+    /// Editor overlays and gizmos, drawn on the finished (tonemapped) image.
     fn run_surface_passes(&mut self, frame: &mut FrameState, assets: &Assets) {
         let render_region = frame.render_region;
         let pick_active = frame.pick_active;
         let surface_format = self.context.config.format;
         let surface_view = frame.surface_view.clone();
         let depth_view = frame.depth_view.clone();
-
-        let transparent_draw_calls = passes::transparent_pass(
-            self,
-            assets,
-            &frame.prepared_batches,
-            &mut frame.encoder,
-            &surface_view,
-            &depth_view,
-            render_region,
-            pick_active,
-            surface_format,
-        );
-        frame.stats.transparent_draw_calls += transparent_draw_calls;
 
         let overlay_draw_calls = passes::overlay_pass(
             self,

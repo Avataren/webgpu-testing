@@ -80,11 +80,17 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     (
         "environment.get",
-        "Clear color, ambient light, HDR sky and color grading",
+        "Clear color, ambient light and HDR sky",
     ),
     ("environment.set", "Change environment settings"),
-    ("postprocess.get", "Post-processing settings"),
-    ("postprocess.set", "Toggle and tune SSAO, bloom and FXAA"),
+    (
+        "postprocess.get",
+        "Post-processing at the view camera and the volumes it is blended from",
+    ),
+    (
+        "postprocess.set",
+        "Tune exposure, tonemapping, colour grading, bloom, SSAO and lens effects on a volume",
+    ),
     (
         "assets.list",
         "Meshes, materials and textures loaded in the scene",
@@ -203,9 +209,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "camera.set" => rendering::camera_set(params, ctx),
         "environment.get" => rendering::environment_get(ctx),
         "environment.set" => rendering::environment_set(params, ctx),
-        "postprocess.get" => Ok(rendering::postprocess_json(
-            &ctx.gpu.renderer.postprocess_effects(),
-        )),
+        "postprocess.get" => rendering::postprocess_get(ctx),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
         "asset.reload" => rendering::asset_reload(params, ctx),
         "audio.play" => audio_play(params),

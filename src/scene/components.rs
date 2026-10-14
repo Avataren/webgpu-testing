@@ -2,13 +2,14 @@
 // Pure hecs components - no custom entity system
 
 use crate::asset::{Handle, MaterialAsset, Mesh};
-use crate::environment::{ColorGrading, Environment, HdrBackground};
+use crate::environment::{Environment, HdrBackground};
 use crate::gpu_particles::behaviors::{
     BoidsBehavior, OptimizedBoidsBehavior, PhysicsBehavior, StarfieldBehavior,
 };
 use crate::gpu_particles::{
     ColorGradient, EmissionShape, ParticleEmitter, ParticleRenderMode, SizeCurve,
 };
+use crate::renderer::postprocess::{LegacyColorGrading, PostProcessSettings};
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::Material;
 use crate::renderer::Vertex;
@@ -71,6 +72,91 @@ impl From<&Camera> for CameraComponent {
 }
 
 // ============================================================================
+// Post-process Volume Component
+// ============================================================================
+
+/// The region a [`PostProcessVolume`] affects.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VolumeShape {
+    /// Unbounded: applies wherever the camera is.
+    #[default]
+    #[serde(alias = "global", alias = "unbound")]
+    Infinite,
+    /// A box of this full size in the entity's local space (scaled and rotated with it).
+    Box { size: [f32; 3] },
+    /// A sphere of this radius in the entity's local space (scaled by its largest axis).
+    Sphere { radius: f32 },
+}
+
+impl VolumeShape {
+    pub fn label(&self) -> &'static str {
+        match self {
+            VolumeShape::Infinite => "Infinite (unbound)",
+            VolumeShape::Box { .. } => "Box",
+            VolumeShape::Sphere { .. } => "Sphere",
+        }
+    }
+
+    pub fn is_infinite(&self) -> bool {
+        matches!(self, VolumeShape::Infinite)
+    }
+}
+
+/// Post-processing for the part of the scene a camera is in.
+///
+/// Every frame the engine blends the enabled volumes at the camera position, lowest
+/// `priority` first: an infinite volume applies fully, a bounded one fully inside its
+/// shape and fading out over `blend_distance` outside it, both scaled by `weight`. A scene
+/// without volumes uses [`PostProcessSettings::default`].
+///
+/// # Examples
+///
+/// ```
+/// use wgpu_cube::scene::{PostProcessVolume, VolumeShape};
+///
+/// let mut volume = PostProcessVolume::default();
+/// assert_eq!(volume.shape, VolumeShape::Infinite);
+/// volume.settings.vignette.enabled = true;
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PostProcessVolume {
+    pub enabled: bool,
+    pub shape: VolumeShape,
+    /// Higher-priority volumes blend over lower ones.
+    pub priority: i32,
+    /// How strongly the volume applies when the camera is inside it, 0-1.
+    pub weight: f32,
+    /// Distance outside a bounded shape over which the volume fades out, in world units.
+    pub blend_distance: f32,
+    pub settings: PostProcessSettings,
+}
+
+impl Default for PostProcessVolume {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            shape: VolumeShape::Infinite,
+            priority: 0,
+            weight: 1.0,
+            blend_distance: 2.0,
+            settings: PostProcessSettings::default(),
+        }
+    }
+}
+
+impl PostProcessVolume {
+    /// An infinite volume with the given settings.
+    pub fn infinite(settings: PostProcessSettings) -> Self {
+        Self {
+            settings,
+            ..Self::default()
+        }
+    }
+}
+
+// ============================================================================
 // Environment Component
 // ============================================================================
 
@@ -78,17 +164,12 @@ impl From<&Camera> for CameraComponent {
 pub struct EnvironmentComponent {
     pub clear_color: [f32; 4],
     pub ambient_intensity: f32,
-    #[serde(default)]
-    pub color_grading: EnvironmentColorGrading,
+    /// Colour grading from scenes saved before it moved to post-process volumes. Read
+    /// once to build a volume when the project loads; never saved.
+    #[serde(default, skip_serializing)]
+    pub color_grading: Option<LegacyColorGrading>,
     #[serde(default)]
     pub hdr: Option<EnvironmentHdrSettings>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct EnvironmentColorGrading {
-    pub exposure: f32,
-    pub saturation: f32,
-    pub contrast: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,7 +182,6 @@ pub struct EnvironmentHdrSettings {
 impl EnvironmentComponent {
     pub fn from_environment(environment: &Environment) -> Self {
         let color = environment.clear_color();
-        let grading = environment.color_grading();
         let hdr = environment
             .hdr_background()
             .map(EnvironmentHdrSettings::from);
@@ -114,7 +194,7 @@ impl EnvironmentComponent {
                 color.a as f32,
             ],
             ambient_intensity: environment.ambient_intensity(),
-            color_grading: EnvironmentColorGrading::from(grading),
+            color_grading: None,
             hdr,
         }
     }
@@ -127,7 +207,6 @@ impl EnvironmentComponent {
             a: self.clear_color[3] as f64,
         });
         environment.set_ambient_intensity(self.ambient_intensity);
-        environment.set_color_grading(self.color_grading.into());
 
         match self
             .hdr
@@ -157,44 +236,6 @@ impl EnvironmentComponent {
 impl Default for EnvironmentComponent {
     fn default() -> Self {
         Self::from_environment(&Environment::default())
-    }
-}
-
-impl EnvironmentColorGrading {
-    pub fn apply_to(&self, grading: &mut ColorGrading) {
-        grading.set_exposure(self.exposure);
-        grading.set_saturation(self.saturation);
-        grading.set_contrast(self.contrast);
-    }
-}
-
-impl Default for EnvironmentColorGrading {
-    fn default() -> Self {
-        Self {
-            exposure: 1.0,
-            saturation: 1.0,
-            contrast: 1.0,
-        }
-    }
-}
-
-impl From<ColorGrading> for EnvironmentColorGrading {
-    fn from(grading: ColorGrading) -> Self {
-        Self {
-            exposure: grading.exposure(),
-            saturation: grading.saturation(),
-            contrast: grading.contrast(),
-        }
-    }
-}
-
-impl From<EnvironmentColorGrading> for ColorGrading {
-    fn from(settings: EnvironmentColorGrading) -> Self {
-        let mut grading = ColorGrading::default();
-        grading.set_exposure(settings.exposure);
-        grading.set_saturation(settings.saturation);
-        grading.set_contrast(settings.contrast);
-        grading
     }
 }
 

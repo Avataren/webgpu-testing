@@ -1,10 +1,10 @@
 use super::camera::handle_update_camera;
 use super::components::{
     handle_add_camera, handle_add_directional_light, handle_add_environment, handle_add_mesh,
-    handle_add_particle_system, handle_add_point_light, handle_add_spot_light,
-    handle_remove_component,
+    handle_add_particle_system, handle_add_point_light, handle_add_post_process_volume,
+    handle_add_spot_light, handle_remove_component,
 };
-use super::environment::handle_update_environment;
+use super::environment::{handle_update_environment, handle_update_post_process_volume};
 use super::lights::{
     handle_update_directional_light, handle_update_point_light, handle_update_spot_light,
 };
@@ -80,6 +80,9 @@ pub fn dispatch_action(
         }
         InspectorAction::AddSpotLight { entity } => handle_add_spot_light(&mut ctx, entity),
         InspectorAction::AddEnvironment { entity } => handle_add_environment(&mut ctx, entity),
+        InspectorAction::AddPostProcessVolume { entity } => {
+            handle_add_post_process_volume(&mut ctx, entity)
+        }
         InspectorAction::AddParticleSystem { entity } => {
             handle_add_particle_system(&mut ctx, entity)
         }
@@ -141,6 +144,9 @@ pub fn dispatch_action(
         // Environment actions
         InspectorAction::UpdateEnvironment { entity, component } => {
             handle_update_environment(&mut ctx, entity, component)
+        }
+        InspectorAction::UpdatePostProcessVolume { entity, component } => {
+            handle_update_post_process_volume(&mut ctx, entity, *component)
         }
 
         // Shader actions

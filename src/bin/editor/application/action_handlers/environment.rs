@@ -1,5 +1,5 @@
 use hecs::Entity;
-use wgpu_cube::scene::EnvironmentComponent;
+use wgpu_cube::scene::{EnvironmentComponent, PostProcessVolume};
 
 use super::{ActionContext, ActionResult};
 
@@ -82,5 +82,25 @@ pub fn handle_update_environment(
         ActionResult::scene_changed()
     } else {
         ActionResult::no_change()
+    }
+}
+
+/// Handle UpdatePostProcessVolume action
+pub fn handle_update_post_process_volume(
+    ctx: &mut ActionContext,
+    entity: Entity,
+    component: PostProcessVolume,
+) -> ActionResult {
+    let world = ctx.scene.main_world_mut();
+    match world.get::<&mut PostProcessVolume>(entity) {
+        Ok(mut existing) if *existing != component => {
+            *existing = component;
+            ActionResult::scene_changed()
+        }
+        Ok(_) => ActionResult::no_change(),
+        Err(err) => {
+            log::warn!("Failed to update post-process volume for {entity:?}: {err}");
+            ActionResult::no_change()
+        }
     }
 }

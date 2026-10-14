@@ -10,12 +10,13 @@ use super::serialization::{
 };
 use crate::asset::{Assets, Handle, MaterialAsset, MeshData};
 use crate::project::{normalize_absolute_path, relativize_path_to_project, CONTENT_DIR};
+use crate::renderer::postprocess::{LegacyColorGrading, PostProcessEffects, PostProcessSettings};
 use crate::scene::animation::{AnimationClip, AnimationState};
 use crate::scene::components::{
     Billboard, CanCastShadow, Children, DirectionalLight, EditorEntityId, GltfMaterial, GltfNode,
     GltfPrimitive, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name, Parent,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PrimitiveMeshComponent,
-    SpotLight, TransformComponent, Visible,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PostProcessVolume,
+    PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
 use crate::scene::gltf_material_registry::GltfMaterialRegistry;
 use crate::scene::graph::SceneInstance;
@@ -63,6 +64,45 @@ impl SceneAsset {
             mesh_data: Vec::new(),
             active_camera: None,
         }
+    }
+
+    /// Move post-processing stored the old way (project-level effects and environment
+    /// colour grading) into an infinite [`PostProcessVolume`] entity, unless the scene
+    /// already has a volume. Returns whether an entity was added.
+    ///
+    /// [`PostProcessVolume`]: crate::scene::PostProcessVolume
+    pub fn migrate_legacy_post_processing(
+        &mut self,
+        effects: Option<&PostProcessEffects>,
+        project_grading: Option<LegacyColorGrading>,
+    ) -> bool {
+        let scene_grading = self
+            .entities
+            .iter_mut()
+            .filter_map(|entity| entity.environment.as_mut())
+            .fold(None, |found, environment| {
+                found.or(environment.color_grading.take())
+            });
+        if self
+            .entities
+            .iter()
+            .any(|entity| entity.post_process_volume.is_some())
+        {
+            return false;
+        }
+        let grading = scene_grading.or(project_grading);
+        if effects.is_none() && grading.is_none() {
+            return false;
+        }
+
+        let settings = PostProcessSettings::from_legacy(effects, grading.as_ref());
+        self.entities.push(
+            SceneAssetEntity::builder(SerializedTransform::from(Transform::IDENTITY))
+                .with_name("Post Process Volume")
+                .with_post_process_volume(PostProcessVolume::infinite(settings))
+                .build(),
+        );
+        true
     }
 
     pub fn to_json(&self) -> serde_json::Result<String> {
@@ -432,6 +472,10 @@ impl SceneAsset {
 
             if let Some(environment) = &entity.environment {
                 builder.add(environment.clone());
+            }
+
+            if let Some(volume) = &entity.post_process_volume {
+                builder.add(volume.clone());
             }
 
             builders.push(builder);

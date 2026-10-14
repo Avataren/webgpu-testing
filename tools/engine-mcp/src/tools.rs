@@ -117,6 +117,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "particle_system": { "type": ["object", "null"], "description": "GPU particle system settings (fields as entity_get shows them, plus \"preset\": physics|starfield|boids|optimized_boids), or null to remove" },
         "particle_emitter": { "type": ["object", "null"], "description": "Particle emitter settings as entity_get shows them, or null" },
         "environment": { "type": ["object", "null"], "description": "Environment component (see environment_get for fields), or null" },
+        "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, settings: {...as postprocess_set}}. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -150,7 +151,7 @@ pub fn tools() -> Vec<Tool> {
         json!({
             "type": "string",
             "enum": ["empty", "cube", "sphere", "plane", "cylinder", "cone", "torus",
-                     "point_light", "directional_light", "spot_light", "camera", "particles", "environment"],
+                     "point_light", "directional_light", "spot_light", "camera", "particles", "environment", "post_process_volume"],
             "description": "What to create (default empty). Primitive sizes at scale 1: cube 1x1x1 centred (-0.5..0.5); sphere radius 1; cylinder radius 1, length 1 along Z (z -0.5..0.5); cone base radius 1 at z = -1 and tip at the origin, so it points toward +Z, opposite to forward: give ships and arrows a 180 degree yaw; torus ring radius 1 (to the tube centre) with tube radius 0.35 (1.35 outer), axis along Z, and the tube scales with the ring. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor. entity_get shows local_bounds."
         }),
     );
@@ -324,13 +325,13 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scene editing ----
         Tool {
             name: "entity_spawn",
-            description: "Create an entity in the active scene: an empty, a primitive mesh, a light, a camera (made active by default), a GPU particle system or an environment. Accepts every entity_update field too (material, script, parent, lights, ...). Returns the new entity's id. Units are meters, Y is up, -Z is forward. To make many similar objects, spawn one and use entity_duplicate with count/step/columns.",
+            description: "Create an entity in the active scene: an empty, a primitive mesh, a light, a camera (made active by default), a GPU particle system, an environment or a post-process volume. Accepts every entity_update field too (material, script, parent, lights, ...). Returns the new entity's id. Units are meters, Y is up, -Z is forward. To make many similar objects, spawn one and use entity_duplicate with count/step/columns.",
             schema: json!({ "type": "object", "properties": spawn_props }),
             action: Action::Engine("entity.spawn"),
         },
         Tool {
             name: "entity_update",
-            description: "Change any aspect of an entity in one call: name, transform, parent, visibility, shadows, mesh, material, point/spot/directional light, camera, script, particle system/emitter, environment, built-in animations, billboard. Only the given fields change; component fields set to null remove the component. Pass entities (a list) or name_contains instead of entity to apply the same change to many entities at once. Changes made during play mode are discarded on stop (results then carry discarded_on_stop: true).",
+            description: "Change any aspect of an entity in one call: name, transform, parent, visibility, shadows, mesh, material, point/spot/directional light, camera, script, particle system/emitter, environment, post-process volume, built-in animations, billboard. Only the given fields change; component fields set to null remove the component. Pass entities (a list) or name_contains instead of entity to apply the same change to many entities at once. Changes made during play mode are discarded on stop (results then carry discarded_on_stop: true).",
             schema: json!({ "type": "object", "properties": update_props }),
             action: Action::Engine("entity.update"),
         },
@@ -339,7 +340,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -565,7 +566,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "environment_get",
-            description: "Background clear color, ambient intensity, HDR sky (path, intensity) and color grading (exposure, saturation, contrast).",
+            description: "Background clear color, ambient intensity and HDR sky (path, intensity). Exposure, tonemapping and color grading are post-processing: see postprocess_get.",
             schema: empty(),
             action: Action::Engine("environment.get"),
         },
@@ -575,9 +576,6 @@ pub fn tools() -> Vec<Tool> {
             schema: object(json!({
                 "clear_color": color("Background color"),
                 "ambient_intensity": { "type": "number" },
-                "color_grading": { "type": "object", "properties": {
-                    "exposure": { "type": "number" }, "saturation": { "type": "number" }, "contrast": { "type": "number" }
-                }},
                 "hdr": { "type": "object", "properties": {
                     "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "path": { "type": "string", "description": ".hdr image" }
                 }}
@@ -586,23 +584,60 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "postprocess_get",
-            description: "Post-processing toggles and settings (SSAO, bloom, FXAA).",
+            description: "Post-processing in effect at the view camera (exposure, tonemapping, color grading, bloom, SSAO, vignette, chromatic aberration, film grain, sharpening, anti-aliasing) and the post-process volumes it is blended from, with each volume's influence at the camera. The scene renders in HDR; these turn it into the displayed image.",
             schema: empty(),
             action: Action::Engine("postprocess.get"),
         },
         Tool {
             name: "postprocess_set",
-            description: "Toggle or tune SSAO, bloom and FXAA.",
+            description: "Change post-processing on a volume: entity, or else the scene's lowest-priority infinite volume (created if there is none). Only given fields change. Settings are saved with the scene. For an area that looks different (a dark cave, underwater), spawn a post_process_volume entity with a box or sphere shape, a higher priority and a blend_distance instead.",
             schema: object(json!({
-                "ssao": { "type": "boolean" },
-                "bloom": { "type": "boolean" },
-                "fxaa": { "type": "boolean" },
-                "ssao_settings": { "type": "object", "properties": {
-                    "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" }
+                "entity": { "type": ["integer", "string"], "description": "Volume entity id or unique name (default: the infinite volume)" },
+                "volume": { "type": "object", "description": "Volume properties", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "shape": { "type": "object", "description": "{kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}" },
+                    "priority": { "type": "integer" },
+                    "weight": { "type": "number", "description": "0-1" },
+                    "blend_distance": { "type": "number", "description": "Fade distance outside a bounded shape, meters" }
                 }},
-                "bloom_settings": { "type": "object", "properties": {
-                    "threshold": { "type": "number" }, "knee": { "type": "number" }, "scatter": { "type": "number" }
-                }}
+                "exposure": { "type": "object", "properties": {
+                    "mode": { "type": "string", "enum": ["manual", "auto"], "description": "auto adapts to scene brightness like an eye" },
+                    "compensation": { "type": "number", "description": "Stops (EV); +1 doubles brightness" },
+                    "min_ev": { "type": "number" }, "max_ev": { "type": "number" },
+                    "speed_up": { "type": "number", "description": "EV/s when the scene gets brighter" },
+                    "speed_down": { "type": "number", "description": "EV/s when it gets darker" },
+                    "low_percent": { "type": "number" }, "high_percent": { "type": "number" }
+                }},
+                "tonemapping": { "type": "string", "enum": ["rolloff", "neutral", "aces", "agx", "reinhard", "none"], "description": "rolloff (default) keeps colors below 0.76 exactly and softly compresses highlights; neutral is Khronos PBR Neutral (also darkens darks slightly); aces is contrasty and filmic; agx desaturates highlights naturally; none clips" },
+                "color": { "type": "object", "properties": {
+                    "post_exposure": { "type": "number", "description": "Stops" },
+                    "temperature": { "type": "number", "description": "-100 cool .. 100 warm" },
+                    "tint": { "type": "number", "description": "-100 green .. 100 magenta" },
+                    "color_filter": color("Multiplies the image"),
+                    "hue_shift": { "type": "number", "description": "Degrees" },
+                    "saturation": { "type": "number", "description": "1 = unchanged" },
+                    "vibrance": { "type": "number", "description": "-1..1" },
+                    "contrast": { "type": "number", "description": "1 = unchanged" },
+                    "lift": { "type": "array", "description": "Shadows [r,g,b tint (1 = neutral), offset]" },
+                    "gamma": { "type": "array", "description": "Midtones [r,g,b, offset]" },
+                    "gain": { "type": "array", "description": "Highlights [r,g,b, offset]" }
+                }},
+                "bloom": { "type": "object", "properties": {
+                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" },
+                    "threshold": { "type": "number", "description": "HDR brightness where glow starts; 0 = physically based glow on everything" },
+                    "knee": { "type": "number" }, "scatter": { "type": "number", "description": "0-1, how far the glow spreads" },
+                    "tint": { "type": "array" }
+                }},
+                "ssao": { "type": "object", "properties": {
+                    "enabled": { "type": "boolean" }, "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" }
+                }},
+                "vignette": { "type": "object", "properties": {
+                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "smoothness": { "type": "number" }, "roundness": { "type": "number" }, "color": { "type": "array" }, "center": { "type": "array" }
+                }},
+                "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
+                "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
+                "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
+                "anti_aliasing": { "type": "string", "enum": ["none", "fxaa"] }
             }), &[]),
             action: Action::Engine("postprocess.set"),
         },

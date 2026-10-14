@@ -23,7 +23,7 @@ use crate::app::editor::EditorState;
 use crate::scene::SceneHandle;
 #[cfg(feature = "egui")]
 use crate::ui::{
-    EnvironmentSettingsHandle, FrameStatsHandle, PostProcessEffectsHandle, SceneHierarchyHandle,
+    EnvironmentSettingsHandle, FrameStatsHandle, SceneHierarchyHandle,
     SceneHierarchyRegistryHandle, SceneTabsHandle,
 };
 
@@ -218,7 +218,6 @@ where
                 log::info!("Egui context initialized");
             }
 
-            self.editor.apply_postprocess_effects(renderer);
             self.editor.sync_environment_controls(self.core.workspace());
             self.editor.refresh_scene_hierarchy(self.core.workspace());
         }
@@ -420,11 +419,6 @@ where
     }
 
     #[cfg(feature = "egui")]
-    pub fn postprocess_effects_handle(&self) -> PostProcessEffectsHandle {
-        self.editor.postprocess_effects_handle()
-    }
-
-    #[cfg(feature = "egui")]
     pub fn environment_settings_handle(&self) -> EnvironmentSettingsHandle {
         self.editor.environment_settings_handle()
     }
@@ -571,32 +565,11 @@ where
                         .core
                         .run_gpu_systems(&mut renderer, &frame, active_handle);
 
-                    // A freshly loaded project brings its own post-processing settings.
-                    let project_effects = self.core.workspace_mut().take_pending_postprocess();
-                    #[cfg(not(feature = "egui"))]
-                    if let Some(effects) = project_effects {
-                        renderer.set_postprocess_effects(effects);
-                    }
-
                     #[cfg(feature = "egui")]
                     {
-                        if let Some(effects) = project_effects {
-                            self.editor.set_postprocess_effects(effects);
-                        }
                         self.editor.refresh_scene_hierarchy(self.core.workspace());
-                        {
-                            let mut scene = self.core.scene_mut();
-                            self.editor.apply_environment_settings(&mut scene);
-                        }
-                        // Remote changes must reach the UI's copy, which is pushed to
-                        // the renderer every frame.
-                        if let Some(effects) = remote
-                            .as_ref()
-                            .and_then(|hub| hub.borrow_mut().take_postprocess_override())
-                        {
-                            self.editor.set_postprocess_effects(effects);
-                        }
-                        self.editor.apply_postprocess_effects(&mut renderer);
+                        let mut scene = self.core.scene_mut();
+                        self.editor.apply_environment_settings(&mut scene);
                     }
 
                     #[cfg(feature = "egui")]

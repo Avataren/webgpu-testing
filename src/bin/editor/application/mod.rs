@@ -75,8 +75,8 @@ use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
     MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset,
-    SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
+    PointLight, PostProcessVolume, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
+    SceneTreeAsset, SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
 };
 use wgpu_cube::scripting::lua::api::ui::{merge_ui_responses, UiCommand, UiResponse};
 use wgpu_cube::scripting::LuaScriptingPlugin;
@@ -1333,6 +1333,17 @@ impl EditorApplication {
 
         ctx.scene.set_environment(component.to_environment());
 
+        Some(entity)
+    }
+
+    /// A volume starts from the settings in effect at the camera, so adding one does not
+    /// change the picture until it is edited.
+    pub(super) fn create_post_process_volume(ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let settings = ctx.renderer.postprocess_settings().clone();
+        let entity = EntityBuilder::new(&mut ctx.scene)
+            .with_name("Post Process Volume")
+            .with_component(PostProcessVolume::infinite(settings))
+            .spawn();
         Some(entity)
     }
 

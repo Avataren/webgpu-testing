@@ -7,9 +7,9 @@ use crate::scene::{
 };
 use crate::ui::{
     egui, EguiRenderTarget, EguiUiCallback, EnvironmentSettingsControls, EnvironmentSettingsHandle,
-    EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, PostProcessEffectsHandle,
-    PostProcessWindow, SceneHierarchyHandle, SceneHierarchyRegistry, SceneHierarchyRegistryHandle,
-    SceneHierarchyWorkspaceInfo, SceneTabsHandle, SceneTabsState,
+    EnvironmentWindow, FrameStatsHandle, FrameStatsHistory, SceneHierarchyHandle,
+    SceneHierarchyRegistry, SceneHierarchyRegistryHandle, SceneHierarchyWorkspaceInfo,
+    SceneTabsHandle, SceneTabsState,
 };
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,6 @@ pub struct EditorState {
     egui_context: Option<crate::ui::EguiContext>,
     egui_pending_ui: Option<EguiUiCallback>,
     frame_stats: FrameStatsHandle,
-    postprocess_effects: PostProcessEffectsHandle,
     environment_settings: EnvironmentSettingsHandle,
     scene_hierarchies: SceneHierarchyRegistryHandle,
     scene_tabs: SceneTabsHandle,
@@ -43,7 +42,6 @@ impl EditorState {
             egui_context: None,
             egui_pending_ui: None,
             frame_stats: FrameStatsHistory::handle(),
-            postprocess_effects: PostProcessWindow::handle(),
             environment_settings: EnvironmentWindow::handle_from_environment(&environment_source),
             scene_hierarchies,
             scene_tabs,
@@ -85,10 +83,6 @@ impl EditorState {
 
     pub fn frame_stats_handle(&self) -> FrameStatsHandle {
         self.frame_stats.clone()
-    }
-
-    pub fn postprocess_effects_handle(&self) -> PostProcessEffectsHandle {
-        self.postprocess_effects.clone()
     }
 
     pub fn environment_settings_handle(&self) -> EnvironmentSettingsHandle {
@@ -181,22 +175,6 @@ impl EditorState {
         let requested = self.exit_requested;
         self.exit_requested = false;
         requested
-    }
-
-    /// Replace the post-processing settings shown in the UI and applied each frame.
-    pub fn set_postprocess_effects(
-        &self,
-        effects: crate::renderer::postprocess::PostProcessEffects,
-    ) {
-        if let Ok(mut current) = self.postprocess_effects.lock() {
-            *current = effects;
-        }
-    }
-
-    pub fn apply_postprocess_effects(&self, renderer: &mut Renderer) {
-        if let Ok(effects) = self.postprocess_effects.lock() {
-            renderer.set_postprocess_effects(*effects);
-        }
     }
 
     pub fn apply_environment_settings(&self, scene: &mut SceneWorkspaceSceneMut<'_>) {

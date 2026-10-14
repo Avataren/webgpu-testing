@@ -15,9 +15,9 @@ use crate::scene::{
     CameraComponent, CameraProjection, CanCastShadow, Children, DirectionalLight,
     EnvironmentComponent, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name,
     OrbitAnimation, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset,
-    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PrimitiveMeshComponent,
-    RotateAnimation, Scene, SceneImportDevice, SpotLight, Transform, TransformComponent, Visible,
-    WorldTransform,
+    ParticleEmitterComponent, ParticleSystemComponent, PointLight, PostProcessVolume,
+    PrimitiveMeshComponent, RotateAnimation, Scene, SceneImportDevice, SpotLight, Transform,
+    TransformComponent, Visible, WorldTransform,
 };
 use crate::scripting::lua::ScriptMode;
 use crate::scripting::{LuaScriptComponent, LuaScriptSource};
@@ -46,6 +46,7 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "particle_system",
     "particle_emitter",
     "environment",
+    "post_process_volume",
     "billboard",
     "depth_state",
     "rotate_animation",
@@ -71,6 +72,7 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "particle_system" => has::<ParticleSystemComponent>(world, entity),
         "particle_emitter" => has::<ParticleEmitterComponent>(world, entity),
         "environment" => has::<EnvironmentComponent>(world, entity),
+        "post_process_volume" => has::<PostProcessVolume>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
         "rotate_animation" => has::<RotateAnimation>(world, entity),
@@ -346,6 +348,9 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     if let Ok(environment) = world.get::<&EnvironmentComponent>(entity) {
         out["environment"] = serde_json::to_value(&*environment).unwrap_or(Value::Null);
     }
+    if let Ok(volume) = world.get::<&PostProcessVolume>(entity) {
+        out["post_process_volume"] = serde_json::to_value(&*volume).unwrap_or(Value::Null);
+    }
     if let Ok(billboard) = world.get::<&Billboard>(entity) {
         let orientation = match billboard.orientation {
             BillboardOrientation::FaceCamera => "face_camera",
@@ -417,6 +422,7 @@ fn default_name(kind: &str) -> String {
         "camera" => "Camera".into(),
         "particles" => "Particle System".into(),
         "environment" => "Environment".into(),
+        "post_process_volume" => "Post Process Volume".into(),
         other => {
             let mut chars = other.chars();
             chars
@@ -442,11 +448,13 @@ pub(super) fn spawn(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRe
             | "camera"
             | "particles"
             | "environment"
+            | "post_process_volume"
     );
     if primitive.is_none() && !known {
         return Err(format!(
             "unknown kind {kind:?}; use empty, cube, sphere, plane, cylinder, cone, torus, \
-             point_light, directional_light, spot_light, camera, particles or environment"
+             point_light, directional_light, spot_light, camera, particles, environment or \
+             post_process_volume"
         ));
     }
 
@@ -483,6 +491,13 @@ pub(super) fn spawn(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRe
         }
         "environment" => {
             builder.add(EnvironmentComponent::from_environment(scene.environment()));
+        }
+        "post_process_volume" => {
+            // Start from what is in effect, so the new volume changes nothing until edited.
+            let settings =
+                crate::scene::blend_post_process_volumes(scene.main_world(), scene.camera().eye)
+                    .unwrap_or_default();
+            builder.add(PostProcessVolume::infinite(settings));
         }
         "particles" => {
             let preset = particle_preset_from_name(
@@ -823,6 +838,15 @@ fn apply_patch(
                 )?;
                 sync_environment_from_entity(ctx, entity);
             }
+            "post_process_volume" => patch_component(
+                ctx.gpu.scene.main_world_mut(),
+                entity,
+                value,
+                |volume: &mut PostProcessVolume, v| {
+                    *volume = patch_serde(volume, v)?;
+                    Ok(())
+                },
+            )?,
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
                 entity,
@@ -1091,6 +1115,7 @@ default_for_remote_from_default!(
     CameraComponent,
     ParticleEmitterComponent,
     EnvironmentComponent,
+    PostProcessVolume,
 );
 
 impl DefaultForRemote for RotateAnimation {
@@ -1609,6 +1634,7 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         }
         "particle_emitter" => remove::<ParticleEmitterComponent>(world, entity),
         "environment" => remove::<EnvironmentComponent>(world, entity),
+        "post_process_volume" => remove::<PostProcessVolume>(world, entity),
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),
         "rotate_animation" => remove::<RotateAnimation>(world, entity),
@@ -1701,6 +1727,7 @@ fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
     copy::<ParticleSystemComponent>(world, source, &mut builder);
     copy::<ParticleEmitterComponent>(world, source, &mut builder);
     copy::<EnvironmentComponent>(world, source, &mut builder);
+    copy::<PostProcessVolume>(world, source, &mut builder);
     copy::<Billboard>(world, source, &mut builder);
     copy::<DepthState>(world, source, &mut builder);
     copy::<RotateAnimation>(world, source, &mut builder);

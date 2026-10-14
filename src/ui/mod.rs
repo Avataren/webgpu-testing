@@ -14,7 +14,7 @@ mod stats_window;
 mod log_viewer;
 
 #[cfg(feature = "egui")]
-mod postprocess_window;
+mod widgets;
 
 #[cfg(feature = "egui")]
 mod environment_window;
@@ -35,7 +35,7 @@ pub use stats_window::{FrameSample, FrameStatsHandle, FrameStatsHistory, StatsWi
 pub use log_viewer::{init_log_recorder, LogBufferHandle, LogEntry, LogWindow};
 
 #[cfg(feature = "egui")]
-pub use postprocess_window::{PostProcessEffectsHandle, PostProcessWindow};
+pub use widgets::{fine_slider, FineSlider};
 
 #[cfg(feature = "egui")]
 pub use environment_window::{

@@ -76,8 +76,13 @@ engine you launched; save first).
   `get_viewport_size()` and HUDs anchor to it, so check the game camera and HUD at both.
   `viewport_preview` keeps a shape on across several calls; `playtest` takes `aspect` too. `camera_set` edits the game camera entity
   while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
-- `environment_set` controls background, ambient light, HDR sky and grading;
-  `postprocess_set` toggles SSAO, bloom and FXAA.
+- `environment_set` controls background, ambient light and HDR sky. The scene renders
+  in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO, vignette,
+  chromatic aberration, film grain, sharpening and FXAA live on `post_process_volume`
+  entities. `postprocess_set` edits the scene's infinite volume (creating it if needed);
+  for an area with its own look, spawn a `post_process_volume` with a box or sphere
+  shape, higher `priority` and a `blend_distance`. `postprocess_get` shows the blended
+  result at the camera and each volume's influence.
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`

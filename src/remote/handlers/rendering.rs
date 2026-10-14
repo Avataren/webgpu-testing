@@ -3,14 +3,14 @@
 use glam::{Mat4, Vec3};
 use serde_json::{json, Value};
 
-use crate::renderer::postprocess::PostProcessEffects;
 use crate::scene::{
-    Camera, CameraComponent, CameraProjection, EnvironmentComponent, MeshBounds, Name, Parent,
-    TransformComponent, WorldTransform,
+    blend_post_process_volumes, volume_influence, Camera, CameraComponent, CameraProjection,
+    EnvironmentComponent, MeshBounds, Name, Parent, PostProcessVolume, Transform,
+    TransformComponent, Visible, WorldTransform,
 };
 
 use super::super::json::{
-    color_from_json, entity_from_json, entity_id, entity_name, look_rotation, opt_bool, opt_f64,
+    color_from_json, entity_from_json, entity_id, entity_name, look_rotation, merge_json, opt_f64,
     opt_str, patch_serde, round, vec3_from_json, vec3_json,
 };
 use super::entity::{resolve_existing_path, world_to_local};
@@ -154,6 +154,13 @@ pub(super) fn environment_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
 }
 
 pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    if params.get("color_grading").is_some() {
+        return Err(
+            "color grading moved to post-process volumes: use postprocess.set with \
+                    exposure.compensation and color.saturation / color.contrast"
+                .into(),
+        );
+    }
     let mut patch = params.clone();
     if let Some(color) = params.get("clear_color") {
         patch["clear_color"] = json!(color_from_json(color)?);
@@ -196,67 +203,127 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
     Ok(result)
 }
 
-pub(super) fn postprocess_json(effects: &PostProcessEffects) -> Value {
-    json!({
-        "ssao": effects.ssao,
-        "bloom": effects.bloom,
-        "fxaa": effects.fxaa,
-        "ssao_settings": {
-            "radius": round(effects.ssao_settings.radius),
-            "bias": round(effects.ssao_settings.bias),
-            "intensity": round(effects.ssao_settings.intensity),
-            "power": round(effects.ssao_settings.power),
-        },
-        "bloom_settings": {
-            "threshold": round(effects.bloom_settings.threshold),
-            "knee": round(effects.bloom_settings.knee),
-            "scatter": round(effects.bloom_settings.scatter),
-        },
-    })
+/// The post-processing in effect at the view camera, and every volume that feeds it.
+pub(super) fn postprocess_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let scene = &ctx.gpu.scene;
+    let camera = scene.camera().eye;
+    let world = scene.main_world();
+    let mut volumes = Vec::new();
+    let mut query = world.query::<(&PostProcessVolume, Option<&WorldTransform>)>();
+    for (entity, (volume, transform)) in query.iter() {
+        let matrix = transform.map(|t| t.0.matrix()).unwrap_or(Mat4::IDENTITY);
+        volumes.push(json!({
+            "id": entity_id(entity),
+            "name": entity_name(world, entity),
+            "enabled": volume.enabled,
+            "shape": volume.shape,
+            "priority": volume.priority,
+            "weight": round(volume.weight),
+            "blend_distance": round(volume.blend_distance),
+            "influence_at_camera": round(volume_influence(volume, matrix, camera)),
+        }));
+    }
+    let effective = blend_post_process_volumes(world, camera);
+    let mut result = json!({
+        "effective": serde_json::to_value(effective.clone().unwrap_or_default())
+            .map_err(|err| err.to_string())?,
+        "volumes": volumes,
+    });
+    if effective.is_none() {
+        result["note"] = json!(
+            "No enabled post_process_volume in the scene, so the defaults apply. \
+             postprocess.set creates an infinite volume."
+        );
+    }
+    Ok(result)
 }
 
-pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
-    let mut effects = ctx.gpu.renderer.postprocess_effects();
-    if let Some(value) = opt_bool(params, "ssao") {
-        effects.ssao = value;
-    }
-    if let Some(value) = opt_bool(params, "bloom") {
-        effects.bloom = value;
-    }
-    if let Some(value) = opt_bool(params, "fxaa") {
-        effects.fxaa = value;
-    }
-    let float = |section: &str, key: &str| {
-        params
-            .get(section)
-            .and_then(|section| opt_f64(section, key))
-            .map(|v| v as f32)
+/// Accept the pre-volume parameter names (`ssao: bool`, `bloom: bool`, `fxaa: bool`,
+/// `ssao_settings`, `bloom_settings`) alongside the settings layout.
+fn settings_patch(params: &Value) -> Value {
+    let mut patch = params.clone();
+    let Some(object) = patch.as_object_mut() else {
+        return patch;
     };
-    let ssao = &mut effects.ssao_settings;
-    for (key, slot) in [
-        ("radius", &mut ssao.radius),
-        ("bias", &mut ssao.bias),
-        ("intensity", &mut ssao.intensity),
-        ("power", &mut ssao.power),
-    ] {
-        if let Some(value) = float("ssao_settings", key) {
-            *slot = value;
+    for key in ["entity", "volume"] {
+        object.remove(key);
+    }
+    for effect in ["ssao", "bloom"] {
+        if let Some(enabled) = object.get(effect).and_then(Value::as_bool) {
+            object.insert(effect.into(), json!({ "enabled": enabled }));
+        }
+        if let Some(legacy) = object.remove(&format!("{effect}_settings")) {
+            let target = object.entry(effect).or_insert_with(|| json!({}));
+            merge_json(target, &legacy);
         }
     }
-    let bloom = &mut effects.bloom_settings;
-    for (key, slot) in [
-        ("threshold", &mut bloom.threshold),
-        ("knee", &mut bloom.knee),
-        ("scatter", &mut bloom.scatter),
-    ] {
-        if let Some(value) = float("bloom_settings", key) {
-            *slot = value;
-        }
+    if let Some(fxaa) = object.remove("fxaa").and_then(|v| v.as_bool()) {
+        object.insert(
+            "anti_aliasing".into(),
+            json!(if fxaa { "fxaa" } else { "none" }),
+        );
     }
+    patch
+}
 
-    ctx.gpu.renderer.set_postprocess_effects(effects);
-    ctx.hub.set_postprocess_override(effects);
-    Ok(postprocess_json(&effects))
+/// Change post-processing on a volume: the given `entity`, else the lowest-priority
+/// infinite volume, which is created when the scene has none.
+pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let world = ctx.gpu.scene.main_world_mut();
+    let target = match params.get("entity") {
+        Some(value) => {
+            let entity = entity_from_json(world, value)?;
+            if world.get::<&PostProcessVolume>(entity).is_err() {
+                return Err(format!(
+                    "entity {} has no post_process_volume",
+                    entity_id(entity)
+                ));
+            }
+            Some(entity)
+        }
+        None => world
+            .query_mut::<&PostProcessVolume>()
+            .into_iter()
+            .filter(|(_, volume)| volume.shape.is_infinite())
+            .min_by_key(|(_, volume)| volume.priority)
+            .map(|(entity, _)| entity),
+    };
+    let created = target.is_none();
+    let entity = target.unwrap_or_else(|| {
+        world.spawn((
+            Name::new("Post Process Volume"),
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+            PostProcessVolume::default(),
+        ))
+    });
+
+    let mut volume = world
+        .get::<&PostProcessVolume>(entity)
+        .map(|volume| (*volume).clone())
+        .map_err(|err| err.to_string())?;
+    volume.settings = patch_serde(&volume.settings, &settings_patch(params))?;
+    if let Some(volume_patch) = params.get("volume") {
+        let settings = volume.settings.clone();
+        volume = patch_serde(&volume, volume_patch)?;
+        volume.settings = settings;
+    }
+    world
+        .insert_one(entity, volume)
+        .map_err(|err| err.to_string())?;
+    ctx.gpu.scene.propagate_transforms();
+    ctx.mark_modified();
+
+    let mut result = postprocess_get(ctx)?;
+    result["edited_volume"] = json!({
+        "id": entity_id(entity),
+        "name": entity_name(ctx.gpu.scene.main_world(), entity),
+    });
+    if created {
+        result["note"] =
+            json!("Created an infinite Post Process Volume entity for these settings.");
+    }
+    Ok(result)
 }
 
 /// Re-read textures (and scripts) from disk: everything, or what lives under `path`.

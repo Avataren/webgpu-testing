@@ -867,7 +867,7 @@ impl Server {
     }
 
     /// Fill a new project's scene with what every game needs first: a dark backdrop with
-    /// usable ambient light and grading, a shadowed sun, an active camera looking
+    /// usable ambient light, a post-process volume with slight grading, a shadowed sun, an active camera looking
     /// down at the origin and a 40 m floor; then save it.
     fn build_starter_scene(&mut self) -> Result<Value, String> {
         let calls = [
@@ -876,8 +876,11 @@ impl Server {
                 json!({
                     "clear_color": "#05070f",
                     "ambient_intensity": 0.35,
-                    "color_grading": { "exposure": 1.05, "saturation": 1.15, "contrast": 1.05 },
                 }),
+            ),
+            (
+                "postprocess.set",
+                json!({ "color": { "saturation": 1.15, "contrast": 1.05 } }),
             ),
             (
                 "entity.spawn",
@@ -914,9 +917,9 @@ impl Server {
         }
         let saved = self.save_project(&json!({}))?;
         Ok(json!({
-            "entities": ["Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0)"],
-            "environment": "dark blue backdrop, ambient 0.35, slight color grading",
-            "note": "Post-processing (bloom, SSAO, FXAA) is an engine setting, on by default, not stored in the project. Change or delete any of this; pass template: \"empty\" for a bare scene.",
+            "entities": ["Post Process Volume (infinite: tonemapping, bloom, SSAO, FXAA, slight grading)", "Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0)"],
+            "environment": "dark blue backdrop, ambient 0.35",
+            "note": "Post-processing lives on the Post Process Volume entity (postprocess_get/postprocess_set). Change or delete any of this; pass template: \"empty\" for a bare scene.",
             "saved": saved["written"],
         }))
     }

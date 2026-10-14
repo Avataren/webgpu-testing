@@ -18,6 +18,7 @@ pub(crate) mod internal;
 pub mod library;
 pub mod loader;
 pub mod picking;
+mod post_process;
 mod prefab_instantiator;
 mod render_bridge;
 mod runtime_control;
@@ -49,6 +50,7 @@ pub use input_state::{ButtonState, InputState};
 pub use library::SceneLibrary;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
+pub use post_process::{blend_post_process_volumes, volume_influence};
 pub use scene::{Scene, ScenePrefabEntityMetadata};
 pub(crate) use snapshot::SceneSnapshot;
 pub use snapshot::SceneStateSnapshot;
@@ -69,7 +71,7 @@ pub use components::{
     OrbitAnimation, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient,
     ParticleColorKeyframe, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
     ParticleRenderBlendMode, ParticleSizeCurve, ParticleSizeKeyframe, ParticleSystemComponent,
-    ParticleVec3Range, PhysicsBehaviorConfig, PointLight, PrimitiveMeshComponent, RotateAnimation,
-    SelectedInEditor, SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible,
-    WorldTransform,
+    ParticleVec3Range, PhysicsBehaviorConfig, PointLight, PostProcessVolume,
+    PrimitiveMeshComponent, RotateAnimation, SelectedInEditor, SpotLight, StarfieldBehaviorConfig,
+    TransformComponent, Visible, VolumeShape, WorldTransform,
 };

@@ -159,6 +159,7 @@ pub(crate) struct SurfacePassConfig<'a, 'b> {
     resolve: Option<&'a wgpu::TextureView>,
     depth: Option<&'a wgpu::TextureView>,
     pick: Option<&'a wgpu::TextureView>,
+    pick_resolve: Option<&'a wgpu::TextureView>,
     render_region: Option<RenderRegion>,
     batches: &'a [OrderedBatch],
     recorder: &'b mut BatchRecorder<'a>,
@@ -180,6 +181,7 @@ impl<'a, 'b> SurfacePassConfig<'a, 'b> {
             resolve: None,
             depth: None,
             pick: None,
+            pick_resolve: None,
             render_region: None,
             batches,
             recorder,
@@ -201,6 +203,17 @@ impl<'a, 'b> SurfacePassConfig<'a, 'b> {
     pub(crate) fn write_pick(mut self, pick: Option<&'a wgpu::TextureView>) -> Self {
         self.options.write_pick = pick.is_some();
         self.pick = pick;
+        self
+    }
+
+    /// Write the pick id through a multisampled attachment resolved into `resolve`.
+    pub(crate) fn write_pick_resolved(
+        mut self,
+        pick: Option<(&'a wgpu::TextureView, Option<&'a wgpu::TextureView>)>,
+    ) -> Self {
+        self.options.write_pick = pick.is_some();
+        self.pick = pick.map(|(view, _)| view);
+        self.pick_resolve = pick.and_then(|(_, resolve)| resolve);
         self
     }
 
@@ -234,6 +247,7 @@ pub(crate) fn run_surface_pass(
         resolve,
         depth,
         pick,
+        pick_resolve,
         render_region,
         batches,
         recorder,
@@ -244,7 +258,7 @@ pub(crate) fn run_surface_pass(
     let mut plan = PassPlan::new(label).add_color(FrameGraphColorAttachment::load(color, resolve));
 
     if let Some(pick) = pick {
-        plan = plan.add_color(FrameGraphColorAttachment::load(pick, None));
+        plan = plan.add_color(FrameGraphColorAttachment::load(pick, pick_resolve));
     }
 
     if let Some(depth) = depth {
@@ -501,25 +515,28 @@ pub(crate) fn transparent_pass(
     assets: &Assets,
     prepared_batches: &PreparedBatches,
     encoder: &mut wgpu::CommandEncoder,
-    surface_view: &wgpu::TextureView,
+    scene_view: &wgpu::TextureView,
+    scene_resolve_view: Option<&wgpu::TextureView>,
     depth_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
     write_pick: bool,
-    surface_format: wgpu::TextureFormat,
+    scene_format: wgpu::TextureFormat,
 ) -> u32 {
     let batches = prepared_batches.transparent();
     let materials = prepared_batches.materials();
     let material_handles = prepared_batches.material_handles();
     let material_pipeline_keys = prepared_batches.material_pipeline_keys();
-    let pick_view = if write_pick {
+    // Same sample count as the scene colour: the MSAA pick target when there is one.
+    let pick_views = if write_pick {
         renderer
             .postprocess
             .pick_attachment_views()
-            .map(|views| views.single_sample().clone())
+            .map(|views| (views.multisample.clone(), views.resolve.cloned()))
     } else {
         None
     };
 
+    let sample_count = renderer.context.sample_count;
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
         renderer,
@@ -529,20 +546,25 @@ pub(crate) fn transparent_pass(
         material_pipeline_keys,
     );
     let options = BatchPassOptions {
-        color_format: surface_format,
-        color_sample_count: 1,
+        color_format: scene_format,
+        color_sample_count: sample_count,
         use_gbuffer: false,
         write_pick,
     };
     let config = SurfacePassConfig::new(
         "TransparentPass",
-        surface_view,
+        scene_view,
         batches,
         &mut recorder,
         options,
     )
+    .resolve(scene_resolve_view)
     .depth(Some(depth_view))
-    .write_pick(pick_view.as_ref())
+    .write_pick_resolved(
+        pick_views
+            .as_ref()
+            .map(|(view, resolve)| (view, resolve.as_ref())),
+    )
     .render_region(render_region)
     .bindless_group(bindless_group.as_ref());
 

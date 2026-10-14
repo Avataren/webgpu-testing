@@ -9,7 +9,7 @@ use super::serialization::{
 };
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::scene::animation::AnimationState;
-use crate::scene::components::{CameraComponent, EnvironmentComponent};
+use crate::scene::components::{CameraComponent, EnvironmentComponent, PostProcessVolume};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -39,6 +39,7 @@ pub struct SceneAssetEntityBuilder {
     particle_emitter: Option<SerializedParticleEmitter>,
     particle_behavior: Option<SerializedParticleBehavior>,
     environment: Option<EnvironmentComponent>,
+    post_process_volume: Option<PostProcessVolume>,
     camera: Option<CameraComponent>,
     scene_ref: Option<ScenePrefabRef>,
 }
@@ -71,6 +72,7 @@ impl SceneAssetEntityBuilder {
             particle_emitter: None,
             particle_behavior: None,
             environment: None,
+            post_process_volume: None,
             camera: None,
             scene_ref: None,
         }
@@ -202,6 +204,11 @@ impl SceneAssetEntityBuilder {
         self
     }
 
+    pub fn with_post_process_volume(mut self, volume: PostProcessVolume) -> Self {
+        self.post_process_volume = Some(volume);
+        self
+    }
+
     pub fn with_camera(mut self, component: CameraComponent) -> Self {
         self.camera = Some(component);
         self
@@ -239,6 +246,7 @@ impl SceneAssetEntityBuilder {
             particle_emitter: self.particle_emitter,
             particle_behavior: self.particle_behavior,
             environment: self.environment,
+            post_process_volume: self.post_process_volume,
             camera: self.camera,
             scene_ref: self.scene_ref,
             source_entity: None,

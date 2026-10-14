@@ -5,8 +5,9 @@ use wgpu_cube::renderer::primitives::PrimitiveMeshDescriptor;
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::PrimitiveMeshComponent;
 use wgpu_cube::scene::{
-    CameraComponent, DirectionalLight, EnvironmentComponent, MaterialComponent, MeshBounds,
-    MeshComponent, ParticleEmitterComponent, ParticleSystemComponent, PointLight, SpotLight,
+    blend_post_process_volumes, CameraComponent, DirectionalLight, EnvironmentComponent,
+    MaterialComponent, MeshBounds, MeshComponent, ParticleEmitterComponent,
+    ParticleSystemComponent, PointLight, PostProcessVolume, SpotLight,
 };
 use wgpu_cube::scripting::LuaScriptComponent;
 use wgpu_cube::ScenePrimitivePreset;
@@ -189,6 +190,25 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
     ActionResult::scene_changed()
 }
 
+/// Handle AddPostProcessVolume action: an infinite volume holding the settings in effect
+/// now, so the picture does not change until it is edited.
+pub fn handle_add_post_process_volume(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
+    let camera = ctx.scene.camera().eye;
+    let settings = blend_post_process_volumes(ctx.scene.main_world(), camera).unwrap_or_default();
+    let world = ctx.scene.main_world_mut();
+    if world.get::<&PostProcessVolume>(entity).is_ok() {
+        log::warn!("Entity {entity:?} already has a post-process volume");
+        return ActionResult::no_change();
+    }
+    match world.insert_one(entity, PostProcessVolume::infinite(settings)) {
+        Ok(()) => ActionResult::scene_changed(),
+        Err(err) => {
+            log::warn!("Failed to add a post-process volume to {entity:?}: {err}");
+            ActionResult::no_change()
+        }
+    }
+}
+
 /// Handle AddParticleSystem action
 pub fn handle_add_particle_system(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
     let world = ctx.scene.main_world_mut();
@@ -243,6 +263,7 @@ pub fn handle_remove_component(
         RemovableComponent::DirectionalLight => remove::<DirectionalLight>(world, entity),
         RemovableComponent::SpotLight => remove::<SpotLight>(world, entity),
         RemovableComponent::Environment => remove::<EnvironmentComponent>(world, entity),
+        RemovableComponent::PostProcessVolume => remove::<PostProcessVolume>(world, entity),
         RemovableComponent::ParticleSystem => {
             let removed = remove::<ParticleSystemComponent>(world, entity);
             remove::<ParticleEmitterComponent>(world, entity);

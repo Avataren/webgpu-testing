@@ -1,7 +1,7 @@
 #[cfg(feature = "egui")]
 use crate::environment::Environment;
 #[cfg(feature = "egui")]
-use egui::{Context, Slider, Window};
+use egui::{Context, Window};
 #[cfg(feature = "egui")]
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "egui")]
@@ -15,9 +15,6 @@ pub struct EnvironmentSettingsControls {
     pub hdr_enabled: bool,
     pub hdr_available: bool,
     pub hdr_intensity: f32,
-    pub exposure: f32,
-    pub saturation: f32,
-    pub contrast: f32,
     pub dirty: bool,
 }
 
@@ -29,7 +26,6 @@ impl EnvironmentSettingsControls {
         let hdr_available = hdr_background.is_some();
         let hdr_enabled = environment.is_hdr_enabled();
         let hdr_intensity = hdr_background.map(|hdr| hdr.intensity()).unwrap_or(1.0);
-        let grading = environment.color_grading();
 
         Self {
             clear_color: [color.r as f32, color.g as f32, color.b as f32],
@@ -37,9 +33,6 @@ impl EnvironmentSettingsControls {
             hdr_enabled: hdr_enabled && hdr_available,
             hdr_available,
             hdr_intensity,
-            exposure: grading.exposure(),
-            saturation: grading.saturation(),
-            contrast: grading.contrast(),
             dirty: false,
         }
     }
@@ -52,12 +45,6 @@ impl EnvironmentSettingsControls {
             a: 1.0,
         });
         environment.set_ambient_intensity(self.ambient_intensity);
-
-        let mut grading = environment.color_grading();
-        grading.set_exposure(self.exposure);
-        grading.set_saturation(self.saturation);
-        grading.set_contrast(self.contrast);
-        environment.set_color_grading(grading);
 
         if let Some(hdr) = environment.hdr_background_mut() {
             hdr.set_enabled(self.hdr_enabled && self.hdr_available);
@@ -77,8 +64,6 @@ pub struct EnvironmentWindow {
 
 #[cfg(feature = "egui")]
 impl EnvironmentWindow {
-    const SLIDER_WIDTH: f32 = 250.0;
-
     pub fn new(handle: EnvironmentSettingsHandle) -> Self {
         Self {
             handle,
@@ -113,6 +98,7 @@ impl EnvironmentWindow {
                 ui,
                 &mut controls.ambient_intensity,
                 0.0..=2.0,
+                0.005,
                 "Ambient intensity",
                 &mut changed,
             );
@@ -128,6 +114,7 @@ impl EnvironmentWindow {
                     ui,
                     &mut controls.hdr_intensity,
                     0.0..=5.0,
+                    0.01,
                     "Intensity",
                     &mut changed,
                 );
@@ -136,29 +123,7 @@ impl EnvironmentWindow {
             }
 
             ui.separator();
-            ui.heading("Color grading");
-
-            Self::slider_row(
-                ui,
-                &mut controls.exposure,
-                0.0..=4.0,
-                "Exposure",
-                &mut changed,
-            );
-            Self::slider_row(
-                ui,
-                &mut controls.saturation,
-                0.0..=2.0,
-                "Saturation",
-                &mut changed,
-            );
-            Self::slider_row(
-                ui,
-                &mut controls.contrast,
-                0.0..=3.0,
-                "Contrast",
-                &mut changed,
-            );
+            ui.label("Exposure, tonemapping and colour grading are set on Post Process Volumes.");
         });
 
         if changed {
@@ -169,16 +134,17 @@ impl EnvironmentWindow {
         }
     }
 
-    fn slider_row<T: egui::emath::Numeric>(
+    fn slider_row(
         ui: &mut egui::Ui,
-        value: &mut T,
-        range: std::ops::RangeInclusive<T>,
+        value: &mut f32,
+        range: std::ops::RangeInclusive<f32>,
+        step: f32,
         label: &str,
         changed: &mut bool,
     ) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().slider_width = Self::SLIDER_WIDTH;
-            *changed |= ui.add(Slider::new(value, range).text(label)).changed();
+            ui.label(label);
+            *changed |= crate::ui::fine_slider(ui, value, range, step).changed();
         });
     }
 

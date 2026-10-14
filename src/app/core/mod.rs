@@ -383,6 +383,13 @@ impl AppCore {
             aspect,
         );
         renderer.set_render_region(params.render_region);
+        // Post-processing comes from the scene's volumes, blended where the camera is.
+        let post_settings = crate::scene::blend_post_process_volumes(
+            scene.main_world(),
+            renderer.camera_position(),
+        )
+        .unwrap_or_default();
+        renderer.set_postprocess_settings(&post_settings);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.
         renderer.set_editor_overlays(params.camera_override.is_none());
