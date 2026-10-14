@@ -1,9 +1,12 @@
+mod support;
+
 use glam::{Quat, Vec3};
 use log::info;
 use std::path::PathBuf;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
+use wgpu_cube::renderer::postprocess::AntiAliasing;
 use wgpu_cube::renderer::texture::DEFAULT_WHITE_TEXTURE_INDEX;
 use wgpu_cube::renderer::{Material, Texture};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight, PointLight};
@@ -14,8 +17,8 @@ use wgpu_cube::scene::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const CAMERA_RADIUS: f32 = 8.0;
-const CAMERA_HEIGHT: f32 = 2.0;
+const CAMERA_RADIUS: f32 = 16.0;
+const CAMERA_HEIGHT: f32 = 11.0;
 
 struct ExampleApp;
 
@@ -38,6 +41,13 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
     let scene = &mut *ctx.scene;
 
     info!("Creating PBR test scene...");
+
+    support::configure(scene, [0.018, 0.026, 0.045], 0.11, |settings| {
+        settings.anti_aliasing = AntiAliasing::Taa;
+        settings.ssao.radius = 0.45;
+        settings.sharpen.enabled = true;
+        settings.sharpen.strength = 0.2;
+    });
 
     let (verts, idx) = wgpu_cube::renderer::sphere_mesh(64, 32);
     let sphere_mesh = renderer.create_mesh(&verts, &idx);
@@ -64,17 +74,8 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
             let metallic = col as f32 / (grid_size - 1) as f32;
             let roughness = row as f32 / (grid_size - 1) as f32;
 
-            let color = if col == 0 && row == 0 {
-                [200, 200, 200, 255]
-            } else if col == grid_size - 1 && row == 0 {
-                [200, 150, 100, 255]
-            } else if col == 0 && row == grid_size - 1 {
-                [180, 180, 200, 255]
-            } else {
-                [220, 220, 220, 255]
-            };
-
-            let material = Material::new(color)
+            // Keep albedo constant so only metallic and roughness change across the grid.
+            let material = Material::new([215, 140, 68, 255])
                 .with_metallic(metallic)
                 .with_roughness(roughness)
                 .with_base_color_texture(DEFAULT_WHITE_TEXTURE_INDEX)
@@ -95,9 +96,31 @@ fn setup_pbr_scene(ctx: &mut StartupContext<'_>) {
                 MeshComponent(sphere_handle),
                 MaterialComponent(material_handle),
                 Visible(true),
+                CanCastShadow(true),
             ));
         }
     }
+
+    let (vertices, indices) = wgpu_cube::renderer::cube_mesh();
+    let plinth = renderer.create_mesh(&vertices, &indices);
+    let plinth_mesh = scene.assets.meshes.insert(plinth);
+    let plinth_material = scene.assets.materials.insert(MaterialAsset::from_material(
+        Material::new([54, 70, 90, 255])
+            .with_metallic(0.15)
+            .with_roughness(0.42),
+        PathBuf::from("examples/pbr/plinth"),
+    ));
+    scene.world_mut().spawn((
+        Name::new("PBR Display Plinth"),
+        TransformComponent(Transform::from_trs(
+            Vec3::new(0.0, -1.0, 0.0),
+            Quat::IDENTITY,
+            Vec3::new(14.0, 0.4, 14.0),
+        )),
+        MeshComponent(plinth_mesh),
+        MaterialComponent(plinth_material),
+        Visible(true),
+    ));
 
     spawn_pbr_lighting(scene);
 
@@ -111,11 +134,11 @@ fn spawn_pbr_lighting(scene: &mut Scene) {
     scene.world_mut().spawn((
         Name::new("PBR Key Light"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
-        DirectionalLight::new(Vec3::new(1.0, 0.97, 0.9), 2.2),
+        DirectionalLight::new(Vec3::new(1.0, 0.97, 0.9), 3.0),
         CanCastShadow(true),
     ));
 
-    let fill_position = Vec3::new(0.0, 2.5, 5.5);
+    let fill_position = Vec3::new(-6.0, 5.0, 4.0);
     scene.world_mut().spawn((
         Name::new("PBR Fill Light"),
         TransformComponent(Transform::from_trs(
@@ -125,18 +148,34 @@ fn spawn_pbr_lighting(scene: &mut Scene) {
         )),
         PointLight {
             color: Vec3::new(0.9, 0.95, 1.0),
-            intensity: 220.0,
+            intensity: 75.0,
             range: 22.0,
         },
+        CanCastShadow(false),
+    ));
+
+    scene.world_mut().spawn((
+        Name::new("PBR Rim Light"),
+        TransformComponent(Transform::from_trs(
+            Vec3::ZERO,
+            Quat::from_euler(
+                glam::EulerRot::YXZ,
+                145f32.to_radians(),
+                -25f32.to_radians(),
+                0.0,
+            ),
+            Vec3::ONE,
+        )),
+        DirectionalLight::new(Vec3::new(0.51, 0.74, 1.0), 1.5),
         CanCastShadow(false),
     ));
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {
-    let t = ctx.scene.time() as f32 * 0.25;
+    let t = ctx.scene.time() as f32 * 0.12 + std::f32::consts::FRAC_PI_4;
     let camera = ctx.scene.camera_mut();
     camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
-    camera.target = Vec3::ZERO;
+    camera.target = Vec3::new(0.0, -0.2, 0.0);
     camera.up = Vec3::Y;
 }
 

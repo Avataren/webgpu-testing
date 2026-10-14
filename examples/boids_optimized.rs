@@ -2,6 +2,8 @@
 //
 // Optimized 3D Boids Simulation using Spatial Hash Grid
 
+mod support;
+
 use glam::{Quat, Vec3};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
@@ -61,18 +63,15 @@ impl RenderApplication for BoidsOptimizedApp {
     fn configure(&self, _builder: &mut AppBuilder) {}
 
     fn setup(&mut self, ctx: &mut StartupContext) {
-        // Environment setup
-        ctx.scene.environment_mut().set_clear_color(wgpu::Color {
-            r: 0.02,
-            g: 0.025,
-            b: 0.04,
-            a: 1.0,
+        support::configure(&mut ctx.scene, [0.004, 0.008, 0.02], 0.15, |settings| {
+            settings.exposure.compensation = 1.0;
+            // GPU-driven boids have no motion vectors; FXAA keeps their trails clean.
+            settings.ssao.enabled = false;
         });
-        ctx.scene.environment_mut().disable_hdr_background();
 
         // Camera setup
         let camera = ctx.scene.camera_mut();
-        camera.eye = Vec3::new(0.0, 45.0, 130.0);
+        camera.eye = Vec3::new(0.0, 32.0, 140.0);
         camera.target = Vec3::ZERO;
         let updated_projection = match camera.projection() {
             CameraProjection::Perspective {
@@ -101,8 +100,18 @@ impl RenderApplication for BoidsOptimizedApp {
                 sun_rotation,
                 Vec3::splat(1.0),
             )),
-            DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 6.0),
-            CanCastShadow(true),
+            DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 4.0),
+            CanCastShadow(false),
+        ));
+        ctx.scene.world_mut().spawn((
+            Name::new("Boids Fill Light"),
+            TransformComponent(Transform::from_trs(
+                Vec3::ZERO,
+                Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::new(-0.55, -0.35, 0.8).normalize()),
+                Vec3::ONE,
+            )),
+            DirectionalLight::new(Vec3::new(0.73, 0.85, 1.0), 2.5),
+            CanCastShadow(false),
         ));
 
         // Create mesh for boid rendering
@@ -169,7 +178,7 @@ impl RenderApplication for BoidsOptimizedApp {
     }
 
     fn update(&mut self, ctx: &mut UpdateContext) {
-        ctx.scene.camera_mut().eye = Vec3::new(0.0, 0.0, 150.0);
+        ctx.scene.camera_mut().eye = Vec3::new(0.0, 32.0, 140.0);
         ctx.scene.camera_mut().target = Vec3::ZERO;
     }
 

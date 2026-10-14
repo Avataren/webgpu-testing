@@ -1,9 +1,12 @@
+mod support;
+
 use glam::{Quat, Vec3};
 use log::info;
 use std::path::PathBuf;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
+use wgpu_cube::renderer::postprocess::AntiAliasing;
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{
     CanCastShadow, DirectionalLight, Name, PointLight, TransformComponent,
@@ -13,8 +16,8 @@ use wgpu_cube::scene::{EntityBuilder, Transform};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const CAMERA_RADIUS: f32 = 8.5;
-const CAMERA_HEIGHT: f32 = 4.5;
+const CAMERA_RADIUS: f32 = 11.5;
+const CAMERA_HEIGHT: f32 = 6.0;
 
 struct BloomExample;
 
@@ -38,6 +41,24 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating bloom showcase scene...");
 
+    support::configure(scene, [0.008, 0.012, 0.025], 0.08, |settings| {
+        settings.exposure.compensation = 0.0;
+        settings.anti_aliasing = AntiAliasing::Taa;
+        settings.bloom.enabled = true;
+        settings.bloom.intensity = 0.3;
+        settings.bloom.threshold = 1.2;
+        settings.bloom.scatter = 0.65;
+        settings.ssao.radius = 0.5;
+        settings.ssr.enabled = true;
+        settings.ssr.intensity = 0.55;
+        settings.ssr.blur = 0.35;
+        settings.sharpen.enabled = true;
+        settings.sharpen.strength = 0.2;
+        settings.vignette.enabled = true;
+        settings.vignette.intensity = 0.18;
+        settings.vignette.smoothness = 0.4;
+    });
+
     let (sphere_verts, sphere_idx) = wgpu_cube::renderer::sphere_mesh(48, 24);
     let sphere_mesh = renderer.create_mesh(&sphere_verts, &sphere_idx);
     let sphere_handle = scene.assets.meshes.insert(sphere_mesh);
@@ -47,7 +68,9 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
 
     let floor_material = scene.assets.materials.insert(MaterialAsset::from_material(
-        Material::new([64, 70, 76, 255]).with_roughness(0.85),
+        Material::new([49, 59, 75, 255])
+            .with_metallic(0.3)
+            .with_roughness(0.28),
         PathBuf::from("examples/bloom/floor"),
     ));
 
@@ -64,9 +87,9 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
         .spawn();
 
     let column_material = scene.assets.materials.insert(MaterialAsset::from_material(
-        Material::new([230, 232, 240, 255])
-            .with_metallic(0.05)
-            .with_roughness(0.18),
+        Material::new([137, 151, 172, 255])
+            .with_metallic(0.5)
+            .with_roughness(0.24),
         PathBuf::from("examples/bloom/column"),
     ));
 
@@ -81,7 +104,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
         EntityBuilder::new(scene)
             .with_name(format!("Reflector {}", idx))
             .with_transform(Transform::from_trs(
-                *pos,
+                *pos + Vec3::Y * 0.3,
                 Quat::IDENTITY,
                 Vec3::new(0.9, 2.6, 0.9),
             ))
@@ -99,18 +122,38 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     let bloom_emitters = [
-        (Vec3::new(0.0, 1.4, 0.0), Vec3::new(1.0, 0.85, 0.6), 440.0),
-        (Vec3::new(-2.6, 1.2, -1.8), Vec3::new(0.6, 0.85, 1.0), 360.0),
-        (Vec3::new(2.6, 1.0, -1.8), Vec3::new(0.95, 0.5, 1.0), 340.0),
-        (Vec3::new(2.2, 1.1, 2.4), Vec3::new(1.0, 0.65, 0.4), 380.0),
-        (Vec3::new(-2.2, 1.0, 2.6), Vec3::new(0.7, 1.0, 0.6), 320.0),
+        (
+            Vec3::new(0.0, 1.4, 0.0),
+            [255, 123, 34, 255],
+            Vec3::new(1.0, 0.65, 0.25),
+        ),
+        (
+            Vec3::new(-2.6, 1.2, -1.8),
+            [22, 143, 255, 255],
+            Vec3::new(0.15, 0.55, 1.0),
+        ),
+        (
+            Vec3::new(2.6, 1.0, -1.8),
+            [206, 41, 255, 255],
+            Vec3::new(0.75, 0.15, 1.0),
+        ),
+        (
+            Vec3::new(2.2, 1.1, 2.4),
+            [255, 76, 25, 255],
+            Vec3::new(1.0, 0.35, 0.1),
+        ),
+        (
+            Vec3::new(-2.2, 1.0, 2.6),
+            [53, 255, 120, 255],
+            Vec3::new(0.2, 1.0, 0.4),
+        ),
     ];
 
-    for (idx, (position, color, intensity)) in bloom_emitters.iter().enumerate() {
+    for (idx, (position, color, light_color)) in bloom_emitters.iter().enumerate() {
         EntityBuilder::new(scene)
             .with_name(format!("Pedestal {}", idx))
             .with_transform(Transform::from_trs(
-                Vec3::new(position.x, -0.4, position.z),
+                Vec3::new(position.x, -0.6, position.z),
                 Quat::IDENTITY,
                 Vec3::new(1.2, 0.8, 1.2),
             ))
@@ -119,8 +162,10 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             .visible(true)
             .spawn();
 
-        let mut orb_material = Material::pbr().with_roughness(0.05);
-        orb_material.base_color = to_srgb(*color);
+        // HDR emission drives the halo; point lights only provide spill on nearby surfaces.
+        let orb_material = Material::new(*color)
+            .with_roughness(0.25)
+            .with_emissive(4.0);
         let orb_material_handle = scene.assets.materials.insert(MaterialAsset::from_material(
             orb_material,
             PathBuf::from(format!("examples/bloom/orb_{idx}")),
@@ -138,16 +183,19 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
             .visible(true)
             .spawn();
 
-        scene.world_mut().spawn((
-            Name::new(format!("Bloom Light {}", idx)),
-            TransformComponent(Transform::from_trs(*position, Quat::IDENTITY, Vec3::ONE)),
-            PointLight {
-                color: *color,
-                intensity: *intensity,
-                range: 11.0,
-            },
-            CanCastShadow(false),
-        ));
+        // Four satellite lights fit the renderer's four-point-light budget.
+        if idx > 0 {
+            scene.world_mut().spawn((
+                Name::new(format!("Bloom Light {}", idx)),
+                TransformComponent(Transform::from_trs(*position, Quat::IDENTITY, Vec3::ONE)),
+                PointLight {
+                    color: *light_color,
+                    intensity: 24.0,
+                    range: 9.0,
+                },
+                CanCastShadow(false),
+            ));
+        }
     }
 
     let key_direction = Vec3::new(-0.45, -1.1, -0.35).normalize();
@@ -155,35 +203,26 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
     scene.world_mut().spawn((
         Name::new("Fill Light"),
         TransformComponent(Transform::from_trs(Vec3::ZERO, key_rotation, Vec3::ONE)),
-        DirectionalLight::new(Vec3::splat(0.75), 1.4),
+        DirectionalLight::new(Vec3::splat(0.75), 1.8),
         CanCastShadow(true),
     ));
 
     let camera = scene.camera_mut();
     camera.eye = Vec3::new(7.5, CAMERA_HEIGHT, 7.5);
-    camera.target = Vec3::new(0.0, 1.0, 0.0);
+    camera.target = Vec3::new(0.0, 0.2, 0.0);
     camera.up = Vec3::Y;
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {
-    let t = ctx.scene.time() as f32 * 0.25;
+    let t = ctx.scene.time() as f32 * 0.12 + std::f32::consts::FRAC_PI_4;
     let camera = ctx.scene.camera_mut();
     camera.eye = Vec3::new(
         t.cos() * radius,
         height + (t * 0.6).sin() * 0.6,
         t.sin() * radius,
     );
-    camera.target = Vec3::new(0.0, 1.0, 0.0);
+    camera.target = Vec3::new(0.0, 0.2, 0.0);
     camera.up = Vec3::Y;
-}
-
-fn to_srgb(color: Vec3) -> [u8; 4] {
-    [
-        (color.x.clamp(0.0, 1.0) * 255.0) as u8,
-        (color.y.clamp(0.0, 1.0) * 255.0) as u8,
-        (color.z.clamp(0.0, 1.0) * 255.0) as u8,
-        255,
-    ]
 }
 
 #[cfg(not(target_arch = "wasm32"))]

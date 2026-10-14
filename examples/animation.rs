@@ -1,8 +1,11 @@
-use glam::Vec3;
+mod support;
+
+use glam::{Quat, Vec3};
 use log::info;
 use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::render_application::{run_application, RenderApplication};
-use wgpu_cube::scene::{Camera, SceneLoader};
+use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
+use wgpu_cube::scene::{Camera, Name, SceneLoader, Transform, TransformComponent};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -46,7 +49,37 @@ fn load_scene(ctx: &mut StartupContext<'_>) {
 
     match SceneLoader::load_gltf(GLTF_PATH, scene, renderer, SCENE_SCALE, None) {
         Ok(_) => {
-            scene.add_default_lighting();
+            support::configure(scene, [0.018, 0.026, 0.045], 0.12, |settings| {
+                settings.ssao.radius = 0.4;
+                settings.color.vibrance = 0.15;
+            });
+            for (name, direction, color, intensity, shadows) in [
+                (
+                    "Animation Key Light",
+                    Vec3::new(0.35, -1.0, -0.85),
+                    Vec3::new(1.0, 0.95, 0.87),
+                    3.0,
+                    true,
+                ),
+                (
+                    "Animation Fill Light",
+                    Vec3::new(-0.5, -0.5, 0.75),
+                    Vec3::new(0.7, 0.82, 1.0),
+                    1.2,
+                    false,
+                ),
+            ] {
+                scene.world_mut().spawn((
+                    Name::new(name),
+                    TransformComponent(Transform::from_trs(
+                        Vec3::ZERO,
+                        Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize()),
+                        Vec3::ONE,
+                    )),
+                    DirectionalLight::new(color, intensity),
+                    CanCastShadow(shadows),
+                ));
+            }
             let mut camera = Camera::default();
             camera.eye = Vec3::new(0.1, 3.5, 5.0);
             camera.target = Vec3::ZERO;

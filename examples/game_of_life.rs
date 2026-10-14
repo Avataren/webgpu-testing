@@ -1,10 +1,13 @@
 // examples/game_of_life_refactored.rs - Refactored version using new compute abstractions
 
+mod support;
+
 use glam::{Quat, Vec3};
 use std::path::PathBuf;
-use wgpu_cube::app::{GpuUpdateContext, StartupContext, UpdateContext};
+use wgpu_cube::app::{AppBuilder, GpuUpdateContext, StartupContext};
 use wgpu_cube::asset::{Handle, MaterialAsset};
 use wgpu_cube::render_application::{run_application, RenderApplication};
+use wgpu_cube::renderer::postprocess::{AntiAliasing, Tonemapper};
 use wgpu_cube::renderer::{
     BindGroupBuilder, BindGroupLayoutBuilder, ComputePass, ComputePipelineBuilder, Material,
     Texture,
@@ -15,8 +18,9 @@ use wgpu_cube::scene::{EntityBuilder, Transform};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-const GRID_WIDTH: u32 = 1920;
-const GRID_HEIGHT: u32 = 1080;
+// Visible cells make the evolving patterns readable in a window-sized smoke capture.
+const GRID_WIDTH: u32 = 384;
+const GRID_HEIGHT: u32 = 216;
 const STEP_INTERVAL: f64 = 0.05;
 const WORKGROUP_SIZE: u32 = 8;
 
@@ -26,15 +30,21 @@ struct GameOfLifeApp {
 }
 
 impl RenderApplication for GameOfLifeApp {
+    fn configure(&self, builder: &mut AppBuilder) {
+        builder.disable_default_lighting();
+    }
+
     fn setup(&mut self, ctx: &mut StartupContext) {
+        support::configure(&mut ctx.scene, [0.008, 0.012, 0.022], 0.03, |settings| {
+            settings.tonemapping = Tonemapper::Rolloff;
+            settings.exposure.compensation = 0.0;
+            settings.ssao.enabled = false;
+            settings.anti_aliasing = AntiAliasing::None;
+        });
         let gol_state = GameOfLifeState::new(ctx, GRID_WIDTH, GRID_HEIGHT);
         spawn_billboard(ctx, gol_state.display_handle, GRID_WIDTH, GRID_HEIGHT);
         configure_camera(ctx);
         self.state = Some(gol_state);
-    }
-
-    fn update(&mut self, ctx: &mut UpdateContext) {
-        orbit_camera(ctx);
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
@@ -271,16 +281,9 @@ fn generate_initial_pattern(buffer: &mut [u8], width: u32, height: u32) {
 
 fn configure_camera(ctx: &mut StartupContext) {
     let camera = ctx.scene.camera_mut();
-    camera.eye = Vec3::new(0.0, 0.0, 7.0);
+    camera.eye = Vec3::new(0.0, 0.0, 7.5);
     camera.target = Vec3::ZERO;
     camera.up = Vec3::Y;
-}
-
-fn orbit_camera(ctx: &mut UpdateContext) {
-    let t = ctx.scene.time() as f32 * 0.2;
-    let camera = ctx.scene.camera_mut();
-    camera.eye = Vec3::new(t.cos() * 6.5, 2.5, t.sin() * 6.5);
-    camera.target = Vec3::ZERO;
 }
 
 fn spawn_billboard(
@@ -296,11 +299,11 @@ fn spawn_billboard(
     let mesh = renderer.create_mesh(&vertices, &indices);
     let mesh_handle = scene.assets.meshes.insert(mesh);
 
-    let scale_x = (width as f32) / 128.0;
-    let scale_y = (height as f32) / 128.0;
+    let scale_x = 9.6;
+    let scale_y = scale_x * height as f32 / width as f32;
 
     let board_material = scene.assets.materials.insert(MaterialAsset::from_material(
-        Material::pbr()
+        Material::new([117, 230, 207, 255])
             .with_unlit()
             .with_nearest_filtering()
             .with_base_color_texture(texture_handle.index() as u32),

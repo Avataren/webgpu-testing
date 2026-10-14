@@ -1,4 +1,6 @@
 // examples/particle_effects.rs - With floor and shadows
+mod support;
+
 use glam::{Quat, Vec3};
 use std::path::PathBuf;
 
@@ -7,7 +9,7 @@ use wgpu_cube::gpu_particles::behaviors::PhysicsBehavior;
 use wgpu_cube::gpu_particles::{
     ColorGradient, EmissionShape, GpuParticleSystem, ParticleEmitter, ParticleRenderMode, SizeCurve,
 };
-use wgpu_cube::renderer::{CustomRenderContext, Material};
+use wgpu_cube::renderer::{CustomRenderContext, Material, Texture};
 use wgpu_cube::scene::components::{CanCastShadow, DirectionalLight};
 use wgpu_cube::scene::{
     CameraProjection, MaterialComponent, MeshComponent, Name, Transform, TransformComponent,
@@ -24,7 +26,7 @@ const MAX_PARTICLES_SMOKE: u32 = 5000;
 
 const FOUNTAIN_RATE: f32 = 1250.0;
 const SMOKE_RATE: f32 = 120.0;
-const FIREWORK_BURST_SIZE: u32 = 12500;
+const FIREWORK_BURST_SIZE: u32 = 2500;
 
 struct ParticleEffectsApp {
     fountain_system: Option<GpuParticleSystem>,
@@ -83,18 +85,18 @@ impl RenderApplication for ParticleEffectsApp {
         let quad_mesh_handle = ctx.scene.assets.meshes.insert(quad_mesh);
         self.quad_mesh_handle = Some(quad_mesh_handle);
 
-        // Scene setup
-        ctx.scene.environment_mut().set_clear_color(wgpu::Color {
-            r: 0.1,
-            g: 0.15,
-            b: 0.2,
-            a: 1.0,
+        support::configure(&mut ctx.scene, [0.005, 0.008, 0.018], 0.08, |settings| {
+            settings.exposure.compensation = 0.4;
+            settings.bloom.enabled = true;
+            settings.bloom.intensity = 0.1;
+            settings.bloom.threshold = 1.6;
+            settings.bloom.scatter = 0.6;
+            settings.ssao.intensity = 0.5;
         });
-        ctx.scene.environment_mut().disable_hdr_background();
 
         let mut camera = wgpu_cube::scene::Camera::default();
-        camera.eye = Vec3::new(0.0, 8.0, 25.0);
-        camera.target = Vec3::new(0.0, 3.0, 0.0);
+        camera.eye = Vec3::new(0.0, 12.0, 38.0);
+        camera.target = Vec3::new(0.0, 6.0, 0.0);
         camera.up = Vec3::Y;
         camera.set_projection(CameraProjection::perspective(
             60f32.to_radians(),
@@ -112,19 +114,21 @@ impl RenderApplication for ParticleEffectsApp {
         ctx.scene.world_mut().spawn((
             Name::new("Main Light"),
             TransformComponent(Transform::from_trs(Vec3::ZERO, sun_rotation, Vec3::ONE)),
-            DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 3.0),
+            DirectionalLight::new(Vec3::new(1.0, 0.95, 0.9), 1.8),
             CanCastShadow(true), // ✅ Enable shadow casting
         ));
 
         // ====================================================================
-        // FLOOR - Scaled cube with checker material
+        // A quiet floor keeps the translucent effects and their shadows readable.
         // ====================================================================
         let floor_material = ctx
             .scene
             .assets
             .materials
             .insert(MaterialAsset::from_material(
-                Material::checker().with_metallic(0.1).with_roughness(0.8),
+                Material::new([53, 67, 84, 255])
+                    .with_metallic(0.1)
+                    .with_roughness(0.55),
                 PathBuf::from("examples/particle_effects/floor"),
             ));
 
@@ -140,12 +144,34 @@ impl RenderApplication for ParticleEffectsApp {
             Visible(true),
         ));
 
-        log::info!("Floor added at y=-0.5 with checker material");
+        // Soft sprites fade in RGB as well as alpha: additive blending ignores alpha.
+        let sprite_size = 64;
+        let mut sprite_pixels = Vec::with_capacity(sprite_size * sprite_size * 4);
+        for y in 0..sprite_size {
+            for x in 0..sprite_size {
+                let u = (x as f32 + 0.5) / sprite_size as f32 * 2.0 - 1.0;
+                let v = (y as f32 + 0.5) / sprite_size as f32 * 2.0 - 1.0;
+                let fade = ((1.0 - u * u - v * v).max(0.0).powi(2) * 255.0) as u8;
+                sprite_pixels.extend_from_slice(&[fade; 4]);
+            }
+        }
+        let sprite = Texture::from_bytes(
+            ctx.renderer.get_device(),
+            ctx.renderer.get_queue(),
+            &sprite_pixels,
+            sprite_size as u32,
+            sprite_size as u32,
+            Some("Soft Particle Sprite"),
+        );
+        let sprite_handle = ctx.scene.assets.textures.insert(sprite);
+        ctx.renderer.update_texture_bind_group(&ctx.scene.assets);
 
         // ====================================================================
         // FOUNTAIN: 3D Cubes
         // ====================================================================
-        let fountain_material = Material::new([76, 128, 255, 204]).with_alpha().with_unlit();
+        let fountain_material = Material::new([180, 210, 255, 255])
+            .with_metallic(0.12)
+            .with_roughness(0.45);
 
         let mut fountain_system = GpuParticleSystem::new(
             ctx.renderer.get_device(),
@@ -189,7 +215,8 @@ impl RenderApplication for ParticleEffectsApp {
         // ====================================================================
         // FIREWORKS: Billboarded
         // ====================================================================
-        let fireworks_material = Material::new([255, 204, 51, 255])
+        let fireworks_material = Material::new([255, 255, 255, 255])
+            .with_base_color_texture(sprite_handle.index() as u32)
             .with_unlit()
             .with_billboarding();
 
@@ -203,16 +230,17 @@ impl RenderApplication for ParticleEffectsApp {
             ParticleRenderMode::Additive,
         );
 
-        fireworks_system.set_casts_shadows(true); // ✅ Enable shadows
+        fireworks_system.set_casts_shadows(false);
         fireworks_system.set_depth_write_enabled(false);
-        log::info!("Fireworks: Billboarded quads with shadows enabled");
+        log::info!("Fireworks: Additive soft sparks");
         self.fireworks_system = Some(fireworks_system);
 
         // ====================================================================
         // SMOKE: Billboarded
         // ====================================================================
-        let smoke_material = Material::new([128, 128, 128, 153])
-            //.with_alpha()
+        let smoke_material = Material::new([165, 183, 206, 153])
+            .with_base_color_texture(sprite_handle.index() as u32)
+            .with_alpha()
             .with_unlit()
             .with_billboarding();
 
@@ -223,17 +251,17 @@ impl RenderApplication for ParticleEffectsApp {
             MAX_PARTICLES_SMOKE,
             smoke_material,
             &self.smoke_behavior,
-            ParticleRenderMode::Additive,
+            ParticleRenderMode::AlphaBlend,
         );
 
-        smoke_system.set_casts_shadows(true); // ✅ Enable shadows
+        smoke_system.set_casts_shadows(false);
         smoke_system.set_depth_write_enabled(false);
 
         let smoke_emitter = ParticleEmitter::new(Vec3::new(8.0, 0.0, 0.0), SMOKE_RATE)
-            .with_emission_shape(EmissionShape::Sphere { radius: 0.15 })
-            .with_velocity(Vec3::new(-0.1, 0.2, -0.1), Vec3::new(0.1, 0.5, 0.1))
+            .with_emission_shape(EmissionShape::Sphere { radius: 0.35 })
+            .with_velocity(Vec3::new(-0.3, 0.4, -0.3), Vec3::new(0.3, 0.8, 0.3))
             .with_lifetime(5.0, 12.0)
-            .with_scale(Vec3::splat(0.3), Vec3::splat(0.5))
+            .with_scale(Vec3::splat(0.6), Vec3::splat(0.9))
             .with_color_gradient(
                 ColorGradient::new()
                     .with_keyframe([0.7, 0.7, 0.7, 0.9], 0.0)
@@ -247,15 +275,15 @@ impl RenderApplication for ParticleEffectsApp {
             );
 
         smoke_system.add_emitter(smoke_emitter);
-        log::info!("Smoke: Billboarded quads with shadows enabled");
+        log::info!("Smoke: Alpha-blended soft billboards");
         self.smoke_system = Some(smoke_system);
 
         log::info!("=== Particle Effects Ready ===");
-        log::info!("- Floor: 50x50 checker pattern at y=-0.5");
+        log::info!("- Floor: 50x50 slate platform at y=-0.5");
         log::info!("- Light: Directional with shadows");
         log::info!("- Left: Fountain (3D cubes, casts shadows)");
-        log::info!("- Center: Fireworks (billboarded, casts shadows)");
-        log::info!("- Right: Smoke (billboarded, casts shadows)");
+        log::info!("- Center: Fireworks (additive HDR sparks)");
+        log::info!("- Right: Smoke (alpha-blended billboards)");
     }
 
     fn gpu_update(&mut self, ctx: &mut GpuUpdateContext) {
@@ -289,17 +317,17 @@ impl RenderApplication for ParticleEffectsApp {
 
             let colors = [
                 ColorGradient::new()
-                    .with_keyframe([1.0, 0.8, 0.2, 1.0], 0.0)
-                    .with_keyframe([1.0, 0.5, 0.0, 0.3], 0.2)
-                    .with_keyframe([1.0, 0.2, 0.0, 0.0], 1.0),
+                    .with_keyframe([4.0, 2.4, 0.4, 1.0], 0.0)
+                    .with_keyframe([2.0, 0.7, 0.0, 0.3], 0.2)
+                    .with_keyframe([0.0, 0.0, 0.0, 0.0], 1.0),
                 ColorGradient::new()
-                    .with_keyframe([0.2, 0.8, 1.0, 1.0], 0.0)
-                    .with_keyframe([0.0, 0.5, 1.0, 0.3], 0.2)
-                    .with_keyframe([0.0, 0.2, 1.0, 0.0], 1.0),
+                    .with_keyframe([0.4, 2.4, 4.0, 1.0], 0.0)
+                    .with_keyframe([0.0, 0.7, 2.0, 0.3], 0.2)
+                    .with_keyframe([0.0, 0.0, 0.0, 0.0], 1.0),
                 ColorGradient::new()
-                    .with_keyframe([0.2, 1.0, 0.3, 1.0], 0.0)
-                    .with_keyframe([0.0, 1.0, 0.5, 0.3], 0.2)
-                    .with_keyframe([0.0, 1.0, 0.2, 0.0], 1.0),
+                    .with_keyframe([0.4, 4.0, 0.8, 1.0], 0.0)
+                    .with_keyframe([0.0, 2.0, 0.7, 0.3], 0.2)
+                    .with_keyframe([0.0, 0.0, 0.0, 0.0], 1.0),
             ];
 
             let color = colors[(rand::random::<f32>() * 3.0) as usize % 3].clone();
@@ -307,9 +335,9 @@ impl RenderApplication for ParticleEffectsApp {
             let firework = ParticleEmitter::new(Vec3::new(x, y, z), 0.0)
                 .with_burst(FIREWORK_BURST_SIZE)
                 .with_emission_shape(EmissionShape::RadialBurst)
-                .with_radial_velocity(10.0, 15.0)
+                .with_radial_velocity(6.0, 9.0)
                 .with_lifetime(1.5, 2.5)
-                .with_scale(Vec3::splat(0.18), Vec3::splat(0.22))
+                .with_scale(Vec3::splat(0.1), Vec3::splat(0.16))
                 .with_color_gradient(color);
 
             if let Some(system) = &mut self.fireworks_system {

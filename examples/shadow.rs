@@ -1,12 +1,17 @@
+mod support;
+
 use std::path::{Path, PathBuf};
 
 use glam::{Quat, Vec3};
 use log::info;
-use wgpu_cube::app::{StartupContext, UpdateContext};
+use wgpu_cube::app::{AppBuilder, StartupContext, UpdateContext};
 use wgpu_cube::asset::MaterialAsset;
 use wgpu_cube::render_application::{run_application, RenderApplication};
+use wgpu_cube::renderer::postprocess::AntiAliasing;
 use wgpu_cube::renderer::{Material, Texture};
-use wgpu_cube::scene::components::{Billboard, BillboardOrientation, BillboardSpace, DepthState};
+use wgpu_cube::scene::components::{
+    Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, DirectionalLight,
+};
 use wgpu_cube::scene::{
     MaterialComponent, MeshComponent, Name, Transform, TransformComponent, Visible,
 };
@@ -20,6 +25,10 @@ const CAMERA_HEIGHT: f32 = 6.0;
 struct ExampleApp;
 
 impl RenderApplication for ExampleApp {
+    fn configure(&self, builder: &mut AppBuilder) {
+        builder.disable_default_lighting();
+    }
+
     fn setup(&mut self, ctx: &mut StartupContext) {
         setup_shadow_scene(ctx);
     }
@@ -35,6 +44,22 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
 
     info!("Creating shadow map test scene...");
 
+    support::configure(scene, [0.018, 0.026, 0.045], 0.1, |settings| {
+        settings.anti_aliasing = AntiAliasing::Taa;
+        settings.sharpen.enabled = true;
+        settings.sharpen.strength = 0.2;
+    });
+    scene.world_mut().spawn((
+        Name::new("Shadow Key Light"),
+        TransformComponent(Transform::from_trs(
+            Vec3::ZERO,
+            Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::new(0.35, -1.0, -0.85).normalize()),
+            Vec3::ONE,
+        )),
+        DirectionalLight::new(Vec3::new(1.0, 0.94, 0.85), 3.0),
+        CanCastShadow(true),
+    ));
+
     let (verts, idx) = wgpu_cube::renderer::cube_mesh();
     let cube_mesh = renderer.create_mesh(&verts, &idx);
     let cube_handle = scene.assets.meshes.insert(cube_mesh);
@@ -47,9 +72,9 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         renderer.get_device(),
         renderer.get_queue(),
         512,
-        32,
-        [200, 200, 200, 255],
-        [40, 40, 40, 255],
+        64,
+        [130, 147, 166, 255],
+        [65, 80, 101, 255],
         Some("Shadow Test Floor"),
     );
     let checker_handle = scene.assets.textures.insert(checker_texture);
@@ -74,7 +99,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     let cube_material = scene.assets.materials.insert(MaterialAsset::from_material(
-        Material::new([220, 220, 230, 255])
+        Material::new([231, 119, 78, 255])
             .with_metallic(0.0)
             .with_roughness(0.3),
         PathBuf::from("examples/shadow/cube"),
@@ -83,7 +108,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     scene.world_mut().spawn((
         Name::new("Shadow Test Cube"),
         TransformComponent(Transform::from_trs(
-            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.75, 0.0),
             Quat::IDENTITY,
             Vec3::splat(1.5),
         )),
@@ -91,6 +116,45 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
         MaterialComponent(cube_material),
         Visible(true),
     ));
+
+    let (vertices, indices) = wgpu_cube::renderer::sphere_mesh(48, 24);
+    let sphere = renderer.create_mesh(&vertices, &indices);
+    let sphere_handle = scene.assets.meshes.insert(sphere);
+    for (name, mesh, position, scale, color) in [
+        (
+            "Shadow Test Sphere",
+            sphere_handle,
+            Vec3::new(-3.0, 1.0, -1.5),
+            Vec3::ONE,
+            [72, 166, 173, 255],
+        ),
+        (
+            "Shadow Test Column",
+            cube_handle,
+            Vec3::new(2.0, 1.75, -2.0),
+            Vec3::new(1.2, 3.5, 1.2),
+            [217, 173, 99, 255],
+        ),
+    ] {
+        let material = scene.assets.materials.insert(MaterialAsset::from_material(
+            Material::new(color)
+                .with_metallic(0.15)
+                .with_roughness(0.35),
+            PathBuf::from(format!("examples/shadow/{name}")),
+        ));
+        scene.world_mut().spawn((
+            Name::new(name),
+            TransformComponent(Transform::from_trs(
+                position,
+                Quat::from_rotation_y(20f32.to_radians()),
+                scale,
+            )),
+            MeshComponent(mesh),
+            MaterialComponent(material),
+            CanCastShadow(true),
+            Visible(true),
+        ));
+    }
 
     let webgpu_texture = Texture::from_path(
         renderer.get_device(),
@@ -109,7 +173,7 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
     ));
 
     let sprite_offset = Vec3::new(3.0, 2.2, 8.0);
-    let sprite_transform = Transform::from_trs(sprite_offset, Quat::IDENTITY, Vec3::splat(2.5));
+    let sprite_transform = Transform::from_trs(sprite_offset, Quat::IDENTITY, Vec3::splat(1.6));
 
     let billboard =
         Billboard::new(BillboardOrientation::FaceCamera).with_space(BillboardSpace::View {
@@ -135,10 +199,10 @@ fn setup_shadow_scene(ctx: &mut StartupContext<'_>) {
 }
 
 fn orbit_camera(ctx: &mut UpdateContext<'_>, radius: f32, height: f32) {
-    let t = ctx.scene.time() as f32 * 0.25;
+    let t = ctx.scene.time() as f32 * 0.15 + std::f32::consts::FRAC_PI_4;
     let camera = ctx.scene.camera_mut();
     camera.eye = Vec3::new(t.cos() * radius, height, t.sin() * radius);
-    camera.target = Vec3::ZERO;
+    camera.target = Vec3::new(0.0, 0.6, 0.0);
     camera.up = Vec3::Y;
 }
 
