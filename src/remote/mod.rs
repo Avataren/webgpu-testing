@@ -40,8 +40,11 @@ mod hub;
 mod json;
 pub mod log_tap;
 pub mod preview;
+mod profile;
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod validation;
 
 pub use capture::{capture_surface, FrameCapture};
 pub use handlers::{RemoteContext, RemoteResult, CORE_METHODS};

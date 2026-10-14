@@ -26,7 +26,8 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
   mode and `monitor` (1-based index, output name like `HDMI-A-0`, or `primary`). The
   `ENGINE_MONITOR` environment variable overrides the monitor. The window is centered on
   that monitor and shrunk to fit; positioning only works on X11, not Wayland.
-- The web/WASM build is currently broken; see [Known issues](#known-issues-and-roadmap).
+- Native and web players run Lua gameplay. `build_web.sh --project <dir> --no-serve`
+  packages saved projects; the vendored Lua shim requires clang and matching wasm-bindgen.
 
 ## Source map
 
@@ -298,6 +299,27 @@ agent workflow.
   sequence numbers, so clients can poll for new lines. Panics are recorded there too.
 - **Lua console**: `ScriptingState::eval` runs code with the full scripting API, either
   in a persistent console environment or inside one entity's script environment.
+- **Explicit simulation**: `RuntimeStateHandle` stores manual mode, seed and step count.
+  Entering manual play initializes scripts once; ordinary update frames skip Lua/animation.
+  `runtime.step` applies step-indexed input, updates scenes and realizes script assets for
+  each fixed step. GPU particles, UI and custom app systems are outside this scope.
+- **Scene transactions**: `scene.transaction` validates whitelisted scene calls in a
+  speculative snapshot, resolves aliases to previous results and commits once. Errors and
+  dry runs restore the original scene, including its scripting runtime; file/audio/Lua
+  operations are excluded. The editor records one undo entry on commit.
+- **Spatial tools** use transformed world AABBs, visibility inheritance and hierarchy
+  exclusions. Ray normals describe box faces; placement/scatter are approximate authoring.
+- **Profiling**: `profile.capture` samples consecutive frames through the remote GPU system.
+  Percentiles use nearest rank; CPU stage/submit cost and cumulative Lua hook counters are
+  available, along with entity/asset growth. GPU execution timestamps are not measured.
+- **Prefab authoring** exports a selected subtree into a registered scene document. Source
+  updates affect future/reopened instances; current instance values are preserved.
+  Project exports include linked child scene nodes as prefab references with placement and
+  visibility overrides; snapshots preserve origin metadata in serialized entity order.
+- **Verification**: read-only `project.validate` checks saved structure/assets/Lua syntax.
+  MCP `web_build` wraps the non-serving build script; `web_playtest` uses Node's WebSocket
+  and Chromium CDP with a disposable loopback server/browser profile. Results contain
+  structured JSON, output schemas and tool annotations.
 
 ## Invariants and gotchas
 
@@ -333,11 +355,8 @@ agent workflow.
 
 ## Known issues and roadmap
 
-- **Web/WASM build is broken**: `mlua`'s vendored Lua can't target
-  `wasm32-unknown-unknown`. Options:
-  - compile scripting out on wasm with a stub `ScriptingState`
-  - use the emscripten target
-  - switch Lua implementation
+- **Web filesystem limits**: Lua uses the vendored wasm libc/SjLj shim. File watching and
+  authoring remain native-only; player assets load through HTTP, and audio needs a gesture.
 - **glTF data-URI images**: images embedded as `data:` URIs are treated as file paths, so
   `packaged_gltf_roundtrip_without_source` fails.
 - **Inspector script picker** lists only `scripts/` and `examples/scripts/`, not the open

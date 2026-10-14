@@ -10,6 +10,7 @@
 mod engine;
 mod guide;
 mod tools;
+mod web;
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -191,6 +192,8 @@ impl Server {
                     "name": tool.name,
                     "description": tool.description,
                     "inputSchema": tool.schema,
+                    "outputSchema": tool.output_schema(),
+                    "annotations": tool.annotations(),
                 })).collect::<Vec<_>>()
             })),
             "tools/call" => Ok(self.call_tool(&params)),
@@ -216,8 +219,21 @@ impl Server {
             .unwrap_or_else(|| json!({}));
 
         match self.run_tool(name, arguments) {
-            Ok(Output::Json(value)) => text_result(pretty(&value), false),
-            Ok(Output::Text(text)) => text_result(text, false),
+            Ok(Output::Json(value)) => {
+                let failed = value.get("ok") == Some(&Value::Bool(false));
+                let mut result = text_result(pretty(&value), failed);
+                result["structuredContent"] = if value.is_object() {
+                    value
+                } else {
+                    json!({"result": value})
+                };
+                result
+            }
+            Ok(Output::Text(text)) => {
+                let mut result = text_result(text.clone(), false);
+                result["structuredContent"] = json!({"text": text});
+                result
+            }
             Ok(Output::Image {
                 png_base64,
                 caption,
@@ -226,7 +242,8 @@ impl Server {
                     { "type": "image", "data": png_base64, "mimeType": "image/png" },
                     { "type": "text", "text": caption.to_string() }
                 ],
-                "isError": false
+                "isError": caption.get("ok") == Some(&Value::Bool(false)),
+                "structuredContent": caption
             }),
             Err(message) => error_result(message),
         }
@@ -258,6 +275,24 @@ impl Server {
             .get("calls")
             .and_then(Value::as_array)
             .ok_or("calls must be an array of {tool, arguments}")?;
+        if args["atomic"].as_bool().unwrap_or(false) || args["dry_run"].as_bool().unwrap_or(false) {
+            let calls=calls.iter().map(|call| {
+                let name=call["tool"].as_str().ok_or("every call needs tool")?;
+                let tool=self.tools.iter().find(|t|t.name==name).ok_or_else(||format!("unknown tool {name:?}"))?;
+                let Action::Engine(method)=tool.action else {return Err(format!("{name} is not a scene-only engine tool"));};
+                let mut mapped=json!({"method":method,"params":call.get("arguments").cloned().unwrap_or(json!({}))});
+                if let Some(alias)=call.get("as") {mapped["as"]=alias.clone();}
+                Ok(mapped)
+            }).collect::<Result<Vec<_>,String>>()?;
+            return self
+                .engine
+                .call(
+                    "scene.transaction",
+                    json!({"calls":calls,"dry_run":args["dry_run"].as_bool().unwrap_or(false)}),
+                )
+                .map(Output::Json)
+                .map_err(|e| e.to_string());
+        }
         let stop_on_error = args
             .get("stop_on_error")
             .and_then(Value::as_bool)
@@ -304,6 +339,25 @@ impl Server {
 
     fn local_tool(&mut self, name: &str, args: &Value) -> Result<Output, String> {
         match name {
+            "web_build" => {
+                let project = self
+                    .engine
+                    .repo
+                    .join(args["project"].as_str().ok_or("project required")?);
+                let validation = self
+                    .engine
+                    .call("project.validate", json!({"path":project}))
+                    .map_err(|e| e.to_string())?;
+                if validation["ok"] != true {
+                    return Ok(Output::Json(json!({"ok":false,"validation":validation})));
+                }
+                let mut result = self
+                    .engine
+                    .build_web(&project, args["overwrite"].as_bool().unwrap_or(false))?;
+                result["validation"] = validation;
+                Ok(Output::Json(result))
+            }
+            "web_playtest" => self.web_playtest(args),
             "batch" => self.batch(args),
             "engine_launch" => self.launch(args).map(Output::Json),
             "engine_stop" => self.engine.stop().map(Output::Json),
@@ -533,6 +587,7 @@ impl Server {
             .filter_map(Result::ok)
             .filter_map(|entry| modified(&entry.path()))
             .chain(modified(&crate_dir.join("Cargo.toml")))
+            .chain(modified(&crate_dir.join("web_playtest.mjs")))
             .max();
         let binary = std::env::current_exe().ok().and_then(|exe| modified(&exe));
         let newer = |time: Option<SystemTime>| time.is_some_and(|time| time > self.started);
@@ -569,6 +624,107 @@ impl Server {
     /// Play for a while with scripted input, then report errors, the state `eval`
     /// returns and a screenshot, and (by default) stop again.
     fn playtest(&mut self, args: &Value) -> Result<Output, String> {
+        let mut resolved = if let Some(path) = args["scenario"].as_str() {
+            let path = self.engine.repo.join(path);
+            serde_json::from_str::<Value>(
+                &std::fs::read_to_string(&path)
+                    .map_err(|e| format!("cannot read scenario {}: {e}", path.display()))?,
+            )
+            .map_err(|e| e.to_string())?
+        } else {
+            json!({})
+        };
+        let object = resolved
+            .as_object_mut()
+            .ok_or("scenario must be a JSON object")?;
+        object.extend(
+            args.as_object()
+                .ok_or("arguments must be an object")?
+                .clone(),
+        );
+        object.remove("scenario");
+        if let Some(path) = object
+            .remove("save_scenario")
+            .and_then(|v| v.as_str().map(str::to_owned))
+        {
+            use std::io::Write;
+            let path = self.engine.repo.join(path);
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|e| format!("cannot save scenario {}: {e}", path.display()))?;
+            file.write_all(
+                serde_json::to_string_pretty(&resolved)
+                    .map_err(|e| e.to_string())?
+                    .as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        let mut touched_runtime = false;
+        let result = self.playtest_inner(&resolved, &mut touched_runtime);
+        if result.is_err() && touched_runtime {
+            let _ = self.engine.call("input.clear", json!({}));
+            if preview_params(&resolved).is_some() {
+                let _ = self.set_preview(json!({}), 1);
+            }
+            let _ = self.engine.call("runtime.set", json!({"mode":"stop"}));
+            let _ = self.engine.call("wait", json!({"frames":2}));
+        }
+        result
+    }
+
+    fn check_assertions(&mut self, args: &Value, step: Option<u64>) -> Result<Vec<Value>, String> {
+        let mut results = Vec::new();
+        if let Some(assertions) = args.get("assertions") {
+            for assertion in assertions.as_array().ok_or("assertions must be an array")? {
+                let at = assertion["at_step"].as_u64();
+                if at != step && !(at.is_none() && step == args["steps"].as_u64()) {
+                    continue;
+                }
+                let code = assertion["code"]
+                    .as_str()
+                    .ok_or("assertion code must be a Lua expression")?;
+                let mut params = json!({"code":format!("return ({code})"),"read_only":true,"fallback_to_script":true});
+                if let Some(entity) = args.get("entity") {
+                    params["entity"] = entity.clone();
+                }
+                let value = self
+                    .engine
+                    .call("lua.eval", params)
+                    .unwrap_or_else(|e| json!({"error":e.to_string()}));
+                results.push(json!({"name":assertion.get("name").cloned().unwrap_or(json!(code)),"at_step":step,"passed":value["result"]==true,"observed":value}));
+            }
+        }
+        Ok(results)
+    }
+
+    fn playtest_inner(
+        &mut self,
+        args: &Value,
+        touched_runtime: &mut bool,
+    ) -> Result<Output, String> {
+        let steps = args
+            .get("steps")
+            .map(|v| {
+                v.as_u64()
+                    .filter(|n| (1..=10000).contains(n))
+                    .ok_or("steps must be 1..=10000")
+            })
+            .transpose()?;
+        if let Some(assertions) = args.get("assertions") {
+            for assertion in assertions.as_array().ok_or("assertions must be an array")? {
+                if assertion["code"].as_str().is_none() {
+                    return Err("assertions need code".into());
+                }
+                if let Some(at) = assertion.get("at_step") {
+                    let at = at.as_u64().ok_or("at_step must be a nonnegative integer")?;
+                    if steps.is_none_or(|n| at > n) {
+                        return Err("at_step requires steps and must be <= steps".into());
+                    }
+                }
+            }
+        }
         let seconds = args
             .get("seconds")
             .and_then(Value::as_f64)
@@ -602,27 +758,97 @@ impl Server {
         }
         let preview = preview_params(args);
         if let Some(preview) = &preview {
+            *touched_runtime = true;
             self.set_preview(preview.clone(), 1)?;
         }
         let mut start = json!({ "mode": "play" });
-        if let Some(scale) = args.get("time_scale") {
+        if steps.is_some() || args.get("seed").is_some() {
+            *touched_runtime = true;
+            call(&mut self.engine, "runtime.set", json!({"mode":"stop"}))?;
+            call(&mut self.engine, "wait", json!({"frames":2}))?;
+            call(&mut self.engine, "input.clear", json!({}))?;
+            start["manual"] = json!(steps.is_some());
+        }
+        if let Some(seed) = args.get("seed") {
+            start["seed"] = seed.clone();
+        }
+        if let Some(scale) = args.get("time_scale").filter(|_| steps.is_none()) {
             start["time_scale"] = scale.clone();
         }
         call(&mut self.engine, "runtime.set", start)?;
+        *touched_runtime = true;
         // Play starts at the beginning of the next frame.
         call(&mut self.engine, "wait", json!({ "frames": 2 }))?;
 
-        if let Some(events) = args.get("input").filter(|events| !events.is_null()) {
-            call(&mut self.engine, "input.send", json!({ "events": events }))?;
+        if let Some(setup) = args["setup"].as_str() {
+            let mut params = json!({"code":setup,"fallback_to_script":true});
+            if let Some(entity) = args.get("entity") {
+                params["entity"] = entity.clone();
+            }
+            call(&mut self.engine, "lua.eval", params)?;
         }
-        let waited = call(
-            &mut self.engine,
-            "wait",
-            json!({ "seconds": seconds, "frames": 1 }),
-        )?;
+        let mut assertions = Vec::new();
+        let waited = if let Some(total) = steps {
+            let mut checkpoints = std::collections::BTreeSet::from([0, total]);
+            if let Some(rows) = args["assertions"].as_array() {
+                for row in rows {
+                    if let Some(at) = row["at_step"].as_u64() {
+                        checkpoints.insert(at);
+                    }
+                }
+            }
+            let mut previous = 0;
+            let mut waited = json!({"steps":0});
+            let mut input_sent = false;
+            for checkpoint in checkpoints {
+                if checkpoint > previous {
+                    let mut params = json!({"steps":checkpoint-previous});
+                    if let Some(dt) = args.get("dt") {
+                        params["dt"] = dt.clone();
+                    }
+                    if !input_sent {
+                        if let Some(events) = args.get("input") {
+                            params["input"] = events.clone();
+                        }
+                        input_sent = true;
+                    }
+                    waited = call(&mut self.engine, "runtime.step", params)?;
+                }
+                assertions.extend(self.check_assertions(args, Some(checkpoint))?);
+                if assertions.iter().any(|r| r["passed"] == false) {
+                    break;
+                }
+                previous = checkpoint;
+            }
+            waited
+        } else {
+            if let Some(events) = args.get("input").filter(|events| !events.is_null()) {
+                call(&mut self.engine, "input.send", json!({"events":events}))?;
+            }
+            let waited = call(
+                &mut self.engine,
+                "wait",
+                json!({"seconds":seconds,"frames":1}),
+            )?;
+            assertions = self.check_assertions(args, None)?;
+            waited
+        };
 
         let mut report = serde_json::Map::new();
         report.insert("waited".into(), waited);
+        report.insert(
+            "ok".into(),
+            json!(assertions.iter().all(|r| r["passed"] == true)),
+        );
+        report.insert(
+            "first_failure".into(),
+            assertions
+                .iter()
+                .find(|r| r["passed"] == false)
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        report.insert("assertions".into(), json!(assertions));
         let runtime = call(&mut self.engine, "runtime.get", json!({}))?;
         report.insert("time_scale".into(), runtime["time_scale"].clone());
         if let Some(code) = args.get("eval").and_then(Value::as_str) {
@@ -649,6 +875,9 @@ impl Server {
                     .collect()
             })
             .unwrap_or_default();
+        if !failing.is_empty() {
+            report.insert("ok".into(), json!(false));
+        }
         report.insert("failing_scripts".into(), json!(failing));
         let logs = call(
             &mut self.engine,

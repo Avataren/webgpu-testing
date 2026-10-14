@@ -206,7 +206,7 @@ impl ProjectSystem {
         candidate
     }
 
-    fn save_scene_to_library(
+    pub(super) fn save_scene_to_library(
         &mut self,
         document_id: String,
         scene_asset: wgpu_cube::scene::SceneAsset,
@@ -243,7 +243,13 @@ impl ProjectSystem {
             id: document_id.clone(),
             name: display_name,
             relative_path,
-            dependencies: wgpu_cube::project::SceneDocumentDependencies::default(),
+            dependencies: wgpu_cube::project::SceneDocumentDependencies {
+                prefab_instances: scene_asset
+                    .entities
+                    .iter()
+                    .filter_map(|e| e.scene_ref.as_ref().map(|r| r.document.clone()))
+                    .collect(),
+            },
         };
 
         self.scene_library.register_document(&document);

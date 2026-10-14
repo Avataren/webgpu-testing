@@ -17,6 +17,9 @@ struct RuntimeState {
     desired_mode: RuntimeMode,
     active_mode: RuntimeMode,
     time_scale: f64,
+    manual: bool,
+    seed: Option<u64>,
+    simulation_steps: u64,
 }
 
 /// Largest supported play-mode time scale.
@@ -29,6 +32,9 @@ impl RuntimeStateHandle {
                 desired_mode: RuntimeMode::Editor,
                 active_mode: RuntimeMode::Editor,
                 time_scale: 1.0,
+                manual: false,
+                seed: None,
+                simulation_steps: 0,
             })),
         }
     }
@@ -55,6 +61,37 @@ impl RuntimeStateHandle {
     pub fn set_time_scale(&self, scale: f64) {
         let scale = if scale.is_finite() { scale } else { 1.0 };
         self.lock().time_scale = scale.clamp(0.0, MAX_TIME_SCALE);
+    }
+
+    /// Whether Lua gameplay and scene animation advance only through remote steps.
+    pub fn manual_simulation(&self) -> bool {
+        self.lock().manual
+    }
+
+    /// Configure an explicit-step session before entering play.
+    ///
+    /// ```
+    /// let runtime = wgpu_cube::app::RuntimeStateHandle::new();
+    /// runtime.configure_simulation(true, Some(123));
+    /// assert!(runtime.manual_simulation());
+    /// assert_eq!(runtime.simulation_steps(), 0);
+    /// ```
+    pub fn configure_simulation(&self, manual: bool, seed: Option<u64>) {
+        let mut state = self.lock();
+        state.manual = manual;
+        state.seed = seed;
+        if manual {
+            state.time_scale = 0.0;
+        }
+    }
+
+    /// Simulation steps completed in the current play session.
+    pub fn simulation_steps(&self) -> u64 {
+        self.lock().simulation_steps
+    }
+
+    pub(crate) fn add_simulation_steps(&self, steps: u64) {
+        self.lock().simulation_steps += steps;
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, RuntimeState> {
@@ -156,11 +193,22 @@ impl RuntimeController {
         let snapshot = SceneSnapshot::capture(scene);
         self.editor_snapshot = Some(snapshot);
         scene.reset_script_runtime();
+        let seed = self.state.lock().seed;
+        if let Some(seed) = seed {
+            if let Err(error) = scene.lua_scripting_mut().seed_random(seed) {
+                log::error!("Cannot seed Lua randomness: {error}");
+            }
+        }
+        self.state.lock().simulation_steps = 0;
         scene.set_animation_playback(true);
         scene.set_time(0.0);
         scene.init_timer();
         self.gizmos_enabled = false;
         self.mode = RuntimeMode::Playing;
+        if self.state.manual_simulation() {
+            // Compile and run on_created exactly once, before a test's setup hooks.
+            scene.update_with_mode(0.0, false);
+        }
     }
 
     fn stop_playback(&mut self, scene: &mut Scene) {
@@ -184,6 +232,7 @@ impl RuntimeController {
         crate::audio::stop_all();
         // A sped-up playtest should not carry over into the next play session.
         self.state.set_time_scale(1.0);
+        self.state.configure_simulation(false, None);
         self.gizmos_enabled = self.editor_gizmos_enabled;
         self.mode = RuntimeMode::Editor;
     }

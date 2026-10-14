@@ -197,7 +197,39 @@ Facts that change how you write scripts:
   `Return`, `Escape`, `ArrowUp`/`Down`/`Left`/`Right`, `Shift`, `Control`, `Alt`, `Tab`.
   Mouse buttons are 0 left, 1 right, 2 middle.
 
-## Injecting input
+## New authoring and verification tools
+
+- Repeatable tests: `playtest {steps, dt, seed, setup, assertions}` initializes a fresh
+  manual session. Assertions are `{code: "boolean Lua expression", at_step?, name?}`;
+  omitted `at_step` checks at the end. Failed checkpoints return their step and observations
+  before the usual screenshot/stop. `scenario` loads saved JSON; `save_scenario` writes a
+  new file. For interactive stepping, configure `runtime_set {mode: "play", manual: true,
+  seed}` while stopped, wait two frames, then `runtime_step`. Only Lua gameplay and scene
+  animation are stepped; UI, custom app systems, GPU particles and rendering are independent.
+- Spatial tools: `scene_query {bounds: {min, max}}` or `{center, radius}` and
+  `scene_raycast {origin, direction}` inspect world AABBs. `entity_place` adds `entity`,
+  `offset`, `align_normal` and `avoid_overlap`. Box normals approximate the geometry.
+  `scene_scatter {entity, bounds, count, spacing, seed}` creates constrained copies; use
+  `on_surface: false` for a flat placement plane. Hidden ancestors are respected.
+- `batch {atomic: true, calls}` rolls back all scene edits on failure and creates one undo
+  entry. `dry_run: true` validates without committing. Name results with `as: "root"` and
+  reference them using `{ "$ref": "root/id" }`. Only scene operations are supported;
+  files, scripts, project operations, audio and runtime actions cannot be transactional.
+- `prefab_create {entity, name}`, `prefab_inspect {document_id}` and
+  `prefab_update {entity, document_id}` author reusable sources; `scene_instance` links them.
+  Save the project to persist registration. Existing instances keep current values until
+  recreated or reopened after a source update.
+- `mesh_sweep {path, radius}` builds tubes/rails; `profile` supplies a polygonal section.
+  `mesh_heightfield {resolution, size, seed}` creates terrain; `heights` or `source` provides
+  explicit/image heights. Both persist embedded geometry with `project_save`.
+- `profile_capture {frames}` captures CPU latency percentiles, stage/script cost and asset
+  growth. `baseline` compares a previous report. It does not measure GPU execution.
+- After `project_save`, call `project_validate` for paths, structure and Lua syntax.
+  `web_build {project}` packages the existing web pipeline; replacing artifacts needs
+  `overwrite: true`. `web_playtest {directory}` returns browser failures and a screenshot.
+  It needs Node 22+ and Chromium/Brave (`ENGINE_BROWSER`); no npm dependencies or deployment.
+
+## Injecting input (frame-based sessions)
 
 `input_send` is applied at the start of upcoming frames, exactly like real key events,
 so `is_key_just_pressed` fires once per tap.

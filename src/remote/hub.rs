@@ -103,6 +103,13 @@ struct Waiter {
     start: Instant,
 }
 
+struct ProfileCapture {
+    reply: Reply,
+    frames: usize,
+    samples: Vec<Value>,
+    baseline: Option<Value>,
+}
+
 /// Remote-control state of one running application.
 pub struct RemoteHub {
     port: u16,
@@ -113,11 +120,13 @@ pub struct RemoteHub {
     started: Instant,
     last_dt: f64,
     input: Vec<ScheduledInput>,
+    simulation_input: Vec<(u64, InputEvent)>,
     captures: Vec<CaptureRequest>,
     /// Whether the frame being rendered is the first capture's own frame.
     capturing_own_frame: bool,
     waiters: Vec<Waiter>,
     scene_baseline: Option<SceneBaseline>,
+    profile: Option<ProfileCapture>,
 }
 
 impl RemoteHub {
@@ -143,10 +152,12 @@ impl RemoteHub {
             started: Instant::now(),
             last_dt: 0.0,
             input: Vec::new(),
+            simulation_input: Vec::new(),
             captures: Vec::new(),
             capturing_own_frame: false,
             waiters: Vec::new(),
             scene_baseline: None,
+            profile: None,
         }
     }
 
@@ -197,10 +208,24 @@ impl RemoteHub {
     /// Release every key and button and drop queued input.
     pub(crate) fn clear_input(&mut self) {
         self.input.clear();
+        self.simulation_input.clear();
+    }
+
+    pub(crate) fn schedule_simulation_input(&mut self, step: u64, event: InputEvent) {
+        self.simulation_input.push((step, event));
+    }
+    pub(crate) fn apply_simulation_input(&mut self, step: u64, input: &mut InputState) {
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.simulation_input)
+            .into_iter()
+            .partition(|(at, _)| *at <= step);
+        self.simulation_input = later;
+        for (_, event) in due {
+            handlers::apply_simulation_event(input, &event);
+        }
     }
 
     pub(crate) fn pending_input(&self) -> usize {
-        self.input.len()
+        self.input.len() + self.simulation_input.len()
     }
 
     /// Apply injected input that is due. Call at the start of a frame, before the
@@ -333,6 +358,23 @@ impl RemoteHub {
     /// back if it is not deferred.
     fn try_defer(&mut self, request: RemoteRequest) -> Option<RemoteRequest> {
         match request.method.as_str() {
+            "profile.capture" => {
+                let frames = opt_u64(&request.params, "frames").unwrap_or(300);
+                if !(2..=10000).contains(&frames) || self.profile.is_some() {
+                    request.reply.send(Err(
+                        "profile.capture needs 2..=10000 frames and no capture already running"
+                            .into(),
+                    ));
+                } else {
+                    self.profile = Some(ProfileCapture {
+                        reply: request.reply,
+                        frames: frames as usize,
+                        samples: Vec::new(),
+                        baseline: request.params.get("baseline").cloned(),
+                    });
+                }
+                None
+            }
             "screenshot" => {
                 let params = &request.params;
                 // Rendering through a camera is a preview of the game, which only makes
@@ -412,6 +454,20 @@ pub fn process_requests(
 ) {
     let mut hub = hub.borrow_mut();
     let requests = hub.drain_requests();
+    if let Some(mut capture) = hub.profile.take() {
+        let mut remote = RemoteContext::new(ctx, &mut hub, app.remote_methods());
+        if let Ok(sample) = handlers::profile_sample(&mut remote) {
+            capture.samples.push(sample);
+        }
+        if capture.samples.len() >= capture.frames {
+            capture.reply.send(Ok(super::profile::summarize(
+                &capture.samples,
+                capture.baseline.as_ref(),
+            )));
+        } else {
+            hub.profile = Some(capture);
+        }
+    }
     if requests.is_empty() {
         return;
     }

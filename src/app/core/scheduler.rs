@@ -357,12 +357,16 @@ impl Scheduler {
         dt: f64,
         runtime: RuntimeMode,
         time_scale: f64,
+        manual_simulation: bool,
     ) -> Option<SceneHandle> {
         let mut active_handle = handle;
         let mut dt = dt;
 
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             match runtime {
+                RuntimeMode::Playing if manual_simulation => {
+                    dt = 0.0;
+                }
                 RuntimeMode::Playing => {
                     // Speed-ups run several normal-sized steps rather than one long one,
                     // so game logic sees the same step sizes as at normal speed.
@@ -715,7 +719,14 @@ mod tests {
         workspace.open_scene(second_id.clone(), Scene::new());
 
         let result = scheduler
-            .run_update_stage(&mut workspace, first_handle, 0.0, RuntimeMode::Editor, 1.0)
+            .run_update_stage(
+                &mut workspace,
+                first_handle,
+                0.0,
+                RuntimeMode::Editor,
+                1.0,
+                false,
+            )
             .expect("update stage should succeed");
 
         assert_eq!(workspace.active_scene_handle(), Some(result));

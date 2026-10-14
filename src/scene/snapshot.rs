@@ -18,6 +18,7 @@ pub(crate) struct SceneSnapshot {
     pub(crate) gizmo_mode: TransformGizmoMode,
     pub(crate) gizmo_space: TransformGizmoSpace,
     pub(crate) gizmo_hover: Option<TransformGizmoHandle>,
+    prefab_origins: Vec<(Vec<usize>, super::graph::PrefabOriginMetadata)>,
 }
 
 impl SceneSnapshot {
@@ -33,6 +34,55 @@ impl SceneSnapshot {
         let gizmo_mode = scene.transform_gizmo_mode();
         let gizmo_space = scene.transform_gizmo_space();
         let gizmo_hover = scene.transform_gizmo_hover();
+        let mut prefab_origins = Vec::new();
+        fn collect(
+            scene: &Scene,
+            node: super::SceneNodeId,
+            tree: &super::SceneTreeAssetNode,
+            path: Vec<usize>,
+            out: &mut Vec<(Vec<usize>, super::graph::PrefabOriginMetadata)>,
+        ) {
+            let node_ref = scene.node(node);
+            if let (Some(origin), Some(asset)) = (node_ref.prefab_origin(), tree.asset.as_ref()) {
+                let by_entity = origin
+                    .entity_paths()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, path)| {
+                        node_ref
+                            .instance()
+                            .asset_entity(index)
+                            .map(|entity| (entity, path.clone()))
+                    })
+                    .collect::<std::collections::HashMap<_, _>>();
+                let paths = asset
+                    .entities
+                    .iter()
+                    .map(|row| {
+                        row.source_entity
+                            .and_then(|entity| by_entity.get(&entity).cloned().flatten())
+                    })
+                    .collect();
+                out.push((
+                    path.clone(),
+                    super::graph::PrefabOriginMetadata::new(origin.document_id(), paths),
+                ));
+            }
+            for (index, (&child, child_tree)) in
+                node_ref.children().iter().zip(&tree.children).enumerate()
+            {
+                let mut child_path = path.clone();
+                child_path.push(index);
+                collect(scene, child, child_tree, child_path, out);
+            }
+        }
+        collect(
+            scene,
+            scene.root_id(),
+            &tree.root,
+            Vec::new(),
+            &mut prefab_origins,
+        );
 
         Self {
             assets,
@@ -46,6 +96,7 @@ impl SceneSnapshot {
             gizmo_mode,
             gizmo_space,
             gizmo_hover,
+            prefab_origins,
         }
     }
 
@@ -57,6 +108,14 @@ impl SceneSnapshot {
         scene.set_time(self.time);
         let mut library = SceneLibrary::new();
         let tree_root = scene.instantiate_tree_asset(&mut library, &self.tree, None, None);
+        for (path, origin) in self.prefab_origins {
+            let node = path.into_iter().try_fold(tree_root, |node, index| {
+                scene.node_children(node).get(index).copied()
+            });
+            if let Some(node) = node {
+                scene.node_mut(node).set_prefab_origin(Some(origin));
+            }
+        }
 
         let main_scene = if self.main_scene_path.is_empty() {
             Some(tree_root)

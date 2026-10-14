@@ -51,6 +51,84 @@ fn scene_asset_roundtrip_without_prefab_reference() {
 }
 
 #[test]
+fn linked_scene_nodes_survive_snapshot_export_and_project_reopen() {
+    use wgpu_cube::project::{ProjectManifest, ProjectMetadata};
+    use wgpu_cube::scene::SceneStateSnapshot;
+    let source = SceneAsset::builder("Source")
+        .add_entity(
+            SceneAssetEntity::builder(SerializedTransform::identity())
+                .with_name("Root")
+                .build(),
+        )
+        .build();
+    let host = SceneAsset::builder("Host")
+        .add_entity(
+            SceneAssetEntity::builder(SerializedTransform::identity())
+                .with_name("HostRoot")
+                .build(),
+        )
+        .build();
+    let mut library = SceneLibrary::new();
+    library.insert("source", source.clone());
+    let mut scene = Scene::new();
+    let main = scene.instantiate_asset(&mut library, &host, None, Some("host"));
+    scene.set_main_scene(main);
+    let reference = ScenePrefabRef {
+        document: "source".into(),
+        node_path: vec!["Root".into()],
+        overrides: ScenePrefabOverrides {
+            transform: Some(make_transform([3., 2., 1.])),
+            visible: Some(false),
+            ..Default::default()
+        },
+    };
+    let tree = SceneTreeAsset::new(
+        "Linked",
+        SceneTreeAssetNode::builder("Linked")
+            .with_scene_ref(reference)
+            .build(),
+    );
+    scene.instantiate_tree_asset(&mut library, &tree, Some(main), Some("host"));
+    assert!(!scene.prefab_entity_metadata().is_empty());
+    let scene = SceneStateSnapshot::capture(&scene).into_scene();
+    assert!(!scene.prefab_entity_metadata().is_empty());
+    let exported = scene.export_main_asset("Host").unwrap();
+    let reference = exported
+        .entities
+        .iter()
+        .find_map(|e| e.scene_ref.as_ref())
+        .unwrap();
+    assert_eq!(reference.document, "source");
+    assert_eq!(
+        reference.overrides.transform.as_ref().unwrap().translation,
+        [3., 2., 1.]
+    );
+    assert_eq!(reference.overrides.visible, Some(false));
+    let mut manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None).unwrap();
+    manifest.scenes.push(wgpu_cube::project::SceneDocument {
+        id: "source".into(),
+        name: "Source".into(),
+        relative_path: "content/scenes/source.json".into(),
+        dependencies: Default::default(),
+    });
+    manifest.add_scene_asset("source".into(), source);
+    let dir = tempfile::tempdir().unwrap();
+    manifest.save_to_dir(dir.path()).unwrap();
+    let loaded = ProjectManifest::load_from_dir(dir.path()).unwrap();
+    let host_id = &loaded.scenes.iter().find(|d| d.id != "source").unwrap().id;
+    let exported = loaded.scene_asset(host_id).unwrap();
+    let mut reopened = Scene::new();
+    let node = reopened.instantiate_asset(&mut library, exported, None, Some(host_id));
+    reopened.set_main_scene(node);
+    assert!(!reopened.prefab_entity_metadata().is_empty());
+    let child = reopened.node_children(node)[0];
+    assert!(reopened
+        .node_local_transform(child)
+        .translation
+        .abs_diff_eq(Vec3::new(3., 2., 1.), 1e-5));
+}
+
+#[test]
 fn scene_asset_roundtrip_with_prefab_reference() {
     let overrides = prefab_overrides_sample();
     let prefab_ref = ScenePrefabRef {

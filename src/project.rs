@@ -475,7 +475,7 @@ impl ProjectManifest {
                 metadata: metadata_paths,
             });
         }
-        let (document, document_id) = if let Some(existing) = existing_document {
+        let (mut document, document_id) = if let Some(existing) = existing_document {
             let mut document = existing.clone();
             document.name = asset.name.clone();
             (document, existing.id.clone())
@@ -485,6 +485,11 @@ impl ProjectManifest {
             (document, document_id)
         };
 
+        document.dependencies.prefab_instances = asset
+            .entities
+            .iter()
+            .filter_map(|e| e.scene_ref.as_ref().map(|r| r.document.clone()))
+            .collect();
         let mut scene_assets = HashMap::new();
         scene_assets.insert(document_id.clone(), asset);
 

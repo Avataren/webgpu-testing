@@ -74,6 +74,63 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Package a saved project through the repository's canonical web-build script.
+    pub fn build_web(&self, project: &Path, overwrite: bool) -> Result<Value, String> {
+        let project = project.canonicalize().map_err(|e| e.to_string())?;
+        if !project.join("project.json").is_file() {
+            return Err("project has no project.json".into());
+        }
+        let output_dir = self
+            .repo
+            .join("target/web")
+            .join(project.file_name().ok_or("project directory has no name")?);
+        if output_dir.exists() && !overwrite {
+            return Err(format!(
+                "{} exists; pass overwrite: true",
+                output_dir.display()
+            ));
+        }
+        let toolchain = self.toolchain()?;
+        let mut command = Command::new("bash");
+        command
+            .current_dir(&self.repo)
+            .args(["build_web.sh", "--project"])
+            .arg(&project)
+            .arg("--no-serve")
+            .env("CARGO_TARGET_DIR", &toolchain.target_dir);
+        if let Some(bin) = toolchain.bin_dir {
+            let mut path = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .collect::<Vec<_>>();
+            path.insert(0, bin);
+            command.env(
+                "PATH",
+                std::env::join_paths(path).map_err(|e| e.to_string())?,
+            );
+        }
+        let started = Instant::now();
+        let output = command.output().map_err(|e| e.to_string())?;
+        let log = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !output.status.success() {
+            return Err(format!(
+                "web build failed:\n{}",
+                log.lines()
+                    .rev()
+                    .take(100)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+        Ok(
+            json!({"ok":true,"directory":output_dir.display().to_string(),"seconds":started.elapsed().as_secs_f64(),"summary":log,"entry":"index.html?example=player"}),
+        )
+    }
     pub fn new(repo: PathBuf, port: u16) -> Self {
         Self {
             repo,

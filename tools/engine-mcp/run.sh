@@ -7,7 +7,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 bin="$here/target/release/engine-mcp"
 
-if [ ! -x "$bin" ] || [ -n "$(find "$here/src" "$here/Cargo.toml" -newer "$bin" -print -quit)" ]; then
+if [ ! -x "$bin" ] || [ -n "$(find "$here/src" "$here/Cargo.toml" "$here/web_playtest.mjs" -newer "$bin" -print -quit)" ]; then
     # cargo is not always on PATH; fall back to rustup toolchains (stable first).
     if ! command -v cargo >/dev/null; then
         for tc in "$HOME"/.rustup/toolchains/stable-* "$HOME"/.rustup/toolchains/nightly-*; do

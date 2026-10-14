@@ -18,6 +18,74 @@ pub struct Tool {
     pub action: Action,
 }
 
+impl Tool {
+    /// Schemas for stable query reports; flexible editing reports remain open objects.
+    pub fn output_schema(&self) -> Value {
+        let (properties, required) = match self.name {
+            "runtime_step" => (
+                json!({"steps":{"type":"integer"},"dt":{"type":"number"},"simulation_steps":{"type":"integer"},"game_time":{"type":"number"},"manual":{"type":"boolean"}}),
+                vec!["steps", "dt", "simulation_steps", "game_time", "manual"],
+            ),
+            "scene_raycast" => (
+                json!({"total":{"type":"integer"},"hits":{"type":"array","items":{"type":"object"}},"precision":{"type":"string"}}),
+                vec!["total", "hits", "precision"],
+            ),
+            "scene_query" => (
+                json!({"total":{"type":"integer"},"offset":{"type":"integer"},"entities":{"type":"array","items":{"type":"object"}},"precision":{"type":"string"}}),
+                vec!["total", "offset", "entities", "precision"],
+            ),
+            "project_validate" => (
+                json!({"ok":{"type":"boolean"},"project":{"type":"string"},"files_checked":{"type":"integer"},"errors":{"type":"array","items":{"type":"object"}},"warnings":{"type":"array","items":{"type":"object"}}}),
+                vec!["ok", "project", "files_checked", "errors", "warnings"],
+            ),
+            "profile_capture" => (
+                json!({"samples":{"type":"integer"},"frame_time_ms":{"type":"object"},"stages_ms":{"type":"object"},"growth":{"type":"object"},"slow_scripts":{"type":"array","items":{"type":"object"}}}),
+                vec![
+                    "samples",
+                    "frame_time_ms",
+                    "stages_ms",
+                    "growth",
+                    "slow_scripts",
+                ],
+            ),
+            _ => (json!({}), Vec::new()),
+        };
+        object(properties, &required)
+    }
+    /// MCP hints describe observable behavior, rather than granting permission.
+    pub fn annotations(&self) -> Value {
+        let read_only = matches!(
+            self.name,
+            "engine_info"
+                | "engine_status"
+                | "engine_output"
+                | "engine_stats"
+                | "lua_api_reference"
+                | "scene_list_entities"
+                | "scene_tree"
+                | "entity_get"
+                | "assets_list"
+                | "script_status"
+                | "input_state"
+                | "camera_get"
+                | "environment_get"
+                | "postprocess_get"
+                | "logs"
+                | "editor_state"
+                | "audio_status"
+                | "sound_inspect"
+                | "scene_query"
+                | "scene_raycast"
+                | "prefab_inspect"
+                | "project_validate"
+                | "profile_capture"
+        );
+        json!({"readOnlyHint": read_only, "destructiveHint": !read_only,
+            "openWorldHint": matches!(self.name, "web_playtest" | "engine_call"),
+            "idempotentHint": read_only && self.name != "profile_capture"})
+    }
+}
+
 fn entity_ref() -> Value {
     json!({
         "anyOf": [{ "type": "integer" }, { "type": "string" }],
@@ -808,7 +876,63 @@ pub fn tools() -> Vec<Tool> {
     ];
     tools.extend(procedural_tools());
     tools.extend(geometry_tools());
+    tools.extend(additional_tools());
+    for tool in &mut tools {
+        match tool.name {
+            "batch" => {
+                tool.description="Run tool calls sequentially; atomic true validates scene-only calls and commits as one undo step, with rollback on failure. dry_run validates without committing. Calls may name results with as and reference prior results using {$ref: alias/id}. Normal batches stop on error by default.";
+                tool.schema["properties"]["atomic"] = json!({"type":"boolean","description":"Run scene-only calls in one engine transaction with rollback and one undo step"});
+                tool.schema["properties"]["dry_run"] = json!({"type":"boolean","description":"Validate a speculative scene transaction without committing (implies atomic)"});
+                tool.schema["properties"]["calls"]["items"]["properties"]["as"] = json!({"type":"string","description":"Name this result for later {$ref: alias/id} references"});
+            }
+            "runtime_set" => {
+                tool.schema["properties"]["manual"] = json!({"type":"boolean","description":"Before play: freeze automatic Lua/animation updates; advance using runtime_step"});
+                tool.schema["properties"]["seed"] = json!({"type":"integer","minimum":0,"description":"Seed Lua's PRNG before scripts load and on_created runs"});
+            }
+            "playtest" => {
+                tool.description="Playtest with wall-clock seconds or exact steps/dt and seeded Lua randomness. Optional setup runs after initialization; assertions check boolean Lua expressions at checkpoints. Returns state/eval, failed assertions/scripts, logs, sounds, scene diff and optional screenshot, then stops. scenario/save_scenario load/save JSON test parameters and input. Manual stepping covers Lua gameplay and scene animation; rendering/UI/GPU particles/custom app systems are independent.";
+                tool.schema["properties"]["steps"] = json!({"type":"integer","minimum":1,"maximum":10000,"description":"Use fixed simulation steps instead of wall-clock seconds"});
+                tool.schema["properties"]["dt"] = json!({"type":"number","minimum":0.000001,"maximum":1,"default":0.016666666666666666});
+                tool.schema["properties"]["seed"] = json!({"type":"integer","minimum":0});
+                tool.schema["properties"]["setup"] = json!({"type":"string","description":"Lua setup hook after on_created, before input and simulation"});
+                tool.schema["properties"]["assertions"] = json!({"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"code":{"type":"string","description":"Lua expression returning true"},"at_step":{"type":"integer","minimum":0}},"required":["code"]}});
+                tool.schema["properties"]["scenario"] = json!({"type":"string","description":"Read test parameters and saved input from a JSON file; explicit arguments override it"});
+                tool.schema["properties"]["save_scenario"] = json!({"type":"string","description":"Save resolved test parameters to this JSON file; refuses existing files"});
+            }
+            _ => {}
+        }
+    }
     tools
+}
+
+fn additional_tools() -> Vec<Tool> {
+    let region = json!({"type":"object","properties":{"min":vec3("Minimum world corner"),"max":vec3("Maximum world corner")},"required":["min","max"]});
+    let ray = json!({"origin":vec3("World ray origin"),"direction":vec3("Nonzero ray direction"),"max_distance":{"type":"number","exclusiveMinimum":0,"default":10000},"exclude":{"type":"array","items":entity_ref()},"visible_only":{"type":"boolean","default":true},"name_contains":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":1000,"default":1}});
+    let mut placement = ray.clone();
+    placement["entity"] = entity_ref();
+    placement["offset"] = json!({"type":"number","default":0});
+    placement["align_normal"] = json!({"type":"boolean","default":false});
+    placement["avoid_overlap"] = json!({"type":"boolean","default":false});
+    let mut sweep = entity_fields();
+    sweep.extend(json!({"entity":entity_ref(),"path":{"type":"array","items":vec3("Polyline point"),"minItems":2,"maxItems":4096},"profile":{"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"description":"Optional simple XY cross-section; defaults to a circle"},"radius":{"type":"number","exclusiveMinimum":0,"default":0.1},"segments":{"type":"integer","minimum":3,"maximum":512,"default":24},"caps":{"type":"boolean","default":true}}).as_object().unwrap().clone());
+    let mut terrain = entity_fields();
+    terrain.extend(json!({"entity":entity_ref(),"resolution":{"type":"array","items":{"type":"integer","minimum":2,"maximum":512},"minItems":2,"maxItems":2,"default":[64,64]},"size":{"type":"array","items":{"type":"number","exclusiveMinimum":0},"minItems":2,"maxItems":2,"default":[20,20]},"heights":{"type":"array","items":{"type":"number"},"description":"Row-major values, x fastest; mutually exclusive with source"},"source":{"type":"string","description":"Height image, resized to resolution; luminance values multiplied by height_scale"},"height_scale":{"type":"number","default":3},"seed":{"type":"integer","minimum":0},"noise_scale":{"type":"number","exclusiveMinimum":0,"default":4},"octaves":{"type":"integer","minimum":1,"maximum":12,"default":4}}).as_object().unwrap().clone());
+    vec![
+        Tool{name:"runtime_step",description:"Advance exactly N Lua/gameplay and scene-animation steps while rendering remains independent. Requires manual play mode. Input delay and tap frames are simulation-step indices within this call. GPU particles and custom app systems are outside the deterministic scope.",schema:object(json!({"steps":{"type":"integer","minimum":1,"maximum":10000,"default":1},"dt":{"type":"number","minimum":0.000001,"maximum":1,"default":0.016666666666666666},"input":{"type":"array","items":{"type":"object"}}}),&[]),action:Action::Engine("runtime.step")},
+        Tool{name:"scene_raycast",description:"Intersect transformed mesh world AABBs; returns distance-sorted hits, positions and box-face normals. This is an approximate bounding-box query, not triangle collision.",schema:object(ray,&["origin","direction"]),action:Action::Engine("scene.raycast")},
+        Tool{name:"scene_query",description:"Find visible mesh bounds overlapping a world region or within a radius of center; returns paginated entity summaries and world bounds. Hidden ancestors are respected.",schema:object(json!({"bounds":region,"center":vec3("Distance-query center"),"radius":{"type":"number","minimum":0},"exclude":{"type":"array","items":entity_ref()},"name_contains":{"type":"string"},"visible_only":{"type":"boolean","default":true},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":1000}}),&[]),action:Action::Engine("scene.query")},
+        Tool{name:"entity_place",description:"Place an entity hierarchy on the closest ray-hit bounding-box surface, using its support point. Supports normal alignment, offset and optional overlap rejection; parent transforms are respected.",schema:object(placement,&["entity","origin","direction"]),action:Action::Engine("entity.place")},
+        Tool{name:"scene_scatter",description:"Seeded copies of an entity hierarchy within XZ bounds, optionally dropped onto world AABB surfaces. Enforces spacing, slope and overlap constraints. All requested placements must fit or no copies are made.",schema:object(json!({"entity":entity_ref(),"bounds":region,"count":{"type":"integer","minimum":1,"maximum":1000,"default":10},"seed":{"type":"integer","minimum":0},"spacing":{"type":"number","minimum":0,"default":1},"on_surface":{"type":"boolean","default":true},"max_slope":{"type":"number","minimum":0,"maximum":90,"default":45},"avoid_overlap":{"type":"boolean","default":true}}),&["entity","bounds"]),action:Action::Engine("scene.scatter")},
+        Tool{name:"prefab_create",description:"Editor: save an entity hierarchy as a portable scene document, embedding procedural geometry and resetting its root transform. Registers the document for scene_instance. Save the project to persist registration.",schema:object(json!({"entity":entity_ref(),"name":{"type":"string"}}),&["entity","name"]),action:Action::Engine("prefab.create")},
+        Tool{name:"prefab_inspect",description:"Editor: inspect a prefab source, linked instance entities and serialized instance overrides.",schema:object(json!({"document_id":{"type":"string"}}),&["document_id"]),action:Action::Engine("prefab.inspect")},
+        Tool{name:"prefab_update",description:"Editor: replace a prefab source with a selected hierarchy. New instances use the new source; existing instances keep current values until recreated or reopened. Save the project to persist registration.",schema:object(json!({"entity":entity_ref(),"document_id":{"type":"string"}}),&["entity","document_id"]),action:Action::Engine("prefab.update")},
+        Tool{name:"profile_capture",description:"Sample consecutive engine frames and report median/p95/p99 CPU frame and stage times, script cost and entity/asset growth. Optional baseline compares frame latency. Measure player performance; GPU execution timestamps are not included.",schema:object(json!({"frames":{"type":"integer","minimum":2,"maximum":10000,"default":300},"baseline":{"type":"object"}}),&[]),action:Action::Engine("profile.capture")},
+        Tool{name:"mesh_sweep",description:"Sweep a circular or polygon cross-section along an open 3D polyline, with transported frames, UVs, normals, tangents and caps. Sharp bends may self-intersect. Geometry is persisted by project_save.",schema:object(Value::Object(sweep),&["path"]),action:Action::Engine("mesh.sweep")},
+        Tool{name:"mesh_heightfield",description:"Generate XZ terrain with upward slope normals from explicit heights, an image or seeded fractal noise. UVs/tangents and embedded geometry persist with project_save. Shares the procedural vertex budget.",schema:object(Value::Object(terrain),&[]),action:Action::Engine("mesh.heightfield")},
+        Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},
+        Tool{name:"web_build",description:"Validate and package a saved project using the existing wasm build pipeline. Returns its output directory. Does not launch a server or publish. Existing artifacts require overwrite true.",schema:object(json!({"project":{"type":"string"},"overwrite":{"type":"boolean","default":false}}),&["project"]),action:Action::Local},
+        Tool{name:"web_playtest",description:"Browser smoke test of a web_build artifact using Node 22+ and Chromium's DevTools protocol, with no npm dependencies. Returns console/page/network failures and a screenshot; sends input to unlock audio. No deployment.",schema:object(json!({"directory":{"type":"string"},"seconds":{"type":"number","minimum":0,"maximum":60,"default":3},"viewport_size":{"type":"array","items":{"type":"integer","minimum":64,"maximum":4096},"minItems":2,"maxItems":2},"browser":{"type":"string","description":"Chromium/Brave executable, or ENGINE_BROWSER"},"save_path":{"type":"string","description":"Optional screenshot file; otherwise returned inline"}}),&["directory"]),action:Action::Local},
+    ]
 }
 
 fn geometry_tools() -> Vec<Tool> {

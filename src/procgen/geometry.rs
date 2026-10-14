@@ -81,6 +81,8 @@ pub enum Shape {
     Lathe(LatheOptions),
     Extrude(ExtrudeOptions),
     Primitive { primitive: String },
+    Sweep(SweepOptions),
+    Heightfield(HeightfieldOptions),
 }
 
 fn one() -> [f32; 3] {
@@ -105,6 +107,291 @@ fn empty() -> MeshData {
         vertices: Vec::new(),
         indices: Vec::new(),
     }
+}
+
+/// Sweep a circular or simple polygon cross-section along an open 3D polyline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SweepOptions {
+    pub path: Vec<[f32; 3]>,
+    /// CCW XY cross-section. Empty selects a circle of radius `radius`.
+    pub profile: Vec<[f32; 2]>,
+    pub radius: f32,
+    pub segments: u32,
+    pub caps: bool,
+}
+impl Default for SweepOptions {
+    fn default() -> Self {
+        Self {
+            path: Vec::new(),
+            profile: Vec::new(),
+            radius: 0.1,
+            segments: 24,
+            caps: true,
+        }
+    }
+}
+
+/// XZ grid with explicit row-major heights or seeded fractal noise.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeightfieldOptions {
+    pub resolution: [u32; 2],
+    pub size: [f32; 2],
+    pub heights: Vec<f32>,
+    pub height_scale: f32,
+    pub seed: u64,
+    pub noise_scale: f32,
+    pub octaves: u32,
+}
+impl Default for HeightfieldOptions {
+    fn default() -> Self {
+        Self {
+            resolution: [64, 64],
+            size: [20.0, 20.0],
+            heights: Vec::new(),
+            height_scale: 3.0,
+            seed: 0,
+            noise_scale: 4.0,
+            octaves: 4,
+        }
+    }
+}
+
+/// Build a tube, cable or polygonal rail. Frames parallel-transport along the path.
+/// Sharp bends may intersect the cross-section; this generator does not perform CSG.
+///
+/// ```
+/// use wgpu_cube::procgen::geometry::{sweep, SweepOptions};
+/// let mesh = sweep(&SweepOptions {
+///     path: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2.0]],
+///     ..Default::default()
+/// }).unwrap();
+/// assert!(!mesh.indices.is_empty());
+/// ```
+pub fn sweep(options: &SweepOptions) -> Result<MeshData, String> {
+    if !(2..=4096).contains(&options.path.len())
+        || !(3..=512).contains(&options.segments)
+        || !finite(&[options.radius])
+        || options.radius <= 0.0
+        || options.path.iter().any(|p| !finite(p))
+    {
+        return Err(
+            "sweep needs 2..=4096 finite path points, radius > 0 and 3..=512 segments".into(),
+        );
+    }
+    let path = options
+        .path
+        .iter()
+        .copied()
+        .map(Vec3::from)
+        .collect::<Vec<_>>();
+    if path.windows(2).any(|p| p[0].distance(p[1]) < EPS) {
+        return Err("sweep path contains a zero-length edge".into());
+    }
+    let mut profile = if options.profile.is_empty() {
+        (0..options.segments)
+            .map(|i| {
+                let a = i as f32 / options.segments as f32 * std::f32::consts::TAU;
+                Vec2::new(a.cos(), a.sin()) * options.radius
+            })
+            .collect::<Vec<_>>()
+    } else {
+        if !(3..=512).contains(&options.profile.len()) || options.profile.iter().any(|p| !finite(p))
+        {
+            return Err("profile needs 3..=512 finite points".into());
+        }
+        options.profile.iter().copied().map(Vec2::from).collect()
+    };
+    validate_polygon(&profile)?;
+    if area(&profile) < 0.0 {
+        profile.reverse();
+    }
+    let n = profile.len();
+    if path.len() * (n + 1) + 2 * n > MAX_VERTICES {
+        return Err("sweep exceeds vertex budget".into());
+    }
+    let caps = triangulate(&profile)?;
+    let mut data = empty();
+    let mut previous_tangent = (path[1] - path[0]).normalize();
+    let reference = if previous_tangent.y.abs() < 0.9 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    let mut right = reference.cross(previous_tangent).normalize();
+    let mut distance = 0.0;
+    let mut frames = Vec::new();
+    for i in 0..path.len() {
+        let tangent = if i == 0 {
+            previous_tangent
+        } else if i + 1 == path.len() {
+            (path[i] - path[i - 1]).normalize()
+        } else {
+            ((path[i] - path[i - 1]).normalize() + (path[i + 1] - path[i]).normalize())
+                .try_normalize()
+                .ok_or("sweep cannot reverse direction at a path point")?
+        };
+        if previous_tangent.dot(tangent) < -0.999 {
+            return Err("sweep has a reversing bend".into());
+        }
+        right = Quat::from_rotation_arc(previous_tangent, tangent) * right;
+        right = (right - tangent * right.dot(tangent)).normalize();
+        let up = tangent.cross(right).normalize();
+        if i > 0 {
+            distance += path[i].distance(path[i - 1]);
+        }
+        frames.push((right, up, tangent));
+        for j in 0..=n {
+            let point = profile[j % n];
+            let before = (point - profile[(j + n - 1) % n]).normalize();
+            let after = (profile[(j + 1) % n] - point).normalize();
+            let edge = (before + after)
+                .try_normalize()
+                .ok_or("profile has a reversing corner")?;
+            let normal = right * edge.y - up * edge.x;
+            let along = right * edge.x + up * edge.y;
+            let position = path[i] + right * point.x + up * point.y;
+            data.vertices.push(v(
+                position.to_array(),
+                normal.to_array(),
+                [j as f32 / n as f32, distance],
+                [along.x, along.y, along.z, 1.0],
+            ));
+        }
+        previous_tangent = tangent;
+    }
+    for i in 0..path.len() - 1 {
+        for j in 0..n {
+            let a = (i * (n + 1) + j) as u32;
+            let b = a + 1;
+            let c = a + (n + 1) as u32;
+            let d = c + 1;
+            triangle(&mut data, a, b, c);
+            triangle(&mut data, b, d, c);
+        }
+    }
+    if options.caps {
+        for (i, sign) in [(0, -1.0), (path.len() - 1, 1.0)] {
+            let (right, up, tangent) = frames[i];
+            let normal = tangent * sign;
+            let base = data.vertices.len() as u32;
+            for point in &profile {
+                let p = path[i] + right * point.x + up * point.y;
+                data.vertices.push(v(
+                    p.to_array(),
+                    normal.to_array(),
+                    point.to_array(),
+                    [right.x, right.y, right.z, sign],
+                ));
+            }
+            for indices in &caps {
+                let [a, b, c] = indices.map(|index| base + index as u32);
+                if sign > 0.0 {
+                    triangle(&mut data, a, b, c);
+                } else {
+                    triangle(&mut data, a, c, b);
+                }
+            }
+        }
+    }
+    check_budget(&data)?;
+    Ok(data)
+}
+
+/// Build an upward-facing grid with slope normals and tangent-space UVs.
+///
+/// ```
+/// use wgpu_cube::procgen::geometry::{heightfield, HeightfieldOptions};
+/// let mesh = heightfield(&HeightfieldOptions {
+///     resolution: [2, 2], heights: vec![0.0; 4], ..Default::default()
+/// }).unwrap();
+/// assert_eq!(mesh.indices.len(), 6);
+/// ```
+pub fn heightfield(options: &HeightfieldOptions) -> Result<MeshData, String> {
+    let [w, h] = options.resolution.map(|n| n as usize);
+    if w < 2
+        || h < 2
+        || w > 512
+        || h > 512
+        || w * h > MAX_VERTICES
+        || !finite(&options.size)
+        || options.size.iter().any(|x| *x <= 0.0)
+        || !finite(&[options.height_scale, options.noise_scale])
+        || options.noise_scale <= 0.0
+        || !(1..=12).contains(&options.octaves)
+    {
+        return Err("heightfield needs resolution 2..=512 within vertex budget, positive size/noise_scale and octaves 1..=12".into());
+    }
+    if !options.heights.is_empty() && (options.heights.len() != w * h || !finite(&options.heights))
+    {
+        return Err(
+            "heights must contain resolution.x * resolution.y finite values, x fastest".into(),
+        );
+    }
+    let seed_offset = [
+        (options.seed & 65535) as f64 * 0.013,
+        (options.seed >> 16 & 65535) as f64 * 0.017,
+        (options.seed >> 32) as f64 * 0.019,
+    ];
+    let heights = if options.heights.is_empty() {
+        (0..w * h)
+            .map(|index| {
+                let x = (index % w) as f64 / (w - 1) as f64 * options.noise_scale as f64;
+                let z = (index / w) as f64 / (h - 1) as f64 * options.noise_scale as f64;
+                super::noise::fbm3(
+                    x + seed_offset[0],
+                    seed_offset[1] + 0.37,
+                    z + seed_offset[2],
+                    options.octaves,
+                ) as f32
+                    * options.height_scale
+            })
+            .collect::<Vec<_>>()
+    } else {
+        options
+            .heights
+            .iter()
+            .map(|v| v * options.height_scale)
+            .collect()
+    };
+    let dx = options.size[0] / (w - 1) as f32;
+    let dz = options.size[1] / (h - 1) as f32;
+    let mut data = empty();
+    for z in 0..h {
+        for x in 0..w {
+            let xl = x.saturating_sub(1);
+            let xr = (x + 1).min(w - 1);
+            let zl = z.saturating_sub(1);
+            let zr = (z + 1).min(h - 1);
+            let sx = (heights[z * w + xr] - heights[z * w + xl]) / ((xr - xl) as f32 * dx);
+            let sz = (heights[zr * w + x] - heights[zl * w + x]) / ((zr - zl) as f32 * dz);
+            let normal = Vec3::new(-sx, 1.0, -sz).normalize();
+            let tangent = Vec3::new(1.0, sx, 0.0).normalize();
+            data.vertices.push(v(
+                [
+                    x as f32 * dx - options.size[0] * 0.5,
+                    heights[z * w + x],
+                    z as f32 * dz - options.size[1] * 0.5,
+                ],
+                normal.to_array(),
+                [x as f32 / (w - 1) as f32, z as f32 / (h - 1) as f32],
+                [tangent.x, tangent.y, tangent.z, -1.0],
+            ));
+        }
+    }
+    for z in 0..h - 1 {
+        for x in 0..w - 1 {
+            let a = (z * w + x) as u32;
+            let b = a + 1;
+            let c = a + w as u32;
+            let d = c + 1;
+            triangle(&mut data, a, c, b);
+            triangle(&mut data, b, c, d);
+        }
+    }
+    check_budget(&data)?;
+    Ok(data)
 }
 
 fn finite(values: &[f32]) -> bool {
@@ -615,6 +902,8 @@ pub fn compose(parts: &[MeshPart]) -> Result<MeshData, String> {
         let mut data = match &part.shape {
             Shape::Lathe(options) => lathe(options),
             Shape::Extrude(options) => extrude(options),
+            Shape::Sweep(options) => sweep(options),
+            Shape::Heightfield(options) => heightfield(options),
             Shape::Primitive { primitive } => {
                 let descriptor = match primitive.as_str() {
                     "cube" => PrimitiveMeshDescriptor::Cube,
@@ -685,6 +974,54 @@ pub fn compose(parts: &[MeshPart]) -> Result<MeshData, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sweeps_keep_outward_winding_and_reject_reversing_paths() {
+        let options = SweepOptions {
+            path: vec![[0., 0., 0.], [0., 0., 2.], [0.5, 0., 3.]],
+            ..Default::default()
+        };
+        assert_frames_and_winding(&sweep(&options).unwrap());
+        assert!(sweep(&SweepOptions {
+            path: vec![[0., 0., 0.], [0., 0., 1.], [0., 0., 0.]],
+            ..Default::default()
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn heightfields_reproduce_seeds_and_match_sloped_normals() {
+        let options = HeightfieldOptions {
+            resolution: [3, 3],
+            size: [2., 2.],
+            heights: vec![0., 1., 2., 0., 1., 2., 0., 1., 2.],
+            height_scale: 1.,
+            ..Default::default()
+        };
+        let mesh = heightfield(&options).unwrap();
+        assert_frames_and_winding(&mesh);
+        assert!(Vec3::from(mesh.vertices[4].normal)
+            .abs_diff_eq(Vec3::new(-1., 1., 0.).normalize(), 1e-6));
+        let options = HeightfieldOptions {
+            seed: 12,
+            ..Default::default()
+        };
+        assert_eq!(
+            generated(heightfield(&options).unwrap()).key,
+            generated(heightfield(&options).unwrap()).key
+        );
+        assert_ne!(
+            generated(heightfield(&options).unwrap()).key,
+            generated(
+                heightfield(&HeightfieldOptions {
+                    seed: 13,
+                    ..options
+                })
+                .unwrap()
+            )
+            .key
+        );
+    }
 
     fn assert_frames_and_winding(mesh: &MeshData) {
         assert!(!mesh.indices.is_empty());

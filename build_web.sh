@@ -6,6 +6,11 @@
 set -euo pipefail
 
 PORT="${PORT:-8080}"
+NO_SERVE=0
+for ARG in "$@"; do
+    if [ "$ARG" = "--no-serve" ]; then NO_SERVE=1; fi
+done
+BUILD_DIR="${CARGO_TARGET_DIR:-target}"
 
 # The CLI must match the wasm-bindgen crate in Cargo.lock exactly.
 WANT=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
@@ -27,19 +32,21 @@ if [ "${1:-}" = "--project" ]; then
     rm -rf "$OUT"
     mkdir -p "$OUT"
     wasm-bindgen --target web --out-dir "$OUT/pkg" \
-        target/wasm32-unknown-unknown/release/player.wasm
+        "$BUILD_DIR/wasm32-unknown-unknown/release/player.wasm"
     # The player loads project.json and content/ relative to the page.
     cp web/index.html "$PROJECT/project.json" "$OUT/"
     cp -r "$PROJECT/content" "$OUT/"
 
     echo "Staged $OUT; open http://localhost:$PORT/?example=player"
+    if [ "$NO_SERVE" = 1 ]; then exit 0; fi
     exec python3 -m http.server --directory "$OUT" "$PORT"
 fi
 
 EXAMPLE="${1:-minimal}"
 cargo build --target wasm32-unknown-unknown --release --example "$EXAMPLE"
 wasm-bindgen --target web --out-dir web/pkg \
-    "target/wasm32-unknown-unknown/release/examples/$EXAMPLE.wasm"
+    "$BUILD_DIR/wasm32-unknown-unknown/release/examples/$EXAMPLE.wasm"
 
 echo "Open http://localhost:$PORT/?example=$EXAMPLE"
+if [ "$NO_SERVE" = 1 ]; then exit 0; fi
 exec python3 -m http.server --directory web "$PORT"

@@ -312,6 +312,7 @@ impl AppCore {
             frame.dt(),
             runtime_mode,
             self.runtime.state_handle().time_scale(),
+            self.runtime.state_handle().manual_simulation(),
         ) {
             Some(new_handle) => new_handle,
             None => {

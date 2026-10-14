@@ -165,6 +165,8 @@ pub(super) fn runtime_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "mode": runtime_mode_name(handle.active_mode()),
         "requested": runtime_mode_name(handle.desired_mode()),
         "time_scale": handle.time_scale(),
+        "manual": handle.manual_simulation(),
+        "simulation_steps": handle.simulation_steps(),
     }))
 }
 
@@ -179,10 +181,35 @@ pub(super) fn runtime_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Re
         Some(other) => return Err(format!("unknown mode {other:?}; use play or stop")),
     };
     let time_scale = opt_f64(params, "time_scale");
-    if mode.is_none() && time_scale.is_none() {
+    let manual = opt_bool(params, "manual");
+    let seed = params
+        .get("seed")
+        .map(|value| value.as_u64().ok_or("seed must be a nonnegative integer"))
+        .transpose()?;
+    let next_manual = manual.unwrap_or(handle.manual_simulation());
+    if let Some(scale) = time_scale {
+        if !(0.0..=MAX_TIME_SCALE).contains(&scale) {
+            return Err(format!("time_scale must be between 0 and {MAX_TIME_SCALE}"));
+        }
+        if next_manual && scale != 0.0 {
+            return Err("manual simulation requires time_scale 0".into());
+        }
+    }
+    if manual.is_some() || seed.is_some() {
+        if handle.active_mode() == RuntimeMode::Playing {
+            return Err(
+                "configure manual/seed before entering play; stop the current session first".into(),
+            );
+        }
+        handle.configure_simulation(next_manual, seed);
+    }
+    if mode.is_none() && time_scale.is_none() && manual.is_none() && seed.is_none() {
         return Err("give mode (play or stop) and/or time_scale".into());
     }
     if let Some(scale) = time_scale {
+        if handle.manual_simulation() && scale != 0.0 {
+            return Err("manual simulation requires time_scale 0".into());
+        }
         if !(0.0..=MAX_TIME_SCALE).contains(&scale) {
             return Err(format!("time_scale must be between 0 and {MAX_TIME_SCALE}"));
         }
@@ -192,6 +219,7 @@ pub(super) fn runtime_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Re
     let mut result = json!({
         "mode": runtime_mode_name(previous),
         "time_scale": handle.time_scale(),
+        "manual": handle.manual_simulation(),
     });
     if let Some(mode) = mode {
         handle.request_mode(mode);

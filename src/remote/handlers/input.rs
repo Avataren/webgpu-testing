@@ -66,7 +66,7 @@ fn vec2(value: &Value) -> Result<Vec2, String> {
 }
 
 /// Turn one event description into scheduled `(delay, event)` pairs.
-fn parse_event(event: &Value) -> Result<Vec<(u64, InputEvent)>, String> {
+pub(super) fn parse_event(event: &Value) -> Result<Vec<(u64, InputEvent)>, String> {
     let delay = opt_u64(event, "delay").unwrap_or(0);
     let action = opt_str(event, "action").unwrap_or("tap");
     let hold = opt_u64(event, "frames")
@@ -76,7 +76,10 @@ fn parse_event(event: &Value) -> Result<Vec<(u64, InputEvent)>, String> {
     let press_release =
         |down: InputEvent, up: InputEvent| -> Result<Vec<(u64, InputEvent)>, String> {
             match action {
-                "tap" | "press" => Ok(vec![(delay, down), (delay + hold, up)]),
+                "tap" | "press" => Ok(vec![
+                    (delay, down),
+                    (delay.checked_add(hold).ok_or("input delay overflows")?, up),
+                ]),
                 "down" | "hold" => Ok(vec![(delay, down)]),
                 "up" | "release" => Ok(vec![(delay, up)]),
                 other => Err(format!("unknown action {other:?}; use tap, down or up")),

@@ -2,7 +2,9 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::procgen::geometry::{self, ExtrudeOptions, LatheOptions, MeshPart};
+use crate::procgen::geometry::{
+    self, ExtrudeOptions, HeightfieldOptions, LatheOptions, MeshPart, SweepOptions,
+};
 use crate::remote::json::{entity_from_json, entity_id};
 
 use super::{entity, RemoteContext, RemoteResult};
@@ -20,6 +22,14 @@ pub(super) fn generate(
     let data = match method {
         "mesh.lathe" => geometry::lathe(&parse::<LatheOptions>(params)?),
         "mesh.extrude" => geometry::extrude(&parse::<ExtrudeOptions>(params)?),
+        "mesh.sweep" => geometry::sweep(&parse::<SweepOptions>(params)?),
+        "mesh.heightfield" => {
+            let mut options = parse::<HeightfieldOptions>(params)?;
+            if let Some(source) = params.get("source").and_then(Value::as_str) {
+                load_height_image(source, &mut options)?;
+            }
+            geometry::heightfield(&options)
+        }
         "mesh.compose" => geometry::compose(&parse::<Vec<MeshPart>>(
             params.get("parts").ok_or("parts is required")?,
         )?),
@@ -58,6 +68,8 @@ pub(super) fn generate(
             fields.entry("name").or_insert(json!(match method {
                 "mesh.lathe" => "Lathe",
                 "mesh.extrude" => "Extrusion",
+                "mesh.sweep" => "Sweep",
+                "mesh.heightfield" => "Heightfield",
                 _ => "Composite",
             }));
             fields.insert("kind".into(), json!("empty"));
@@ -78,4 +90,32 @@ pub(super) fn generate(
         "notes": "UVs, normals and tangents included. project_save persists geometry and materials. Composition joins parts without boolean union."
     });
     Ok(report)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_height_image(source: &str, options: &mut HeightfieldOptions) -> Result<(), String> {
+    if options.resolution.iter().any(|n| !(2..=512).contains(n))
+        || options.resolution[0] as usize * options.resolution[1] as usize > geometry::MAX_VERTICES
+    {
+        return Err("height image resolution exceeds the mesh budget".into());
+    }
+    if !options.heights.is_empty() {
+        return Err("use source or heights, not both".into());
+    }
+    let image =
+        image::open(crate::project::resolve_project_path(source)).map_err(|e| e.to_string())?;
+    let gray = image
+        .resize_exact(
+            options.resolution[0],
+            options.resolution[1],
+            image::imageops::FilterType::Triangle,
+        )
+        .to_luma32f();
+    options.heights = gray.pixels().map(|p| p[0]).collect();
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_height_image(_: &str, _: &mut HeightfieldOptions) -> Result<(), String> {
+    Err("height image generation requires native authoring".into())
 }

@@ -64,7 +64,15 @@ impl ProjectController {
     }
 
     pub(super) fn add_scene_document(&mut self, document: wgpu_cube::project::SceneDocument) {
-        self.scene_documents.push(document);
+        if let Some(existing) = self
+            .scene_documents
+            .iter_mut()
+            .find(|doc| doc.id == document.id)
+        {
+            *existing = document;
+        } else {
+            self.scene_documents.push(document);
+        }
     }
 
     pub(super) fn scene_documents(&self) -> &[wgpu_cube::project::SceneDocument] {

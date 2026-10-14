@@ -58,10 +58,13 @@ Options and environment:
 | Scripting | `lua_eval`, `script_status`, `script_reload`, `lua_api_reference` |
 | Runtime | `runtime_set` (play/stop, time_scale), `wait`, `playtest` |
 | Audio | `sound_play`, `sound_stop`, `audio_status` |
-| Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `texture_generate`, `texture_maps`, `sound_generate` |
+| Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
+| Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
+| Prefabs | `prefab_create`, `prefab_inspect`, `prefab_update` (instances use `scene_instance`) |
+| Verification | `runtime_step`, `profile_capture`, `project_validate`, `web_build`, `web_playtest` |
 
 Value conventions: meters, Y up, -Z forward; rotations as Euler degrees `[x, y, z]`
 applied yaw, pitch, roll (like Lua's `set_rotation`); colors as `[r, g, b(, a)]` in 0..1
@@ -226,6 +229,132 @@ with clipping headroom and short endpoint fades. The response automatically incl
 `sound_inspect` measurements and a waveform/spectrogram. Use `path` with `sound_play`
 or Lua `play_sound`; replacing a clip clears its cache for the next playback.
 `image: false` omits previews and spectrograms from any generation tool.
+
+## Repeatable gameplay tests
+
+`runtime_set {mode: "play", manual: true, seed: 123}` starts an explicit-step session.
+Configure it while stopped, then `wait {frames: 2}` for the transition. Lua chunks and
+`on_created` run once with the seeded VM; automatic frames then leave gameplay and scene
+animation frozen. `runtime_step {steps: 60, dt: 0.016666666666666666}` advances one second.
+Input `delay` and tap `frames` refer to simulation steps, starting at zero; queued releases
+survive subsequent step calls. `input_clear` clears both frame and simulation queues.
+Stop resets manual mode, the seed configuration and time scale.
+
+Rendering, GPU particles, UI hooks, external I/O and custom application's update systems
+are outside this deterministic scope. Seeds do not guarantee identical pixels or make
+scripts using wall clocks, external state or their own `math.randomseed` deterministic.
+
+`playtest` accepts `steps`, `dt`, `seed`, `setup` and `assertions`, in addition to its
+existing reporting options. Fixed-step tests restart play from the editor snapshot.
+`setup` runs after initialization, in `entity`'s script (or the uniquely inferred script).
+Each assertion's `code` is a Lua expression that must return boolean `true`:
+
+```json
+{
+  "steps": 120, "seed": 123, "entity": "Controller", "lean": true,
+  "setup": "RT.god(true)",
+  "input": [{"key": "A", "action": "tap", "delay": 10, "frames": 3}],
+  "assertions": [
+    {"name": "initialized", "at_step": 0, "code": "GAME.wave == 1"},
+    {"name": "alive", "at_step": 60, "code": "GAME.lives > 0"},
+    {"name": "completed", "code": "GAME.lives > 0"}
+  ],
+  "eval": "return GAME.stats"
+}
+```
+
+An omitted `at_step` checks at the end; the first failed checkpoint ends simulation and
+returns `ok: false`, `first_failure`, assertion observations, logs and the optional
+screenshot before stopping. Script failures also make `ok` false. Seconds-based tests
+support setup and final assertions. `save_scenario` writes the resolved test to a new JSON
+file; `scenario` loads it, with explicit arguments overriding saved ones. Save paths are
+relative to the repository unless absolute. Existing scenario files are never replaced.
+
+## Spatial editing and transactions
+
+`scene_query {bounds: {min, max}}` finds meshes whose world boxes intersect a region;
+`{center: [x,y,z], radius}` measures distance to each box. Results have world bounds,
+pagination (`offset`, `limit`) and optional distance. `name_contains`, `exclude` (entity
+hierarchies) and `visible_only` filter both queries and rays; hidden ancestors are respected.
+
+`scene_raycast {origin, direction, max_distance, limit}` returns distance-sorted hits,
+world positions and normals. **These are world AABB intersections**, including box-face
+normals on rotated meshes; they are approximate placement queries, not triangle collision.
+`entity_place {entity, origin, direction, offset, align_normal, avoid_overlap}` places a
+hierarchy's support point on the nearest hit, excluding itself. Parent transforms are
+respected; a rejected placement restores its transform. `scene_scatter` copies a hierarchy
+into XZ `bounds: {min, max}` with `count`, `seed`, `spacing`, `on_surface`, `max_slope` and
+`avoid_overlap`. All copies must fit within the attempt budget or nothing is created.
+
+`batch {atomic: true, calls}` validates and edits a speculative scene, committing once as
+one undo entry. An error restores the original scene. `dry_run: true` validates without
+committing and implies atomic mode; its returned entity IDs are speculative. Give a call
+an `as` alias, then reference its result using JSON-pointer syntax:
+
+```json
+{"atomic": true, "calls": [
+  {"tool": "entity_spawn", "as": "root", "arguments": {"kind": "empty", "name": "Group"}},
+  {"tool": "entity_spawn", "arguments": {"kind": "cube", "parent": {"$ref": "root/id"}}}
+]}
+```
+
+Transactions require editor mode and accept scene/entity edits, spatial queries, placement,
+scatter, procedural meshes, camera/environment/postprocessing edits and scene inspection.
+They exclude scripts, files, asset generators/imports, audio, project lifecycle and runtime
+operations. Normal batches retain their existing sequential behavior.
+
+## Prefabs, geometry and performance
+
+`prefab_create {entity, name}` saves a hierarchy as a scene document with embedded geometry,
+portable material/script paths, a zeroed root transform and fresh editor identities.
+`prefab_inspect {document_id}` returns its source, linked instance entities and serialized
+overrides. `prefab_update {entity, document_id}` replaces a source created by this tool.
+Use `scene_instance {document_id, node_path: ["RootName"]}` for linked instances.
+Source files save immediately; `project_save` persists registration. New instances load
+updated sources; existing instances retain their current values until recreated or reopened.
+Linked child scenes retain their source links across play/stop, transactions and project
+save/reopen. Instance placement and root visibility are saved as overrides.
+Updating from another selection preserves the source root name so existing links stay valid.
+
+`mesh_sweep {path, radius, segments, caps}` sweeps a circular section along an open 3D
+polyline, using transported frames. Supply `profile: [[x,y], ...]` for a simple polygonal
+section. Sharp bends may intersect; reversing paths and invalid profiles are rejected.
+`mesh_heightfield {resolution, size, height_scale, seed, noise_scale, octaves}` builds XZ
+terrain. Alternatively provide row-major `heights` (x fastest), or a `source` image resized
+to resolution and sampled as luminance. Explicit/image values multiply `height_scale`.
+Both generators include UVs, normals and tangents, accept the ordinary geometry editing
+fields, share the existing mesh budget, and persist through `project_save`.
+
+`profile_capture {frames: 300}` samples consecutive frames, returning median/p95/p99/max
+frame and stage times, cumulative script-hook cost over the capture, and entity/asset
+growth. Pass an earlier report as `baseline` for latency comparisons. CPU timings include
+submission and display waits; they do not measure GPU execution. Use the player to measure
+game costs without editor overhead. Reloading/despawning scripts during a capture can
+reset or remove their cumulative counters.
+
+## Validation and web verification
+
+`project_validate {path}` uses the running native engine to inspect saved project/scene
+JSON, missing/nonportable asset paths, camera settings, hierarchy structure, mesh indices,
+duplicate identifiers/names and Lua syntax. It neither executes scripts nor migrates files.
+Without `path`, it checks the active project. Dynamic script paths and gameplay need tests.
+
+`web_build {project, overwrite}` validates the project and invokes `build_web.sh --project
+<dir> --no-serve`, returning `target/web/<project-directory-name>`. Existing artifacts require
+`overwrite: true`. `web_playtest {directory, seconds, viewport_size, browser, save_path}`
+serves that artifact on a temporary loopback port and tests it in a fresh headless Chromium
+profile. It checks device/canvas initialization and reports console, exception and network
+failures with a screenshot. A Shift press unlocks web audio. Node 22+ and Chromium/Brave are
+required; there are no npm dependencies. `ENGINE_BROWSER` selects an executable. Temporary
+server/browser processes and profiles are cleaned up. Neither tool publishes anything.
+
+All tools expose output schemas and behavior annotations. Results include structured JSON
+alongside compatible text/image content; failed assertions, transactions and validation
+reports set MCP `isError`. Stable query reports have typed output fields.
+
+Regression checks: build native editor/player and the MCP binary, then run
+`python3 tools/engine-mcp/examples/verify_additions.py --web`. It creates its own editor,
+port and scratch project, retaining screenshots and reports under `target/engine-mcp/`.
 
 ## Talking to the engine without MCP
 

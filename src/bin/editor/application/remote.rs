@@ -28,6 +28,9 @@ pub(super) const EDITOR_METHODS: &[&str] = &[
     "scene.rename",
     "scene.instance",
     "asset.import",
+    "prefab.create",
+    "prefab.inspect",
+    "prefab.update",
 ];
 
 fn str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -145,6 +148,8 @@ impl EditorApplication {
         ctx: &mut RemoteContext<'_, '_>,
     ) -> Option<RemoteResult> {
         let result = match method {
+            "prefab.create" | "prefab.update" => self.remote_save_prefab(method, params, ctx),
+            "prefab.inspect" => self.remote_inspect_prefab(params, ctx),
             "editor.state" => Ok(self.remote_editor_state(ctx)),
             "editor.undo" | "editor.redo" => {
                 let history = self.history();
@@ -309,6 +314,146 @@ impl EditorApplication {
             _ => return None,
         };
         Some(result)
+    }
+
+    fn remote_save_prefab(
+        &mut self,
+        method: &str,
+        params: &Value,
+        ctx: &mut RemoteContext<'_, '_>,
+    ) -> RemoteResult {
+        if ctx.runtime_mode() != Some(RuntimeMode::Editor) {
+            return Err("prefab authoring requires editor mode".into());
+        }
+        let root = self
+            .project_system()
+            .controller()
+            .current_dir()
+            .cloned()
+            .ok_or("open a project before authoring prefabs")?;
+        let entity = entity_from_json(
+            ctx.gpu.scene.main_world(),
+            params.get("entity").ok_or("entity required")?,
+        )?;
+        let (id, name) = if method == "prefab.create" {
+            let name = str_param(params, "name")?;
+            if name.is_empty()
+                || name.len() > 100
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return Err("prefab name needs 1..=100 letters, digits, _ or -".into());
+            }
+            let id = format!("prefab_{name}");
+            if self.project_system().scene_document(&id).is_some()
+                || root
+                    .join("content/scenes")
+                    .join(format!("{id}.json"))
+                    .exists()
+            {
+                return Err("prefab already exists; use prefab_update".into());
+            }
+            (id, name.to_string())
+        } else {
+            let id = str_param(params, "document_id")?;
+            let document = self
+                .project_system()
+                .scene_document(id)
+                .ok_or("unknown prefab document")?;
+            if !id.starts_with("prefab_") {
+                return Err("prefab_update only updates documents created by prefab_create".into());
+            }
+            (id.to_string(), document.name.clone())
+        };
+        let mut asset = ctx
+            .gpu
+            .scene
+            .export_entity_subtree(entity, name)
+            .ok_or("cannot export this hierarchy")?;
+        if method == "prefab.update" {
+            // Linked instances address the source root by name. Reauthoring from a
+            // differently named selection must keep that existing reference valid.
+            let root_name = self
+                .project_system_mut()
+                .scene_library_mut()
+                .asset(&id)
+                .and_then(|source| source.entities.iter().find(|row| row.parent.is_none()))
+                .and_then(|row| row.name.clone());
+            if let Some(root) = asset.entities.first_mut() {
+                if root_name.is_some() {
+                    root.name = root_name;
+                }
+            }
+        }
+        asset.relativize_script_paths(&root);
+        asset
+            .persist_material_assets(&root)
+            .map_err(|e| e.to_string())?;
+        let entities = asset.entities.len();
+        self.project_system_mut()
+            .save_scene_to_library(id.clone(), asset, &root)?;
+        Ok(
+            json!({"document_id":id,"path":format!("content/scenes/{id}.json"),"entities":entities,
+            "note":"Source saved and registered for scene_instance. project_save persists the document registration. Existing instances retain their current values; instantiate again or reopen to load the updated source."}),
+        )
+    }
+
+    fn remote_inspect_prefab(
+        &mut self,
+        params: &Value,
+        ctx: &mut RemoteContext<'_, '_>,
+    ) -> RemoteResult {
+        let id = str_param(params, "document_id")?;
+        let document = self
+            .project_system()
+            .scene_document(id)
+            .cloned()
+            .ok_or("unknown document")?;
+        let asset = self
+            .project_system_mut()
+            .scene_library_mut()
+            .asset(id)
+            .cloned()
+            .ok_or("source document is not loaded")?;
+        let instances = ctx
+            .gpu
+            .scene
+            .prefab_entity_metadata()
+            .into_iter()
+            .filter(|(_, meta)| meta.document_id == id)
+            .map(|(entity, meta)| json!({"id":entity_id(entity),"node_path":meta.node_path}))
+            .collect::<Vec<_>>();
+        // Instance transform/component overrides are serialized in scene_ref on proxy entities.
+        let tree = ctx.gpu.scene.export_main_asset("PrefabInspection");
+        fn collect(value: &Value, id: &str, out: &mut Vec<Value>) {
+            match value {
+                Value::Object(object) => {
+                    if let Some(reference) = object.get("scene_ref").filter(|r| r["document"] == id)
+                    {
+                        out.push(reference.clone());
+                    }
+                    for value in object.values() {
+                        collect(value, id, out);
+                    }
+                }
+                Value::Array(array) => {
+                    for value in array {
+                        collect(value, id, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut overrides = Vec::new();
+        collect(
+            &serde_json::to_value(tree).map_err(|e| e.to_string())?,
+            id,
+            &mut overrides,
+        );
+        Ok(
+            json!({"document":document,"source":asset,"instance_entities":instances,"instance_overrides":overrides}),
+        )
     }
 
     fn remote_editor_state(&self, ctx: &mut RemoteContext<'_, '_>) -> Value {

@@ -11,6 +11,9 @@ mod input;
 mod procedural;
 mod rendering;
 mod scripting;
+mod simulation;
+mod spatial;
+mod transaction;
 mod voxel;
 
 use serde_json::{json, Value};
@@ -30,6 +33,8 @@ pub type RemoteResult = Result<Value, String>;
 
 /// Built-in methods with a one-line description each.
 pub const CORE_METHODS: &[(&str, &str)] = &[
+    ("profile.capture", "Capture frame percentiles, stage timings and asset growth"),
+    ("project.validate", "Read-only saved-project asset, camera and Lua syntax validation"),
     (
         "engine.info",
         "Frame, runtime mode, active scene, surface size, project root",
@@ -88,6 +93,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     ("runtime.get", "Current runtime mode"),
     ("runtime.set", "Switch between editor and play mode"),
+    ("runtime.step", "Advance explicit fixed simulation steps with step-indexed input"),
+    ("scene.raycast", "Raycast visible world-space mesh bounding boxes"),
+    ("scene.query", "Query mesh bounds by region, distance and name"),
+    ("entity.place", "Place a hierarchy on a bounding-box surface"),
+    ("scene.scatter", "Scatter copies using seeded spacing and surface constraints"),
+    ("scene.transaction", "Validate, commit or roll back a group of scene edits with aliases"),
+    ("mesh.sweep", "Sweep a circular or polygonal cross-section along a 3D path"),
+    ("mesh.heightfield", "Build terrain from explicit heights, an image or seeded noise"),
     ("camera.get", "View camera position, target and projection"),
     (
         "camera.set",
@@ -141,6 +154,11 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ("screenshot", "PNG of the window or the scene viewport"),
     ("wait", "Answer after a number of frames and/or seconds"),
 ];
+
+pub(crate) fn profile_sample(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    info::stats(ctx)
+}
+pub(crate) use simulation::apply_event as apply_simulation_event;
 
 /// Access to the engine while handling a remote request.
 pub struct RemoteContext<'c, 'w> {
@@ -200,6 +218,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
     }
 
     match method {
+        "project.validate" => validate_project(params),
         "engine.info" => info::engine_info(ctx),
         "engine.methods" => Ok(methods(ctx)),
         "stats" => info::stats(ctx),
@@ -216,7 +235,9 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "entity.delete" => entity::delete(params, ctx),
         "entity.duplicate" => entity::duplicate(params, ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
-        "mesh.lathe" | "mesh.extrude" | "mesh.compose" => geometry::generate(method, params, ctx),
+        "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {
+            geometry::generate(method, params, ctx)
+        }
         "texture.generate" => procedural::texture_generate(params, ctx, false),
         "texture.maps" => procedural::texture_generate(params, ctx, true),
         "audio.generate" => procedural::sound_generate(params),
@@ -225,6 +246,12 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "script.reload" => scripting::reload(params, ctx),
         "runtime.get" => scripting::runtime_get(ctx),
         "runtime.set" => scripting::runtime_set(params, ctx),
+        "runtime.step" => simulation::step(params, ctx),
+        "scene.raycast" => spatial::raycast(params, ctx),
+        "scene.query" => spatial::query(params, ctx),
+        "entity.place" => spatial::place(params, ctx),
+        "scene.scatter" => spatial::scatter(params, ctx),
+        "scene.transaction" => transaction::run(params, ctx),
         "camera.get" => rendering::camera_get(ctx),
         "camera.set" => rendering::camera_set(params, ctx),
         "environment.get" => rendering::environment_get(ctx),
@@ -262,6 +289,19 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             "unknown method {method:?}; call engine.methods for the list"
         )),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validate_project(params: &Value) -> RemoteResult {
+    let path = super::json::opt_str(params, "path")
+        .map(std::path::PathBuf::from)
+        .or_else(crate::project::active_project_root)
+        .ok_or("give path or open a project")?;
+    super::validation::validate(&path)
+}
+#[cfg(target_arch = "wasm32")]
+fn validate_project(_: &Value) -> RemoteResult {
+    Err("project validation requires native authoring".into())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

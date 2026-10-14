@@ -1238,6 +1238,12 @@ impl Scene {
         };
 
         let transform = Transform::from(node_asset.transform.clone());
+        let transform = if node_asset.asset.is_none() && node_asset.scene_ref.is_some() {
+            // The tree placement wraps the prefab's own instance override.
+            transform.mul_transform(self.node_local_transform(node_id))
+        } else {
+            transform
+        };
         self.node_mut(node_id).set_local_transform(transform);
 
         for child in &node_asset.children {
@@ -1255,8 +1261,94 @@ impl Scene {
     }
 
     pub fn export_main_asset(&self, name: impl Into<String>) -> Option<SceneAsset> {
-        self.export_node_asset_internal(self.main_scene, Some(name.into()), true)
-        // REMAP FOR SAVE
+        let name = name.into();
+        let mut asset = self
+            .export_node_asset_internal(self.main_scene, Some(name.clone()), true)
+            .unwrap_or_else(|| {
+                SceneAsset::builder(name)
+                    .with_root_transform(SerializedTransform::from(
+                        *self.node_local_transform(self.main_scene),
+                    ))
+                    .build()
+            });
+        fn append(scene: &Scene, node: SceneNodeId, transform: Transform, asset: &mut SceneAsset) {
+            let node_ref = scene.node(node);
+            if let Some(origin) = node_ref.prefab_origin() {
+                let Some((index, path)) = origin
+                    .entity_paths()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| p.as_ref().map(|p| (i, p)))
+                    .min_by_key(|(_, p)| p.len())
+                else {
+                    return;
+                };
+                let visible = node_ref.instance().asset_entity(index).and_then(|entity| {
+                    node_ref
+                        .instance()
+                        .world()
+                        .get::<&crate::scene::Visible>(entity)
+                        .ok()
+                        .map(|v| v.0)
+                });
+                let reference = super::ScenePrefabRef {
+                    document: origin.document_id().into(),
+                    node_path: path.clone(),
+                    overrides: super::ScenePrefabOverrides {
+                        transform: Some(SerializedTransform::from(transform)),
+                        visible,
+                        ..Default::default()
+                    },
+                };
+                asset.entities.push(
+                    super::SceneAssetEntity::builder(SerializedTransform::identity())
+                        .with_name(node_ref.name())
+                        .with_scene_ref(reference)
+                        .build(),
+                );
+                // Nested linked nodes belong to the referenced source document.
+                return;
+            }
+            for &child in node_ref.children() {
+                append(
+                    scene,
+                    child,
+                    transform.mul_transform(scene.node_local_transform(child)),
+                    asset,
+                );
+            }
+        }
+        for &child in self.node_children(self.main_scene) {
+            append(self, child, *self.node_local_transform(child), &mut asset);
+        }
+        (!asset.entities.is_empty()
+            || !asset.animations.is_empty()
+            || !asset.animation_states.is_empty())
+        .then_some(asset)
+    }
+
+    /// Export one entity and its descendants as a portable prefab scene asset.
+    /// Mesh data is embedded and entity references are remapped within the subtree.
+    pub fn export_entity_subtree(
+        &self,
+        entity: Entity,
+        name: impl Into<String>,
+    ) -> Option<SceneAsset> {
+        let node = self.node_for_entity(entity)?;
+        let (_, indices) = serialize_world(self.node(node).instance().world(), &self.assets);
+        let index = *indices.get(&entity)?;
+        let asset = self.export_node_asset(node)?;
+        let mut prefab = super::prefab_instantiator::clone_prefab_asset_subtree(&asset, index);
+        prefab.name = name.into();
+        // A reusable source must not retain the authoring scene's editor identities.
+        for entity in &mut prefab.entities {
+            entity.editor_id = None;
+            entity.source_entity = None;
+        }
+        if let Some(root) = prefab.entities.first_mut() {
+            root.transform = SerializedTransform::identity();
+        }
+        Some(prefab)
     }
 
     pub fn export_node_asset(&self, node: SceneNodeId) -> Option<SceneAsset> {

@@ -97,6 +97,8 @@ struct ScriptSlot {
     /// succeeds again; compile and load errors stay until the script is reloaded.
     last_error: Option<(String, String)>,
     reported_errors: HashSet<String>,
+    cpu_ms: f64,
+    invocations: u64,
 }
 
 impl ScriptSlot {
@@ -200,6 +202,7 @@ fn invoke(
     hook: Hook<'_>,
 ) -> Option<FunctionCallOutcome> {
     let instance = slot.instance.as_mut()?;
+    let started = crate::time::Instant::now();
 
     let lua = runtime.lua();
     let bits = entity_bits(entity);
@@ -228,6 +231,8 @@ fn invoke(
     // Apply whatever the script recorded, even if it failed part way through.
     outputs.apply_commands(world, &commands);
     outputs.pending_events.extend(events.take());
+    slot.cpu_ms += started.elapsed().as_secs_f64() * 1000.0;
+    slot.invocations += 1;
 
     match result {
         Ok(outcome) => {
@@ -291,6 +296,40 @@ pub struct ScriptingState {
 }
 
 impl ScriptingState {
+    /// Cumulative CPU hook cost per script, reset when the script is rebuilt.
+    pub fn script_timings(&self) -> Vec<serde_json::Value> {
+        let mut rows = self
+            .slots
+            .iter()
+            .map(|(entity, slot)| {
+                serde_json::json!({
+                    "entity":entity.to_bits().get(),"source":slot.source.display_name(),
+                    "cpu_ms":slot.cpu_ms,"invocations":slot.invocations
+                })
+            })
+            .collect::<Vec<_>>();
+        rows.sort_by(|a, b| {
+            b["cpu_ms"]
+                .as_f64()
+                .unwrap()
+                .total_cmp(&a["cpu_ms"].as_f64().unwrap())
+        });
+        rows
+    }
+    /// Seed the VM's shared Lua PRNG before compiling scripts or running on_created.
+    ///
+    /// ```
+    /// let mut scripts = wgpu_cube::scripting::ScriptingState::new().unwrap();
+    /// scripts.seed_random(123).unwrap();
+    /// assert!(scripts.script_timings().is_empty());
+    /// ```
+    pub fn seed_random(&mut self, seed: u64) -> Result<(), LuaScriptingError> {
+        let math: mlua::Table = self.runtime.lua().globals().get("math")?;
+        let seed_random: mlua::Function = math.get("randomseed")?;
+        seed_random.call::<()>((seed as i64, 0i64))?;
+        Ok(())
+    }
+
     /// Construct a new scripting state.
     pub fn new() -> Result<Self, LuaScriptingError> {
         Ok(Self {
@@ -789,6 +828,8 @@ impl ScriptingState {
                 created: false,
                 last_error: None,
                 reported_errors: HashSet::new(),
+                cpu_ms: 0.0,
+                invocations: 0,
             };
 
             match self.runtime.compile(&source) {

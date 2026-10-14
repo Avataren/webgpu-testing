@@ -64,6 +64,20 @@ release player that wave runs at 5.7 ms frames (Lua 0.46 ms); in the debug edito
 MCP-server changes (new tool parameters, blocking project tools) only take effect after the
 MCP server is restarted; engine changes take effect after `engine_launch` rebuilds.
 
+Authoring extensions (2026-10-14): added explicit seeded simulation steps and playtest
+assertions/scenarios, world-AABB queries and constrained placement/scatter, scene transactions
+with dry runs/aliases/single undo, prefab source authoring/inspection, CPU profile captures,
+saved-project validation, web packaging/browser smoke tests, sweeps and heightfields.
+MCP responses now include structured content, output schemas and behavior annotations.
+Verification exposed an existing prefab persistence gap: linked child nodes were omitted
+from project export and origin metadata was lost in play/undo snapshots. Both now round-trip,
+including placement and root visibility; tree placement also preserves prefab transforms.
+Updating a prefab from another selection keeps the source root name stable. Checked through
+the real MCP server in an isolated editor, saved/reopened projects and a WebGPU browser;
+Rust tests, Clippy and editor/Robotron GPU smoke checks pass. Scope limits are in the README:
+spatial queries use boxes, explicit steps cover Lua/scene animation, profiling measures CPU,
+and existing instances reload new sources when recreated or reopened.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
