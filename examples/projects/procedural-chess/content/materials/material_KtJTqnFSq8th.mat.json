@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/walnut_square_base_color.png",
+    "name": "walnut_square_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/walnut_square_metallic_roughness.png",
+    "name": "walnut_square_metallic_roughness.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/walnut_square_normal.png",
+    "name": "walnut_square_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/walnut_square_occlusion.png",
+    "name": "walnut_square_occlusion.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

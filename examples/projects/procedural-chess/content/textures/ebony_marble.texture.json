@@ -1,0 +1,30 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "ao_strength": 0.12,
+    "colors": [
+      "#111b23",
+      "#35444c"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "metallic_roughness",
+      "occlusion"
+    ],
+    "name": "ebony_marble",
+    "normal_strength": 0.003,
+    "overwrite": true,
+    "pattern": "marble",
+    "roughness": 0.25,
+    "roughness_variation": 0.05,
+    "scale": 3,
+    "seed": 29,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

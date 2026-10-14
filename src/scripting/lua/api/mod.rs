@@ -25,6 +25,7 @@ mod text_editor_bridge;
 mod transform;
 pub mod ui;
 mod view;
+pub(crate) mod voxel;
 
 use mlua::{Lua, Result as LuaResult};
 
@@ -70,6 +71,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     ui::register_ui_api(lua)?;
     editor_commands::register_editor_command_api(lua)?;
     coroutine::register_coroutine_api(lua)?;
+    voxel::register_voxel_api(lua)?;
     lua.globals().set(
         "is_playing",
         lua.create_function(|lua, ()| {

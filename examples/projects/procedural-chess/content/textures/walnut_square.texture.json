@@ -1,0 +1,29 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#302119",
+      "#6b4830"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "metallic_roughness",
+      "occlusion"
+    ],
+    "name": "walnut_square",
+    "normal_strength": 0.002,
+    "overwrite": true,
+    "pattern": "wood",
+    "roughness": 0.4,
+    "roughness_variation": 0.05,
+    "scale": 3,
+    "seed": 11,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

@@ -82,6 +82,20 @@ fn with_audio<R>(f: impl FnOnce(&mut Audio) -> R) -> R {
     AUDIO.with(|cell| f(cell.borrow_mut().get_or_insert_with(Audio::new)))
 }
 
+/// Forget a generated/replaced file without opening a device or interrupting voices.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn invalidate_file(path: &Path) {
+    AUDIO.with(|cell| {
+        if let Some(audio) = cell.borrow_mut().as_mut() {
+            // resolve_path canonicalizes existing files before putting them in the cache.
+            audio
+                .output
+                .files
+                .remove(&path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+        }
+    });
+}
+
 /// Resolve a sound path: absolute, relative to the working directory, to the open
 /// project, or to its content folder.
 pub fn resolve_path(path: &str) -> Result<PathBuf, String> {
@@ -217,7 +231,7 @@ mod native {
     pub(super) struct Output {
         /// `None` until first used; `Some(None)` if no device could be opened.
         device: Option<Option<MixerDeviceSink>>,
-        files: HashMap<PathBuf, Arc<[u8]>>,
+        pub(super) files: HashMap<PathBuf, Arc<[u8]>>,
         players: Vec<(u64, Player, f32)>,
     }
 
@@ -590,6 +604,32 @@ mod web {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn invalidating_a_replaced_file_clears_only_that_cached_clip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("generated.wav");
+        let other = dir.path().join("other.wav");
+        std::fs::write(&path, [1]).unwrap();
+        let canonical = path.canonicalize().unwrap();
+        with_audio(|audio| {
+            audio
+                .output
+                .files
+                .insert(canonical.clone(), std::sync::Arc::from([1u8]));
+            audio
+                .output
+                .files
+                .insert(other.clone(), std::sync::Arc::from([2u8]));
+        });
+        invalidate_file(&path);
+        with_audio(|audio| {
+            assert!(!audio.output.files.contains_key(&canonical));
+            assert!(audio.output.files.contains_key(&other));
+            assert!(audio.output.playing().is_empty());
+        });
+    }
 
     #[test]
     fn missing_files_are_an_error() {

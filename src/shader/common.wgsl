@@ -111,6 +111,7 @@ struct VsIn {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,  // xyz = tangent, w = handedness
+    @location(4) color: vec4<f32>,    // linear, multiplies the material colour
     @builtin(instance_index) instance: u32,
 };
 
@@ -122,7 +123,8 @@ struct VsOut {
     @location(3) @interpolate(flat) instance_id: u32,
     @location(4) tangent: vec3<f32>,
     @location(5) bitangent: vec3<f32>,
-    @location(6) @interpolate(flat) material_color: vec4<f32>,
+    // The material colour times the vertex colour, so it varies across a face.
+    @location(6) material_color: vec4<f32>,
     @location(7) @interpolate(flat) material_texture_indices0: vec4<u32>,
     @location(8) @interpolate(flat) material_texture_indices1: vec2<u32>,
     @location(9) @interpolate(flat) material_flags: u32,
@@ -195,7 +197,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.instance_id = in.instance;
     out.tangent = t;
     out.bitangent = b;
-    out.material_color = material.color;
+    out.material_color = material.color * in.color;
     out.material_texture_indices0 = vec4<u32>(
         material.base_color_texture,
         material.metallic_roughness_texture,

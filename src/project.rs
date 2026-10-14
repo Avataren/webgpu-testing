@@ -363,7 +363,9 @@ impl ProjectManifest {
         existing_document: Option<&SceneDocument>,
     ) -> Result<Self, ProjectError> {
         let engine_camera = SerializedEngineCamera::from_camera(scene.camera());
-        let scene_name = metadata.name.clone();
+        let scene_name = existing_document
+            .map(|document| document.name.clone())
+            .unwrap_or_else(|| metadata.name.clone());
         let mut asset = scene
             .export_main_asset(scene_name.clone())
             .unwrap_or_else(|| SceneAsset::builder(scene_name).build());
@@ -946,6 +948,51 @@ mod tests {
 
         fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) -> Mesh {
             Mesh::from_vertices(&self.device, vertices, indices)
+        }
+    }
+
+    #[test]
+    fn named_scene_captures_keep_distinct_files_names_and_entities() {
+        let document = |id: &str, name: &str| SceneDocument {
+            id: id.into(),
+            name: name.into(),
+            relative_path: PathBuf::from(format!("content/scenes/{id}.json")),
+            dependencies: Default::default(),
+        };
+        let board_doc = document("board.scene", "Procedural Chess");
+        let study_doc = document("study.scene", "Chess Piece Study");
+        let mut board = Scene::new();
+        board
+            .main_world_mut()
+            .spawn((crate::scene::Name::new("Board marker"),));
+        let mut study = Scene::new();
+        study
+            .main_world_mut()
+            .spawn((crate::scene::Name::new("Study marker"),));
+        let board_manifest =
+            ProjectManifest::capture(&board, ProjectMetadata::default(), Some(&board_doc)).unwrap();
+        let mut manifest =
+            ProjectManifest::capture(&study, ProjectMetadata::default(), Some(&study_doc)).unwrap();
+        assert_eq!(
+            manifest.scene_asset(&study_doc.id).unwrap().name,
+            "Chess Piece Study"
+        );
+        manifest.scenes.push(board_doc.clone());
+        manifest.add_scene_asset(
+            board_doc.id.clone(),
+            board_manifest.scene_asset(&board_doc.id).unwrap().clone(),
+        );
+        let directory = tempfile::tempdir().unwrap();
+        manifest.save_to_dir(directory.path()).unwrap();
+        let restored = ProjectManifest::load_from_dir(directory.path()).unwrap();
+        assert_eq!(restored.scenes().len(), 2);
+        for (doc, marker) in [(&board_doc, "Board marker"), (&study_doc, "Study marker")] {
+            let asset = restored.scene_asset(&doc.id).unwrap();
+            assert_eq!(asset.name, doc.name);
+            assert!(asset
+                .entities
+                .iter()
+                .any(|entity| entity.name.as_deref() == Some(marker)));
         }
     }
 

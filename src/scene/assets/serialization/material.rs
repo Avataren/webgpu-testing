@@ -360,7 +360,11 @@ impl SerializedMaterial {
 
             let texture_index = if let Some(resolved) = resolved_path.as_deref() {
                 super::super::resources::with_import_device(&mut renderer, |device| {
-                    assets.resolve_texture_index(slot, Some(resolved), device, false)
+                    let is_srgb = matches!(
+                        slot,
+                        MaterialTextureSlot::BaseColor | MaterialTextureSlot::Emissive
+                    );
+                    assets.resolve_texture_index(slot, Some(resolved), device, is_srgb)
                 })
             } else if let Some(index) = slot_data.index {
                 index

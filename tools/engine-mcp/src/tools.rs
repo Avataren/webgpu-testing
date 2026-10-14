@@ -194,7 +194,7 @@ pub fn tools() -> Vec<Tool> {
         json!({ "type": "string", "description": "Apply the same change to every entity whose name contains this (case-insensitive) instead of one" }),
     );
 
-    vec![
+    let mut tools = vec![
         // ---- Process control (local) ----
         Tool {
             name: "engine_launch",
@@ -359,6 +359,33 @@ pub fn tools() -> Vec<Tool> {
             description: "Copy an entity with its children (same parent). Inline materials are copied; scripts start fresh. Accepts entity_update fields to apply to the copy, e.g. a new name or translation. With count, step, row_step and columns it lays out a row or grid of copies in one call (e.g. 12x6 bricks: count 71, columns 12, step [1.1,0,0], row_step [0,-0.5,0]) and returns just their ids and names.",
             schema: json!({ "type": "object", "properties": duplicate_props, "required": ["entity"] }),
             action: Action::Engine("entity.duplicate"),
+        },
+        Tool {
+            name: "voxel_spawn",
+            description: "Procedural voxel models: build a model from text art, a flat voxel list or a fill expression, and spawn it as one entity with a child per colour. The engine greedy-meshes it (hidden faces dropped, same-coloured faces merged into large quads), so a model costs a few meshes, not one cube per voxel; identical models share their meshes. Corners are shaded with baked ambient occlusion (ao), and colors/parts put several keys into one mesh with per-vertex colours (e.g. a gradient on one material). Returns the root id, each part's key/keys/entity/quads, and quads vs cube_quads (what one cube per voxel would draw). Grid: x right, y up, z toward the viewer. Exactly one source: rows (one layer, extruded depth voxels), layers, size+voxels, or size+fill. Scripts do the same with voxel_model/spawn_voxels (lua_api_reference section \"Procedural geometry\").",
+            schema: object(json!({
+                "name": { "type": "string", "description": "Root entity name (default Voxels); children are named <name>.<key>" },
+                "rows": { "type": "array", "items": { "type": "string" }, "description": "Text art, top row first: each character is a voxel of that key ('.' or space is empty), extruded depth voxels toward -Z" },
+                "layers": { "type": "array", "items": { "type": "array", "items": { "type": "string" } }, "description": "3D text art: slices front (+Z) to back, each a list of rows top to bottom" },
+                "legend": { "type": "object", "description": "Character -> key (a string such as a colour name or \"#rrggbb\", or an integer; null makes the character empty). Without a legend each character is its own key" },
+                "depth": { "type": "integer", "minimum": 1, "description": "Voxels of thickness per text layer (default 1)" },
+                "size": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 3, "maxItems": 3, "description": "[width, height, depth] in voxels, for voxels and fill" },
+                "voxels": { "type": "array", "description": "Flat list of keys, index x + W*(y + H*z); 0, null or \"\" is empty" },
+                "fill": { "type": "string", "description": "Lua expression (or statements that return) giving the key for cell x, y, z (0-based ints), or nil/false/0 for empty; true means key 1. In scope: W, H, D, math, noise(x[,y[,z]]) and fbm(x,y,z[,octaves]) (gradient noise, about -1..1, features ~1 unit apart: scale coordinates, e.g. noise(x*0.1, z*0.1)). E.g. terrain: \"y < 6 + fbm(x*0.08, 0, z*0.08)*5 and (y < 4 and 'rock' or 'grass')\"; a ball: \"(x-7.5)^2+(y-7.5)^2+(z-7.5)^2 < 64\". Runs sandboxed, up to 10 s" },
+                "voxel": { "anyOf": [{ "type": "number" }, vec3("Per-axis size")], "description": "Size of one voxel in meters (default 0.1)" },
+                "pivot": vec3("Fraction of the model's box at the entity origin (default [0.5, 0, 0.5]: standing centred on it; [0.5, 0.5, 0.5] centres it)"),
+                "palette": { "type": "object", "description": "Key -> material for that part: a colour (\"#rrggbb\" or [r,g,b]) or material fields as entity_update takes them, e.g. {\"color\": \"#ff4400\", \"emissive\": 3}. Keys that are \"#rrggbb\" colour themselves" },
+                "ao": { "type": "number", "minimum": 0, "maximum": 1, "description": "Strength of the ambient occlusion baked into vertex colours: creases and inner corners darken (default 1, 0 = off)" },
+                "colors": { "type": "object", "description": "Key -> vertex colour (\"#rrggbb\" or [r,g,b(,a)]), which multiplies the part's material colour. Keys not listed are white" },
+                "parts": { "type": "object", "description": "Key -> part key: keys naming the same part share one mesh and one material (palette entry of the part key), each with its own vertex colour" },
+                "part": { "type": ["string", "integer"], "description": "Part of every key that parts does not list, e.g. \"body\" puts the whole model in one mesh" },
+                "cast_shadow": { "type": "boolean", "description": "Whether the parts cast shadows (default true)" },
+                "translation": vec3("Root position in meters"),
+                "rotation": vec3("Root rotation, Euler degrees"),
+                "scale": { "anyOf": [vec3("Scale"), { "type": "number" }] },
+                "parent": entity_ref()
+            }), &[]),
+            action: Action::Engine("voxel.spawn"),
         },
         // ---- Scripting & runtime ----
         Tool {
@@ -777,6 +804,169 @@ pub fn tools() -> Vec<Tool> {
             description: "Editor only: redo the last undone change.",
             schema: empty(),
             action: Action::Engine("editor.redo"),
+        },
+    ];
+    tools.extend(procedural_tools());
+    tools.extend(geometry_tools());
+    tools
+}
+
+fn geometry_tools() -> Vec<Tool> {
+    let point = json!({"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2});
+    let lathe = json!({
+        "profile": {"type": "array", "items": point, "minItems": 2, "maxItems": 512, "description": "[radius, height] points ordered bottom to top; equal heights make ledges, radius 0 closes a pole. Y is the turning axis"},
+        "segments": {"type": "integer", "minimum": 3, "maximum": 512, "default": 64},
+        "caps": {"type": "boolean", "default": true},
+        "crease_angle": {"type": "number", "minimum": 0, "maximum": 180, "default": 45, "description": "Profile edges meeting above this angle stay sharp; others share smooth normals"},
+        "bevel": {"type": "number", "minimum": 0, "default": 0, "description": "Trim distance along edges at each profile corner; clamped to fit short edges. Softens turned bases, collars and crowns"},
+        "bevel_segments": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3, "description": "1 chamfers profile corners; 2..8 rounds them"}
+    });
+    let extrude = json!({
+        "polygon": {"type": "array", "items": point, "minItems": 3, "maxItems": 256, "description": "Simple XY polygon in either winding; concave outlines supported, holes/self-intersections rejected. Optional repeated closing point"},
+        "depth": {"type": "number", "exclusiveMinimum": 0, "default": 1, "description": "Length along Z, centered at Z=0"},
+        "caps": {"type": "boolean", "default": true},
+        "bevel": {"type": "number", "minimum": 0, "default": 0, "description": "Inset at both cap rims, less than depth/2 and small enough to preserve the outline"},
+        "bevel_segments": {"type": "integer", "minimum": 1, "maximum": 8, "default": 1},
+        "steps": {"type": "integer", "minimum": 1, "maximum": 256, "default": 1},
+        "twist": {"type": "number", "default": 0, "description": "Total rotation in degrees from negative to positive Z; increase steps for a smooth twist"},
+        "taper": {"type": "number", "exclusiveMinimum": 0, "maximum": 100, "default": 1, "description": "Positive Z end scale relative to negative Z end; around the XY origin"}
+    });
+    let mut common = entity_fields();
+    // Only geometry editing fields supported by the handler are advertised.
+    common.retain(|key, _| {
+        [
+            "name",
+            "translation",
+            "position",
+            "rotation",
+            "rotation_quat",
+            "scale",
+            "look_at",
+            "parent",
+            "visible",
+            "material",
+            "cast_shadow",
+        ]
+        .contains(&key.as_str())
+    });
+    common.insert("entity".into(), entity_ref());
+    let mut lathe_props = common.clone();
+    lathe_props.extend(lathe.as_object().unwrap().clone());
+    let mut extrude_props = common.clone();
+    extrude_props.extend(extrude.as_object().unwrap().clone());
+    let transform = json!({
+        "translation": vec3("Local translation, meters"),
+        "rotation": vec3("Euler degrees [pitch, yaw, roll]"),
+        "scale": vec3("Nonzero per-axis scale, default [1,1,1]; negative values mirror with corrected winding")
+    });
+    let part_schema = |shape: &str, properties: &Value, required: &[&str]| {
+        let mut props = transform.as_object().unwrap().clone();
+        props.extend(properties.as_object().unwrap().clone());
+        props.insert("shape".into(), json!({"const": shape, "type": "string"}));
+        let mut required_fields = vec!["shape"];
+        required_fields.extend(required);
+        object(Value::Object(props), &required_fields)
+    };
+    common.insert("parts".into(), json!({
+        "type": "array", "minItems": 1, "maxItems": 128,
+        "items": {"oneOf": [part_schema("lathe", &lathe, &["profile"]), part_schema("extrude", &extrude, &["polygon"]),
+            part_schema("primitive", &json!({"primitive": {"type": "string", "enum": ["cube", "sphere", "plane", "cylinder", "cone", "torus"]}}), &["primitive"])]}
+    }));
+    vec![
+        Tool {
+            name: "mesh_lathe",
+            description: "Turn a radius/height profile around Y into a procedural mesh with UVs, normals, tangents, end caps, configurable sharp creases and optional rounded profile bevels. Ideal for chess bases, stems, finials, vases and balusters. Creates one entity, or replaces entity's mesh while preserving its material. Accepts transforms/material/parent. Identical geometry shares a GPU mesh; project_save persists it. Returns bounds, counts and a reproducible recipe.",
+            schema: object(Value::Object(lathe_props), &["profile"]),
+            action: Action::Engine("mesh.lathe"),
+        },
+        Tool {
+            name: "mesh_extrude",
+            description: "Extrude a simple concave XY outline along centered Z, with triangulated caps, optional rim bevel, taper and twist. Useful for knight silhouettes, crosses, crenellations and plaques. UVs/normals/tangents support procedural textures. Creates an entity or replaces entity's geometry; accepts material/transforms/parent. Holes and self-intersections are rejected. project_save persists the mesh.",
+            schema: object(Value::Object(extrude_props), &["polygon"]),
+            action: Action::Engine("mesh.extrude"),
+        },
+        Tool {
+            name: "mesh_compose",
+            description: "Build one mesh from up to 128 transformed lathe, extrusion or primitive parts. Each part has shape plus local translation/rotation/scale. Ideal for complete chess pieces with turned bodies, extruded heads and ornaments. Corrects normals and mirrored winding. Joins overlapping surfaces without boolean union. Primitives use entity_spawn sizes/axes; lathe is Y-up and extrusion is along Z. Creates an entity or replaces entity's mesh; project_save persists geometry.",
+            schema: object(Value::Object(common), &["parts"]),
+            action: Action::Engine("mesh.compose"),
+        },
+    ]
+}
+
+fn procedural_tools() -> Vec<Tool> {
+    let common = json!({
+        "name": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[A-Za-z0-9_-]+$", "description": "Asset filename stem; letters, digits, underscores and hyphens" },
+        "directory": { "type": "string", "description": "Output folder, absolute or relative to the project; default content/textures or content/audio. Required when no project is open" },
+        "overwrite": { "type": "boolean", "default": false, "description": "Replace existing outputs under this name" },
+        "image": { "type": "boolean", "default": true, "description": "Return a map preview or waveform/spectrogram image" }
+    });
+    let mut texture = common.clone();
+    texture.as_object_mut().unwrap().extend(json!({
+        "maps": { "type": "array", "minItems": 1, "maxItems": 7, "uniqueItems": true, "items": { "type": "string", "enum": ["base_color", "height", "normal", "roughness", "metallic_roughness", "occlusion", "orm"] }, "description": "Generated maps; texture_generate defaults to base_color, height, normal, metallic_roughness, occlusion. texture_maps defaults to normal, metallic_roughness, occlusion" },
+        "colors": { "type": "array", "minItems": 2, "maxItems": 2, "items": color("Color"), "description": "Two colors for low/high heights, default earthy dark/light. Used for base_color only" },
+        "normal_strength": { "type": "number", "minimum": 0, "maximum": 10, "default": 0.05, "description": "Bump height relative to UV extent; independent of image resolution, 0 gives flat normals" },
+        "flip_y": { "type": "boolean", "default": false, "description": "Flip the normal map's green channel for the opposite tangent-space Y convention" },
+        "roughness": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+        "roughness_variation": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.2, "description": "Height-based roughness variation; 0 gives uniform roughness" },
+        "metallic": { "type": "number", "minimum": 0, "maximum": 1, "default": 0 },
+        "ao_strength": { "type": "number", "minimum": 0, "maximum": 10, "default": 1, "description": "Darkening of height-field depressions; 0 disables occlusion" },
+        "ao_radius": { "type": "integer", "minimum": 1, "maximum": 32, "default": 4, "description": "Neighborhood radius in pixels for approximate occlusion" },
+        "entity": entity_ref()
+    }).as_object().unwrap().clone());
+    let mut generate = texture.clone();
+    generate.as_object_mut().unwrap().extend(json!({
+        "pattern": { "type": "string", "enum": ["noise", "bricks", "checker", "wood", "marble", "voronoi"], "default": "noise" },
+        "size": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1, "maximum": 2048 }, "default": [256, 256], "description": "[width, height] in pixels" },
+        "seed": { "type": "integer", "minimum": 0, "default": 0 },
+        "scale": { "type": "integer", "minimum": 1, "maximum": 64, "default": 4, "description": "Pattern repetitions / base noise cells per tile" },
+        "octaves": { "type": "integer", "minimum": 1, "maximum": 8, "default": 5, "description": "Noise layers" },
+        "mortar": { "type": "number", "minimum": 0.001, "maximum": 0.3, "default": 0.06, "description": "Brick joint width relative to a brick cell" }
+    }).as_object().unwrap().clone());
+    let mut derive = texture;
+    derive.as_object_mut().unwrap().extend(json!({
+        "source": { "type": "string", "description": "Height image, absolute or project-relative; max 2048 pixels per axis. Image values are treated as linear height, not inferred physical depth" },
+        "channel": { "type": "string", "enum": ["luminance", "red", "green", "blue", "alpha"], "default": "luminance" },
+        "invert": { "type": "boolean", "default": false, "description": "Treat dark areas as raised" },
+        "tileable": { "type": "boolean", "default": true, "description": "Wrap height sampling across the edges; false clamps for non-tileable images. This does not make a nonperiodic source tileable" }
+    }).as_object().unwrap().clone());
+    let mut sound = common;
+    sound.as_object_mut().unwrap().extend(json!({
+        "preset": { "type": "string", "enum": ["tone", "blip", "laser", "explosion", "pickup", "jump", "hit", "powerup"], "default": "tone" },
+        "seed": { "type": "integer", "minimum": 0, "default": 0 },
+        "waveform": { "type": "string", "enum": ["sine", "square", "saw", "triangle", "noise"], "description": "Override preset oscillator" },
+        "duration": { "type": "number", "minimum": 0.02, "maximum": 10, "description": "Seconds (default from preset)" },
+        "sample_rate": { "type": "integer", "enum": [8000, 16000, 22050, 44100, 48000, 96000], "default": 44100 },
+        "frequency": { "type": "number", "minimum": 20, "description": "Starting Hz; must be <= 0.45 * sample_rate" },
+        "end_frequency": { "type": "number", "minimum": 20, "description": "Ending Hz, logarithmic pitch sweep; tone defaults to frequency" },
+        "noise_mix": { "type": "number", "minimum": 0, "maximum": 1, "description": "Blend seeded noise into the oscillator (default from preset)" },
+        "attack": { "type": "number", "minimum": 0, "description": "Fade-in seconds; minimum anti-click fade 1 ms" },
+        "release": { "type": "number", "minimum": 0, "description": "Fade-out seconds; attack + release <= duration, minimum anti-click fade 1 ms" },
+        "decay": { "type": "number", "minimum": 0, "maximum": 20, "description": "Exponential falloff over clip (0 is sustained)" },
+        "volume": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.8, "description": "Peak-normalized output level, with clipping headroom" },
+        "vibrato_hz": { "type": "number", "minimum": 0, "maximum": 40, "default": 0 },
+        "vibrato_depth": { "type": "number", "minimum": 0, "maximum": 0.5, "default": 0, "description": "Fractional frequency modulation" },
+        "lowpass_hz": { "type": "number", "minimum": 20, "description": "Low-pass cutoff <= 0.49 * sample_rate (default 0.4 * sample_rate)" },
+        "duty_cycle": { "type": "number", "minimum": 0.05, "maximum": 0.95, "default": 0.5, "description": "Square-wave pulse width" }
+    }).as_object().unwrap().clone());
+    vec![
+        Tool {
+            name: "texture_generate",
+            description: "Generate deterministic tileable textures and matching PBR maps as PNG assets, using noise, bricks, checker, wood, marble or Voronoi. Includes tangent-space normal maps, linear height, roughness, occlusion and packed metallic/roughness or ORM. Saves into the project's content/textures, with a generation recipe. Returns paths, an image preview and material fields ready for entity_update; optional entity applies the maps immediately. Existing loaded textures are reloaded. Roughness/AO are height-based approximations; height is an export map, not displacement. Same seed and parameters reproduce the same images.",
+            schema: object(generate, &["name"]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "texture_maps",
+            description: "Derive procedural normal, roughness, occlusion and packed PBR maps from an existing height image. Choose height channel, inversion, bump strength, wrap/clamp and normal Y convention. Saves PNGs and a generation recipe, returns a preview and material bindings, optionally applies to entity. Wrap sampling preserves tileable inputs but does not repair source seams. An albedo image can supply luminance height, but this is an approximation, not recovered geometry.",
+            schema: object(derive, &["name", "source"]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "sound_generate",
+            description: "Synthesize a deterministic sound effect directly into the project's content/audio as mono 16-bit PCM WAV. Presets: tone, blip, laser, explosion, pickup, jump, hit and powerup. Customize waveform, pitch sweep, envelope, seeded noise, vibrato, pulse width and low-pass filter. Peak normalization prevents clipping; short endpoint fades prevent clicks. Saves a recipe and automatically returns sound_inspect measurements and a waveform/spectrogram image. Use the returned path with sound_play or Lua play_sound. Replacing a sound invalidates its playback cache.",
+            schema: object(sound, &["name"]),
+            action: Action::Local,
         },
     ]
 }

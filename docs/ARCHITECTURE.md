@@ -40,6 +40,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/shader/` | WGSL modules composed by `ShaderBuilder` |
 | `src/scene/` | `Scene`, `SceneWorkspace`, components, transforms, glTF loading, serialization, snapshots |
 | `src/asset/` | Shared `Assets` (meshes, materials, textures) and handles |
+| `src/procgen/` | Profile lathes, beveled polygon extrusions, mesh composition, voxel meshes, seeded height fields/PBR maps and PCM sound synthesis |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
 | `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
@@ -281,6 +282,18 @@ agent workflow.
   advances the hub's frame counter and answers `wait` requests.
 - **Post-processing**: `postprocess.set` edits a volume entity (the lowest-priority
   infinite one by default, created if missing), so changes save with the scene.
+- **Procedural assets** (`remote/handlers/procedural.rs`): `texture.generate` writes
+  tileable PNG map sets, `texture.maps` derives maps from an existing height image,
+  and `audio.generate` writes seeded PCM WAV effects. Files and parameter recipes
+  save immediately under the project's content folder; output paths and compatible
+  material bindings are returned. Existing textures reload, and replaced sound files
+  are evicted from the playback cache. CPU algorithms live in `src/procgen/` and can
+  be tested without a GPU or audio device. Generation tools are native authoring
+  features; their output assets also load on the web.
+- **Procedural geometry** (`remote/handlers/geometry.rs`): `mesh.lathe` turns and bevels
+  radius/height profiles, `mesh.extrude` triangulates and bevels concave polygons with
+  taper/twist, and `mesh.compose` joins transformed parts. Outputs have UVs, normals,
+  tangents, content-based GPU sharing and bounds. Scene saves embed their `MeshData`.
 - **Logs**: every log record also goes to `remote::log_tap`, a ring buffer with
   sequence numbers, so clients can poll for new lines. Panics are recorded there too.
 - **Lua console**: `ScriptingState::eval` runs code with the full scripting API, either

@@ -279,6 +279,12 @@ fn load_primitive(
         .map(|uv| uv.into_f32().collect::<Vec<_>>())
         .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
 
+    // glTF vertex colours are linear, like ours.
+    let colors = reader
+        .read_colors(0)
+        .map(|c| c.into_rgba_f32().collect::<Vec<_>>())
+        .filter(|c| c.len() == positions.len());
+
     let tangents = reader
         .read_tangents()
         .map(|t| t.collect::<Vec<_>>())
@@ -298,7 +304,8 @@ fn load_primitive(
         .zip(normals.iter())
         .zip(uvs.iter())
         .zip(tangents.iter())
-        .map(|(((pos, norm), uv), tangent)| {
+        .enumerate()
+        .map(|(i, (((pos, norm), uv), tangent))| {
             let scaled_pos = [
                 pos[0] * scale_multiplier,
                 pos[1] * scale_multiplier,
@@ -310,6 +317,7 @@ fn load_primitive(
                 normal: *norm,
                 uv: *uv,
                 tangent: *tangent,
+                color: colors.as_ref().map_or(Vertex::WHITE, |c| c[i]),
             }
         })
         .collect::<Vec<_>>();

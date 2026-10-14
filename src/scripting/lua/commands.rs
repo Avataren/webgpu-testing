@@ -1489,6 +1489,8 @@ pub struct PendingEventUnsubscription {
 pub enum AssetCommand {
     Material(serde_json::Value),
     Mesh(serde_json::Value),
+    /// A mesh built by a script (one colour of a voxel model, ...).
+    GeneratedMesh(std::sync::Arc<crate::procgen::GeneratedMesh>),
     Light(serde_json::Value),
     Camera(serde_json::Value),
     ActiveCamera,

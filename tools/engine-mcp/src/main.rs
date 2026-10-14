@@ -36,7 +36,14 @@ to one already running. engine_info shows its state and value conventions.
 startup dialog blocks the editor until then. editor_state shows the project's scripts folder.
 3. Build scenes with entity_spawn / entity_update (meshes, materials, lights, camera, \
 particles, environment). Units are meters, Y is up, -Z is forward, rotations are Euler \
-degrees. Entities are referenced by id or unique name.
+degrees. Entities are referenced by id or unique name. voxel_spawn builds procedural voxel \
+models (text art or a noise fill expression) as optimized meshes.
+mesh_lathe turns radius/height profiles around Y; mesh_extrude builds beveled concave \
+polygon extrusions along Z, with taper and twist; mesh_compose assembles transformed \
+parts into one mesh. These include UVs, normals and tangents and persist with project_save.
+texture_generate creates tileable PNG material maps; texture_maps derives normal and \
+PBR maps from a height image. Both return ready-to-use material bindings and can apply \
+them to an entity. sound_generate writes seeded WAV effects and inspects their levels.
 4. Gameplay is Lua: read lua_api_reference, write .lua files into the project's scripts \
 folder with your file tools, attach them with entity_update {script: {path}}, then \
 runtime_set play, wait, and check script_status, logs and screenshot. runtime_set stop \
@@ -274,7 +281,7 @@ impl Server {
                 Ok(Output::Json(value)) => json!({ "tool": name, "result": value }),
                 Ok(Output::Text(text)) => json!({ "tool": name, "result": text }),
                 Ok(Output::Image { caption, .. }) => {
-                    json!({ "tool": name, "result": caption, "note": "image left out; call screenshot directly to see it" })
+                    json!({ "tool": name, "result": caption, "note": "image left out; call this tool directly to see it" })
                 }
                 Err(message) => {
                     failed += 1;
@@ -439,10 +446,16 @@ impl Server {
             }
             "project_save" => self.save_project(args).map(Output::Json),
             "playtest" => self.playtest(args),
-            "sound_inspect" => {
+            "sound_inspect" | "sound_generate" | "texture_generate" | "texture_maps" => {
+                let method = match name {
+                    "sound_generate" => "audio.generate",
+                    "texture_generate" => "texture.generate",
+                    "texture_maps" => "texture.maps",
+                    _ => "audio.inspect",
+                };
                 let mut report = self
                     .engine
-                    .call("audio.inspect", args.clone())
+                    .call(method, args.clone())
                     .map_err(|err| err.to_string())?;
                 match report
                     .as_object_mut()

@@ -76,6 +76,74 @@ impl SceneImportDevice for HeadlessDevice {
 }
 
 #[test]
+fn procedural_mesh_roundtrip_preserves_geometry_frames_bounds_and_sharing() {
+    use wgpu_cube::procgen::geometry::{generated, lathe, LatheOptions};
+    let Some(mut headless) = HeadlessDevice::new() else {
+        return;
+    };
+    let mesh = generated(
+        lathe(&LatheOptions {
+            profile: vec![[0.4, 0.0], [0.45, 0.1], [0.2, 0.5], [0.0, 1.0]],
+            segments: 24,
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    let mut scene = Scene::new();
+    let handle = scene.assets.ensure_generated_mesh(&mut headless, &mesh);
+    assert_eq!(
+        handle,
+        scene.assets.ensure_generated_mesh(&mut headless, &mesh)
+    );
+    for name in ["White pawn", "Black pawn"] {
+        scene.main_world_mut().spawn((
+            Name::new(name),
+            TransformComponent(Transform::default()),
+            MeshComponent(handle),
+            MeshBounds::new(mesh.min, mesh.max),
+            Visible(true),
+        ));
+    }
+    let manifest = ProjectManifest::capture(&scene, ProjectMetadata::default(), None).unwrap();
+    let directory = tempdir().unwrap();
+    manifest.save_to_dir(directory.path()).unwrap();
+    let loaded = ProjectManifest::load_from_dir(directory.path()).unwrap();
+    let asset = loaded.scene_asset(&loaded.scenes()[0].id).unwrap();
+    assert_eq!(asset.mesh_data.len(), 1);
+    assert_eq!(asset.mesh_data[0].indices, mesh.data.indices);
+    for (actual, expected) in asset.mesh_data[0].vertices.iter().zip(&mesh.data.vertices) {
+        assert_eq!(actual.pos, expected.pos);
+        assert_eq!(actual.normal, expected.normal);
+        assert_eq!(actual.uv, expected.uv);
+        assert_eq!(actual.tangent, expected.tangent);
+    }
+    let mut bundle = SceneAssetBundle::new(asset.clone(), SceneAssetResources::default());
+    let mut restored = Scene::new();
+    let mut library = SceneLibrary::new();
+    bundle.register_resources(&mut headless, &mut restored.assets);
+    let node = restored.instantiate_asset_with_renderer(
+        &mut library,
+        &bundle.asset,
+        None,
+        &mut headless,
+        None,
+    );
+    restored.set_main_scene(node);
+    let handles: Vec<_> = restored
+        .world()
+        .query::<(&MeshComponent, &MeshBounds)>()
+        .iter()
+        .map(|(_, (component, bounds))| {
+            assert_eq!(bounds.min, mesh.min);
+            assert_eq!(bounds.max, mesh.max);
+            component.0
+        })
+        .collect();
+    assert_eq!(handles.len(), 2);
+    assert_eq!(handles[0], handles[1]);
+}
+
+#[test]
 fn project_manifest_roundtrip_preserves_primitive_meshes() {
     let Some(mut headless) = HeadlessDevice::new() else {
         eprintln!("Skipping primitive mesh roundtrip test: no suitable headless adapter available");

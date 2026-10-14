@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/ebony_marble_base_color.png",
+    "name": "ebony_marble_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/ebony_marble_metallic_roughness.png",
+    "name": "ebony_marble_metallic_roughness.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/ebony_marble_normal.png",
+    "name": "ebony_marble_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/ebony_marble_occlusion.png",
+    "name": "ebony_marble_occlusion.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

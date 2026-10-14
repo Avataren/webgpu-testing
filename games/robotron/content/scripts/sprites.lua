@@ -1,9 +1,11 @@
 -- Pixel art for every actor, after the 1982 sprites. robotron.lua turns each sprite into a voxel
--- model (one cube per same-coloured rectangle, extruded `depth` voxels) and uses the same pixels for
--- the line "materialize" spawn-in and the stretched-apart explosions.
+-- model (extruded `depth` voxels and rounded out where it is wide, one engine-meshed part per
+-- colour) and uses the same pixels for the line "materialize" spawn-in and the stretched-apart
+-- explosions.
 --
 -- Rows run top to bottom; '.' is empty. `legend` maps a character to a colour in COLORS. Frames of
--- one sprite must have the same size; pixels shared by every frame are built once.
+-- one sprite must have the same size. `bulge` (default config.BULGE) caps how many voxels a side
+-- the sprite swells; 0 keeps it a flat slab.
 
 local M = {}
 

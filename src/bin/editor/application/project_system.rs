@@ -372,14 +372,32 @@ impl ProjectSystem {
             return;
         };
 
-        let existing_document = self.controller.primary_scene_document();
+        // New scene tabs need their own document, rather than overwriting scene one.
+        let active_id = gpu_ctx.scene.document_id().to_owned();
+        let active_document = self
+            .controller
+            .scene_documents()
+            .iter()
+            .find(|doc| doc.id == active_id)
+            .cloned()
+            .unwrap_or_else(|| SceneDocument {
+                name: active_id
+                    .strip_suffix(".scene")
+                    .unwrap_or(&active_id)
+                    .to_owned(),
+                relative_path: PathBuf::from(wgpu_cube::project::CONTENT_DIR)
+                    .join("scenes")
+                    .join(format!("{active_id}.json")),
+                id: active_id,
+                dependencies: Default::default(),
+            });
         let notification;
         let mut save_error = None;
 
         match ProjectManifest::capture(
             &gpu_ctx.scene,
             self.controller.metadata().clone(),
-            existing_document,
+            Some(&active_document),
         ) {
             Ok(mut manifest) => {
                 // Merge with existing scene documents from imports

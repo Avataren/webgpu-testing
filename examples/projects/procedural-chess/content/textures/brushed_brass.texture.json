@@ -1,0 +1,30 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#a77b36",
+      "#c8a458"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "metallic_roughness",
+      "occlusion"
+    ],
+    "metallic": 0.8,
+    "name": "brushed_brass",
+    "normal_strength": 0.0004,
+    "overwrite": true,
+    "pattern": "noise",
+    "roughness": 0.27,
+    "roughness_variation": 0.04,
+    "scale": 8,
+    "seed": 43,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

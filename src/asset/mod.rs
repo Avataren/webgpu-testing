@@ -28,6 +28,9 @@ pub struct Assets {
     pub textures: AssetCache<Texture>,
     pub materials: AssetCache<MaterialAsset>,
     primitive_meshes: HashMap<PrimitiveMeshDescriptor, Handle<Mesh>>,
+    /// Meshes built at runtime (e.g. voxel models) by content key, so equal geometry
+    /// shares one mesh.
+    generated_meshes: HashMap<u64, Handle<Mesh>>,
     material_paths: HashMap<PathBuf, Handle<MaterialAsset>>,
     texture_paths: HashMap<PathBuf, Handle<Texture>>,
     /// Whether each texture loaded by path was sampled as sRGB, for reloading it.
@@ -50,6 +53,7 @@ impl Assets {
             textures,
             materials,
             primitive_meshes: HashMap::new(),
+            generated_meshes: HashMap::new(),
             material_paths: HashMap::new(),
             texture_paths: HashMap::new(),
             texture_srgb: HashMap::new(),
@@ -84,6 +88,47 @@ impl Assets {
         let handle = self.meshes.insert(mesh);
         self.primitive_meshes.insert(descriptor, handle);
         handle
+    }
+
+    /// The mesh for runtime-built geometry, uploading it the first time its key is seen.
+    pub fn ensure_generated_mesh(
+        &mut self,
+        renderer: &mut dyn SceneImportDevice,
+        mesh: &crate::procgen::GeneratedMesh,
+    ) -> Handle<Mesh> {
+        if let Some(&handle) = self.generated_meshes.get(&mesh.key) {
+            return handle;
+        }
+        let handle = self
+            .meshes
+            .insert(renderer.create_mesh(&mesh.data.vertices, &mesh.data.indices));
+        self.generated_meshes.insert(mesh.key, handle);
+        handle
+    }
+
+    /// Release generated meshes whose handle is not in `in_use`. Returns how many were
+    /// released.
+    ///
+    /// Scripts that rebuild geometry (destructible or streamed voxels) would otherwise
+    /// keep every version they ever made.
+    pub fn release_unused_generated_meshes(
+        &mut self,
+        in_use: &std::collections::HashSet<usize>,
+    ) -> usize {
+        let meshes = &mut self.meshes;
+        let before = self.generated_meshes.len();
+        self.generated_meshes.retain(|_, handle| {
+            let keep = in_use.contains(&handle.index());
+            if !keep {
+                meshes.release(*handle);
+            }
+            keep
+        });
+        before - self.generated_meshes.len()
+    }
+
+    pub fn generated_mesh_count(&self) -> usize {
+        self.generated_meshes.len()
     }
 
     pub fn primitive_mesh_handle(

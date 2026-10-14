@@ -10,8 +10,8 @@
 --   P            pause
 --   Escape       back to the demo
 --
--- Every actor is a voxel model of its 1982 sprite (sprites.lua): one cube per same-coloured
--- rectangle of pixels, standing on a lit floor so it casts a real shadow. The same pixels drive
+-- Every actor is a voxel model of its 1982 sprite (sprites.lua), meshed by the engine into one
+-- mesh per colour, standing on a lit floor so it casts a real shadow. The same pixels drive
 -- the effects from the original: enemies MATERIALIZE out of spread-apart pixel lines that close
 -- up into the sprite, shot enemies STRETCH APART along the line of fire, a RECTANGLE ZOOM runs
 -- between waves, and on death everything freezes while the player flashes through colours, then
@@ -37,6 +37,7 @@
 --   combat     collisions                                   waves     the wave tables, start and end
 --   autopilot  the demo / B pilot                           flow      the game's state machine
 --   camera     framing the arena                            hud       on-screen text
+--   logo       the voxel title in attract mode
 
 local C = require("robotron.config")
 local PLAY_MUSIC, MUSIC_VOLUME, FOV = C.PLAY_MUSIC, C.MUSIC_VOLUME, C.FOV
@@ -59,6 +60,8 @@ local Camera = require("robotron.camera")
 local update_camera = Camera.update_camera
 local Hud = require("robotron.hud")
 local draw_hud = Hud.draw_hud
+local Logo = require("robotron.logo")
+local update_logo = Logo.update_logo
 
 local max = math.max
 
@@ -123,6 +126,7 @@ function update(self_entity, dt)
     update_effects(dt)
     local c2 = clock()
     update_camera(dt)
+    update_logo(dt)
     local c3 = clock()
     update_walls(dt)
     update_lights(dt)
@@ -171,12 +175,12 @@ RT = {
     end,
     entities = function() return #entities end,
     pooled = function()
-        local c, cubes = {}, 0
+        local c, parts = {}, 0
         for key, pool in pairs(pools) do
             c[key] = #pool
-            for _, u in ipairs(pool) do cubes = cubes + #u.cubes end
+            for _, u in ipairs(pool) do parts = parts + #u.parts end
         end
-        c.cubes = cubes
+        c.parts = parts
         return c
     end,
     units = function(kind)

@@ -1,0 +1,30 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "ao_strength": 0.15,
+    "colors": [
+      "#d4c1a1",
+      "#fff0cf"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "metallic_roughness",
+      "occlusion"
+    ],
+    "name": "ivory_marble",
+    "normal_strength": 0.003,
+    "overwrite": true,
+    "pattern": "marble",
+    "roughness": 0.28,
+    "roughness_variation": 0.06,
+    "scale": 3,
+    "seed": 17,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

@@ -807,3 +807,150 @@ fn a_bare_spawned_group_node_carries_its_children_along() {
     let position = world.get::<&WorldTransform>(leaf).unwrap().0.translation;
     assert_eq!(position, Vec3::new(5.0, 1.0, 0.0));
 }
+
+#[test]
+fn voxel_models_mesh_per_key_and_spawn_one_child_per_part() {
+    use crate::scene::Name;
+    use crate::scripting::lua::AssetCommand;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let result = state
+        .eval(
+            &mut world,
+            r##"
+                local m = voxel_model{
+                    rows = { "RRR", "RGR", "RRR" }, depth = 2, voxel = 0.5,
+                    legend = { R = "red", G = "#00ff00" },
+                }
+                local shared = spawn_primitive("cube", "Shared")
+                local root, parts = spawn_voxels(m, "Box", {
+                    materials = { red = shared }, cast_shadow = false,
+                })
+                -- A fill function: a 4x4x4 ball of key 1 (true).
+                local ball = voxel_model{ size = {4, 4, 4}, fill = function(x, y, z)
+                    return (x - 1.5)^2 + (y - 1.5)^2 + (z - 1.5)^2 < 4
+                end }
+                return #m.parts, m.parts[1].key, m.parts[2].key, m.voxels, m.quads,
+                    m.cube_quads, parts.red ~= nil and parts["#00ff00"] ~= nil,
+                    ball.parts[1].key, ball.voxels, m.max[2], tostring(m.parts[1].mesh)
+            "##,
+            None,
+        )
+        .unwrap();
+    let values = result.values;
+    assert_eq!(values[0], serde_json::json!(2));
+    assert_eq!(values[1], serde_json::json!("red"));
+    assert_eq!(values[2], serde_json::json!("#00ff00"));
+    assert_eq!(values[3], serde_json::json!(18));
+    // The green voxels sit inside the red frame but show on the front and back faces.
+    assert!(values[4].as_u64().unwrap() < values[5].as_u64().unwrap() / 4);
+    assert_eq!(values[6], serde_json::json!(true));
+    assert_eq!(values[7], serde_json::json!(1));
+    assert_eq!(values[8], serde_json::json!(32));
+    assert_eq!(values[9], serde_json::json!(1.5));
+    assert!(values[10].as_str().unwrap().starts_with("GeneratedMesh("));
+
+    let names: Vec<String> = world
+        .query::<&Name>()
+        .iter()
+        .map(|(_, name)| name.0.clone())
+        .collect();
+    for expected in ["Box", "Box.red", "Box.#00ff00"] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "{expected} missing from {names:?}"
+        );
+    }
+    let commands = state.take_pending_asset_commands();
+    let meshes = commands
+        .iter()
+        .filter(|pending| matches!(pending.command, AssetCommand::GeneratedMesh(_)))
+        .count();
+    let shares = commands
+        .iter()
+        .filter(|pending| matches!(pending.command, AssetCommand::ShareMaterial(_)))
+        .count();
+    let patches: Vec<_> = commands
+        .iter()
+        .filter_map(|pending| match &pending.command {
+            AssetCommand::Material(patch) => Some(patch.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(meshes, 2);
+    assert_eq!(shares, 1, "red shares Shared's material");
+    // The green key is a colour, so it colours its own part.
+    assert_eq!(patches, vec![serde_json::json!({ "color": "#00ff00" })]);
+    let no_shadow = world
+        .query::<(&Name, &crate::scene::CanCastShadow)>()
+        .iter()
+        .filter(|(_, (name, cast))| name.0.starts_with("Box.") && !cast.0)
+        .count();
+    assert_eq!(no_shadow, 2);
+}
+
+#[test]
+fn voxel_look_groups_keys_and_colours_vertices() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let result = state
+        .eval(
+            &mut world,
+            r##"
+                local m = voxel_model{
+                    rows = { "ABC" }, ao = 0,
+                    colors = { A = "#ff0000", B = { 0, 0, 1 } },
+                    parts = { C = "trim" }, part = "body",
+                }
+                local root, parts = spawn_voxels(m, "Look")
+                local keys = m.parts[1].keys
+                local bad = pcall(voxel_model, { rows = { "A" }, colors = { A = "red" } })
+                return #m.parts, m.parts[1].key, m.parts[2].key, keys[1], keys[2],
+                    m.parts[1].voxels, parts.body ~= nil and parts.trim ~= nil, bad
+            "##,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        result.values,
+        vec![
+            serde_json::json!(2),
+            serde_json::json!("body"),
+            serde_json::json!("trim"),
+            serde_json::json!("A"),
+            serde_json::json!("B"),
+            serde_json::json!(2),
+            serde_json::json!(true),
+            serde_json::json!(false),
+        ]
+    );
+}
+
+#[test]
+fn voxel_model_errors_name_the_problem() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    for (source, expected) in [
+        (r#"voxel_model{ rows = { "AA", "A" } }"#, "row 2"),
+        (
+            r#"voxel_model{ rows = { "AX" }, legend = { A = 1 } }"#,
+            "'X'",
+        ),
+        (
+            r#"voxel_model{ size = {2, 2, 2}, fill = function() error("boom") end }"#,
+            "fill(0, 0, 0)",
+        ),
+        (
+            r#"voxel_model{ size = {2, 2, 2} }"#,
+            "needs rows, layers, voxels or fill",
+        ),
+        (r#"set_mesh(spawn_entity("E"), 5)"#, "set_mesh expects"),
+    ] {
+        let err = state
+            .eval(&mut world, source, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}

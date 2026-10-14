@@ -5,10 +5,13 @@
 
 mod diff;
 mod entity;
+mod geometry;
 mod info;
 mod input;
+mod procedural;
 mod rendering;
 mod scripting;
+mod voxel;
 
 use serde_json::{json, Value};
 
@@ -17,7 +20,9 @@ use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
 use super::hub::RemoteHub;
 
 pub(crate) use diff::SceneBaseline;
-pub(crate) use entity::{patch_material, set_active_camera, set_camera, set_light, set_mesh};
+pub(crate) use entity::{
+    patch_material, set_active_camera, set_camera, set_generated_mesh, set_light, set_mesh,
+};
 pub(crate) use rendering::adjust_camera;
 
 /// Outcome of a remote method: a JSON result or an error message.
@@ -61,7 +66,17 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Remove a component from an entity",
     ),
     ("entity.delete", "Delete an entity and its children"),
+    (
+        "voxel.spawn",
+        "Build a voxel model (text art, voxels or a fill expression) as optimized meshes",
+    ),
     ("entity.duplicate", "Copy an entity and its children"),
+    ("mesh.lathe", "Revolve a radius/height profile into a UV-mapped mesh"),
+    ("mesh.extrude", "Extrude a concave XY polygon with bevel, twist and taper"),
+    ("mesh.compose", "Combine transformed procedural shapes into one reusable mesh"),
+    ("texture.generate", "Generate seeded tileable PNG textures and matching PBR maps"),
+    ("texture.maps", "Derive normal, roughness, occlusion and packed maps from a height image"),
+    ("audio.generate", "Synthesize a seeded sound effect as a portable PCM WAV file"),
     (
         "lua.eval",
         "Run Lua with the full scripting API and return the result",
@@ -200,6 +215,11 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "entity.remove_component" => entity::remove_component(params, ctx),
         "entity.delete" => entity::delete(params, ctx),
         "entity.duplicate" => entity::duplicate(params, ctx),
+        "voxel.spawn" => voxel::spawn_voxels(params, ctx),
+        "mesh.lathe" | "mesh.extrude" | "mesh.compose" => geometry::generate(method, params, ctx),
+        "texture.generate" => procedural::texture_generate(params, ctx, false),
+        "texture.maps" => procedural::texture_generate(params, ctx, true),
+        "audio.generate" => procedural::sound_generate(params),
         "lua.eval" => scripting::eval(params, ctx),
         "script.status" => scripting::status(ctx),
         "script.reload" => scripting::reload(params, ctx),

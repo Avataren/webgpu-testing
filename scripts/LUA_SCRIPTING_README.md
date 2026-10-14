@@ -193,7 +193,8 @@ end
 - `share_material(entity, source)` - Draw `entity` with `source`'s material. Many entities
   of one color (sparks, bullets, bricks) then use one material instead of one each.
   `set_material` on one of them gives it its own copy again.
-- `set_mesh(entity, kind)` - Replace the geometry with a primitive, or `nil` to remove it
+- `set_mesh(entity, mesh)` - Replace the geometry with a primitive (by name), a generated
+  mesh (`model.parts[i].mesh` of a `voxel_model`), or `nil` to remove it
 - `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
 - `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
   `"#rrggbb"`), `emissive` (strength; the surface glows in its own color, and values above 1
@@ -212,6 +213,91 @@ set_translation(spark, 0, 2, 0)
 set_material(spark, { color = {1, 0.6, 0.1}, emissive = 1, unlit = true })
 set_material_color(hit_brick, 1, 1, 1) -- flash
 ```
+
+### Procedural geometry
+Voxel models are meshed by the engine: faces between solid voxels are dropped and
+same-coloured faces in one plane merge into large rectangles, so a model draws a few
+meshes with a handful of quads instead of one cube per voxel. Each key (colour) becomes its
+own mesh so it can have its own material. Identical models share their meshes (and draw
+instanced), and meshes no entity uses any more are freed. Ambient occlusion is baked into
+the vertex colours, so creases and inner corners darken; faces only merge where their
+corner shading matches, so it stays exact.
+
+- `voxel_model(desc)` → `model` - Build and mesh a model. `desc` has exactly one source:
+  - `rows = {"..RR..", ".RGGR.", ...}` - text art, top row first; each character is a voxel
+    of that key (`.` and space are empty), extruded `depth` voxels (default 1);
+  - `layers = { rows, rows, ... }` - 3D text art, slices from the front (+Z) to the back;
+  - `size = {W, H, D}` with `voxels = {...}` - a flat array, index `1 + x + W*(y + H*z)`;
+  - `size = {W, H, D}` with `fill = function(x, y, z) return key end` - called for every
+    cell (0-based, y up, z toward the viewer).
+
+  Keys are strings or integers; `nil`, `false`, `0` and `""` are empty and `true` is key 1.
+  `legend = {R = "red", G = 2, x = false}` maps text-art characters to keys (without it
+  each character is its own key). `voxel` is the size of one voxel in meters (number or
+  `{x, y, z}`, default 0.1) and `pivot` the fraction of the model's box at the entity's
+  origin (default `{0.5, 0, 0.5}`: standing centred on it). `palette = {[key] = material}`
+  is kept for `spawn_voxels`. Limits: 1024 voxels per side, 16M cells, 255 keys.
+
+  The look: `ao` is the strength of the baked ambient occlusion (0..1, default 1; 0 turns
+  it off). `colors = {[key] = "#rrggbb" or {r, g, b[, a]}}` gives keys a vertex colour,
+  which multiplies the material colour (and so the glow of emissive materials).
+  `parts = {[key] = part_key}` puts several keys into one mesh, which draws with one
+  material while each key keeps its vertex colour; `part = part_key` does that for every
+  key `parts` does not list. A gradient is many keys with their own `colors` in one part.
+
+  The result: `size`, `voxel`, `min`, `max` (local bounds), `voxels` (solid count),
+  `quads`, `triangles`, `cube_quads` (what one cube per voxel would draw), `palette`, and
+  `parts` = `{ {key = ..., keys = {...}, mesh = GeneratedMesh, quads = n, voxels = n}, ... }`
+  in order of first use (`keys` are the keys a grouped part draws). `set_mesh(entity, part.mesh)` draws a part on any entity.
+- `spawn_voxels(model_or_desc[, name[, opts]])` → `root, parts` - Spawn a model (or build
+  one from a description first): an entity `name` (default `"Voxels"`) with a child
+  `name.key` per part; `parts[key]` is that child. `opts.materials[key]` is an entity to
+  share the material of, a colour (`"#rrggbb"` or `{r, g, b}`), or material fields; without
+  one the `palette` entry is used, and a key that is a `"#rrggbb"` string colours itself.
+  `opts.parent` parents the root, `opts.cast_shadow = false` keeps the parts out of shadow
+  maps.
+- `noise(x[, y[, z]])` → `number` - Smooth gradient (Perlin) noise in about -1..1 with
+  features about one unit apart; 0 at integer coordinates, so scale them (`x * 0.1`).
+- `fbm(x, y, z[, octaves])` → `number` - Several octaves of `noise` (default 4) for
+  rougher, natural-looking shapes, in about -1..1.
+
+```lua
+-- A sprite with walk frames: build each frame once and share it between all actors.
+local frames = {}
+for i, rows in ipairs(SPRITE_FRAMES) do
+    frames[i] = voxel_model{ rows = rows, depth = 3, voxel = 0.08, legend = { H = "hair", S = "skin" } }
+end
+local hair = spawn_primitive("cube", "HairMat") -- hidden template whose material parts share
+set_component(hair, "Visible", false)
+local root, parts = spawn_voxels(frames[1], "Hero", { materials = { hair = hair, skin = "#ffb080" } })
+
+-- Terrain from noise: 64 x 24 x 64 voxels of 0.5 m.
+local terrain = voxel_model{
+    size = {64, 24, 64}, voxel = 0.5, pivot = {0.5, 0, 0.5},
+    fill = function(x, y, z)
+        local h = 8 + fbm(x * 0.05, 0, z * 0.05, 5) * 8
+        if y > h then return nil end
+        return y > h - 1 and "grass" or (y > h - 4 and "dirt" or "rock")
+    end,
+    palette = { grass = "#4a9a35", dirt = "#7a5230", rock = { color = "#777780", roughness = 0.9 } },
+}
+log_info(("terrain: %d voxels, %d quads (%d as cubes)"):format(terrain.voxels, terrain.quads, terrain.cube_quads))
+spawn_voxels(terrain, "Terrain")
+
+-- A glowing bar shaded from yellow to red: one key per row, all in one part.
+local rows, colors = {}, {}
+for r = 1, 8 do
+    local k = string.char(64 + r) -- "A".."H"
+    rows[r] = string.rep(k, 20)
+    colors[k] = { 1, 1 - r / 8, 0.1 }
+end
+spawn_voxels(voxel_model{ rows = rows, depth = 2, colors = colors, part = "bar" }, "Bar",
+    { materials = { bar = { color = { 1, 1, 1 }, emissive = 2 } } })
+```
+
+To change a model (digging, building), build a new one and `set_mesh` each part's entity
+to the new part's mesh, or despawn the old root and spawn again. For big worlds, split
+them into chunks (e.g. 32³) so a change re-meshes only one chunk.
 
 ### Lights and Cameras
 - `spawn_light(kind[, fields][, name])` → `entity` - Spawn a `"point"`, `"directional"`

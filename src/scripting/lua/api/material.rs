@@ -10,6 +10,7 @@
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 use serde_json::json;
 
+use super::voxel::LuaGeneratedMesh;
 use crate::scripting::lua::commands::AssetCommand;
 use crate::scripting::lua::guards::with_active_commands;
 
@@ -27,6 +28,32 @@ fn check_primitive(kind: &str) -> LuaResult<()> {
     }
 }
 
+/// Turn a Lua table of material fields into the JSON patch the material commands take.
+/// `false` removes a texture (Lua tables cannot hold nil) or clears a flag.
+pub(crate) fn material_patch(
+    lua: &Lua,
+    fields: LuaValue,
+    function: &str,
+) -> LuaResult<serde_json::Value> {
+    let mut patch: serde_json::Value = lua.from_value(fields)?;
+    let Some(object) = patch.as_object_mut() else {
+        return Err(mlua::Error::RuntimeError(format!(
+            "{function} expects a table of material fields"
+        )));
+    };
+    for value in object.values_mut() {
+        if *value == json!(false) {
+            *value = serde_json::Value::Null;
+        }
+    }
+    for flag in ["unlit", "transparent", "double_sided", "nearest_filtering"] {
+        if object.get(flag).is_some_and(serde_json::Value::is_null) {
+            object.insert(flag.into(), json!(false));
+        }
+    }
+    Ok(patch)
+}
+
 /// Registers the mesh and material functions:
 ///
 /// - `set_material(entity, fields)` - change material fields: `color` ({r, g, b[, a]} in
@@ -34,7 +61,8 @@ fn check_primitive(kind: &str) -> LuaResult<()> {
 ///   `transparent`, `double_sided`, `nearest_filtering` (booleans), and texture paths
 ///   `base_color_texture`, `normal_texture`, `emissive_texture`, ... (false removes one)
 /// - `set_material_color(entity, r, g, b[, a])` - shorthand for the base color
-/// - `set_mesh(entity, kind)` - replace the geometry with a primitive, or `nil` to remove it
+/// - `set_mesh(entity, mesh)` - replace the geometry with a primitive (by name), a generated
+///   mesh (a part of `voxel_model`), or `nil` to remove it
 /// - `spawn_primitive(kind[, name[, {material_of = entity}]])` - spawn a visible entity
 ///   with a primitive mesh and its own material (or `material_of`'s); returns its handle
 /// - `share_material(entity, source)` - draw `entity` with `source`'s material, so many
@@ -46,23 +74,7 @@ pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "set_material",
         lua.create_function(|lua, (entity, fields): (i64, LuaValue)| {
-            let mut patch: serde_json::Value = lua.from_value(fields)?;
-            let Some(object) = patch.as_object_mut() else {
-                return Err(mlua::Error::RuntimeError(
-                    "set_material expects a table of fields".into(),
-                ));
-            };
-            // Lua tables cannot hold nil, so `false` removes a texture.
-            for value in object.values_mut() {
-                if *value == json!(false) {
-                    *value = serde_json::Value::Null;
-                }
-            }
-            for flag in ["unlit", "transparent", "double_sided", "nearest_filtering"] {
-                if object.get(flag).is_some_and(serde_json::Value::is_null) {
-                    object.insert(flag.into(), json!(false));
-                }
-            }
+            let patch = material_patch(lua, fields, "set_material")?;
             with_active_commands(|commands| {
                 commands.asset_command(entity, AssetCommand::Material(patch))
             })
@@ -83,13 +95,26 @@ pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
 
     globals.set(
         "set_mesh",
-        lua.create_function(|_, (entity, kind): (i64, Option<String>)| {
-            if let Some(kind) = &kind {
-                check_primitive(kind)?;
-            }
-            with_active_commands(|commands| {
-                commands.asset_command(entity, AssetCommand::Mesh(json!(kind)))
-            })
+        lua.create_function(|_, (entity, mesh): (i64, LuaValue)| {
+            let command = match &mesh {
+                LuaValue::Nil => AssetCommand::Mesh(serde_json::Value::Null),
+                LuaValue::String(kind) => {
+                    let kind = kind.to_str()?.to_string();
+                    check_primitive(&kind)?;
+                    AssetCommand::Mesh(json!(kind))
+                }
+                LuaValue::UserData(data) => {
+                    AssetCommand::GeneratedMesh(data.borrow::<LuaGeneratedMesh>()?.0.clone())
+                }
+                other => {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "set_mesh expects a primitive name, a generated mesh (a voxel model \
+                         part's mesh) or nil, not a {}",
+                        other.type_name()
+                    )))
+                }
+            };
+            with_active_commands(|commands| commands.asset_command(entity, command))
         })?,
     )?;
 

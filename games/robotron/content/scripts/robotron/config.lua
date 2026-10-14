@@ -16,6 +16,7 @@ local SFX_VOLUME = 0.55
 local PLAY_MUSIC = false                 -- the original has no music during play
 local MUSIC_VOLUME = 0.12
 local VOX = 0.125                        -- one sprite pixel, in meters
+local BULGE = 2                          -- how many voxels a sprite swells out on each side
 local LEAN = math.rad(16)                -- actors lean back toward the camera so the sprite reads
 local CAM_PITCH = math.rad(60)           -- camera angle below the horizon
 local FOV = 26.0
@@ -46,7 +47,7 @@ return {
     SPR = SPR, COLORS = COLORS, HW = HW, HD = HD, P_R = P_R,
     LX = LX, LZ = LZ, P_SPEED = P_SPEED, FIRE_INT = FIRE_INT, B_SPEED = B_SPEED,
     B_R = B_R, N_PBULLETS = N_PBULLETS, START_LIVES = START_LIVES, EXTRA_LIFE = EXTRA_LIFE, SFX_VOLUME = SFX_VOLUME,
-    PLAY_MUSIC = PLAY_MUSIC, MUSIC_VOLUME = MUSIC_VOLUME, VOX = VOX, LEAN = LEAN, CAM_PITCH = CAM_PITCH,
+    PLAY_MUSIC = PLAY_MUSIC, MUSIC_VOLUME = MUSIC_VOLUME, VOX = VOX, BULGE = BULGE, LEAN = LEAN, CAM_PITCH = CAM_PITCH,
     FOV = FOV, MAT_T = MAT_T, SPREAD = SPREAD, TRANS_T = TRANS_T, FR = FR,
     PXM = PXM, BYM = BYM, GRUNT_STEP = GRUNT_STEP, PROG_SPEED = PROG_SPEED, CL = CL,
     SL = SL, FLASH = FLASH,

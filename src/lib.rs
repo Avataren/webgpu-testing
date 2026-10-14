@@ -6,6 +6,7 @@ pub mod audio_inspect;
 pub mod environment;
 pub mod gpu_particles;
 pub mod io;
+pub mod procgen;
 pub mod profiler;
 pub mod project;
 pub mod remote;

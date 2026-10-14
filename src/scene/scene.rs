@@ -797,6 +797,31 @@ impl Scene {
         released
     }
 
+    /// Release generated meshes (voxel models, ...) no entity draws any more. Returns how
+    /// many were released.
+    pub fn collect_unused_generated_meshes(&mut self) -> usize {
+        if self.assets.generated_mesh_count() == 0 {
+            return 0;
+        }
+        let in_use: std::collections::HashSet<usize> = self
+            .nodes
+            .values()
+            .flat_map(|node| {
+                node.instance()
+                    .world()
+                    .query::<&crate::scene::components::MeshComponent>()
+                    .iter()
+                    .map(|(_, mesh)| mesh.0.index())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let released = self.assets.release_unused_generated_meshes(&in_use);
+        if released > 0 {
+            log::debug!("released {released} unused generated meshes");
+        }
+        released
+    }
+
     pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
         self.stepped_time += dt;
         self.refresh_environment_state();
@@ -969,9 +994,17 @@ impl Scene {
         if commands.is_empty() {
             if collect {
                 self.collect_unused_materials();
+                self.collect_unused_generated_meshes();
             }
             return;
         }
+        // A script that swaps generated meshes may leave the old ones unused.
+        let meshes_replaced = commands.iter().any(|pending| {
+            matches!(
+                pending.command,
+                AssetCommand::Mesh(_) | AssetCommand::GeneratedMesh(_)
+            )
+        });
         let mut textures_loaded = false;
         for pending in commands {
             if !self.main_world().contains(pending.entity) {
@@ -985,6 +1018,12 @@ impl Scene {
                 AssetCommand::Mesh(mesh) => {
                     crate::remote::handlers::set_mesh(self, renderer, pending.entity, mesh)
                 }
+                AssetCommand::GeneratedMesh(mesh) => crate::remote::handlers::set_generated_mesh(
+                    self,
+                    renderer,
+                    pending.entity,
+                    mesh,
+                ),
                 AssetCommand::Light(patch) => {
                     crate::remote::handlers::set_light(self.main_world_mut(), pending.entity, patch)
                 }
@@ -1005,6 +1044,9 @@ impl Scene {
         }
         if collect {
             self.collect_unused_materials();
+        }
+        if collect || meshes_replaced {
+            self.collect_unused_generated_meshes();
         }
     }
 

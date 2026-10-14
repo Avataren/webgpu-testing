@@ -34,7 +34,8 @@ fn error(message: impl Into<String>) -> mlua::Error {
     mlua::Error::RuntimeError(message.into())
 }
 
-fn color(value: &Value, key: &str) -> LuaResult<[f32; 4]> {
+/// A colour from Lua: `"#rrggbb[aa]"` or `{r, g, b[, a]}` (named or positional).
+pub(crate) fn color(value: &Value, key: &str) -> LuaResult<[f32; 4]> {
     match value {
         Value::String(text) => {
             let text = text.to_str()?;

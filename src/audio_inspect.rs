@@ -58,7 +58,7 @@ fn decode(path: &Path) -> Result<Clip, String> {
         .map_err(|err| format!("cannot decode {}: {err}", path.display()))?;
     let channels = usize::from(decoder.channels().get());
     let sample_rate = decoder.sample_rate().get();
-    let samples: Vec<f32> = decoder.map(|sample| sample as f32).collect();
+    let samples: Vec<f32> = decoder.collect();
     if samples.is_empty() {
         return Err(format!("{} has no samples", path.display()));
     }

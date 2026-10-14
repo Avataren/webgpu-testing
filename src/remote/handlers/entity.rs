@@ -7,6 +7,7 @@ use hecs::{Entity, World};
 use serde_json::{json, Value};
 
 use crate::asset::{MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot};
+use crate::procgen::GeneratedMesh;
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Renderer};
@@ -748,7 +749,7 @@ fn bulk_targets(world: &World, params: &Value) -> Result<Option<Vec<Entity>>, St
 
 /// Apply every recognised field of `patch` to `entity`. Returns the names of the
 /// fields that were applied; unknown fields are an error so typos are not silent.
-fn apply_patch(
+pub(super) fn apply_patch(
     ctx: &mut RemoteContext<'_, '_>,
     entity: Entity,
     patch: &Value,
@@ -1233,16 +1234,47 @@ pub(crate) fn set_mesh(
     )?;
     let descriptor =
         primitive_from_name(name).ok_or_else(|| format!("unknown primitive {name:?}"))?;
-    let has_material = world
+    let (mesh, bounds) = primitive_mesh(scene, renderer, descriptor);
+    attach_mesh(scene, entity, mesh, bounds)?;
+    scene
+        .main_world_mut()
+        .insert_one(entity, PrimitiveMeshComponent { descriptor })
+        .map_err(|err| err.to_string())
+}
+
+/// Give `entity` a mesh built at runtime (e.g. one colour of a voxel model).
+pub(crate) fn set_generated_mesh(
+    scene: &mut Scene,
+    renderer: &mut Renderer,
+    entity: Entity,
+    mesh: &GeneratedMesh,
+) -> Result<(), String> {
+    let handle = scene.assets.ensure_generated_mesh(renderer, mesh);
+    let bounds = (!mesh.data.vertices.is_empty()).then(|| MeshBounds::new(mesh.min, mesh.max));
+    attach_mesh(scene, entity, MeshComponent(handle), bounds)?;
+    let _ = scene
+        .main_world_mut()
+        .remove_one::<PrimitiveMeshComponent>(entity);
+    Ok(())
+}
+
+/// Replace `entity`'s geometry, keeping its material (or giving it a new one) and making
+/// sure it has what drawing needs.
+fn attach_mesh(
+    scene: &mut Scene,
+    entity: Entity,
+    mesh: MeshComponent,
+    bounds: Option<MeshBounds>,
+) -> Result<(), String> {
+    let has_material = scene
+        .main_world()
         .satisfies::<&MaterialComponent>(entity)
         .unwrap_or(false);
-
-    let (mesh, bounds) = primitive_mesh(scene, renderer, descriptor);
     // Keep an existing material; only the geometry changes.
     let material = (!has_material).then(|| new_pbr_material(scene));
     let world = scene.main_world_mut();
     world
-        .insert(entity, (mesh, PrimitiveMeshComponent { descriptor }))
+        .insert_one(entity, mesh)
         .map_err(|err| err.to_string())?;
     if let Some(material) = material {
         world

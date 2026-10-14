@@ -46,8 +46,8 @@ local function make_unit(kind, mkey)
     local root = reg(spawn_entity(uname("RT_" .. kind .. "_")))
     set_component(root, "Visible", false)
     set_translation(root, 0, -50, 0)
-    local fnodes, cubes = build_model(root, m, not K[kind].proj)
-    local u = { kind = kind, mkey = mkey, k = K[kind], m = m, e = root, fnodes = fnodes, cubes = cubes, frame = 1,
+    local fnodes, parts = build_model(root, m, not K[kind].proj)
+    local u = { kind = kind, mkey = mkey, k = K[kind], m = m, e = root, fnodes = fnodes, parts = parts, frame = 1,
         vis = false, alive = false, x = 0, z = 0, vx = 0, vz = 0, ox = 0, oz = 0, spawn_t = 0, age = 0, face = 0,
         yaw = 0, ph = math.random() * 6.28, sc = 1, anim = 0 }
     units[#units + 1] = u

@@ -93,6 +93,30 @@ engine you launched; save first).
   per file. Run `sound_inspect {path}` on every sound you generate or import: it reports
   length, peak/RMS, clipping, silence at either end and whether the loop seam clicks,
   with notes on problems and a waveform/spectrogram image.
+- Procedural geometry: `mesh_lathe {profile = [[radius, height], ...]}` turns a profile
+  around Y (bottom to top, equal heights for ledges, zero radius for poles); `bevel` and
+  `bevel_segments` soften profile corners. `mesh_extrude
+  {polygon, depth, bevel}` extrudes a concave XY outline along centered Z, with rounded
+  rim bevels (`bevel_segments`), taper and twist (`steps` controls subdivision).
+  `mesh_compose {parts}` joins locally transformed `shape: "lathe"`, `"extrude"` or
+  `"primitive"` parts into one mesh/material, without a boolean union. All three have
+  UVs/normals/tangents, accept material/transforms/parent, and can replace `entity`'s
+  mesh while keeping its material. Identical geometry shares a GPU mesh; `project_save`
+  embeds it for reopening and export. Chess example: `examples/projects/procedural-chess`;
+  regenerate with `tools/engine-mcp/examples/procedural_chess.py`.
+- Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`
+  writes tileable PNGs (noise, bricks, checker, wood, marble, voronoi) and matching
+  normal, height, metallic/roughness and occlusion maps into `content/textures`.
+  `texture_maps {name, source}` derives maps from a height image; `flip_y`, `channel`,
+  `invert` and `tileable` control conversion. Both return previews and ready-to-use
+  `material` fields, or apply them directly with `entity`. ORM packs occlusion into R,
+  roughness into G and metallic into B. Height is an export map, not displacement.
+  `sound_generate {name, preset, seed}` writes WAVs into `content/audio` (tone, blip,
+  laser, explosion, pickup, jump, hit, powerup), with pitch/envelope/noise/filter controls
+  and automatic inspection. Files save immediately with JSON parameter recipes;
+  `overwrite: true` replaces them, reloading textures and clearing sound caches.
+  Use `image: false` for terse batch results. Scene material assignments still need
+  `project_save`.
 - Material `emissive` makes a surface glow in its own color; above 1 it is HDR, which is
   what lets bloom pick up a lit surface (try 2 to 5 with bloom on).
 - The cone's tip points toward +Z, opposite to forward: ships and arrows made from cones
@@ -140,6 +164,15 @@ Facts that change how you write scripts:
   almost no CPU cost; prefer it to spark entities. For pooled entities of one color,
   `spawn_primitive(kind, name, {material_of = first})` or `share_material` makes them
   share one material.
+- Voxel art and procedural shapes: `voxel_model{rows = ..., legend = ..., depth = ...}` or
+  `voxel_model{size = {W, H, D}, fill = function(x, y, z) ... end}` (with `noise`/`fbm`)
+  greedy-meshes the model into one mesh per colour, and `spawn_voxels(model, name,
+  {materials = ...})` spawns it with one child per colour. Never build voxel models from one
+  cube entity per voxel or per rectangle. Build each model once and spawn it many times:
+  identical models share meshes. Ambient occlusion is baked in (`ao`); `colors` (vertex
+  colours per key) with `parts`/`part` put many keys in one mesh, e.g. a gradient on one
+  emissive material. From the MCP side, `voxel_spawn` does the same with text art or a
+  `fill` Lua expression.
 - Split a big game into files: `require("waves")` returns a module, `include("autopilot")`
   runs a file inside the script. Editing either hot-reloads the scripts that use it.
 - `save_data(key, text)` / `load_data(key)` keep a high score or settings between runs

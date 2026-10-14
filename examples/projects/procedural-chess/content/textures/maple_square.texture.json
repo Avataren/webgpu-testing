@@ -1,0 +1,29 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#b9a383",
+      "#e9d5b0"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "metallic_roughness",
+      "occlusion"
+    ],
+    "name": "maple_square",
+    "normal_strength": 0.002,
+    "overwrite": true,
+    "pattern": "wood",
+    "roughness": 0.4,
+    "roughness_variation": 0.05,
+    "scale": 3,
+    "seed": 5,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

@@ -21,8 +21,8 @@ local player = nil
 local function build_player()
     local root = reg(spawn_entity("RT_player"))
     local m = model("player")
-    local fnodes, cubes = build_model(root, m, true)
-    player = { e = root, m = m, fnodes = fnodes, cubes = cubes, frame = 1, vis = true, flash = false }
+    local fnodes, parts = build_model(root, m, true)
+    player = { e = root, m = m, fnodes = fnodes, parts = parts, frame = 1, vis = true, flash = false }
     S.player = player
 end
 
@@ -39,7 +39,7 @@ local function show_player(v)
 end
 
 local function flash_player(col)
-    for _, c in ipairs(player.cubes) do share_material(c[1], mat_of(col or c[2])) end
+    for _, p in ipairs(player.parts) do share_material(p[1], mat_of(col or p[2])) end
     player.flash = col ~= nil
 end
 

@@ -1,7 +1,7 @@
--- The HUD: score, men, wave, the attract-mode title and popups.
+-- The HUD: score, men, wave, the attract-mode subtitle and popups.
 
 local C = require("robotron.config")
-local COLORS, FLASH = C.COLORS, C.FLASH
+local COLORS = C.COLORS
 local S = require("robotron.state")
 local g = S.g
 
@@ -39,10 +39,10 @@ local function draw_hud(ui)
     end
 
     if g.demo then
+        -- the title itself is the voxel logo (logo.lua)
         if g.demo_t < 8.0 then
-            local a = min(1, (8.0 - g.demo_t) * 0.5)
-            neon_label(ui, "center", 0, -170, "ROBOTRON: 2084", 72, colv(FLASH[floor(g.time * 8) % #FLASH + 1], a), 0.22)
-            ui:screen_label("center", 0, -105, "SAVE THE LAST HUMAN FAMILY", { size = 24, color = { 1, 1, 1, a * 0.9 } })
+            local a = min(1, (8.0 - g.demo_t) * 0.5, g.demo_t * 1.5)
+            ui:screen_label("center", 0, 10, "SAVE THE LAST HUMAN FAMILY", { size = 24, color = { 1, 1, 1, a * 0.9 } })
         end
         if floor(g.time * 2) % 2 == 0 then
             ui:screen_label("bottom_center", 0, 70, "PRESS ENTER TO PLAY", { size = 34, color = { 1, 1, 1, 1 } })

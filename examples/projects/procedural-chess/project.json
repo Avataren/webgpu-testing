@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "procedural-chess",
+    "description": ""
+  },
+  "scenes": [
+    {
+      "id": "Procedural_Chess.scene",
+      "name": "Procedural Chess",
+      "relative_path": "content/scenes/Procedural_Chess.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    },
+    {
+      "id": "Chess_Piece_Study.scene",
+      "name": "Chess Piece Study",
+      "relative_path": "content/scenes/Chess_Piece_Study.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.062745101749897,
+      0.09019608050584793,
+      0.125490203499794,
+      1.0
+    ],
+    "ambient_intensity": 0.5,
+    "hdr": null
+  },
+  "engine_camera": {
+    "eye": [
+      10.8,
+      11.7,
+      13.8
+    ],
+    "target": [
+      10.280697,
+      11.161464,
+      13.136447
+    ],
+    "up": [
+      -0.3319044,
+      0.8426024,
+      -0.42410007
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 0.7330383,
+      "near": 0.1,
+      "far": 100.0
+    }
+  },
+  "imports": []
+}
