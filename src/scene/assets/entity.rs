@@ -352,6 +352,8 @@ pub(crate) fn generate_material_asset_path(
     materials_dir_abs: &Path,
     gltf_source: Option<&Path>,
     material_index: Option<usize>,
+    editor_id: Option<u128>,
+    document_id: &str,
     used: &HashSet<PathBuf>,
 ) -> PathBuf {
     if let (Some(source), Some(index)) = (gltf_source, material_index) {
@@ -379,6 +381,24 @@ pub(crate) fn generate_material_asset_path(
 
             return rel_path;
         }
+    }
+
+    // Inline materials in a freshly captured scene have no file handle yet.
+    // Reuse the entity's persistent identity across captures and material edits.
+    if let Some(id) = editor_id {
+        // Editor ids are local to a scene. Encode its document id without allowing
+        // path separators or collisions between escaped and literal characters.
+        let namespace: String = document_id
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-') {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02x}")
+                }
+            })
+            .collect();
+        return materials_dir_rel.join(format!("material_{namespace}_{id:032x}.mat.json"));
     }
 
     let mut rng = thread_rng();

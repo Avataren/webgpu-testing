@@ -9,7 +9,7 @@ const BUILD_PLATFORM_COMBO_ID: &str = "project_build_platform";
 pub struct ProjectController {
     metadata: ProjectMetadata,
     current_dir: Option<PathBuf>,
-    pending_save: Option<PathBuf>,
+    pending_save: Option<(PathBuf, bool)>,
     pending_load: Option<PathBuf>,
     pending_build: Option<ProjectBuildRequest>,
     pending_create: Option<NewProjectRequest>,
@@ -238,14 +238,14 @@ impl ProjectController {
                     .cloned()
                     .or_else(|| rfd::FileDialog::new().pick_folder())
                 {
-                    self.pending_save = Some(dir);
+                    self.pending_save = Some((dir, false));
                     ui.close();
                 }
             }
 
             if ui.button("Save Project As...").clicked() {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                    self.pending_save = Some(dir);
+                    self.pending_save = Some((dir, false));
                     ui.close();
                 }
             }
@@ -309,7 +309,7 @@ impl ProjectController {
             });
     }
 
-    pub fn take_pending_save(&mut self) -> Option<PathBuf> {
+    pub fn take_pending_save(&mut self) -> Option<(PathBuf, bool)> {
         self.pending_save.take()
     }
 
@@ -327,7 +327,11 @@ impl ProjectController {
 
     /// Save the project to `dir` on the next frame, as File > Save Project does.
     pub fn request_save_project(&mut self, dir: PathBuf) {
-        self.pending_save = Some(dir);
+        self.request_save_project_with_options(dir, false);
+    }
+
+    pub fn request_save_project_with_options(&mut self, dir: PathBuf, compact: bool) {
+        self.pending_save = Some((dir, compact));
     }
 
     pub fn request_load_project(&mut self, path: PathBuf) {

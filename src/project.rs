@@ -506,12 +506,17 @@ impl ProjectManifest {
     }
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<(), ProjectError> {
+        self.save_to_dir_with_options(dir, false)
+    }
+
+    /// Save with optional compact scene JSON. The serialized scene data is identical.
+    pub fn save_to_dir_with_options(&self, dir: &Path, compact: bool) -> Result<(), ProjectError> {
         fs::create_dir_all(dir)?;
 
         let mut manifest = self.clone();
         manifest.environment.prepare_for_save(dir)?;
-        for asset in manifest.scene_assets.values_mut() {
-            asset.persist_material_assets(dir)?;
+        for (document_id, asset) in &mut manifest.scene_assets {
+            asset.persist_material_assets_for_document(dir, document_id)?;
             asset.relativize_script_paths(dir);
         }
 
@@ -522,7 +527,12 @@ impl ProjectManifest {
             let Some(asset) = manifest.scene_assets.get(&document.id) else {
                 return Err(ProjectError::MissingSceneAsset(document.id.clone()));
             };
-            let scene_json = asset.to_json().map_err(ProjectError::Serialization)?;
+            let scene_json = if compact {
+                serde_json::to_string(asset)
+            } else {
+                asset.to_json()
+            }
+            .map_err(ProjectError::Serialization)?;
             let scene_path = dir.join(&document.relative_path);
             if let Some(parent) = scene_path.parent() {
                 fs::create_dir_all(parent)?;
@@ -900,6 +910,88 @@ mod tests {
     use crate::asset::Mesh;
     use crate::renderer::Vertex;
     use crate::scene::{SceneAsset, SceneImportDevice, SceneLibrary};
+
+    #[test]
+    fn repeated_captures_reuse_inline_material_files_and_compact_saves_roundtrip() {
+        let directory = tempfile::tempdir().unwrap();
+        let make_asset = |color| {
+            let mut asset = SceneAsset::builder("Materials").build();
+            for id in [42, 43] {
+                let mut entity = crate::scene::SceneAssetEntity::builder(
+                    crate::scene::SerializedTransform::from(crate::scene::Transform::IDENTITY),
+                )
+                .with_name(format!("Entity{id}"))
+                .build();
+                entity.editor_id = Some(id);
+                let material = crate::renderer::Material {
+                    base_color: color,
+                    ..Default::default()
+                };
+                entity.material_data =
+                    Some(crate::scene::SerializedMaterial::from_material(material));
+                asset.entities.push(entity);
+            }
+            let (vertices, indices) = crate::renderer::primitives::cylinder_mesh(16);
+            asset
+                .mesh_data
+                .push(crate::asset::MeshData { vertices, indices });
+            asset
+        };
+        let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
+        let doc = manifest.scenes[0].clone();
+        manifest.add_scene_asset(doc.id.clone(), make_asset([255, 0, 0, 255]));
+        manifest.save_to_dir(directory.path()).unwrap();
+        let scene_path = directory.path().join(&doc.relative_path);
+        let pretty = fs::read_to_string(&scene_path).unwrap();
+        let first: serde_json::Value = serde_json::from_str(&pretty).unwrap();
+        // A new capture has inline data again, with no file handles from the last save.
+        manifest.add_scene_asset(doc.id.clone(), make_asset([255, 0, 0, 255]));
+        manifest
+            .save_to_dir_with_options(directory.path(), true)
+            .unwrap();
+        let compact = fs::read_to_string(&scene_path).unwrap();
+        assert!(compact.len() < pretty.len() / 2);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&compact).unwrap(),
+            first
+        );
+        let loaded = ProjectManifest::load_from_dir(directory.path()).unwrap();
+        assert_eq!(
+            loaded.scene_asset(&doc.id).unwrap().mesh_data[0]
+                .vertices
+                .len(),
+            first["mesh_data"][0]["vertices"].as_array().unwrap().len()
+        );
+
+        // Editing an inline material updates the same file, leaving unrelated files alone.
+        let materials = directory.path().join("content/materials");
+        let unrelated = materials.join("hand_authored.mat.json");
+        fs::write(&unrelated, "unrelated").unwrap();
+        manifest.add_scene_asset(doc.id.clone(), make_asset([0, 255, 0, 255]));
+        manifest.save_to_dir(directory.path()).unwrap();
+        assert_eq!(fs::read_dir(&materials).unwrap().count(), 3);
+        assert_eq!(fs::read_to_string(unrelated).unwrap(), "unrelated");
+        for entity in first["entities"].as_array().unwrap() {
+            let path = directory.path().join(entity["material"].as_str().unwrap());
+            let material: crate::scene::SerializedMaterial =
+                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(material.base_color, [0, 255, 0, 255]);
+        }
+        // The same editor ids in another scene must not overwrite this scene's files.
+        let mut other_doc = doc.clone();
+        other_doc.id = "other.scene".into();
+        other_doc.relative_path = PathBuf::from("content/scenes/other.scene.json");
+        manifest.add_scene_asset(other_doc.id.clone(), make_asset([0, 0, 255, 255]));
+        manifest.scenes.push(other_doc);
+        manifest.save_to_dir(directory.path()).unwrap();
+        assert_eq!(fs::read_dir(&materials).unwrap().count(), 5);
+        for entity in first["entities"].as_array().unwrap() {
+            let path = directory.path().join(entity["material"].as_str().unwrap());
+            let material: crate::scene::SerializedMaterial =
+                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(material.base_color, [0, 255, 0, 255]);
+        }
+    }
 
     struct HeadlessDevice {
         device: Arc<wgpu::Device>,

@@ -137,6 +137,14 @@ impl SceneAsset {
     }
 
     pub fn persist_material_assets(&mut self, project_root: &Path) -> Result<(), std::io::Error> {
+        self.persist_material_assets_for_document(project_root, &self.name.clone())
+    }
+
+    pub(crate) fn persist_material_assets_for_document(
+        &mut self,
+        project_root: &Path,
+        document_id: &str,
+    ) -> Result<(), std::io::Error> {
         let materials_dir_rel = PathBuf::from(CONTENT_DIR).join("materials");
         let materials_dir_abs = project_root.join(&materials_dir_rel);
         fs::create_dir_all(&materials_dir_abs)?;
@@ -210,6 +218,8 @@ impl SceneAsset {
                     &materials_dir_abs,
                     entity.gltf_source.as_deref(),
                     entity.gltf_material,
+                    entity.editor_id,
+                    document_id,
                     &written,
                 );
 

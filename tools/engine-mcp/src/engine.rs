@@ -1,6 +1,6 @@
 //! Connection to a running engine, and building and launching engine processes.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -174,6 +174,13 @@ impl Engine {
 
     pub fn is_listening(&self) -> bool {
         TcpStream::connect_timeout(&self.address(), Duration::from_millis(300)).is_ok()
+    }
+
+    /// An external process may have replaced the engine on the same port.
+    /// Discard the old socket before attaching, without replaying any mutations.
+    pub fn reconnect(&mut self) -> Result<(), CallError> {
+        self.connection = None;
+        self.connect().map(|_| ())
     }
 
     /// Send one request and wait for its answer.
@@ -501,6 +508,7 @@ impl Engine {
         binary: &Path,
         args: &[String],
         monitor: Option<&str>,
+        env: &BTreeMap<String, String>,
         timeout: Duration,
     ) -> Result<Value, String> {
         if !binary.exists() {
@@ -520,6 +528,14 @@ impl Engine {
         ));
 
         let mut command = Command::new(binary);
+        command
+            .env(
+                "RUST_LOG",
+                std::env::var("ENGINE_RUST_LOG").unwrap_or_else(|_| "info".into()),
+            )
+            .env("RUST_BACKTRACE", "1")
+            .envs(env)
+            .env("ENGINE_REMOTE_PORT", self.port.to_string());
         if let Some(monitor) = monitor {
             // Read by the engine's RenderSettings; overrides settings.json.
             command.env("ENGINE_MONITOR", monitor);
@@ -527,12 +543,6 @@ impl Engine {
         let mut child = command
             .args(args)
             .current_dir(&self.repo)
-            .env("ENGINE_REMOTE_PORT", self.port.to_string())
-            .env(
-                "RUST_LOG",
-                std::env::var("ENGINE_RUST_LOG").unwrap_or_else(|_| "info".into()),
-            )
-            .env("RUST_BACKTRACE", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -610,6 +620,35 @@ impl Engine {
     }
 }
 
+/// Validate child environment overrides before building or launching a window.
+pub fn launch_environment(overrides: Option<&Value>) -> Result<BTreeMap<String, String>, String> {
+    let env: BTreeMap<String, String> = match overrides {
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|_| "env must be an object with string values".to_string())?,
+        None => BTreeMap::new(),
+    };
+    for (key, value) in &env {
+        if key.is_empty() || key.contains(['=', '\0']) || value.contains('\0') {
+            return Err("env contains an invalid environment name or value".into());
+        }
+    }
+    #[cfg(target_os = "linux")]
+    validate_desktop_environment(|key| env.get(key).cloned().or_else(|| std::env::var(key).ok()))?;
+    Ok(env)
+}
+
+#[cfg(target_os = "linux")]
+fn validate_desktop_environment(get: impl Fn(&str) -> Option<String>) -> Result<(), String> {
+    if ["DISPLAY", "WAYLAND_DISPLAY"]
+        .iter()
+        .any(|key| get(key).is_some_and(|value| !value.is_empty()))
+    {
+        Ok(())
+    } else {
+        Err("no desktop session is configured: DISPLAY and WAYLAND_DISPLAY are empty or unset. Pass engine_launch env (for example {\"DISPLAY\":\":0\"}, or WAYLAND_DISPLAY and XDG_RUNTIME_DIR), or start the editor from a desktop terminal and attach. No build was started.".into())
+    }
+}
+
 fn describe_status(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => format!("exit code {code}"),
@@ -639,6 +678,74 @@ fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnect_discards_socket_from_replaced_engine() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = thread::spawn(move || {
+            for generation in [1, 2] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = String::new();
+                BufReader::new(&stream).read_line(&mut request).unwrap();
+                let request: Value = serde_json::from_str(&request).unwrap();
+                assert_eq!(request["method"], "engine.info");
+                writeln!(
+                    stream,
+                    "{}",
+                    json!({"id":request["id"],"result":{"generation":generation}})
+                )
+                .unwrap();
+            }
+        });
+        let mut engine = Engine::new(PathBuf::new(), port);
+        assert_eq!(
+            engine.call("engine.info", json!({})).unwrap()["generation"],
+            1
+        );
+        engine.reconnect().unwrap();
+        assert_eq!(
+            engine.call("engine.info", json!({})).unwrap()["generation"],
+            2
+        );
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn launch_environment_validates_overrides() {
+        assert_eq!(
+            launch_environment(Some(&json!({"DISPLAY":":99", "ENGINE_TEST":"yes"}))).unwrap()
+                ["ENGINE_TEST"],
+            "yes"
+        );
+        for invalid in [
+            json!([]),
+            json!({"DISPLAY": 1}),
+            json!({"bad=name":"x"}),
+            json!({"":"x"}),
+            json!({"DISPLAY":"x\0"}),
+        ] {
+            assert!(launch_environment(Some(&invalid)).is_err());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_desktop_fails_preflight() {
+        assert!(validate_desktop_environment(|_| None).is_err());
+        assert!(validate_desktop_environment(|_| Some(String::new())).is_err());
+        assert!(validate_desktop_environment(
+            |key| (key == "WAYLAND_DISPLAY").then(|| "wayland-0".into())
+        )
+        .is_ok());
+        assert!(
+            validate_desktop_environment(|key| (key == "DISPLAY").then(|| ":0".into())).is_ok()
+        );
+    }
 
     #[test]
     fn versions_parse_and_compare() {

@@ -206,26 +206,47 @@ pub fn cylinder_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     let top_center_index = vertices.len() as u32;
     vertices.push(v([0.0, 0.0, 0.5], [0.0, 0.0, 1.0], [0.5, 0.5], tangent));
 
-    // Bottom cap
-    let base_ring_start = 0u32;
+    // Caps need separate rim vertices so their normals do not interpolate with
+    // the radial side normals. Viewed from outside, both caps wind CCW.
+    let base_ring_start = vertices.len() as u32;
     for i in 0..segments {
-        let current = base_ring_start + (i * 2);
-        let next = base_ring_start + (((i + 1) % segments) * 2);
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let (y, x) = theta.sin_cos();
+        vertices.push(v(
+            [x, y, -0.5],
+            [0.0, 0.0, -1.0],
+            [(x + 1.0) * 0.5, (y + 1.0) * 0.5],
+            [1.0, 0.0, 0.0, -1.0],
+        ));
+    }
+    for i in 0..segments {
+        let current = base_ring_start + i;
+        let next = base_ring_start + (i + 1) % segments;
 
         indices.push(bottom_center_index);
-        indices.push(current);
         indices.push(next);
+        indices.push(current);
     }
 
     // Top cap
-    let top_ring_start = 1u32;
+    let top_ring_start = vertices.len() as u32;
     for i in 0..segments {
-        let current = top_ring_start + (i * 2);
-        let next = top_ring_start + (((i + 1) % segments) * 2);
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let (y, x) = theta.sin_cos();
+        vertices.push(v(
+            [x, y, 0.5],
+            [0.0, 0.0, 1.0],
+            [(x + 1.0) * 0.5, (y + 1.0) * 0.5],
+            tangent,
+        ));
+    }
+    for i in 0..segments {
+        let current = top_ring_start + i;
+        let next = top_ring_start + (i + 1) % segments;
 
         indices.push(top_center_index);
-        indices.push(next);
         indices.push(current);
+        indices.push(next);
     }
 
     (vertices, indices)
@@ -499,6 +520,32 @@ pub fn cube_mesh() -> (Vec<Vertex>, Vec<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cylinder_triangles_and_cap_normals_face_outward() {
+        for segments in [3, 8, 32] {
+            let (vertices, indices) = cylinder_mesh(segments);
+            for triangle in indices.as_chunks::<3>().0 {
+                let [a, b, c] = [
+                    vertices[triangle[0] as usize],
+                    vertices[triangle[1] as usize],
+                    vertices[triangle[2] as usize],
+                ];
+                let face = (Vec3::from(b.pos) - Vec3::from(a.pos))
+                    .cross(Vec3::from(c.pos) - Vec3::from(a.pos));
+                let center = (Vec3::from(a.pos) + Vec3::from(b.pos) + Vec3::from(c.pos)) / 3.0;
+                assert!(face.dot(center) > 0.0, "inward triangle: {triangle:?}");
+                for vertex in [a, b, c] {
+                    assert!(face.dot(Vec3::from(vertex.normal)) > 0.0);
+                }
+                if a.pos[2] == b.pos[2] && b.pos[2] == c.pos[2] {
+                    let normal = [0.0, 0.0, a.pos[2].signum()];
+                    for vertex in [a, b, c] {
+                        assert_eq!(vertex.normal, normal);
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn cube_counts_look_right() {
         let (v, i) = cube_mesh();

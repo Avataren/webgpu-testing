@@ -371,7 +371,12 @@ impl ProjectSystem {
         }
     }
 
-    fn handle_project_save(&mut self, ctx: &mut EditorContext<'_, '_, '_>, dir: PathBuf) {
+    fn handle_project_save(
+        &mut self,
+        ctx: &mut EditorContext<'_, '_, '_>,
+        dir: PathBuf,
+        compact: bool,
+    ) {
         let Some(gpu_ctx) = ctx.gpu_context_mut() else {
             self.controller
                 .record_save(dir, Some("the renderer is not ready".into()));
@@ -419,7 +424,7 @@ impl ProjectSystem {
                     }
                 }
 
-                if let Err(err) = manifest.save_to_dir(&dir) {
+                if let Err(err) = manifest.save_to_dir_with_options(&dir, compact) {
                     error!("Failed to save project to {:?}: {err}", dir);
                     save_error = Some(err.to_string());
                     notification =
@@ -628,8 +633,8 @@ impl EditorSystem for ProjectSystem {
             self.handle_project_load(ctx, dir);
         }
 
-        if let Some(dir) = self.controller_mut().take_pending_save() {
-            self.handle_project_save(ctx, dir);
+        if let Some((dir, compact)) = self.controller_mut().take_pending_save() {
+            self.handle_project_save(ctx, dir, compact);
         }
 
         if let Some(request) = self.controller_mut().take_pending_build() {

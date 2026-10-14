@@ -13,6 +13,7 @@ use crate::asset::MeshData;
 use crate::renderer::{primitives::PrimitiveMeshDescriptor, vertex::v};
 
 pub const MAX_VERTICES: usize = 250_000;
+pub const MAX_COMPOSE_PARTS: usize = 128;
 const EPS: f32 = 1e-6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -894,8 +895,8 @@ pub fn extrude(options: &ExtrudeOptions) -> Result<MeshData, String> {
 
 /// Assemble transformed parts into a single mesh. This joins surfaces without a boolean union.
 pub fn compose(parts: &[MeshPart]) -> Result<MeshData, String> {
-    if !(1..=128).contains(&parts.len()) {
-        return Err("compose needs 1..=128 parts".into());
+    if !(1..=MAX_COMPOSE_PARTS).contains(&parts.len()) {
+        return Err(format!("compose needs 1..={MAX_COMPOSE_PARTS} parts"));
     }
     let mut combined = empty();
     for (index, part) in parts.iter().enumerate() {

@@ -235,7 +235,10 @@ impl EditorApplication {
                     .map_or(0, |save| save.seq);
                 self.project_system_mut()
                     .controller_mut()
-                    .request_save_project(dir.clone());
+                    .request_save_project_with_options(
+                        dir.clone(),
+                        params["compact"].as_bool().unwrap_or(false),
+                    );
                 Ok(json!({
                     "queued": "project.save",
                     "path": dir.display().to_string(),

@@ -2,6 +2,21 @@
 
 Notes from building a fantasy dungeon crawler through the engine MCP, 2026-10-14.
 
+## Fix status — 2026-10-14
+
+- Added `engine_launch.env` overrides and a Linux desktop-environment preflight before building. Attaching now reconnects before querying a process that replaced the previous engine on the same port.
+- Moved the shared workflow into the `engine://workflow` MCP resource and shortened initialization instructions.
+- Added `engine_info.limits` for light capacities, selection order and procedural mesh budgets. Light schemas advertise the four-light limits. `mesh_compose` already advertised 1–128 parts; the capacity is now reported by the engine too. Distance/influence-based light selection remains open.
+- Added `batch {quiet: true}` for concise successful results while retaining failure and rollback details, including in atomic batches. Full results remain the default.
+- Changed `project_save` to return paths and a written-file count; `verbose: true` includes every changed file. `compact: true` writes equivalent scene JSON without whitespace. Ordinary editor saves still pretty-print; binary mesh assets remain open.
+- Inline editor material filenames now use scene-document and entity identities, so repeated captures and edits reuse files. Existing orphan files are retained; dependency scanning and cleanup remain open.
+- Scenario saves create parent directories before simulation and still refuse existing files.
+- Corrected cylinder cap winding and flat cap normals for newly generated meshes. Previously embedded geometry needs regeneration to receive this correction.
+- Hot reload retains the script's spawned-handle registry and allocation counter. Regression checks mutate preserved entities after multiple reloads and allocate new handles, instead of checking entity counts alone.
+- Documented the console's missing module loaders, the simulation step needed to apply queued reloads in frozen sessions, and HUD font limitations. Custom fonts, offscreen capture sizing, navigation authoring and richer HUD primitives remain open.
+
+Validation: engine/MCP Rust tests, native editor/player builds and the extended isolated MCP verification script. Live checks cover desktop overrides/preflight, quiet rollback and aliases, nested scenario directories, resumed handle mutations, repeated/compact saves, and first-call reconnect after external editor-to-player replacement.
+
 ## Launch and discovery
 
 - **Desktop environment is missing from MCP launches.** `engine_launch {target: "editor"}` compiled successfully, then exited because neither `DISPLAY` nor `WAYLAND_DISPLAY` was set. The terminal environment has `DISPLAY=:0` and a working desktop socket. Workaround: launch the built editor from the terminal with the desktop environment and let MCP attach. Suggest exposing launch environment overrides or inheriting the desktop session environment, and checking it before spending time on a build.

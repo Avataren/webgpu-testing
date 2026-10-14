@@ -739,6 +739,72 @@ fn hot_reload_hands_on_destroyed_result_to_the_new_on_created_and_follows_module
 }
 
 #[test]
+fn hot_reload_keeps_spawned_handles_mutable_and_new_handles_distinct() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let entity = spawn_script(
+        &mut world,
+        "handle_reload",
+        r#"
+        function on_created(self_entity, previous)
+            GAME = previous or {ticks = 0, pool = {
+                spawn_entity("PooledA"), spawn_entity("PooledB")
+            }}
+            if previous then
+                GAME.extra = spawn_entity("AfterReload" .. GAME.ticks)
+            end
+        end
+        function on_destroyed(self_entity, reason)
+            if reason == "reload" then return GAME end
+        end
+        function update(self_entity, dt)
+            GAME.ticks = GAME.ticks + 1
+            set_translation(GAME.pool[1], GAME.ticks, 1, 0)
+            set_translation(GAME.pool[2], GAME.ticks, 2, 0)
+            if GAME.extra then set_translation(GAME.extra, GAME.ticks, 3, 0) end
+        end
+    "#,
+    );
+    state.process_scripts(&mut world, DT, false).unwrap();
+    let pool = world
+        .query::<&crate::scene::Name>()
+        .iter()
+        .filter(|(_, name)| name.0.starts_with("Pooled"))
+        .map(|(entity, name)| (entity, name.0.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(pool.len(), 2);
+    for reload in 1..=2 {
+        assert!(state.reload_entity(entity));
+        for _ in 0..3 {
+            state.process_scripts(&mut world, DT, false).unwrap();
+        }
+        assert_eq!(state.last_error(entity), None);
+        for (pooled, name) in &pool {
+            let pos = world
+                .get::<&TransformComponent>(*pooled)
+                .unwrap()
+                .0
+                .translation;
+            assert_eq!(
+                pos.x,
+                (1 + reload * 3) as f32,
+                "preserved handle no longer mutates {name}"
+            );
+            assert_eq!(pos.y, if name == "PooledA" { 1.0 } else { 2.0 });
+        }
+        let newest = format!("AfterReload{}", 1 + (reload - 1) * 3);
+        let extra = world
+            .query::<(&crate::scene::Name, &TransformComponent)>()
+            .iter()
+            .find(|(_, (name, _))| name.0 == newest)
+            .map(|(_, (_, t))| t.0.translation)
+            .unwrap();
+        assert_eq!(extra, Vec3::new((1 + reload * 3) as f32, 3.0, 0.0));
+        assert_eq!(world.len(), 3 + reload);
+    }
+}
+
+#[test]
 fn spawn_primitive_can_share_a_material() {
     let mut state = ScriptingState::new().unwrap();
     let mut world = World::new();

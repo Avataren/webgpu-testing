@@ -557,6 +557,11 @@ in the `on_ui(self_entity, ui)` hook. It works in the editor and in the standalo
 top-level `anchored_panel`s are drawn as overlays on the game view, everything else goes
 into a window titled after the entity.
 
+Text uses egui's bundled default fonts. Glyph coverage is limited; unsupported
+characters render as missing-glyph boxes even when the text API accepts the string.
+Use ASCII for portable health bars and map markers. The HUD API currently has no
+project-font loading option.
+
 **Note**: All UI widgets are methods called on the `ui` parameter passed to `on_ui()`.
 
 #### Basic Widgets
@@ -758,6 +763,12 @@ Script locals reset on a reload. To keep a game going while you edit it (instead
 restarting the demo at wave 1), return the state from `on_destroyed` and take it back in
 `on_created`. Any Lua value works, including tables with functions; entering or leaving
 play mode always starts fresh.
+
+Spawned handles kept in that state remain valid across a hot reload: the replacement
+script retains its handle registry, including the allocation counter. These handles
+are scoped to that script; use entity IDs or unique names to share references with
+other scripts. A queued reload needs a simulation update. In a frozen manual session,
+advance with `runtime_step`; waiting for rendered frames does not apply the reload.
 
 ```lua
 function on_created(self_entity, previous)

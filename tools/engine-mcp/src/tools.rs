@@ -167,9 +167,9 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "cast_shadow": { "type": "boolean", "description": "Lights: whether the light casts shadows. Meshes: whether the mesh shows up in shadow maps (default true)" },
         "mesh": { "type": ["string", "null"], "enum": ["cube", "sphere", "plane", "cylinder", "cone", "torus", null], "description": "Replace the geometry with a primitive, or null to remove" },
         "material": material,
-        "point_light": nullable_object("Add/update a point light, or null to remove", point),
-        "spot_light": nullable_object("Add/update a spot light (shines along -Z), or null to remove", spot),
-        "directional_light": nullable_object("Add/update a directional light (shines along -Z), or null to remove", directional),
+        "point_light": nullable_object("Add/update a point light, or null to remove. Renderer uses the first 4 point lights in scene/world order; see engine_info limits.", point),
+        "spot_light": nullable_object("Add/update a spot light (shines along -Z), or null to remove. Renderer uses the first 4 spot lights in scene/world order; see engine_info limits.", spot),
+        "directional_light": nullable_object("Add/update a directional light (shines along -Z), or null to remove. Renderer uses the first 4 directional lights in scene/world order.", directional),
         "camera": nullable_object("Add/update a camera component, or null to remove", json!({
             "projection": { "type": "string", "enum": ["perspective", "orthographic"] },
             "fov_deg": { "type": "number" },
@@ -273,6 +273,7 @@ pub fn tools() -> Vec<Tool> {
                 "build": { "type": "boolean", "description": "Run cargo build first (default true)" },
                 "release": { "type": "boolean", "description": "Optimized build (default false)" },
                 "restart": { "type": "boolean", "description": "Stop an engine this server started before launching" },
+                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Child environment overrides, e.g. DISPLAY=:0 or WAYLAND_DISPLAY plus XDG_RUNTIME_DIR. Desktop environment is checked before building on Linux. Omitted values inherit from the MCP server." },
                 "monitor": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Monitor for the window: 1-based number, output name (e.g. HDMI-A-0) or primary. Defaults to settings.json / ENGINE_MONITOR; respect the user's choice and don't override it without reason." },
                 "timeout_seconds": { "type": "number", "description": "How long to wait for the engine to start (default 120)" }
             }), &[]),
@@ -333,7 +334,8 @@ pub fn tools() -> Vec<Tool> {
                         "required": ["tool"]
                     }
                 },
-                "stop_on_error": { "type": "boolean", "description": "Default true" }
+                "stop_on_error": { "type": "boolean", "description": "Default true" },
+                "quiet": { "type": "boolean", "default": false, "description": "Return identifiers and counts instead of full successful results/geometry recipes; errors and rollback details remain. Applies to sequential, atomic and dry-run batches." }
             }), &["calls"]),
             action: Action::Local,
         },
@@ -458,7 +460,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Scripting & runtime ----
         Tool {
             name: "lua_eval",
-            description: "Run Lua in the engine with the full scripting API (see lua_api_reference) and return the result and anything printed. A bare expression returns its value. Without entity, code runs in a persistent console environment (globals survive between calls). With entity, it runs inside that entity's script, so it can read or change the script's globals and state (console code cannot see them; the error names the script that defines a missing global). World changes apply when the chunk finishes. Great for queries and for moving, hiding, recoloring (set_material_color) or re-parenting many entities, and for spawning primitives, lights and cameras (spawn_primitive, spawn_light, spawn_camera).",
+            description: "Run Lua with the scripting API; return values and printed output. A bare expression returns its value. Without entity, uses a persistent console whose globals survive calls; require/include are unavailable. With entity, uses that script's globals, state and module loaders. World changes apply when the chunk finishes. See lua_api_reference.",
             schema: object(json!({
                 "code": { "type": "string" },
                 "entity": entity_ref(),
@@ -474,7 +476,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "script_reload",
-            description: "Recompile scripts: one entity's, every user of a file, or all. Files under the project and scripts/ are also hot-reloaded automatically by the editor when saved.",
+            description: "Schedule recompilation for one entity, every user of a file, or all scripts. Reload runs on the next simulation update; frozen manual sessions require runtime_step (wait alone does not advance scripts). The editor also watches project scripts automatically.",
             schema: object(json!({
                 "entity": entity_ref(),
                 "path": { "type": "string" }
@@ -802,8 +804,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_save",
-            description: "Editor only: save the project (scenes, environment, editor camera) to its directory, or to path. Must be in editor mode, not playing. Returns once the files are written, with the paths that changed.",
-            schema: object(json!({ "path": { "type": "string" } }), &[]),
+            description: "Editor only: save scenes, environment and editor camera to the project directory or path. Stop play first. Returns after writing, with project/scene paths and a written-file count. verbose includes all changed paths; compact removes scene JSON whitespace.",
+            schema: object(json!({
+                "path": { "type": "string" },
+                "verbose": { "type": "boolean", "default": false },
+                "compact": { "type": "boolean", "default": false, "description": "Write compact scene JSON, preserving the same data and embedded meshes" }
+            }), &[]),
             action: Action::Local,
         },
         Tool {
@@ -897,7 +903,7 @@ pub fn tools() -> Vec<Tool> {
                 tool.schema["properties"]["setup"] = json!({"type":"string","description":"Lua setup hook after on_created, before input and simulation"});
                 tool.schema["properties"]["assertions"] = json!({"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"code":{"type":"string","description":"Lua expression returning true"},"at_step":{"type":"integer","minimum":0}},"required":["code"]}});
                 tool.schema["properties"]["scenario"] = json!({"type":"string","description":"Read test parameters and saved input from a JSON file; explicit arguments override it"});
-                tool.schema["properties"]["save_scenario"] = json!({"type":"string","description":"Save resolved test parameters to this JSON file; refuses existing files"});
+                tool.schema["properties"]["save_scenario"] = json!({"type":"string","description":"Save resolved test parameters before simulation; creates parent directories and refuses existing files"});
             }
             _ => {}
         }

@@ -27,7 +27,10 @@ const SUPPORTED_PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"]
 /// Results longer than this are cut so they do not flood the client's context.
 const MAX_TEXT: usize = 120_000;
 
-const INSTRUCTIONS: &str = "\
+const INSTRUCTIONS: &str = "Controls the wgpu-cube engine. Read engine://workflow for the authoring workflow and lua_api_reference for scripting. Start with engine_launch and engine_info; create/open a project before editing. Check screenshots after visual changes and save with project_save.";
+
+const WORKFLOW_URI: &str = "engine://workflow";
+const WORKFLOW: &str = "\
 Controls the wgpu-cube game engine (Rust, wgpu, hecs ECS, Lua scripting).
 
 Workflow:
@@ -181,7 +184,7 @@ impl Server {
                 };
                 Ok(json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
+                    "capabilities": { "tools": { "listChanged": false }, "resources": {} },
                     "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
                     "instructions": INSTRUCTIONS,
                 }))
@@ -197,7 +200,14 @@ impl Server {
                 })).collect::<Vec<_>>()
             })),
             "tools/call" => Ok(self.call_tool(&params)),
-            "resources/list" => Ok(json!({ "resources": [] })),
+            "resources/list" => Ok(json!({ "resources": [{
+                "uri": WORKFLOW_URI, "name": "Engine authoring workflow",
+                "description": "Shared workflow, conventions and verification guidance",
+                "mimeType": "text/plain",
+            }] })),
+            "resources/read" if params["uri"] == WORKFLOW_URI => Ok(json!({
+                "contents": [{"uri": WORKFLOW_URI, "mimeType": "text/plain", "text": WORKFLOW}]
+            })),
             "prompts/list" => Ok(json!({ "prompts": [] })),
             other => {
                 Err(json!({ "code": -32601, "message": format!("method not found: {other}") }))
@@ -290,7 +300,12 @@ impl Server {
                     "scene.transaction",
                     json!({"calls":calls,"dry_run":args["dry_run"].as_bool().unwrap_or(false)}),
                 )
-                .map(Output::Json)
+                .map(|mut result| {
+                    if args["quiet"].as_bool().unwrap_or(false) {
+                        summarize_batch(&mut result);
+                    }
+                    Output::Json(result)
+                })
                 .map_err(|e| e.to_string());
         }
         let stop_on_error = args
@@ -313,7 +328,12 @@ impl Server {
                 .filter(Value::is_object)
                 .unwrap_or_else(|| json!({}));
             let result = match self.run_tool(name, arguments) {
-                Ok(Output::Json(value)) => json!({ "tool": name, "result": value }),
+                Ok(Output::Json(value)) => {
+                    if value["ok"] == false {
+                        failed += 1;
+                    }
+                    json!({ "tool": name, "result": value })
+                }
                 Ok(Output::Text(text)) => json!({ "tool": name, "result": text }),
                 Ok(Output::Image { caption, .. }) => {
                     json!({ "tool": name, "result": caption, "note": "image left out; call this tool directly to see it" })
@@ -329,12 +349,17 @@ impl Server {
                 break;
             }
         }
-        Ok(Output::Json(json!({
+        let mut report = json!({
+            "ok": failed == 0,
             "ran": results.len(),
             "of": calls.len(),
             "failed": failed,
             "results": results,
-        })))
+        });
+        if args["quiet"].as_bool().unwrap_or(false) {
+            summarize_batch(&mut report);
+        }
+        Ok(Output::Json(report))
     }
 
     fn local_tool(&mut self, name: &str, args: &Value) -> Result<Output, String> {
@@ -649,6 +674,11 @@ impl Server {
         {
             use std::io::Write;
             let path = self.engine.repo.join(path);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    format!("cannot create scenario directory {}: {e}", parent.display())
+                })?;
+            }
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -1024,6 +1054,7 @@ impl Server {
 
         let mut report = serde_json::Map::new();
         if restart && self.engine.has_managed_process() {
+            engine::launch_environment(args.get("env"))?;
             report.insert("stopped_previous".into(), self.engine.stop()?);
             // Give the OS a moment to release the port.
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -1033,9 +1064,11 @@ impl Server {
         }
 
         if self.engine.is_listening() {
+            let managed = self.engine.has_managed_process();
+            self.engine.reconnect().map_err(|err| err.to_string())?;
             report.insert(
                 "attached".into(),
-                json!(if self.engine.has_managed_process() {
+                json!(if managed {
                     "the engine this server launched is already running; pass restart: true to relaunch it"
                 } else {
                     "an engine started outside this server is already listening; attached to it"
@@ -1045,6 +1078,7 @@ impl Server {
             if target == "player" && project.is_none() {
                 return Err("the player needs a project directory (project)".into());
             }
+            let env = engine::launch_environment(args.get("env"))?;
             let binary = if build {
                 let (binary, summary) = self.engine.build(target, release)?;
                 report.insert("build".into(), json!(summary));
@@ -1063,9 +1097,14 @@ impl Server {
                 Value::Number(number) => Some(number.to_string()),
                 _ => None,
             });
-            let process =
-                self.engine
-                    .spawn(target, &binary, &process_args, monitor.as_deref(), timeout)?;
+            let process = self.engine.spawn(
+                target,
+                &binary,
+                &process_args,
+                monitor.as_deref(),
+                &env,
+                timeout,
+            )?;
             report.insert("process".into(), process);
         }
 
@@ -1162,7 +1201,7 @@ impl Server {
             "entities": ["Post Process Volume (infinite: tonemapping, bloom, SSAO, FXAA, slight grading)", "Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0)"],
             "environment": "dark blue backdrop, ambient 0.35",
             "note": "Post-processing lives on the Post Process Volume entity (postprocess_get/postprocess_set). Change or delete any of this; pass template: \"empty\" for a bare scene.",
-            "saved": saved["written"],
+            "saved": saved,
         }))
     }
 
@@ -1199,7 +1238,17 @@ impl Server {
         let mut written = Vec::new();
         collect_modified(&directory, &directory, started, &mut written);
         written.sort();
-        Ok(json!({ "saved": directory.display().to_string(), "written": written }))
+        let mut report = json!({
+            "saved": directory.display().to_string(),
+            "project": directory.join("project.json").display().to_string(),
+            "scenes": written.iter().filter(|path| Path::new(path).starts_with(Path::new("content").join("scenes"))).collect::<Vec<_>>(),
+            "written_count": written.len(),
+            "compact": args["compact"].as_bool().unwrap_or(false),
+        });
+        if args["verbose"].as_bool().unwrap_or(false) {
+            report["written"] = json!(written);
+        }
+        Ok(report)
     }
 
     /// Wait until the editor reports `project` as its open project.
@@ -1223,6 +1272,50 @@ impl Server {
             "the project did not finish loading within 60s; check logs. Last editor state: {}",
             pretty(&last_state)
         ))
+    }
+}
+
+/// Keep batch failures and result identities without echoing generated geometry.
+fn summarize_batch(report: &mut Value) {
+    if let Some(results) = report["results"].as_array_mut() {
+        for row in results {
+            if let Some(result) = row.get_mut("result") {
+                if result.get("ok") == Some(&Value::Bool(false)) {
+                    continue;
+                }
+                let mut summary =
+                    json!({"ok": result.get("ok").and_then(Value::as_bool).unwrap_or(true)});
+                for key in [
+                    "id", "name", "entity", "root", "count", "total", "created", "updated",
+                    "deleted",
+                ] {
+                    if let Some(value) = result.get(key).filter(|v| !v.is_array() && !v.is_object())
+                    {
+                        summary[key] = value.clone();
+                    }
+                }
+                if let Some(object) = result.as_object() {
+                    let counts: serde_json::Map<String, Value> = object
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            value
+                                .as_array()
+                                .map(|items| (key.clone(), json!(items.len())))
+                        })
+                        .collect();
+                    if !counts.is_empty() {
+                        summary["counts"] = Value::Object(counts);
+                    }
+                }
+                if let Some(geometry) = result.get("geometry") {
+                    summary["geometry"] = json!({
+                        "vertices": geometry["vertices"], "triangles": geometry["triangles"],
+                        "local_bounds": geometry["local_bounds"], "key": geometry["key"],
+                    });
+                }
+                *result = summary;
+            }
+        }
     }
 }
 
@@ -1293,5 +1386,102 @@ fn error_result(message: String) -> Value {
 impl From<CallError> for String {
     fn from(err: CallError) -> Self {
         err.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequential_batch_errors_set_mcp_error_and_stop() {
+        let mut server = Server {
+            engine: Engine::new(PathBuf::new(), 0),
+            tools: tools::tools(),
+            started: SystemTime::now(),
+        };
+        let result = server.call_tool(&json!({"name":"batch","arguments":{
+            "quiet":true,"calls":[
+                {"tool":"engine_status"}, {"tool":"missing_tool"}, {"tool":"engine_status"}
+            ]
+        }}));
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["ran"], 2);
+        assert_eq!(result["structuredContent"]["failed"], 1);
+        assert!(result["structuredContent"]["results"][1]["error"].is_string());
+    }
+
+    #[test]
+    fn quiet_batch_keeps_failure_and_ids_without_mesh_payloads() {
+        let mut report = json!({"ok":false,"committed":false,"rolled_back":true,
+            "failure":{"index":1,"message":"compose needs 1..=128 parts"},
+            "results":[{"method":"mesh.compose","result":{"id":42,"name":"Wall",
+                "geometry":{"vertices":12000,"triangles":6000,"key":"abc",
+                    "recipe":{"parameters":{"parts":vec![json!({"large":"recipe"});128]}}},
+                "mesh":{"vertices":vec![0;12000]}}}]});
+        summarize_batch(&mut report);
+        assert_eq!(report["results"][0]["result"]["id"], 42);
+        assert_eq!(
+            report["results"][0]["result"]["geometry"]["vertices"],
+            12000
+        );
+        assert_eq!(report["failure"]["index"], 1);
+        assert_eq!(report["rolled_back"], true);
+        assert!(!report["results"][0]["result"]
+            .as_object()
+            .unwrap()
+            .contains_key("mesh"));
+        assert!(report.to_string().len() < 600);
+    }
+
+    #[test]
+    fn scenario_creates_parents_before_runtime_and_refuses_overwrite() {
+        let dir = std::env::temp_dir().join(format!(
+            "engine-mcp-scenario-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut server = Server {
+            engine: Engine::new(dir.clone(), 0),
+            tools: tools::tools(),
+            started: SystemTime::now(),
+        };
+        let args = json!({"save_scenario":"nested/tests/run.json", "steps":1, "seed":123});
+        // No engine is listening, but the resolved scenario is saved before touching it.
+        assert!(server.playtest(&args).is_err());
+        let path = dir.join("nested/tests/run.json");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&saved).unwrap(),
+            json!({"steps":1,"seed":123})
+        );
+        let error = server
+            .playtest(&json!({"save_scenario":"nested/tests/run.json","steps":2}))
+            .err()
+            .unwrap();
+        assert!(error.starts_with("cannot save scenario"), "{error}");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn workflow_is_a_discoverable_resource() {
+        let mut server = Server {
+            engine: Engine::new(PathBuf::new(), 0),
+            tools: tools::tools(),
+            started: SystemTime::now(),
+        };
+        let listed = server
+            .handle(&json!({"id":1,"method":"resources/list"}))
+            .unwrap();
+        assert_eq!(listed["result"]["resources"][0]["uri"], WORKFLOW_URI);
+        let read = server
+            .handle(&json!({"id":2,"method":"resources/read","params":{"uri":WORKFLOW_URI}}))
+            .unwrap();
+        assert_eq!(read["result"]["contents"][0]["text"], WORKFLOW);
+        assert!(INSTRUCTIONS.len() < 400);
     }
 }

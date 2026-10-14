@@ -37,6 +37,11 @@ Options and environment:
   `ENGINE_REMOTE_PORT` set and waits for the socket. If an engine already listens on
   the port (for example an editor you started yourself), it attaches instead. The
   engine's stdout/stderr go to `target/engine-mcp/engine.log` and `engine_output`.
+  On Linux, it checks for `DISPLAY` or `WAYLAND_DISPLAY` before building. Use
+  `engine_launch {env: {"DISPLAY": ":0"}}` to supply a desktop environment; Wayland
+  may also need `XDG_RUNTIME_DIR`. Other child variables inherit from the MCP server
+  unless overridden by `env`. The remote port remains controlled by the server.
+  Attaching discards any socket left from a previous process on the same port.
 - Every other tool is one request to the engine (see `src/tools.rs` for the mapping),
   except `engine_info` (which combines several), `screenshot` (returns an image),
   `lua_api_reference` (reads `scripts/LUA_SCRIPTING_README.md`; `outline`, `section` and
@@ -44,6 +49,7 @@ Options and environment:
   `playtest` (play, input, wait, report, screenshot, stop; `lean` for soak tests).
   `engine_info` also reports whether this server is older than its sources
   (`mcp_server.restart_needed`).
+- The shared authoring workflow is available as the `engine://workflow` MCP resource.
 - Closing the MCP server leaves a launched engine running, so unsaved work in the
   editor is never lost; use `engine_stop` to end it.
 
@@ -69,6 +75,16 @@ Options and environment:
 Value conventions: meters, Y up, -Z forward; rotations as Euler degrees `[x, y, z]`
 applied yaw, pitch, roll (like Lua's `set_rotation`); colors as `[r, g, b(, a)]` in 0..1
 or `"#rrggbb"`; entities by id (the same 64-bit handle Lua uses) or unique name.
+
+`engine_info.limits` reports renderer and procedural geometry capacities. The renderer
+uses at most four lights of each type, in scene/world iteration order, shared across
+scene instances. It does not rank lights by distance or influence.
+
+`project_save` returns project/scene paths and `written_count`; `verbose: true` adds
+the full `written` list. `compact: true` writes scene JSON without whitespace, including
+embedded meshes, with the same data as a normal save. Ordinary editor saves still use
+pretty JSON. Inline editor materials use stable entity identities across saves, so
+repeated captures update the same material files. Existing orphan files are retained.
 
 ## Procedural geometry
 
@@ -138,6 +154,7 @@ normals and tangents for procedural PBR maps. Identical outputs share GPU geomet
 a recipe. `project_save` embeds the generated meshes in the scene, so reopening or
 exporting the project requires no generator or external model. Generation is limited
 to 250,000 vertices and 1,500,000 indices per mesh, including all composed parts.
+`mesh_compose` accepts 1–128 parts; split larger assemblies into separate meshes.
 
 The [procedural chess test project](../../examples/projects/procedural-chess/README.md)
 contains a complete 32-piece board and a separate study of all six types in both
@@ -268,7 +285,13 @@ returns `ok: false`, `first_failure`, assertion observations, logs and the optio
 screenshot before stopping. Script failures also make `ok` false. Seconds-based tests
 support setup and final assertions. `save_scenario` writes the resolved test to a new JSON
 file; `scenario` loads it, with explicit arguments overriding saved ones. Save paths are
-relative to the repository unless absolute. Existing scenario files are never replaced.
+relative to the repository unless absolute. Parent directories are created before
+simulation begins. Existing scenario files are never replaced.
+
+`lua_eval` without `entity` uses a persistent console without `require`/`include`;
+pass a scripted entity to use its module loaders. `script_reload` queues work for the
+next simulation update. In a frozen manual session, use `runtime_step` to apply it;
+waiting for rendered frames alone does not advance scripts.
 
 ## Spatial editing and transactions
 
@@ -302,6 +325,12 @@ Transactions require editor mode and accept scene/entity edits, spatial queries,
 scatter, procedural meshes, camera/environment/postprocessing edits and scene inspection.
 They exclude scripts, files, asset generators/imports, audio, project lifecycle and runtime
 operations. Normal batches retain their existing sequential behavior.
+
+`batch {quiet: true, ...}` returns identifiers and counts for successful calls,
+including geometry bounds/counts, while omitting recipes and detailed entity payloads.
+It works with sequential, atomic and dry-run batches; errors and rollback details remain.
+Alias resolution still uses the complete results. Call tools individually, or omit
+`quiet`, when you need detailed results.
 
 ## Prefabs, geometry and performance
 

@@ -7,10 +7,13 @@ Artifacts and the scratch project are retained under target/engine-mcp/ for insp
 import argparse
 import base64
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
+import time
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -25,25 +28,31 @@ def main():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
         port = probe.getsockname()[1]
+    mcp_env = os.environ.copy()
+    desktop = {key: os.environ[key] for key in ['DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR'] if key in os.environ}
+    if sys.platform.startswith('linux'):
+        for key in ['DISPLAY', 'WAYLAND_DISPLAY']:
+            mcp_env.pop(key, None)
     process = subprocess.Popen([str(REPO / 'tools/engine-mcp/target/debug/engine-mcp'),
                                 '--repo', str(REPO), '--port', str(port)],
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=mcp_env)
     sequence = 0
 
-    def rpc(method, params):
+    def rpc(method, params, transport=None):
         nonlocal sequence
+        transport = transport or process
         sequence += 1
-        process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': sequence,
+        transport.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': sequence,
                                         'method': method, 'params': params}) + '\n')
-        process.stdin.flush()
-        line = process.stdout.readline()
+        transport.stdin.flush()
+        line = transport.stdout.readline()
         assert line, 'MCP server exited'
         response = json.loads(line)
         assert 'error' not in response, response
         return response['result']
 
-    def tool(name, arguments=None, error=False):
-        response = rpc('tools/call', {'name': name, 'arguments': arguments or {}})
+    def tool(name, arguments=None, error=False, transport=None):
+        response = rpc('tools/call', {'name': name, 'arguments': arguments or {}}, transport)
         assert response.get('isError', False) == error, (name, response)
         if error and 'structuredContent' not in response:
             return response
@@ -66,8 +75,18 @@ def main():
             assert definitions[name]['outputSchema']['type'] == 'object'
         assert definitions['scene_query']['annotations']['readOnlyHint']
         assert not definitions['entity_place']['annotations']['readOnlyHint']
-        tool('engine_launch', {'target': 'editor', 'build': False, 'timeout_seconds': 120})
+        resources = rpc('resources/list', {})['resources']
+        assert any(r['uri'] == 'engine://workflow' for r in resources)
+        assert 'Workflow:' in rpc('resources/read', {'uri': 'engine://workflow'})['contents'][0]['text']
+        assert definitions['mesh_compose']['inputSchema']['properties']['parts']['maxItems'] == 128
+        if sys.platform.startswith('linux'):
+            preflight = tool('engine_launch', {'target': 'editor'}, error=True)
+            assert 'No build was started' in preflight['content'][0]['text']
+        launched = tool('engine_launch', {'target': 'editor', 'build': False, 'timeout_seconds': 120, 'env': desktop})
+        assert launched['engine']['limits']['lights']['point'] == 4
+        assert launched['engine']['limits']['geometry']['compose_parts'] == 128
         project = tool('project_create', {'name': 'fixture', 'location': str(work)})
+        assert project['starter_scene']['saved']['written_count'] > 0
         print('Editor and scratch project opened', flush=True)
 
         calls = [
@@ -82,7 +101,7 @@ def main():
             {'tool': 'entity_update', 'arguments': {'entity': 'DoesNotExist', 'visible': False}}
         ]}, error=True)
         assert failed['rolled_back'] and tool('scene_list_entities')['total'] == before
-        committed = tool('batch', {'atomic': True, 'calls': calls})
+        committed = tool('batch', {'atomic': True, 'quiet': True, 'calls': calls})
         assert committed['committed'] and tool('scene_list_entities')['total'] == before + 2
         crate = committed['results'][1]['result']['id']
         tool('editor_undo'); tool('wait', {'frames': 3})
@@ -115,6 +134,16 @@ def main():
         sweep = tool('mesh_sweep', {'name': 'Cable', 'path': [[-3, 1, 2], [-2, 1, 2], [-1, 2, 2]], 'radius': 0.12})
         terrain = tool('mesh_heightfield', {'name': 'Terrain', 'translation': [12, 3, 0], 'size': [6, 6], 'resolution': [32, 32], 'seed': 15})
         assert sweep['geometry']['triangles'] > 0 and terrain['geometry']['vertices'] == 1024
+        before_geometry = tool('scene_list_entities')['total']
+        failed_geometry = tool('batch', {'atomic': True, 'quiet': True, 'calls': [
+            {'tool': 'mesh_lathe', 'arguments': {'name': 'RolledBack', 'profile': [[1, 0], [1, 1]], 'segments': 64}},
+            {'tool': 'mesh_compose', 'arguments': {'parts': [{'shape': 'primitive', 'primitive': 'cube'}] * 129}}
+        ]}, error=True)
+        assert failed_geometry['rolled_back'] and failed_geometry['failure']['index'] == 1
+        summary = failed_geometry['results'][0]['result']
+        assert summary['id'] and summary['geometry']['vertices'] > 0
+        assert 'recipe' not in summary['geometry'] and len(json.dumps(failed_geometry)) < 2000
+        assert tool('scene_list_entities')['total'] == before_geometry
         prefab = tool('prefab_create', {'entity': 'Group', 'name': 'crate_group'})
         inspection = tool('prefab_inspect', {'document_id': prefab['document_id']})
         assert len(inspection['source']['entities']) == 8
@@ -130,10 +159,16 @@ def main():
 
         game = '''
         GAME = {ticks = 0, sum = 0, presses = 0}
-        function on_created() GAME.initial = math.random() end
+        function on_created(_, previous)
+            GAME = previous or GAME
+            if not GAME.pool then GAME.pool = spawn_entity("ReloadPool") end
+            GAME.initial = math.random()
+        end
+        function on_destroyed(_, reason) if reason == "reload" then return GAME end end
         function update(_, dt)
             GAME.ticks = GAME.ticks + 1
             GAME.sum = GAME.sum + math.random()
+            set_translation(GAME.pool, GAME.ticks, 2, 0)
             if is_key_just_pressed("A") then GAME.presses = GAME.presses + 1 end
         end
         '''
@@ -145,8 +180,9 @@ def main():
                                    {'name': 'checkpoint', 'at_step': 15, 'code': 'GAME.ticks == 15 and GAME.presses == 1 and is_key_pressed("A")'},
                                    {'name': 'completed', 'code': 'GAME.ticks == 30 and GAME.presses == 1 and not is_key_pressed("A")'}],
                     'eval': 'return {GAME.initial, GAME.sum, GAME.ticks, get_time()}'}
-        a = tool('playtest', {**scenario, 'save_scenario': str(work / 'scenario.json')})
-        b = tool('playtest', {'scenario': str(work / 'scenario.json')})
+        scenario_path = work / 'tests/nested/scenario.json'
+        a = tool('playtest', {**scenario, 'save_scenario': str(scenario_path)})
+        b = tool('playtest', {'scenario': str(scenario_path)})
         assert a['ok'] and b['ok'] and a['eval']['result'] == b['eval']['result']
         failed = tool('playtest', {**scenario, 'lean': False, 'assertions': [{'at_step': 7, 'code': 'GAME.ticks == 8'}]}, error=True)
         assert failed['first_failure']['at_step'] == 7
@@ -157,6 +193,11 @@ def main():
         assert tool('lua_eval', {'entity': controller, 'code': 'return GAME.ticks', 'read_only': True})['result'] == 0
         tool('runtime_step', {'steps': 2}); tool('wait', {'frames': 10})
         assert tool('lua_eval', {'entity': controller, 'code': 'return GAME.ticks', 'read_only': True})['result'] == 2
+        tool('script_reload', {'entity': controller}); tool('wait', {'frames': 3})
+        assert tool('lua_eval', {'entity': controller, 'code': 'return GAME.ticks', 'read_only': True})['result'] == 2
+        tool('runtime_step', {'steps': 3})
+        assert tool('entity_get', {'entity': 'ReloadPool'})['transform']['translation'] == [5, 2, 0]
+        assert tool('script_status')['failing'] == 0
         tool('runtime_set', {'mode': 'stop'}); tool('wait', {'frames': 3})
         print('Seeded replay, input checkpoints, failure reporting and render-independent stepping passed', flush=True)
 
@@ -164,11 +205,20 @@ def main():
         assert profile['samples'] == 30 and profile['frame_time_ms']['p99'] >= profile['frame_time_ms']['median']
         comparison = tool('profile_capture', {'frames': 20, 'baseline': profile})
         assert 'p95' in comparison['comparison']
-        tool('project_save')
+        save_report = tool('project_save')
+        assert save_report['written_count'] > 0 and save_report['scenes'] and 'written' not in save_report
         assert tool('prefab_inspect', {'document_id': prefab['document_id']})['instance_entities']
         manifest = json.loads((work / 'fixture/project.json').read_text())
         host = next(d for d in manifest['scenes'] if d['id'] != prefab['document_id'])
-        saved = json.loads((work / 'fixture' / host['relative_path']).read_text())
+        scene_path = work / 'fixture' / host['relative_path']
+        pretty = scene_path.read_text()
+        saved = json.loads(pretty)
+        materials = set((work / 'fixture/content/materials').glob('*.mat.json'))
+        verbose_save = tool('project_save', {'compact': True, 'verbose': True})
+        compact = scene_path.read_text()
+        assert json.loads(compact) == saved and len(compact) < len(pretty) / 2
+        assert len(verbose_save['written']) == verbose_save['written_count']
+        assert set((work / 'fixture/content/materials').glob('*.mat.json')) == materials
         assert any((e.get('scene_ref') or {}).get('document') == prefab['document_id'] for e in saved['entities'])
         tool('project_open', {'path': str(work / 'fixture')})
         reopened = tool('prefab_inspect', {'document_id': prefab['document_id']})
@@ -177,7 +227,40 @@ def main():
         assert validation['ok'], validation
         print('Profile capture, comparison, persistence and project validation passed', flush=True)
         tool('screenshot', {'camera': 'game', 'save_path': str(work / 'scene.png')})
+        # A second MCP server attaches to the editor without owning its process.
+        # Replacing it with a player must work on the first engine_launch call.
+        observer = subprocess.Popen([str(REPO / 'tools/engine-mcp/target/debug/engine-mcp'),
+                                     '--repo', str(REPO), '--port', str(port)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        player = None
+        try:
+            tool('engine_launch', {'target': 'editor', 'build': False}, transport=observer)
+            tool('engine_stop')
+            player_env = {**os.environ, 'ENGINE_REMOTE_PORT': str(port), 'RUST_LOG': 'warn'}
+            with (work / 'replacement-player.log').open('w') as log:
+                player = subprocess.Popen([str(REPO / 'target/debug/player'), str(work / 'fixture')],
+                                          cwd=REPO, env=player_env, stdout=log, stderr=log)
+                deadline = time.monotonic() + 30
+                while True:
+                    assert player.poll() is None, 'Replacement player exited; see replacement-player.log'
+                    try:
+                        with socket.create_connection(('127.0.0.1', port), timeout=0.2):
+                            break
+                    except OSError:
+                        assert time.monotonic() < deadline, 'Replacement player did not open its port'
+                        time.sleep(0.1)
+                attached = tool('engine_launch', {'target': 'player', 'build': False}, transport=observer)
+                assert 'attached' in attached and attached['engine']['runtime_mode'] == 'playing'
+            print('External editor-to-player replacement reconnects on the first call', flush=True)
+        finally:
+            if player is not None:
+                player.terminate()
+                player.wait(timeout=10)
+            observer.stdin.close()
+            observer.wait(timeout=10)
         if opts.web:
+            tool('engine_launch', {'target': 'editor', 'build': False,
+                                   'project': str(work / 'fixture'), 'env': desktop})
             built = tool('web_build', {'project': str(work / 'fixture'), 'overwrite': True})
             browser = tool('web_playtest', {'directory': built['directory'], 'seconds': 2})
             assert browser['ready'] and browser['ok'], browser

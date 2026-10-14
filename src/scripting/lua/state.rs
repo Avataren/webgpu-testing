@@ -279,6 +279,8 @@ pub struct ScriptingState {
     pending_state_restoration: HashMap<Entity, ScriptStateMap>,
     /// What `on_destroyed(self, "reload")` returned, for the reloaded `on_created`.
     pending_carried: HashMap<Entity, mlua::RegistryKey>,
+    /// Spawn handles retained by the state handed to the replacement script.
+    pending_handles: HashMap<Entity, Rc<RefCell<EntityHandleRegistry>>>,
     /// Scripts to rebuild: `on_destroyed` runs for them at the start of the next frame
     /// (it needs the world), then they are recompiled and `on_created` runs again.
     pending_reloads: Vec<Entity>,
@@ -338,6 +340,7 @@ impl ScriptingState {
             outputs: ScriptOutputs::default(),
             pending_state_restoration: HashMap::new(),
             pending_carried: HashMap::new(),
+            pending_handles: HashMap::new(),
             pending_reloads: Vec::new(),
             elapsed: 0.0,
             view_rect: None,
@@ -392,6 +395,7 @@ impl ScriptingState {
         }
         // A reset (entering or leaving play) starts games fresh.
         self.pending_carried.clear();
+        self.pending_handles.clear();
         self.outputs = ScriptOutputs::default();
         self.pending_reloads.clear();
         self.elapsed = 0.0;
@@ -479,6 +483,8 @@ impl ScriptingState {
     fn unload(&mut self, entity: Entity) {
         if let Some(slot) = self.slots.remove(&entity) {
             if let Some(mut instance) = slot.instance {
+                self.pending_handles
+                    .insert(entity, instance.handles.clone());
                 let state = instance.state_store.borrow().clone();
                 if !state.is_empty() {
                     self.pending_state_restoration.insert(entity, state);
@@ -841,6 +847,9 @@ impl ScriptingState {
                     match LuaScriptInstance::new(self.runtime.lua(), script, source, module_dirs) {
                         Ok(mut instance) => {
                             instance.carried = self.pending_carried.remove(&entity);
+                            if let Some(handles) = self.pending_handles.remove(&entity) {
+                                instance.handles = handles;
+                            }
                             slot.instance = Some(instance);
                         }
                         Err(err) => slot.report(entity, "instantiate", err),

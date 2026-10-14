@@ -36,6 +36,19 @@ pub(super) fn engine_info(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "project_root": crate::project::active_project_root().map(|path| path.display().to_string()),
         "working_directory": std::env::current_dir().ok().map(|path| path.display().to_string()),
         "remote_port": ctx.hub.port(),
+        "limits": {
+            "lights": {
+                "directional": crate::renderer::lights::MAX_DIRECTIONAL_LIGHTS,
+                "point": crate::renderer::lights::MAX_POINT_LIGHTS,
+                "spot": crate::renderer::lights::MAX_SPOT_LIGHTS,
+                "selection": "First lights in scene/world iteration order; no distance or influence ranking. Limit is shared across scene instances.",
+            },
+            "geometry": {
+                "compose_parts": crate::procgen::geometry::MAX_COMPOSE_PARTS,
+                "vertices": crate::procgen::geometry::MAX_VERTICES,
+                "indices": crate::procgen::geometry::MAX_VERTICES * 6,
+            },
+        },
         "conventions": {
             "units": "meters; Y is up, -Z is forward, right-handed",
             "rotation": "Euler degrees [x, y, z], applied yaw(Y) then pitch(X) then roll(Z)",
