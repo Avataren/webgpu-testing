@@ -3246,6 +3246,51 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Reflections (SSR)",
+            "ssr",
+            Some(&mut settings.ssr.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
+                    ui,
+                    "ssr.intensity",
+                    "Intensity",
+                    &mut settings.ssr.intensity,
+                    0.0..=4.0,
+                    0.01,
+                );
+                rows.slider(
+                    ui,
+                    "ssr.blur",
+                    "Blur",
+                    &mut settings.ssr.blur,
+                    0.0..=1.0,
+                    0.01,
+                );
+                rows.slider_with(
+                    ui,
+                    "ssr.max_distance",
+                    "Max distance",
+                    &mut settings.ssr.max_distance,
+                    0.5..=100.0,
+                    0.1,
+                    " m",
+                );
+                rows.slider_with(
+                    ui,
+                    "ssr.thickness",
+                    "Thickness",
+                    &mut settings.ssr.thickness,
+                    0.01..=5.0,
+                    0.01,
+                    " m",
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Motion Blur",
             "motion_blur",
             Some(&mut settings.motion_blur.enabled),

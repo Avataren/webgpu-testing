@@ -301,13 +301,14 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
         color = environment_light + Lo + emissive;
     }
     
-    // Tone mapping
-    color = color / (color + vec3<f32>(1.0));
+    // Linear HDR: post-processing applies exposure and tonemapping.
 
     return ShadedFragment(
         vec4<f32>(color, base_color.a),
         vec4<f32>(normalize(N), 1.0),
-        vec4<f32>(in.world_pos, 1.0),
+        // w: 1 marks a surface; the fraction above it is the smoothness reflections use
+        // (none on unlit surfaces).
+        vec4<f32>(in.world_pos, 1.0 + select(clamp(1.0 - roughness, 0.0, 1.0), 0.0, (material_flags & FLAG_UNLIT) != 0u)),
     );
 }
 

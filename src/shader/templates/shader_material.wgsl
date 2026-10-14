@@ -272,7 +272,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     let ambient = diffuse_color * 0.03 * occlusion;
     var color = ambient + lighting + emissive;
-    color = color / (color + vec3<f32>(1.0));
+    // Linear HDR: post-processing applies exposure and tonemapping.
 
     return vec4<f32>(color, base_color.a);
 }

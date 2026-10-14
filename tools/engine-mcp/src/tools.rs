@@ -653,6 +653,13 @@ pub fn tools() -> Vec<Tool> {
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
+                "ssr": { "type": "object", "description": "Screen-space reflections: smooth surfaces (low material roughness) reflect what is on screen as a blurred, glossy sheen", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "intensity": { "type": "number", "description": "1 = physically based for the material (0-4)" },
+                    "max_distance": { "type": "number", "description": "How far a reflected ray travels, meters" },
+                    "thickness": { "type": "number", "description": "How far behind a surface a ray may pass and still hit it, meters" },
+                    "blur": { "type": "number", "description": "0 sharp .. 1 very glossy" }
+                }},
                 "motion_blur": { "type": "object", "description": "Camera and per-object motion blur", "properties": {
                     "enabled": { "type": "boolean" },
                     "intensity": { "type": "number", "description": "Shutter: share of the frame it is open, 0.5 = 180 degrees" },

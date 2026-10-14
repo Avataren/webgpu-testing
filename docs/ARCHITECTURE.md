@@ -81,8 +81,13 @@ transparent pass → post-processing → custom stage (`AfterPostprocess`) →
 surface passes (overlay, gizmos) → UI hook.
 
 The scene renders in HDR (`Rgba16Float`, `postprocess::HDR_FORMAT`), transparent
-surfaces included, so light above 1.0 survives to bloom and tonemapping. Post-processing
-(`src/renderer/postprocess/`) runs: MSAA depth resolve → TAA (Halton-jittered camera,
+surfaces included, so light above 1.0 survives to bloom and tonemapping; scene shaders
+write linear radiance and leave exposure and tonemapping to post-processing. The G-buffer
+holds the octahedral normal and motion (`GBUFFER_NORMAL_FORMAT`) and the world position,
+whose `w` is 0 for background and `1 + smoothness` (1 − roughness, 0 when unlit) on a
+surface. Post-processing (`src/renderer/postprocess/`) runs: MSAA depth resolve →
+screen-space reflections (half-res trace through the G-buffer positions, separable blur,
+added to the HDR scene weighted by smoothness² and Fresnel) → TAA (Halton-jittered camera,
 closest-depth motion vector, Catmull-Rom history, YCoCg variance clipping) → motion blur
 → SSAO → bloom (13-tap Karis downsample chain, tent upsample blended by scatter) → depth
 of field (half-res CoC prefilter, golden-angle bokeh gather) → auto exposure (compute:

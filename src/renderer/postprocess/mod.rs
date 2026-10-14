@@ -1,7 +1,8 @@
 //! Post-processing on the HDR scene: SSAO, bloom, auto exposure, colour correction,
 //! tonemapping, vignette, chromatic aberration, film grain, sharpening and FXAA.
 //!
-//! Frame order: depth resolve (MSAA only) -> SSAO -> bloom -> auto exposure -> composite
+//! Frame order: depth resolve (MSAA only) -> screen-space reflections (added to the scene)
+//! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> composite
 //! (HDR to display, into an intermediate target) -> final (anti-aliasing, sharpening,
 //! grain and dither, onto the surface).
 
@@ -13,6 +14,7 @@ mod pipelines;
 mod resources;
 mod settings;
 mod ssao;
+mod ssr;
 mod temporal;
 
 pub use lut::CubeLut;
@@ -20,8 +22,8 @@ pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
     LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
-    PostProcessEffects, PostProcessSettings, SharpenSettings, SsaoSettings, Tonemapper,
-    VignetteSettings, TRACKBALL_NEUTRAL,
+    PostProcessEffects, PostProcessSettings, ReflectionSettings, SharpenSettings, SsaoSettings,
+    Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
@@ -34,6 +36,7 @@ use pipelines::{
 };
 use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
+use ssr::{SsrInputs, SsrStage};
 use temporal::{TemporalInputs, TemporalStage};
 
 use crate::renderer::{RenderRegion, ShaderBuilder};
@@ -133,6 +136,8 @@ pub struct PostProcess {
     pick_target: LazyPickTarget,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
+    ssr_half: TextureBundle,
+    ssr_ping: TextureBundle,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -150,6 +155,7 @@ pub struct PostProcess {
     composite_pipeline: CompositePipeline,
     final_pipeline: FinalPipeline,
     ssao_stage: SsaoStage,
+    ssr_stage: SsrStage,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
     dof_stage: DofStage,
@@ -344,6 +350,7 @@ pub(crate) fn postprocess_shader_source() -> String {
         .with_module(include_str!("../../shader/postprocess/common.wgsl"))
         .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
         .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
+        .with_module(include_str!("../../shader/postprocess/ssr.wgsl"))
         .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
         .with_module(include_str!(
             "../../shader/postprocess/bloom_prefilter.wgsl"
@@ -440,6 +447,7 @@ impl PostProcess {
 
         let depth_resolve_pipeline = build_depth_resolve(device, &uniform_layout, sample_count);
         let ssao_stage = SsaoStage::new(device, &uniform_layout, &postprocess_shader);
+        let ssr_stage = SsrStage::new(device, &uniform_layout, &postprocess_shader);
         let bloom_stage = BloomStage::new(device, &uniform_layout, &postprocess_shader);
         let exposure_stage = ExposureStage::new(device, &uniform_layout, &postprocess_shader);
         let dof_stage = DofStage::new(device, &uniform_layout, &postprocess_shader);
@@ -459,6 +467,8 @@ impl PostProcess {
             pick_target: LazyPickTarget::new(),
             ssao: targets.ssao,
             ssao_ping: targets.ssao_ping,
+            ssr_half: targets.ssr_half,
+            ssr_ping: targets.ssr_ping,
             bloom_chain: targets.bloom_chain,
             dof_half: targets.dof_half,
             dof_blur: targets.dof_blur,
@@ -476,6 +486,7 @@ impl PostProcess {
             composite_pipeline,
             final_pipeline,
             ssao_stage,
+            ssr_stage,
             bloom_stage,
             exposure_stage,
             dof_stage,
@@ -524,6 +535,8 @@ impl PostProcess {
         self.position_msaa = targets.position_msaa;
         self.ssao = targets.ssao;
         self.ssao_ping = targets.ssao_ping;
+        self.ssr_half = targets.ssr_half;
+        self.ssr_ping = targets.ssr_ping;
         self.bloom_chain = targets.bloom_chain;
         self.dof_half = targets.dof_half;
         self.dof_blur = targets.dof_blur;
@@ -712,6 +725,17 @@ impl PostProcess {
             pass.draw(0..3, 0..1);
         }
 
+        if self.settings.ssr_active() {
+            self.ssr_stage.render(
+                encoder,
+                &self.uniform_bind_group,
+                &self.ssr_half.view,
+                &self.ssr_ping.view,
+                &self.scene_source.view,
+                region,
+            );
+        }
+
         let (taa, motion_blur) = self.temporal_routing;
         if taa {
             self.temporal_stage.render_taa(
@@ -810,6 +834,7 @@ impl PostProcess {
         self.composite_bind_group = None;
         self.final_bind_group = None;
         self.ssao_stage.invalidate();
+        self.ssr_stage.invalidate();
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
         self.dof_stage.invalidate();
@@ -862,6 +887,18 @@ impl PostProcess {
                     output: &self.ssao.view,
                     ping: &self.ssao_ping.view,
                 },
+            },
+        );
+
+        self.ssr_stage.ensure_bind_groups(
+            device,
+            SsrInputs {
+                scene: &self.scene_source.view,
+                normal: &self.normal_source.view,
+                position: &self.position_source.view,
+                sampler: &self.sampler_linear,
+                reflection: &self.ssr_half.view,
+                ping: &self.ssr_ping.view,
             },
         );
 
@@ -989,6 +1026,8 @@ struct SizedTargets {
     position_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
+    ssr_half: TextureBundle,
+    ssr_ping: TextureBundle,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -1026,6 +1065,8 @@ impl SizedTargets {
             position_msaa,
             ssao: TextureBundle::ssao(device, size),
             ssao_ping: TextureBundle::ssao(device, size),
+            ssr_half: TextureBundle::color(device, &half_size(size), HDR_FORMAT, "SsrHalf"),
+            ssr_ping: TextureBundle::color(device, &half_size(size), HDR_FORMAT, "SsrPing"),
             bloom_chain: create_bloom_chain(device, size),
             dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
             dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
@@ -1183,6 +1224,7 @@ struct PostProcessUniform {
     dof_ranges: [f32; 4],
     misc: [f32; 4],
     display: [f32; 4],
+    ssr: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1316,6 +1358,15 @@ impl PostProcessUniform {
                 },
                 settings.motion_blur.max_blur * resolution.y / 1080.0,
             ],
+            ssr: {
+                let ssr = &settings.ssr;
+                [
+                    effect_on(settings.ssr_active(), ssr.intensity),
+                    ssr.max_distance,
+                    ssr.thickness,
+                    ssr.blur,
+                ]
+            },
             output: [
                 flag(inputs.encode_srgb),
                 1.0,
@@ -1336,8 +1387,8 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        // 6 matrices, camera position, 8 vec2 pairs and 20 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 784);
+        // 6 matrices, camera position, 8 vec2 pairs and 21 vec4 blocks.
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 800);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 

@@ -30,6 +30,7 @@ pub struct PostProcessSettings {
     pub lut: LutSettings,
     pub bloom: BloomSettings,
     pub ssao: SsaoSettings,
+    pub ssr: ReflectionSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
@@ -58,6 +59,7 @@ impl PostProcessSettings {
             lut: self.lut.blend(&other.lut, t),
             bloom: self.bloom.blend(&other.bloom, t),
             ssao: self.ssao.blend(&other.ssao, t),
+            ssr: self.ssr.blend(&other.ssr, t),
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -122,6 +124,11 @@ impl PostProcessSettings {
         dof.near_end = finite_or(dof.near_end, 0.0).max(dof.near_start);
         dof.far_start = finite_or(dof.far_start, 0.0).max(dof.near_end);
         dof.far_end = finite_or(dof.far_end, 0.0).max(dof.far_start);
+        let ssr = &mut self.ssr;
+        ssr.intensity = finite_or(ssr.intensity, 0.0).clamp(0.0, 4.0);
+        ssr.max_distance = finite_or(ssr.max_distance, 20.0).clamp(0.1, 1000.0);
+        ssr.thickness = finite_or(ssr.thickness, 0.4).clamp(0.01, 100.0);
+        ssr.blur = finite_or(ssr.blur, 0.5).clamp(0.0, 1.0);
         let blur = &mut self.motion_blur;
         blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
         blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
@@ -132,6 +139,11 @@ impl PostProcessSettings {
     /// Whether the scene needs the SSAO passes this frame.
     pub fn ssao_active(&self) -> bool {
         self.ssao.enabled && self.ssao.intensity > 0.0
+    }
+
+    /// Whether the screen-space reflection passes run this frame.
+    pub fn ssr_active(&self) -> bool {
+        self.ssr.enabled && self.ssr.intensity > 0.0
     }
 
     /// Whether the scene needs the bloom passes this frame.
@@ -638,6 +650,53 @@ impl DepthOfFieldSettings {
             far_start: lerp(from.far_start, to.far_start, t),
             far_end: lerp(from.far_end, to.far_end, t),
             max_blur: lerp(from.max_blur, to.max_blur, t),
+        }
+    }
+}
+
+/// Screen-space reflections: smooth surfaces reflect what is on screen, blurred into a
+/// glossy sheen rather than a mirror. How much a surface reflects follows its material's
+/// roughness and the viewing angle (Fresnel); what is off screen is not reflected.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReflectionSettings {
+    pub enabled: bool,
+    /// Strength of the reflections, 1 = physically based for the material.
+    pub intensity: f32,
+    /// How far a reflected ray travels before it gives up, in meters.
+    pub max_distance: f32,
+    /// How far behind a surface a ray may pass and still hit it, in meters.
+    pub thickness: f32,
+    /// Blur of the reflected image, 0 (sharp) to 1 (very glossy).
+    pub blur: f32,
+}
+
+impl Default for ReflectionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            intensity: 1.0,
+            max_distance: 20.0,
+            thickness: 0.4,
+            blur: 0.5,
+        }
+    }
+}
+
+impl ReflectionSettings {
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        let (from, to, enabled) = fade_pair(self, other, self.enabled, other.enabled, |s| {
+            ReflectionSettings {
+                intensity: 0.0,
+                ..*s
+            }
+        });
+        Self {
+            enabled,
+            intensity: lerp(from.intensity, to.intensity, t),
+            max_distance: lerp(from.max_distance, to.max_distance, t),
+            thickness: lerp(from.thickness, to.thickness, t),
+            blur: lerp(from.blur, to.blur, t),
         }
     }
 }

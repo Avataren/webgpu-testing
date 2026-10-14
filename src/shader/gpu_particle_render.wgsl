@@ -213,8 +213,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ambient = vec3<f32>(0.03) * base_color.rgb;
     var color = ambient + Lo;
     
-    // Tone mapping
-    color = color / (color + vec3<f32>(1.0));
+    // Linear HDR: post-processing applies exposure and tonemapping.
     
     return vec4<f32>(color, base_color.a);
 }

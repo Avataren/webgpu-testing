@@ -77,8 +77,9 @@ engine you launched; save first).
   `viewport_preview` keeps a shape on across several calls; `playtest` takes `aspect` too. `camera_set` edits the game camera entity
   while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
 - `environment_set` controls background, ambient light and HDR sky. The scene renders
-  in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO, vignette,
-  chromatic aberration, film grain, sharpening and FXAA live on `post_process_volume`
+  in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO,
+  screen-space reflections (`ssr`: glossy reflections on smooth, low-roughness surfaces),
+  vignette, chromatic aberration, film grain, sharpening and FXAA live on `post_process_volume`
   entities. `postprocess_set` edits the scene's infinite volume (creating it if needed);
   for an area with its own look, spawn a `post_process_volume` with a box or sphere
   shape, higher `priority` and a `blend_distance`. `postprocess_get` shows the blended
