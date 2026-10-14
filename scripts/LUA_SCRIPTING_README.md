@@ -434,6 +434,8 @@ Script descriptors include:
 - `get_world_rotation(entity)` - Get rotation (returns table with `yaw`, `pitch`, `roll` fields, radians)
 - `set_scale(entity, x, y, z)` - Set entity scale
 - `look_at(entity, target_x, target_y, target_z)` - Point -Z towards the target while keeping the horizon level in a Y-up world. A target at the entity's position leaves its rotation unchanged.
+  Cameras retain the supplied focus point for view and directional-shadow placement.
+  If later movement or rotation points elsewhere, the old focus hint is ignored.
 - `get_forward(entity)`, `get_right(entity)`, `get_up(entity)` - World-space unit vectors
   (tables with `x`, `y`, `z`) for the way the entity faces (-Z), its +X and its +Y. Use them
   instead of deriving directions from yaw: `local f = get_forward(ship)`, then

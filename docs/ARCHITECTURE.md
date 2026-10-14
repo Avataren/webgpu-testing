@@ -344,6 +344,12 @@ agent workflow.
   Rebuilding an unchanged view resets the orbit focus distance. Lua `look_at` and
   MCP camera placement share a Y-up, zero-roll look rotation so a full camera orbit
   keeps the horizon level.
+  Lua `look_at` also supplies a transient `LookAtTarget` hint. While it still agrees
+  with the entity's world forward direction, the camera keeps that actual focus point
+  instead of replacing it with `eye + forward`. Directional shadows then stay centered
+  on an orbit's subject, including elevated subjects and shallow viewing angles. A
+  stale hint is ignored after the camera moves or turns away; scripts regenerate hints
+  at runtime rather than serializing them into scene assets.
 - **Script lists**: the inspector's script picker and the file sandbox are relative to the
   working directory. Run from the repo root.
 

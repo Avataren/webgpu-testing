@@ -11,6 +11,12 @@ pub(crate) fn look_rotation(eye: Vec3, target: Vec3) -> Option<Quat> {
     Some(Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
 }
 
+/// Transient aim point from Lua `look_at`. Cameras retain it as their focus instead
+/// of collapsing the target to one meter ahead, which loses shadow-placement intent.
+/// The camera ignores it if later movement or rotation no longer aims at this point.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LookAtTarget(pub Vec3);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {
     pub translation: Vec3,

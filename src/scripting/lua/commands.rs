@@ -8,7 +8,7 @@ use hecs::{ComponentError, Entity, World};
 use log::warn;
 use serde_json::json;
 
-use crate::scene::transform::look_rotation;
+use crate::scene::transform::{look_rotation, LookAtTarget};
 use crate::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, MaterialComponent, MeshComponent, Name,
     OrbitAnimation, Parent, ParticleEmitterComponent, PointLight, PrimitiveMeshComponent,
@@ -301,6 +301,7 @@ impl ScriptCommands {
         if let Some(entry) = self.pending.get_mut(&handle) {
             if let Some(rotation) = look_rotation(entry.translation.unwrap_or(Vec3::ZERO), target) {
                 entry.rotation = Some(rotation);
+                entry.look_at_target = Some(target);
             }
             return Ok(());
         }
@@ -420,6 +421,9 @@ impl ScriptCommands {
                 transform.scale = scale;
             }
             world.insert_one(entity, TransformComponent(transform))?;
+            if let Some(target) = pending.look_at_target {
+                world.insert_one(entity, LookAtTarget(target))?;
+            }
 
             // Attach all scripts to this entity
             for script in pending.scripts {
@@ -690,11 +694,16 @@ impl ScriptCommands {
                     return Ok(());
                 };
 
+                let mut aimed = false;
                 Self::modify_transform(world, entity, |transform| {
                     if let Some(rotation) = look_rotation(transform.translation, target) {
                         transform.rotation = rotation;
+                        aimed = true;
                     }
                 })?;
+                if aimed {
+                    world.insert_one(entity, LookAtTarget(target))?;
+                }
             }
             ExistingCommand::SetParent {
                 entity_bits,

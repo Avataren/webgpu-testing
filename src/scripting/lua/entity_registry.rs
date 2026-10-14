@@ -58,6 +58,7 @@ pub(crate) struct PendingEntity {
     pub name: Option<String>,
     pub translation: Option<Vec3>,
     pub rotation: Option<Quat>,
+    pub look_at_target: Option<Vec3>,
     pub scale: Option<Vec3>,
     pub parent: Option<i64>,
     pub scripts: Vec<LuaScriptSource>,

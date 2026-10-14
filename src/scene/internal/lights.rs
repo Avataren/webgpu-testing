@@ -454,6 +454,71 @@ mod tests {
     }
 
     #[test]
+    fn scripted_orbit_camera_keeps_the_sculpture_inside_the_shadow_volume() {
+        use crate::scene::camera_control::SceneCamera;
+        use crate::scene::transform::look_rotation;
+        use crate::scripting::lua::commands::ScriptCommands;
+        use crate::scripting::lua::entity_registry::EntityHandleRegistry;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let target = Vec3::new(0.0, 3.7, 0.0);
+        let light_eye = Vec3::new(-8.0, 12.0, 8.0);
+        let light = Transform::from_trs(
+            light_eye,
+            look_rotation(light_eye, Vec3::new(0.0, 2.0, 0.0)).unwrap(),
+            Vec3::ONE,
+        );
+        let mut commands =
+            ScriptCommands::new(Rc::new(RefCell::new(EntityHandleRegistry::default())));
+        let mut world = World::new();
+        let camera_entity = commands.spawn_entity(None);
+        commands
+            .set_translation(camera_entity, Vec3::new(0.0, 4.5, 13.5))
+            .unwrap();
+        commands.look_at(camera_entity, target).unwrap();
+        commands.apply(&mut world).unwrap();
+        let entity =
+            hecs::Entity::from_bits(commands.resolve_entity_bits(camera_entity).unwrap()).unwrap();
+        let mut camera = SceneCamera::new();
+        camera.apply_from_entity(&world, entity);
+        assert!(
+            camera.camera().target.abs_diff_eq(target, EPS),
+            "{:?}",
+            camera.camera().target
+        );
+
+        let expected = build_directional_shadow(camera.camera().eye, target, light, 28.0);
+        for radius in [13.5, 20.2, 30.0] {
+            for height in [4.5, 5.21, 8.4, 15.0] {
+                for step in 0..12 {
+                    let angle = step as f32 * std::f32::consts::TAU / 12.0;
+                    let eye = Vec3::new(angle.sin() * radius, height, angle.cos() * radius);
+                    commands.set_translation(camera_entity, eye).unwrap();
+                    commands.look_at(camera_entity, target).unwrap();
+                    commands.apply(&mut world).unwrap();
+                    camera.apply_from_entity(&world, entity);
+                    assert!(camera.camera().target.abs_diff_eq(target, EPS));
+                    let shadow = build_directional_shadow(eye, camera.camera().target, light, 28.0);
+                    assert!(shadow.view_proj.abs_diff_eq(expected.view_proj, EPS));
+                    for point in [
+                        Vec3::new(-14.0, -0.15, -14.0),
+                        Vec3::new(14.0, -0.15, -14.0),
+                        Vec3::new(0.0, 9.0, 0.0),
+                    ] {
+                        let clip = shadow.view_proj * point.extend(1.0);
+                        let ndc = clip.truncate() / clip.w;
+                        assert!(
+                            ndc.x.abs() < 1.0 && ndc.y.abs() < 1.0 && (0.0..=1.0).contains(&ndc.z),
+                            "radius {radius}, height {height}, step {step}: {ndc}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn directional_shadow_centers_camera_target() {
         let camera_pos = Vec3::new(4.0, 6.0, 12.0);
         let camera_target = Vec3::new(1.0, 0.5, -2.0);

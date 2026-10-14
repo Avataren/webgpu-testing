@@ -78,6 +78,21 @@ Rust tests, Clippy and editor/Robotron GPU smoke checks pass. Scope limits are i
 spatial queries use boxes, explicit steps cover Lua/scene animation, profiling measures CPU,
 and existing instances reload new sources when recreated or reopened.
 
+Tide Observatory round (2026-10-14, commit `c44fc8d`): built a kinetic brass sculpture
+through MCP, now in [`games/tide-observatory`](../../games/tide-observatory/README.md).
+Sweeps, lathes, composed meshes and generated PBR maps were enough to author the scene
+without imported models. Atomic rollback caught an invalid lathe profile cleanly.
+Nine fixed-step interaction assertions passed over 600 steps. Live inspection exposed
+the camera and TAA bugs B17–B19, fixed in that commit; browser smoke testing confirmed
+the open runtime issues B20–B21. The full native tests, strict Clippy, formatting and
+six GPU smoke targets passed. The editor undo test caught a camera regression that
+the library and scene-level tests alone did not cover.
+
+Shadow follow-up: B22 was found after that commit and subsequently fixed.
+A regression test covers 144 combinations of orbit angle, height and distance;
+native captures at low, middle and high views with maximum zoom-out show the full
+shadow, and the user confirmed the disappearing-shadow issue was resolved.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -308,6 +323,76 @@ How to read the sections:
   whole 1,000-line buffer each frame kept `ui_build` at about 38 ms after B15.
 - **Resolution:** reported once per run. (Most of these were B13; the rest are entities drawn
   on the frame they were spawned, before propagation, which is harmless.)
+
+### B17. Lua `look_at` rolls and flips an orbiting camera (fixed, engine)
+
+- Repro: orbit an elevated camera around a target and call Lua `look_at` each update.
+  The horizon tilts and can flip when the camera goes behind the target.
+- Cause: Lua used `Quat::from_rotation_arc(-Z, direction)`, which constrains forward
+  without constraining up. This resembles gimbal lock but is an orientation ambiguity.
+  MCP camera placement already used a level Y-up look rotation.
+- **Resolution:** Lua and MCP share that look rotation for pending and existing
+  entities. Coincident targets leave rotation unchanged. A full-orbit regression test
+  and 73 live MCP probe angles verified aim and a level horizon.
+
+### B18. Camera synchronization ignores changes to roll (fixed, engine)
+
+- Repro: change a camera entity's roll while keeping its position and forward direction
+  fixed. `SceneCamera::apply_from_entity` treats it as unchanged and keeps the old up.
+- **Resolution:** compare the actual perpendicular view-up direction and sync roll
+  without resetting the orbit focus distance. Preserve equivalent saved up hints,
+  including world Y, so editor undo retains the saved camera. Both the new roll test
+  and the existing editor undo test pass.
+
+### B19. TAA jitter disagrees with screen-space effect projections (fixed, engine)
+
+- Repro: enable TAA, ambient occlusion and reflections over a large floor at a grazing
+  camera angle. The distant floor shows broad brightness flicker. With FXAA and the
+  other effects still enabled, the frozen view was stable.
+- Cause: the G-buffer rasterized through a jittered camera, but ambient occlusion and
+  reflection lookups projected through unjittered matrices.
+- **Resolution:** apply the rasterization jitter to `PostProcessCamera`'s projection,
+  view-projection and inverse. Motion vectors and overlays retain their unjittered
+  matrices. In the checked image region, pixels changing by more than five 8-bit color
+  levels dropped from roughly 2,500 to around 10 per comparison. This is a sampled
+  visual check, not a guarantee of identical frames. The projection regression test
+  passes, and the user confirmed the scene looked stable with TAA re-enabled.
+
+### B20. Browser material requests decode literal percent escapes (confirmed, engine)
+
+- Repro: export a scene whose material filenames contain `%2e` in the scene namespace,
+  then package and run it with `web_build` and `web_playtest`. The files exist in the
+  staged output, but material requests return HTTP 404.
+- Cause: the filesystem path is passed directly to the HTTP request. URL decoding
+  changes the literal filename. **Open:** encode filesystem path segments when forming
+  asset URLs, including literal percent signs, and test the complete browser load.
+
+### B21. Browser GPU particles require a bindless group at draw time (confirmed, engine)
+
+- Repro: run Tide Observatory in a WebGPU browser on an adapter without bindless
+  textures. The device initializes and the scene starts loading, then its emitted
+  particles trigger `GPU-driven particles require bindless textures`.
+- Cause: particle pipelines support traditional layouts, but the render path still
+  requests the renderer's global bindless texture group. **Open:** bind the traditional
+  material textures when needed, or explicitly report unsupported effects without a
+  panic. A successful WASM package build is insufficient evidence of a working demo.
+
+### B22. Lua camera focus is lost, moving the directional shadow volume (fixed, engine)
+
+- Repro: orbit Tide Observatory's elevated focus point, raise/lower the camera, or
+  zoom out. A straight boundary cuts through the ring shadow; at some views it vanishes.
+- Cause: Lua `look_at` kept only the entity rotation. Camera synchronization replaced
+  the real focus point with `eye + forward`. The shadow-placement fallback guessed a
+  ground-plane intersection from that ray, which moves far behind an elevated subject
+  at shallow angles and can shift the finite shadow volume off the sculpture.
+- **Resolution:** retain Lua's aim point as a transient `LookAtTarget` hint for pending
+  and existing entities. Use it as the camera target while it agrees with the current
+  world forward direction. Ignore stale hints after unrelated translation or rotation.
+  The existing free-camera fallback remains available when no valid hint exists.
+- Verification: the regression failed before the fix and now passes for all 144 poses,
+  checking a fixed shadow matrix and coverage of the sculpture and surrounding floor.
+  Two additional tests reject stale hints. Native before/after captures show the clipped
+  ring shadow becoming complete without enlarging the light's shadow extent.
 
 ## Pain points
 
@@ -562,6 +647,24 @@ How to read the sections:
   tuned against the defaults. Wish: keep them in `project.json` like the environment, or a
   `set_postprocess` Lua call.
 
+- **Visual comparisons require manual state management.** Diagnosing B19 meant pausing
+  animation, recording the camera and effect settings, toggling one effect at a time,
+  capturing PNG sequences, and comparing selected image regions externally. Pausing
+  the sculpture did not disable camera input; live dragging invalidated some early
+  comparisons. **Open:** capture an isolated scene snapshot with fixed camera and
+  simulation, and record the effective settings and frame/jitter indices with each image.
+- **Approval failures can look like engine failures.** This session initially accepted
+  launch and project creation, then blocked scene edits with `MCP tool call requires
+  approval, but approval policy is never`. Changing the client approval configuration
+  restored editing. This was a host/session policy issue, not an engine bug. **Open:**
+  explain this failure mode in the authoring workflow and distinguish it from connection
+  failures; retain the client's approval controls.
+- **Quiet batches still return a report for every successful call.** `quiet: true`
+  successfully omits full geometry recipes, but a large scene batch still returns many
+  component counts and bounds. Consuming `structuredContent` directly helped avoid
+  repeating the text copy. **Open:** an optional aggregate summary with created IDs,
+  counts and the complete failure/rollback report; keep detailed results available.
+
 ## Wish list
 
 - ✅ `entity_duplicate {count, step}` for a linear/grid array, or a generic `batch` tool that
@@ -636,6 +739,28 @@ How to read the sections:
   Lua reference's remote-control notes.)
 - ⬜ Make the editor's own frame cheaper (`ui_build` about 6.5 ms in a debug build), and skip
   hidden subtrees in transform propagation.
+
+- ⬜ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
+  rendered frames for several effect configurations, and report difference images,
+  per-region variation and settings. Preserve and restore the user's running scene.
+  Cover the actual render/TAA frames, not only deterministic Lua simulation steps.
+- ⬜ **Browser capability preflight:** report unsupported effects and asset URL issues
+  before treating a saved project's native validation or WASM build as browser readiness.
+
+## Tide Observatory: what worked well
+
+- Procedural sweeps made thin orbital rings and curved supports; lathes and composed
+  meshes supplied the basin, lanterns and engraved divisions. Seeded texture generation
+  produced reusable brass, marble and water PBR maps entirely through MCP.
+- Atomic batches were a useful authoring boundary: a bad profile rolled back the whole
+  edit without leaving half a scene. Existing quiet batches and compact saves helped
+  keep routine geometry authoring manageable.
+- Screenshots, Lua evaluation and input injection made the controls and renderer
+  inspectable. Fixed-step assertions covered orbit, zoom, pause/resume, captions, reset
+  and stable mesh counts; screenshots checked the composition at 16:9 and 4:3.
+- `project_validate`, native player restart, profiling and browser smoke tests answered
+  different questions. Native validation and WASM compilation passed while the browser
+  correctly exposed runtime failures; full repository tests caught the undo regression.
 
 ## Open: Lua scripting on the web
 

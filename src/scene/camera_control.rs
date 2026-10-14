@@ -1,6 +1,7 @@
 use super::camera::Camera;
 use super::components::{CameraComponent, TransformComponent, WorldTransform};
 use super::internal::lights::safe_normalize;
+use super::transform::LookAtTarget;
 use glam::Vec3;
 use hecs::{Entity, World};
 
@@ -72,7 +73,19 @@ impl SceneCamera {
                 .and_then(|forward| (camera.up - forward * camera.up.dot(forward)).try_normalize());
             let unchanged_up = current_up.is_some_and(|current| current.dot(up) > 1.0 - 1e-6);
 
-            if !unchanged {
+            let explicit_target = world
+                .get::<&LookAtTarget>(entity)
+                .ok()
+                .map(|hint| hint.0)
+                .filter(|target| {
+                    (*target - eye)
+                        .try_normalize()
+                        .is_some_and(|direction| direction.dot(forward) > 1.0 - 1e-6)
+                });
+            if let Some(target) = explicit_target {
+                camera.eye = eye;
+                camera.target = target;
+            } else if !unchanged {
                 camera.eye = eye;
                 camera.target = eye + forward;
             }
@@ -151,5 +164,57 @@ mod tests {
         assert!(camera.apply_from_entity(&world, entity));
         assert!(camera.camera().up.abs_diff_eq(rotation * Vec3::Y, 1e-5));
         assert_eq!(camera.camera().target, Vec3::NEG_Z * 10.0);
+    }
+
+    #[test]
+    fn apply_from_entity_ignores_look_target_after_turning_away() {
+        let eye = Vec3::new(0.0, 6.0, 12.0);
+        let target = Vec3::ZERO;
+        let mut world = World::new();
+        let entity = world.spawn((
+            TransformComponent(Transform::from_trs(
+                eye,
+                super::super::transform::look_rotation(eye, target).unwrap(),
+                Vec3::ONE,
+            )),
+            super::LookAtTarget(target),
+        ));
+        let mut camera = SceneCamera::new();
+        camera.apply_from_entity(&world, entity);
+        assert_eq!(camera.camera().target, target);
+
+        world
+            .get::<&mut TransformComponent>(entity)
+            .unwrap()
+            .0
+            .rotation = Quat::IDENTITY;
+        camera.apply_from_entity(&world, entity);
+        assert_eq!(camera.camera().eye, eye);
+        assert_eq!(camera.camera().target, eye + Vec3::NEG_Z);
+    }
+
+    #[test]
+    fn apply_from_entity_ignores_look_target_after_moving_sideways() {
+        let eye = Vec3::new(0.0, 6.0, 12.0);
+        let target = Vec3::ZERO;
+        let rotation = super::super::transform::look_rotation(eye, target).unwrap();
+        let mut world = World::new();
+        let entity = world.spawn((
+            TransformComponent(Transform::from_trs(eye, rotation, Vec3::ONE)),
+            super::LookAtTarget(target),
+        ));
+        let mut camera = SceneCamera::new();
+        camera.apply_from_entity(&world, entity);
+        assert_eq!(camera.camera().target, target);
+
+        let moved = eye + Vec3::X * 4.0;
+        world
+            .get::<&mut TransformComponent>(entity)
+            .unwrap()
+            .0
+            .translation = moved;
+        camera.apply_from_entity(&world, entity);
+        assert_eq!(camera.camera().eye, moved);
+        assert_eq!(camera.camera().target, moved + rotation * Vec3::NEG_Z);
     }
 }
