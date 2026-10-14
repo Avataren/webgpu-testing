@@ -10,6 +10,9 @@ struct Globals {
     _padding1: f32,
     camera_up: vec3<f32>,
     _padding2: f32,
+    // view_proj without the TAA jitter, and last frame's: motion vectors compare them.
+    unjittered_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -24,6 +27,44 @@ struct Object {
 
 @group(1) @binding(0) var<storage, read> objects: array<Object>;
 @group(1) @binding(1) var<storage, read> materials: array<MaterialData>;
+// Last frame's model matrices, indexed like `objects` (motion vectors).
+@group(1) @binding(2) var<storage, read> prev_models: array<mat4x4<f32>>;
+
+// Last frame's model matrix for an instance; an all-zero entry means no history.
+fn previous_model(instance: u32, current: mat4x4<f32>) -> mat4x4<f32> {
+    let prev = prev_models[instance];
+    if prev[3][3] == 0.0 {
+        return current;
+    }
+    return prev;
+}
+
+
+// Octahedral normal encoding: a unit vector in two numbers, leaving room for velocity in
+// the same G-buffer texel.
+fn encode_normal_oct(n: vec3<f32>) -> vec2<f32> {
+    let p = n.xy / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+    if n.z >= 0.0 {
+        return p;
+    }
+    let signs = select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+    return (1.0 - abs(p.yx)) * signs;
+}
+
+// G-buffer normal texel: encoded normal in xy, motion vector in zw.
+fn pack_normal_velocity(n: vec3<f32>, velocity: vec2<f32>) -> vec4<f32> {
+    return vec4<f32>(encode_normal_oct(normalize(n)), velocity);
+}
+
+// Screen motion since last frame in UV units (+y down), jitter excluded.
+fn motion_vector(curr_clip: vec4<f32>, prev_clip: vec4<f32>) -> vec2<f32> {
+    if curr_clip.w <= 0.0 || prev_clip.w <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let delta = curr_clip.xy / curr_clip.w - prev_clip.xy / prev_clip.w;
+    return delta * vec2<f32>(0.5, -0.5);
+}
+
 
 struct VsIn {
     @location(0) pos: vec3<f32>,
@@ -46,6 +87,8 @@ struct VsOut {
     @location(8) @interpolate(flat) material_texture_indices1: vec2<u32>,
     @location(9) @interpolate(flat) material_flags: u32,
     @location(10) @interpolate(flat) material_factors: vec3<f32>,
+    @location(11) curr_clip: vec4<f32>,
+    @location(12) prev_clip: vec4<f32>,
 };
 
 struct ShadedFragment {
@@ -118,6 +161,9 @@ fn vs_main(in: VsIn) -> VsOut {
 
     var out: VsOut;
     out.pos = globals.view_proj * world_pos;
+    out.curr_clip = globals.unjittered_view_proj * world_pos;
+    out.prev_clip = globals.prev_view_proj
+        * (previous_model(in.instance, model) * vec4<f32>(in.pos, 1.0));
     out.world_pos = world_pos.xyz;
     out.normal = n;
     out.uv = in.uv;
@@ -149,7 +195,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_main_gbuffer(in: VsOut) -> FragmentOutNoPick {
     let shaded = shade_fragment(in);
-    return FragmentOutNoPick(shaded.color, shaded.normal, shaded.world_pos);
+    return FragmentOutNoPick(
+        shaded.color,
+        pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
+        shaded.world_pos,
+    );
 }
 
 @fragment
@@ -163,5 +213,10 @@ fn fs_main_pick(in: VsOut) -> FragmentOutPick {
 fn fs_main_gbuffer_pick(in: VsOut) -> FragmentOut {
     let shaded = shade_fragment(in);
     let pick_value = object_pick_output(in.instance_id, shaded.color.a, in.material_flags);
-    return FragmentOut(shaded.color, shaded.normal, shaded.world_pos, pick_value);
+    return FragmentOut(
+        shaded.color,
+        pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
+        shaded.world_pos,
+        pick_value,
+    );
 }

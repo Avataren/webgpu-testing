@@ -31,6 +31,7 @@ pub struct PostProcessSettings {
     pub bloom: BloomSettings,
     pub ssao: SsaoSettings,
     pub depth_of_field: DepthOfFieldSettings,
+    pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
     pub chromatic_aberration: ChromaticAberrationSettings,
     pub film_grain: FilmGrainSettings,
@@ -58,6 +59,7 @@ impl PostProcessSettings {
             bloom: self.bloom.blend(&other.bloom, t),
             ssao: self.ssao.blend(&other.ssao, t),
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
+            motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
             chromatic_aberration: self
                 .chromatic_aberration
@@ -120,6 +122,9 @@ impl PostProcessSettings {
         dof.near_end = finite_or(dof.near_end, 0.0).max(dof.near_start);
         dof.far_start = finite_or(dof.far_start, 0.0).max(dof.near_end);
         dof.far_end = finite_or(dof.far_end, 0.0).max(dof.far_start);
+        let blur = &mut self.motion_blur;
+        blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
+        blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
         self.lut.path = self.lut.path.trim().to_string();
         self
     }
@@ -137,6 +142,18 @@ impl PostProcessSettings {
     /// Whether the depth of field passes run this frame.
     pub fn depth_of_field_active(&self) -> bool {
         self.depth_of_field.enabled && self.depth_of_field.max_blur > 0.0
+    }
+
+    /// Whether the motion blur pass runs this frame.
+    pub fn motion_blur_active(&self) -> bool {
+        self.motion_blur.enabled
+            && self.motion_blur.intensity > 0.0
+            && self.motion_blur.max_blur > 0.0
+    }
+
+    /// Whether temporal anti-aliasing runs this frame.
+    pub fn taa_active(&self) -> bool {
+        self.anti_aliasing == AntiAliasing::Taa
     }
 
     /// Whether exposure follows the scene's brightness.
@@ -625,6 +642,43 @@ impl DepthOfFieldSettings {
     }
 }
 
+/// Blurs things along the way they move on screen, like a camera shutter.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MotionBlurSettings {
+    pub enabled: bool,
+    /// Share of the frame the shutter is open: 0.5 is a film camera's 180 degrees.
+    pub intensity: f32,
+    /// Longest streak, in pixels at 1080p (scaled with the view height).
+    pub max_blur: f32,
+}
+
+impl Default for MotionBlurSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            intensity: 0.5,
+            max_blur: 32.0,
+        }
+    }
+}
+
+impl MotionBlurSettings {
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        let (from, to, enabled) = fade_pair(self, other, self.enabled, other.enabled, |s| {
+            MotionBlurSettings {
+                intensity: 0.0,
+                ..*s
+            }
+        });
+        Self {
+            enabled,
+            intensity: lerp(from.intensity, to.intensity, t),
+            max_blur: lerp(from.max_blur, to.max_blur, t),
+        }
+    }
+}
+
 /// Darkens (or tints) the edges of the frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -789,6 +843,10 @@ pub enum AntiAliasing {
     /// Fast approximate anti-aliasing on the tonemapped image.
     #[default]
     Fxaa,
+    /// Temporal anti-aliasing: the camera jitters by a sub-pixel each frame and frames
+    /// are accumulated along the motion vectors. Smoothest edges and stable thin details;
+    /// fast motion can leave a slight trail.
+    Taa,
 }
 
 /// Which post effects ran and how they were tuned, as projects stored them before

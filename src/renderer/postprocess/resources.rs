@@ -64,6 +64,30 @@ impl TextureBundle {
         Self { view, texture }
     }
 
+    /// A colour target that can also be copied to and from (TAA history).
+    pub fn copyable(
+        device: &wgpu::Device,
+        size: &wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: *size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { view, texture }
+    }
+
     pub fn depth(device: &wgpu::Device, size: &wgpu::Extent3d, label: &str) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),

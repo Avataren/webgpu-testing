@@ -13,14 +13,15 @@ mod pipelines;
 mod resources;
 mod settings;
 mod ssao;
+mod temporal;
 
 pub use lut::CubeLut;
 pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
-    LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, PostProcessEffects,
-    PostProcessSettings, SharpenSettings, SsaoSettings, Tonemapper, VignetteSettings,
-    TRACKBALL_NEUTRAL,
+    LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
+    PostProcessEffects, PostProcessSettings, SharpenSettings, SsaoSettings, Tonemapper,
+    VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
@@ -33,6 +34,7 @@ use pipelines::{
 };
 use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
+use temporal::{TemporalInputs, TemporalStage};
 
 use crate::renderer::{RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
@@ -48,6 +50,9 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Half-resolution depth of field colour, with the circle of confusion in alpha.
 pub(crate) const DOF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Octahedral-encoded world normal in xy and screen motion since the previous frame (UV
+/// units, for motion blur and TAA) in zw. Packed together because WebGPU allows only 32
+/// bytes of colour attachments per sample.
 pub const GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_POSITION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_PICK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
@@ -131,6 +136,9 @@ pub struct PostProcess {
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
+    taa_output: TextureBundle,
+    taa_history: TextureBundle,
+    motion_output: TextureBundle,
     display: TextureBundle,
     sampler_linear: wgpu::Sampler,
     sampler_noise: wgpu::Sampler,
@@ -145,6 +153,11 @@ pub struct PostProcess {
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
     dof_stage: DofStage,
+    temporal_stage: TemporalStage,
+    /// The history holds last frame's TAA result (false after a resize or turning TAA on).
+    taa_history_valid: bool,
+    /// Which temporal passes the cached bind groups were built for (TAA, motion blur).
+    temporal_routing: (bool, bool),
     lut: LutTexture,
     size: wgpu::Extent3d,
     settings: PostProcessSettings,
@@ -339,6 +352,7 @@ pub(crate) fn postprocess_shader_source() -> String {
         .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
         .with_module(include_str!("../../shader/postprocess/auto_exposure.wgsl"))
         .with_module(include_str!("../../shader/postprocess/dof.wgsl"))
+        .with_module(include_str!("../../shader/postprocess/temporal.wgsl"))
         .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
         .with_module(include_str!("../../shader/postprocess/final.wgsl"))
         .build_modules_only()
@@ -427,6 +441,7 @@ impl PostProcess {
         let bloom_stage = BloomStage::new(device, &uniform_layout, &postprocess_shader);
         let exposure_stage = ExposureStage::new(device, &uniform_layout, &postprocess_shader);
         let dof_stage = DofStage::new(device, &uniform_layout, &postprocess_shader);
+        let temporal_stage = TemporalStage::new(device, &uniform_layout, &postprocess_shader);
         let composite_pipeline =
             build_composite(device, &uniform_layout, &postprocess_shader, DISPLAY_FORMAT);
         let final_pipeline =
@@ -445,6 +460,9 @@ impl PostProcess {
             bloom_chain: targets.bloom_chain,
             dof_half: targets.dof_half,
             dof_blur: targets.dof_blur,
+            taa_output: targets.taa_output,
+            taa_history: targets.taa_history,
+            motion_output: targets.motion_output,
             display: targets.display,
             sampler_linear,
             sampler_noise,
@@ -459,6 +477,9 @@ impl PostProcess {
             bloom_stage,
             exposure_stage,
             dof_stage,
+            temporal_stage,
+            taa_history_valid: false,
+            temporal_routing: (false, false),
             lut: LutTexture::new(device, queue),
             size,
             settings: PostProcessSettings::default(),
@@ -502,6 +523,10 @@ impl PostProcess {
         self.bloom_chain = targets.bloom_chain;
         self.dof_half = targets.dof_half;
         self.dof_blur = targets.dof_blur;
+        self.taa_output = targets.taa_output;
+        self.taa_history = targets.taa_history;
+        self.motion_output = targets.motion_output;
+        self.taa_history_valid = false;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
         self.pick_target.invalidate();
@@ -536,6 +561,8 @@ impl PostProcess {
             self.viewport_resolution = resolution;
             self.viewport_offset = offset;
             self.viewport_scale = scale;
+            // The history no longer lines up with the view.
+            self.taa_history_valid = false;
             self.upload_uniform(queue);
         }
     }
@@ -603,6 +630,14 @@ impl PostProcess {
             self.bind_groups_dirty = true;
             self.upload_uniform(queue);
         }
+        let routing = (settings.taa_active(), settings.motion_blur_active());
+        if routing != self.temporal_routing {
+            if routing.0 && !self.temporal_routing.0 {
+                self.taa_history_valid = false;
+            }
+            self.temporal_routing = routing;
+            self.mark_bind_groups_dirty();
+        }
         if self.settings != *settings {
             let was_auto = self.settings.auto_exposure_active();
             self.settings = settings.clone().sanitized();
@@ -665,6 +700,24 @@ impl PostProcess {
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+
+        let (taa, motion_blur) = self.temporal_routing;
+        if taa {
+            self.temporal_stage.render_taa(
+                encoder,
+                &self.uniform_bind_group,
+                &self.taa_output,
+                &self.taa_history,
+            );
+            self.taa_history_valid = true;
+        }
+        if motion_blur {
+            self.temporal_stage.render_motion_blur(
+                encoder,
+                &self.uniform_bind_group,
+                &self.motion_output.view,
+            );
         }
 
         let ssao_targets = SsaoTargets {
@@ -750,6 +803,7 @@ impl PostProcess {
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
         self.dof_stage.invalidate();
+        self.temporal_stage.invalidate();
         self.bind_groups_dirty = true;
     }
 
@@ -801,20 +855,43 @@ impl PostProcess {
             },
         );
 
+        // Later passes read the temporal output when TAA or motion blur run.
+        let (taa, motion_blur) = self.temporal_routing;
+        let taa_or_scene = if taa {
+            &self.taa_output.view
+        } else {
+            &self.scene_source.view
+        };
+        let post_input = if motion_blur {
+            &self.motion_output.view
+        } else {
+            taa_or_scene
+        };
+        self.temporal_stage.ensure_bind_groups(
+            device,
+            TemporalInputs {
+                scene: &self.scene_source.view,
+                history: &self.taa_history.view,
+                motion: &self.normal_source.view,
+                position: &self.position_source.view,
+                sampler: &self.sampler_linear,
+                blur_input: taa_or_scene,
+            },
+        );
+
         self.bloom_stage.ensure_bind_groups(
             device,
             BloomBindGroupInputs {
-                scene_view: &self.scene_source.view,
+                scene_view: post_input,
                 sampler_linear: &self.sampler_linear,
                 chain: &self.bloom_chain,
             },
         );
 
-        self.exposure_stage
-            .ensure_bind_group(device, &self.scene_source.view);
+        self.exposure_stage.ensure_bind_group(device, post_input);
         self.dof_stage.ensure_bind_groups(
             device,
-            &self.scene_source.view,
+            post_input,
             &self.position_source.view,
             &self.dof_half.view,
             &self.sampler_linear,
@@ -826,7 +903,7 @@ impl PostProcess {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 90,
-                    resource: wgpu::BindingResource::TextureView(&self.scene_source.view),
+                    resource: wgpu::BindingResource::TextureView(post_input),
                 },
                 wgpu::BindGroupEntry {
                     binding: 91,
@@ -881,6 +958,7 @@ impl PostProcess {
             viewport_scale: self.viewport_scale,
             settings: &self.settings,
             lut_loaded: self.lut.is_loaded(),
+            taa_history_valid: self.taa_history_valid,
             encode_srgb: self.encode_srgb,
             seconds: self.clock.seconds,
             delta: self.clock.delta,
@@ -903,6 +981,9 @@ struct SizedTargets {
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
+    taa_output: TextureBundle,
+    taa_history: TextureBundle,
+    motion_output: TextureBundle,
     display: TextureBundle,
     resolved_depth: Option<TextureBundle>,
 }
@@ -937,6 +1018,9 @@ impl SizedTargets {
             bloom_chain: create_bloom_chain(device, size),
             dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
             dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
+            taa_output: TextureBundle::copyable(device, size, HDR_FORMAT, "TaaOutput"),
+            taa_history: TextureBundle::copyable(device, size, HDR_FORMAT, "TaaHistory"),
+            motion_output: TextureBundle::color(device, size, HDR_FORMAT, "MotionBlurOutput"),
             display: TextureBundle::color(device, size, DISPLAY_FORMAT, "PostDisplay"),
             resolved_depth: (sample_count > 1)
                 .then(|| TextureBundle::depth(device, size, "ResolvedDepth")),
@@ -1034,6 +1118,7 @@ struct UniformInputs<'a> {
     viewport_scale: Vec2,
     settings: &'a PostProcessSettings,
     lut_loaded: bool,
+    taa_history_valid: bool,
     encode_srgb: bool,
     seconds: f32,
     delta: f32,
@@ -1077,7 +1162,7 @@ struct PostProcessUniform {
     output: [f32; 4],
     dof_params: [f32; 4],
     dof_ranges: [f32; 4],
-    dof_extra: [f32; 4],
+    misc: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1195,7 +1280,16 @@ impl PostProcessUniform {
                 let dof = &settings.depth_of_field;
                 [dof.near_start, dof.near_end, dof.far_start, dof.far_end]
             },
-            dof_extra: [flag(settings.depth_of_field.autofocus), 0.0, 0.0, 0.0],
+            misc: [
+                flag(settings.depth_of_field.autofocus),
+                flag(inputs.taa_history_valid),
+                if settings.motion_blur_active() {
+                    settings.motion_blur.intensity
+                } else {
+                    0.0
+                },
+                settings.motion_blur.max_blur * resolution.y / 1080.0,
+            ],
             output: [
                 flag(inputs.encode_srgb),
                 1.0,

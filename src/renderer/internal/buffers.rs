@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::mem;
 use std::num::NonZeroU64;
 
@@ -12,8 +13,20 @@ use crate::renderer::material::Material;
 use crate::renderer::uniforms::CameraUniform;
 use crate::renderer::{batch::InstanceSource, MaterialData, ObjectData};
 
+/// Last frame's model matrix of every instance, for motion vectors. Indexed like the
+/// objects buffer; an all-zero entry means "no history, use the current matrix".
+type PrevModel = [[f32; 4]; 4];
+
+/// Identifies an instance across frames: its pick id (the entity), mesh, and which
+/// occurrence of that pair it is this frame.
+type InstanceKey = (u64, usize, u32);
+
 pub(crate) struct DynamicObjectsBuffer {
     pub(crate) objects: wgpu::Buffer,
+    prev_models: wgpu::Buffer,
+    prev_scratch: Vec<PrevModel>,
+    last_transforms: HashMap<InstanceKey, PrevModel>,
+    current_transforms: HashMap<InstanceKey, PrevModel>,
     pub(crate) materials: wgpu::Buffer,
     pub(crate) object_capacity: u32,
     pub(crate) material_capacity: u32,
@@ -56,6 +69,16 @@ impl DynamicObjectsBuffer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: NonZeroU64::new(mem::size_of::<PrevModel>() as u64),
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -75,24 +98,16 @@ impl DynamicObjectsBuffer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ObjectsBindGroup"),
-            layout: &bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: objects.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: materials.as_entire_binding(),
-                },
-            ],
-        });
+        let prev_models = create_prev_models(device, capacity);
+        let bind_group =
+            create_objects_bind_group(device, &bind_layout, &objects, &materials, &prev_models);
 
         Self {
             objects,
+            prev_models,
+            prev_scratch: Vec::with_capacity(capacity as usize),
+            last_transforms: HashMap::new(),
+            current_transforms: HashMap::new(),
             materials,
             object_capacity: capacity,
             material_capacity: capacity,
@@ -111,7 +126,10 @@ impl DynamicObjectsBuffer {
         materials: &[Material],
     ) -> Result<(), crate::renderer::SurfaceError> {
         self.object_scratch.clear();
+        self.prev_scratch.clear();
         self.cpu_segments.clear();
+        self.current_transforms.clear();
+        let mut occurrences: HashMap<(u64, usize), u32> = HashMap::new();
 
         let mut current_segment: Option<CpuSegment> = None;
         let mut total_instances: u32 = 0;
@@ -133,10 +151,23 @@ impl DynamicObjectsBuffer {
                     continue;
                 }
 
-                let data =
-                    ObjectData::new(inst.transform.matrix(), inst.material_index, inst.pick_id);
+                let model = inst.transform.matrix();
+                let data = ObjectData::new(model, inst.material_index, inst.pick_id);
                 let scratch_index = self.object_scratch.len();
                 self.object_scratch.push(data);
+                // Unidentified instances (pick id 0) get no history, so no motion.
+                let prev = if inst.pick_id == 0 {
+                    PrevModel::zeroed()
+                } else {
+                    let pair = (inst.pick_id, batch.mesh.index());
+                    let occurrence = occurrences.entry(pair).or_insert(0);
+                    let key = (pair.0, pair.1, *occurrence);
+                    *occurrence += 1;
+                    let current = model.to_cols_array_2d();
+                    self.current_transforms.insert(key, current);
+                    self.last_transforms.get(&key).copied().unwrap_or(current)
+                };
+                self.prev_scratch.push(prev);
 
                 if let Some(segment) = current_segment.as_mut() {
                     if global_index == segment.start_index + segment.length as u32 {
@@ -175,7 +206,14 @@ impl DynamicObjectsBuffer {
             context
                 .queue
                 .write_buffer(&self.objects, offset, bytemuck::cast_slice(slice));
+            let prev_offset = (start * mem::size_of::<PrevModel>()) as u64;
+            context.queue.write_buffer(
+                &self.prev_models,
+                prev_offset,
+                bytemuck::cast_slice(&self.prev_scratch[segment.scratch_start..end]),
+            );
         }
+        std::mem::swap(&mut self.last_transforms, &mut self.current_transforms);
 
         self.material_scratch.clear();
         self.material_scratch
@@ -213,6 +251,7 @@ impl DynamicObjectsBuffer {
             mapped_at_creation: false,
         });
 
+        self.prev_models = create_prev_models(&context.device, new_capacity);
         self.object_capacity = new_capacity;
         self.rebuild_bind_group(context);
     }
@@ -238,22 +277,13 @@ impl DynamicObjectsBuffer {
     }
 
     fn rebuild_bind_group(&mut self, context: &RenderContext) {
-        self.bind_group = context
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ObjectsBindGroup"),
-                layout: &self.bind_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.objects.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: self.materials.as_entire_binding(),
-                    },
-                ],
-            });
+        self.bind_group = create_objects_bind_group(
+            &context.device,
+            &self.bind_layout,
+            &self.objects,
+            &self.materials,
+            &self.prev_models,
+        );
     }
 
     pub(crate) fn ensure_capacity(&mut self, context: &RenderContext, required: u32) {
@@ -267,10 +297,50 @@ impl DynamicObjectsBuffer {
     }
 }
 
+fn create_prev_models(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("PrevModelsBuffer"),
+        size: (capacity.max(1) as usize * mem::size_of::<PrevModel>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_objects_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    objects: &wgpu::Buffer,
+    materials: &wgpu::Buffer,
+    prev_models: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ObjectsBindGroup"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: objects.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: materials.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: prev_models.as_entire_binding(),
+            },
+        ],
+    })
+}
+
 pub(crate) struct CameraBuffer {
     pub(crate) buffer: wgpu::Buffer,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) bind_layout: wgpu::BindGroupLayout,
+    /// The same camera without the TAA jitter, for overlays and gizmos drawn on the
+    /// finished image (jittered, thin lines would shimmer).
+    pub(crate) stable_buffer: wgpu::Buffer,
+    pub(crate) stable_bind_group: wgpu::BindGroup,
 }
 
 impl CameraBuffer {
@@ -307,10 +377,26 @@ impl CameraBuffer {
             }],
         });
 
+        let stable_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("StableCameraBuffer"),
+            contents: bytemuck::bytes_of(&camera),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let stable_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("StableCameraBindGroup"),
+            layout: &bind_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: stable_buffer.as_entire_binding(),
+            }],
+        });
+
         Self {
             buffer,
             bind_group,
             bind_layout,
+            stable_buffer,
+            stable_bind_group,
         }
     }
 }

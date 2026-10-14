@@ -82,12 +82,22 @@ surface passes (overlay, gizmos) → UI hook.
 
 The scene renders in HDR (`Rgba16Float`, `postprocess::HDR_FORMAT`), transparent
 surfaces included, so light above 1.0 survives to bloom and tonemapping. Post-processing
-(`src/renderer/postprocess/`) runs: MSAA depth resolve → SSAO → bloom (13-tap Karis
-downsample chain, tent upsample blended by scatter) → auto exposure (compute: luminance
-histogram, adapted EV in a storage buffer) → composite (AO, bloom, exposure, vignette,
-white balance and grading, tonemapping, lift/gamma/gain; into a half-float display
-target) → final (FXAA, CAS sharpening, film grain, dither; onto the surface). Overlays
-and gizmos draw after that, untonemapped.
+(`src/renderer/postprocess/`) runs: MSAA depth resolve → TAA (Halton-jittered camera,
+closest-depth motion vector, Catmull-Rom history, YCoCg variance clipping) → motion blur
+→ SSAO → bloom (13-tap Karis downsample chain, tent upsample blended by scatter) → depth
+of field (half-res CoC prefilter, golden-angle bokeh gather) → auto exposure (compute:
+luminance histogram, adapted EV in a storage buffer) → composite (AO, DoF, bloom,
+exposure, vignette, white balance and grading, tonemapping, lift/gamma/gain, `.cube`
+LUT; into a half-float display target) → final (FXAA, CAS sharpening, film grain,
+dither; onto the surface). Later passes read the TAA/motion-blur output when those run.
+Overlays and gizmos draw after that, untonemapped, through an unjittered camera
+(`CameraBuffer::stable_bind_group`).
+- **G-buffer**: colour (HDR), normal, world position and (while picking) the pick id —
+  exactly WebGPU's 32-byte colour-attachment limit, so motion vectors share the normal
+  texel: octahedral normal in xy, screen motion (UV per frame) in zw. Motion vectors
+  compare `CameraUniform::unjittered_view_proj` with `prev_view_proj`, and each
+  instance's model matrix with last frame's (`prev_models`, group 1 binding 2, matched
+  by pick id + mesh).
 
 - **Bind groups** for the main pipeline: 0 = camera, 1 = objects, 2 = lights,
   3 = textures. Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the

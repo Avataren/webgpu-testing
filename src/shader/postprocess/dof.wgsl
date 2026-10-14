@@ -31,7 +31,7 @@ fn dof_view_depth(pixel : vec2<i32>) -> f32 {
 }
 
 fn dof_focus_distance() -> f32 {
-    if post_uniform.dof_extra.x > 0.5 {
+    if post_uniform.misc.x > 0.5 {
         // Autofocus on whatever is at the centre of the view.
         let dims = vec2<f32>(textureDimensions(dof_position));
         let center = (post_uniform.viewport_offset + 0.5 * post_uniform.viewport_scale) * dims;

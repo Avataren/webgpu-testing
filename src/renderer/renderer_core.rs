@@ -18,7 +18,7 @@ use crate::renderer::{
 use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
 
-use glam::Vec3;
+use glam::{Mat4, Vec2, Vec3};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 use winit::{dpi::PhysicalSize, window::Window};
@@ -215,6 +215,10 @@ pub struct Renderer {
     ui_hook: Option<UiHook>,
     stats: RendererStats,
     render_region: Option<RenderRegion>,
+    /// Last frame's unjittered view-projection, for motion vectors.
+    prev_view_proj: Option<Mat4>,
+    /// Position in the TAA jitter sequence.
+    jitter_index: u32,
 }
 
 impl Renderer {
@@ -273,6 +277,8 @@ impl Renderer {
             ui_hook: None,
             stats: RendererStats::default(),
             render_region: None,
+            prev_view_proj: None,
+            jitter_index: 0,
         }
     }
 
@@ -446,7 +452,25 @@ impl Renderer {
         let view = camera.view();
         let view_inv = view.inverse();
         let proj = camera.proj(aspect);
-        let vp = proj * view;
+        let unjittered_vp = proj * view;
+        let prev_vp = self
+            .prev_view_proj
+            .replace(unjittered_vp)
+            .unwrap_or(unjittered_vp);
+        // TAA: shift the projection by a different sub-pixel offset every frame.
+        let jitter = if self.postprocess.settings().anti_aliasing
+            == crate::renderer::postprocess::AntiAliasing::Taa
+        {
+            self.jitter_index = self.jitter_index.wrapping_add(1);
+            let (width, height) = self
+                .render_region
+                .map(|region| (region.width(), region.height()))
+                .unwrap_or((self.context.config.width, self.context.config.height));
+            taa_jitter(self.jitter_index, width.max(1), height.max(1))
+        } else {
+            Vec2::ZERO
+        };
+        let vp = Mat4::from_translation(jitter.extend(0.0)) * unjittered_vp;
         let inv_vp = vp.inverse();
         let camera_pos = camera.position();
         let mut forward = (camera.target - camera_pos)
@@ -459,18 +483,40 @@ impl Renderer {
         if up.length_squared() < 1e-6 {
             up = Vec3::Y;
         }
-        let uni = CameraUniform::from_matrices(vp, inv_vp, camera_pos, forward, up);
+        let uni = CameraUniform::from_matrices(
+            vp,
+            inv_vp,
+            camera_pos,
+            forward,
+            up,
+            unjittered_vp,
+            prev_vp,
+        );
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
+        let stable = CameraUniform::from_matrices(
+            unjittered_vp,
+            unjittered_vp.inverse(),
+            camera_pos,
+            forward,
+            up,
+            unjittered_vp,
+            prev_vp,
+        );
+        self.context.queue.write_buffer(
+            &self.camera_buffer.stable_buffer,
+            0,
+            bytemuck::bytes_of(&stable),
+        );
         self.postprocess.update_camera(
             &self.context.queue,
             PostProcessCamera {
                 proj,
                 view,
                 view_inv,
-                view_proj: vp,
-                view_proj_inv: inv_vp,
+                view_proj: unjittered_vp,
+                view_proj_inv: unjittered_vp.inverse(),
                 position: camera.position(),
                 near: camera.near(),
                 far: camera.far(),
@@ -1122,4 +1168,43 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) ->
     }
 
     draws
+}
+
+/// Clip-space offset for TAA frame `index`: a Halton(2, 3) point inside the pixel,
+/// converted to NDC for a `width` x `height` view.
+fn taa_jitter(index: u32, width: u32, height: u32) -> Vec2 {
+    // 8 points cover the pixel evenly; longer sequences only add noise at 0.1 blend.
+    let sample = index % 8 + 1;
+    let offset = Vec2::new(halton(sample, 2), halton(sample, 3)) - Vec2::splat(0.5);
+    Vec2::new(
+        offset.x * 2.0 / width as f32,
+        offset.y * 2.0 / height as f32,
+    )
+}
+
+fn halton(mut index: u32, base: u32) -> f32 {
+    let mut result = 0.0;
+    let mut fraction = 1.0;
+    while index > 0 {
+        fraction /= base as f32;
+        result += fraction * (index % base) as f32;
+        index /= base;
+    }
+    result
+}
+
+#[cfg(test)]
+mod taa_tests {
+    use super::*;
+
+    #[test]
+    fn jitter_stays_within_half_a_pixel() {
+        for index in 0..32 {
+            let jitter = taa_jitter(index, 100, 50);
+            assert!(jitter.x.abs() <= 1.0 / 100.0 + 1e-6, "{jitter:?}");
+            assert!(jitter.y.abs() <= 1.0 / 50.0 + 1e-6, "{jitter:?}");
+        }
+        assert_eq!(halton(1, 2), 0.5);
+        assert_eq!(halton(2, 3), 2.0 / 3.0);
+    }
 }

@@ -3246,6 +3246,34 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Motion Blur",
+            "motion_blur",
+            Some(&mut settings.motion_blur.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
+                    ui,
+                    "motion_blur.intensity",
+                    "Shutter",
+                    &mut settings.motion_blur.intensity,
+                    0.0..=1.0,
+                    0.01,
+                );
+                rows.slider_with(
+                    ui,
+                    "motion_blur.max_blur",
+                    "Max streak",
+                    &mut settings.motion_blur.max_blur,
+                    0.0..=128.0,
+                    0.5,
+                    " px",
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Vignette",
             "vignette",
             Some(&mut settings.vignette.enabled),
@@ -3381,7 +3409,11 @@ fn show_post_process_volume_section(
                     "anti_aliasing",
                     "Method",
                     &mut settings.anti_aliasing,
-                    &[(AntiAliasing::None, "None"), (AntiAliasing::Fxaa, "FXAA")],
+                    &[
+                        (AntiAliasing::None, "None"),
+                        (AntiAliasing::Fxaa, "FXAA"),
+                        (AntiAliasing::Taa, "TAA (temporal)"),
+                    ],
                 );
             },
         );

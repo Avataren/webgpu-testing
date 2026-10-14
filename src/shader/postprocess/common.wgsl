@@ -58,8 +58,9 @@ struct PostUniform {
     dof_params : vec4<f32>,
     // manual depth of field: near start, near end, far start, far end (meters)
     dof_ranges : vec4<f32>,
-    // autofocus, unused
-    dof_extra : vec4<f32>,
+    // depth of field autofocus, TAA history valid, motion blur shutter, motion blur max
+    // streak in viewport pixels
+    misc : vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -151,4 +152,13 @@ fn pcg_hash(input : u32) -> u32 {
 fn noise_2d(pixel : vec2<u32>, frame : u32) -> f32 {
     let seed = pcg_hash(pixel.x + pcg_hash(pixel.y + pcg_hash(frame)));
     return f32(seed) / 4294967295.0;
+}
+
+// Inverse of the octahedral encoding the main pass writes into the normal G-buffer.
+fn decode_normal_oct(e : vec2<f32>) -> vec3<f32> {
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    let t = max(-n.z, 0.0);
+    n.x = n.x + select(t, -t, n.x >= 0.0);
+    n.y = n.y + select(t, -t, n.y >= 0.0);
+    return normalize(n);
 }

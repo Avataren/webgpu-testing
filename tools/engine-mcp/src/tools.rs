@@ -653,7 +653,12 @@ pub fn tools() -> Vec<Tool> {
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
-                "anti_aliasing": { "type": "string", "enum": ["none", "fxaa"] }
+                "motion_blur": { "type": "object", "description": "Camera and per-object motion blur", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "intensity": { "type": "number", "description": "Shutter: share of the frame it is open, 0.5 = 180 degrees" },
+                    "max_blur": { "type": "number", "description": "Longest streak in pixels at 1080p" }
+                }},
+                "anti_aliasing": { "type": "string", "enum": ["none", "fxaa", "taa"], "description": "taa: temporal (jittered, accumulated over frames): smoothest and most stable, can trail on fast motion" }
             }), &[]),
             action: Action::Engine("postprocess.set"),
         },

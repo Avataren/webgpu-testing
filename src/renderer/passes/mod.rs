@@ -16,6 +16,8 @@ use super::{RenderFrame, Renderer};
 
 #[derive(Clone, Copy)]
 pub(crate) struct BatchPassOptions {
+    /// Draw with the camera that has no TAA jitter (things drawn after post-processing).
+    pub(crate) stable_camera: bool,
     pub(crate) color_format: wgpu::TextureFormat,
     pub(crate) color_sample_count: u32,
     pub(crate) use_gbuffer: bool,
@@ -83,7 +85,12 @@ impl<'a> BatchRecorder<'a> {
                 options.write_pick,
                 wireframe,
             );
-            pass.set_bind_group(0, &self.renderer.camera_buffer.bind_group, &[]);
+            let camera = if options.stable_camera {
+                &self.renderer.camera_buffer.stable_bind_group
+            } else {
+                &self.renderer.camera_buffer.bind_group
+            };
+            pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
             pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
@@ -446,6 +453,7 @@ pub(crate) fn main_color_pass(
 
         if !batches.is_empty() {
             let options = BatchPassOptions {
+                stable_camera: false,
                 color_format: scene_format,
                 color_sample_count: sample_count,
                 use_gbuffer: true,
@@ -458,6 +466,7 @@ pub(crate) fn main_color_pass(
 
     if !shader_batches.is_empty() {
         let shader_options = BatchPassOptions {
+            stable_camera: false,
             color_format: scene_format,
             color_sample_count: sample_count,
             use_gbuffer: false,
@@ -546,6 +555,7 @@ pub(crate) fn transparent_pass(
         material_pipeline_keys,
     );
     let options = BatchPassOptions {
+        stable_camera: false,
         color_format: scene_format,
         color_sample_count: sample_count,
         use_gbuffer: false,
@@ -612,6 +622,7 @@ pub(crate) fn overlay_pass(
         material_pipeline_keys,
     );
     let options = BatchPassOptions {
+        stable_camera: true,
         color_format: surface_format,
         color_sample_count: 1,
         use_gbuffer: false,
@@ -664,6 +675,7 @@ pub(crate) fn gizmo_pass(
         material_pipeline_keys,
     );
     let options = BatchPassOptions {
+        stable_camera: true,
         color_format: surface_format,
         color_sample_count: 1,
         use_gbuffer: false,

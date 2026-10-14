@@ -99,11 +99,8 @@ fn fs_ssao(in : VertexOutput) -> @location(0) vec4<f32> {
     }
 
     let view_pos = world_to_view_position(world_position.xyz);
-    let normal_sample = fetch_world_normal(scene_uv);
-    var world_normal = normal_sample.xyz;
-    if (normal_sample.w < 0.5) {
-        world_normal = vec3<f32>(0.0, 0.0, 1.0);
-    }
+    // The normal G-buffer packs an octahedral normal (xy) with the motion vector (zw).
+    let world_normal = decode_normal_oct(fetch_world_normal(scene_uv).xy);
     var normal = world_to_view_normal(world_normal);
     if (dot(normal, normal) < 1e-4) {
         normal = vec3<f32>(0.0, 0.0, 1.0);

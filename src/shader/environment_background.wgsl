@@ -7,6 +7,8 @@ struct Globals {
     _padding1: f32,
     camera_up: vec3<f32>,
     _padding2: f32,
+    unjittered_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 
@@ -101,10 +103,18 @@ fn sample_background(in: VsOut) -> BackgroundOut {
     let color = textureSampleLevel(environment_map, environment_sampler, uv, 0.0).rgb
         * environment_intensity();
 
-    let mapped = color / (color + vec3<f32>(1.0));
+    // The sky stays HDR: post-processing exposes, blooms and tonemaps it.
+    // Directions (w = 0) reproject without translation, like a sky at infinity.
+    let curr = globals.unjittered_view_proj * vec4<f32>(dir, 0.0);
+    let prev = globals.prev_view_proj * vec4<f32>(dir, 0.0);
+    var velocity = vec2<f32>(0.0);
+    if curr.w > 0.0 && prev.w > 0.0 {
+        velocity = (curr.xy / curr.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
+    }
+    // No surface here: the normal slot carries only the motion vector (zw).
     return BackgroundOut(
-        vec4<f32>(mapped, 1.0),
-        vec4<f32>(0.0, 0.0, 0.0, 0.0),
+        vec4<f32>(color, 1.0),
+        vec4<f32>(0.0, 0.0, velocity),
         vec4<f32>(0.0, 0.0, 0.0, 0.0),
     );
 }
