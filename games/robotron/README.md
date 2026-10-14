@@ -70,9 +70,30 @@ frames and pixels. The player covers one arcade pixel a frame, as in the arcade.
 
 ## Files
 
-- `content/scripts/robotron.lua`: the whole game (one controller; every actor and bullet is spawned
-  and pooled by the script). Section comments mark the voxel models, actor definitions, wave
-  table, enemy AI, collisions, effects, camera, the autopilot, game flow and HUD.
+- `content/scripts/robotron.lua`: the controller script on `GameController`: the engine hooks
+  (`on_created`, `update`, `on_destroyed`, `on_ui`) and the test globals (`GAME`, `RT`). Every
+  actor and bullet is spawned and pooled by the scripts.
+- `content/scripts/robotron/`: the game, one module per part, each loaded with `require`:
+
+  | Module | What it holds |
+  |---|---|
+  | `config` | tuning, the arena's size, the arcade's units (`FR`, `PXM`, `BYM`) |
+  | `util` | maths helpers |
+  | `state` | `GAME` (`g`), the actor and bullet lists, sound and entity helpers |
+  | `models` | sprites to voxel models |
+  | `fx` | pixel particles, popups, shake, the rectangle zoom, the walls' colours |
+  | `actors` | the kinds (`K`), pooled units, spawning, kills and scoring, shared queries |
+  | `autopilot` | the attract-mode / `B` pilot |
+  | `player` | the player, input, shots and death |
+  | `ai` | enemy and family AI and the per-frame actor update |
+  | `combat` | collisions |
+  | `waves` | the 40-wave tables, where actors start, starting and ending a wave, the restart after a death |
+  | `flow` | the game's state machine, new games, the keys outside play |
+  | `camera` | fitting the camera to the window |
+  | `hud` | on-screen text |
+
+  A module only requires modules above it in this list, so there are no load cycles. Shared
+  tables in `state` are changed in place, never replaced, so every module can keep a reference.
 - `content/scripts/sprites.lua`: the pixel art, after the arcade sprites, with walk frames. Each
   sprite becomes a voxel model (one cube per same-coloured rectangle of pixels, extruded `depth`
   voxels); pixels shared by all frames are built once, the rest go under a node per frame. The

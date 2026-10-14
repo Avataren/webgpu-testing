@@ -5,13 +5,15 @@
 //! - `require(name)` loads `name` as a module and returns what it returns (usually a
 //!   table). The module runs once per script instance in its own environment (it sees
 //!   the scripting API, and its globals stay its own); later calls return the cached
-//!   value.
+//!   value. Modules can `require` other modules too, sharing the script's cache, so a
+//!   module two others require is one instance (a natural place for shared game state).
 //! - `include(name)` runs the file inside the calling script's environment, as if its
 //!   text were pasted there, so the functions and globals it defines become the
 //!   script's. It runs on every call.
 //!
 //! `name` is a path without `.lua` (`"enemies"`, `"ai.autopilot"` or `"ai/autopilot"`),
-//! looked up next to the script first, then under the script root. Editing a required
+//! looked up next to the script first, then under the script root (also from inside a
+//! module, so a module in `ai/` requires its neighbour as `"ai.helpers"`). Editing a required
 //! or included file hot-reloads every script that uses it.
 
 use std::collections::HashMap;
@@ -77,19 +79,35 @@ pub(crate) fn install(
 ) -> LuaResult<()> {
     let search_dirs = Arc::new(search_dirs);
     let loaded: Arc<Mutex<HashMap<PathBuf, mlua::RegistryKey>>> = Arc::default();
+    // The same modules by the name they were required as, so a `require` inside a function
+    // that runs every frame does not touch the disk.
+    let by_name: Arc<Mutex<HashMap<String, mlua::RegistryKey>>> = Arc::default();
     // Modules being loaded, to report a cycle instead of overflowing the stack.
     let loading: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+    // What every module's environment falls back to: the API globals plus this
+    // script's `require`.
+    let module_base = lua.create_table()?;
+    let base_metatable = lua.create_table()?;
+    base_metatable.set("__index", lua.globals())?;
+    module_base.set_metatable(Some(base_metatable));
+    let base_key = Arc::new(lua.create_registry_value(module_base.clone())?);
 
     let require = {
         let (search_dirs, dependencies) = (search_dirs.clone(), dependencies.clone());
         lua.create_function(move |lua, name: String| -> LuaResult<Value> {
+            if let Some(key) = lock(&by_name).get(&name) {
+                return lua.registry_value(key);
+            }
             let (path, contents) = find(&name, &search_dirs)?;
             if let Some(key) = lock(&loaded).get(&path) {
-                return lua.registry_value(key);
+                let value: Value = lua.registry_value(key)?;
+                lock(&by_name).insert(name, lua.create_registry_value(value.clone())?);
+                return Ok(value);
             }
             if lock(&loading).contains(&path) {
                 return Err(mlua::Error::RuntimeError(format!(
-                    "require cycle: {name:?} is still loading"
+                    "require cycle: {name:?} is still loading (move what both modules need into a \
+                     third, or require it inside a function instead of at the top)"
                 )));
             }
             {
@@ -100,7 +118,7 @@ pub(crate) fn install(
             }
             let module_env = lua.create_table()?;
             let metatable = lua.create_table()?;
-            metatable.set("__index", lua.globals())?;
+            metatable.set("__index", lua.registry_value::<Table>(&base_key)?)?;
             module_env.set_metatable(Some(metatable));
             let function = compile(lua, &path, &contents, module_env)?;
             lock(&loading).push(path.clone());
@@ -111,11 +129,12 @@ pub(crate) fn install(
                 Value::Nil => Value::Boolean(true),
                 value => value,
             };
-            let key = lua.create_registry_value(value.clone())?;
-            lock(&loaded).insert(path, key);
+            lock(&loaded).insert(path, lua.create_registry_value(value.clone())?);
+            lock(&by_name).insert(name, lua.create_registry_value(value.clone())?);
             Ok(value)
         })?
     };
+    module_base.raw_set("require", require.clone())?;
     env.raw_set("require", require)?;
 
     let env_key = Arc::new(lua.create_registry_value(env.clone())?);
@@ -137,6 +156,55 @@ pub(crate) fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modules_require_modules_from_the_shared_cache() {
+        let dir = std::env::temp_dir().join(format!("lua-nested-modules-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("game")).unwrap();
+        std::fs::write(dir.join("game/state.lua"), "return { n = 0 }").unwrap();
+        std::fs::write(
+            dir.join("game/a.lua"),
+            "local S = require('game.state')\nreturn { bump = function() S.n = S.n + 1 end }",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("game/b.lua"),
+            "local S = require('game.state')\nreturn { read = function() return S.n end }",
+        )
+        .unwrap();
+        std::fs::write(dir.join("game/loop1.lua"), "return require('game.loop2')").unwrap();
+        std::fs::write(dir.join("game/loop2.lua"), "return require('game.loop1')").unwrap();
+
+        let lua = Lua::new();
+        let env = lua.create_table().unwrap();
+        let metatable = lua.create_table().unwrap();
+        metatable.set("__index", lua.globals()).unwrap();
+        env.set_metatable(Some(metatable));
+        let dependencies: Dependencies = Arc::default();
+        install(&lua, &env, vec![dir.clone()], dependencies.clone()).unwrap();
+
+        let (n, same): (i64, bool) = lua
+            .load(
+                "local a, b = require('game.a'), require('game.b')\n\
+                 a.bump() a.bump()\n\
+                 return b.read(), require('game.state') == require('game/state')",
+            )
+            .set_environment(env.clone())
+            .eval()
+            .unwrap();
+        assert_eq!(n, 2, "both modules share one state module");
+        assert!(same);
+        assert_eq!(lock(&dependencies).len(), 3, "nested modules are dependencies too");
+
+        let cycle = lua
+            .load("require('game.loop1')")
+            .set_environment(env)
+            .exec()
+            .unwrap_err()
+            .to_string();
+        assert!(cycle.contains("require cycle"), "{cycle}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn module_names_map_to_files() {

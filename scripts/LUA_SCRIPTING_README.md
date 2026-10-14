@@ -286,19 +286,31 @@ if score > best then save_data("highscore", tostring(score)) end
 ### Modules
 - `require(name)` - Load a module from another file and return what it returns (usually a
   table). It runs once per script; later calls return the same value. The module sees the
-  scripting API, and its own globals stay in the module.
+  scripting API, and its own globals stay in the module. Modules can `require` other
+  modules: they share the script's cache, so a module required from several places is one
+  instance (a good home for state they all use).
 - `include(name)` - Run another file inside this script, as if its text were pasted here:
   the functions and globals it defines become this script's. Runs on every call.
 
 `name` is a path without `.lua` (`"enemies"`, `"ai.autopilot"` or `"ai/autopilot"`), looked
-up next to the script first, then under the scripts root. Editing a required or included
-file hot-reloads every script that uses it.
+up next to the script first, then under the scripts root, also when a module requires
+another. Editing a required or included file hot-reloads every script that uses it.
 
 ```lua
 -- content/scripts/game.lua
 local waves = require("waves")       -- content/scripts/waves.lua: return { {grunts = 15}, ... }
 include("autopilot")                 -- defines autopilot_update() in this script
 ```
+
+A large game splits well into a module per subsystem: a state module (`game/state.lua`
+returns the shared tables) that the others require, and the script itself keeping the hooks
+(`on_created`, `update`, `on_ui`) and the globals you inspect with `lua_eval` (`GAME`, test
+hooks), since a module's globals are not the script's. Two modules cannot require each
+other at load time (the error says `require cycle`); move what both need into a third, or
+call `require` inside the function that needs it.
+
+Modules should only define things when loaded. Spawn entities and play sounds from functions
+the script calls in its hooks.
 
 ### Audio
 - `play_sound(path[, {volume = 1, pitch = 1, loop = false}])` → `id` - Play a wav, ogg,
