@@ -212,6 +212,18 @@ impl Default for PostProcessCamera {
     }
 }
 
+impl PostProcessCamera {
+    /// Screen-space passes must project into the same jittered pixels as the G-buffer.
+    /// Motion vectors and overlays keep their separate, unjittered camera matrices.
+    pub(crate) fn with_projection_jitter(mut self, jitter: Vec2) -> Self {
+        let shift = Mat4::from_translation(jitter.extend(0.0));
+        self.proj = shift * self.proj;
+        self.view_proj = shift * self.view_proj;
+        self.view_proj_inv = self.view_proj.inverse();
+        self
+    }
+}
+
 /// Time for animated effects (grain, dither) and the frame delta auto exposure adapts by.
 struct FrameClock {
     start: instant::Instant,
@@ -1384,6 +1396,46 @@ impl PostProcessUniform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_space_camera_matches_jittered_gbuffer_at_the_horizon() {
+        let eye = Vec3::new(10.6, 8.4, 17.2);
+        let view = Mat4::look_at_rh(eye, Vec3::new(0.0, 3.7, 0.0), Vec3::Y);
+        let proj = Mat4::perspective_rh(43.0_f32.to_radians(), 16.0 / 9.0, 0.1, 1200.0);
+        let stable_vp = proj * view;
+        let camera = PostProcessCamera {
+            proj,
+            view,
+            view_inv: view.inverse(),
+            view_proj: stable_vp,
+            view_proj_inv: stable_vp.inverse(),
+            position: eye,
+            near: 0.1,
+            far: 1200.0,
+        };
+        for jitter in [
+            Vec2::ZERO,
+            Vec2::new(0.5 / 1824.0, -0.5 / 1080.0),
+            Vec2::new(-0.9 / 1824.0, 0.8 / 1080.0),
+        ] {
+            let post = camera.with_projection_jitter(jitter);
+            let raster_vp = Mat4::from_translation(jitter.extend(0.0)) * stable_vp;
+            for position in [Vec3::new(0.0, -0.15, 0.0), Vec3::new(-600.0, -0.15, -900.0)] {
+                let world = position.extend(1.0);
+                let raster = raster_vp * world;
+                let reflection = post.view_proj * world;
+                let occlusion = post.proj * (post.view * world);
+                let pixel = raster.truncate() / raster.w;
+                assert!((reflection.truncate() / reflection.w).abs_diff_eq(pixel, 1e-6));
+                assert!((occlusion.truncate() / occlusion.w).abs_diff_eq(pixel, 1e-6));
+                let restored = post.view_proj_inv * raster;
+                assert!((restored.truncate() / restored.w).abs_diff_eq(position, 1.0));
+            }
+            assert_eq!(post.view, camera.view);
+            assert_eq!(post.near, camera.near);
+            assert_eq!(post.far, camera.far);
+        }
+    }
 
     #[test]
     fn uniform_matches_the_shader_layout() {

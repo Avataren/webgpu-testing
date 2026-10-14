@@ -587,7 +587,8 @@ impl Renderer {
                 position: camera.position(),
                 near: camera.near(),
                 far: camera.far(),
-            },
+            }
+            .with_projection_jitter(jitter),
         );
     }
 

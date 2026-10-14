@@ -1,0 +1,23 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#070f17",
+      "#21313e"
+    ],
+    "image": false,
+    "metallic": 0.22,
+    "name": "midnight_marble",
+    "normal_strength": 0.009,
+    "pattern": "marble",
+    "roughness": 0.26,
+    "roughness_variation": 0.07,
+    "scale": 3,
+    "seed": 207,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

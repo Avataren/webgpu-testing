@@ -99,6 +99,10 @@ LUT; into a half-float display target) → final (FXAA, CAS sharpening, film gra
 dither; onto the surface). Later passes read the TAA/motion-blur output when those run.
 Overlays and gizmos draw after that, untonemapped, through an unjittered camera
 (`CameraBuffer::stable_bind_group`).
+Screen-space reflection and ambient-occlusion projections use the same TAA jitter
+as the G-buffer rasterization; motion vectors continue to compare unjittered
+matrices. Using a stable projection to look up jittered surfaces causes shading
+to flicker, especially at a distant horizon.
 - **HDR display output** (`src/renderer/hdr_output.rs`), opt-in through `settings.json`
   (`"hdr_output": "off" | "auto" | "simulate"`, `"hdr_paper_white_nits"`,
   `"hdr_peak_nits"`) or the `ENGINE_HDR` environment variable. `auto` picks scRGB
@@ -335,7 +339,11 @@ agent workflow.
   - `get_mapped_range` returns a `Result`.
   - Frames are presented with `queue.present` (`Renderer::present`).
 - **Camera**: `SceneCamera::apply_from_entity` keeps the current camera when the entity
-  hasn't moved. Rebuilding an unchanged view resets the orbit focus distance.
+  hasn't moved, while syncing its up vector when roll changes. Equivalent saved up
+  hints (such as world Y) are preserved across undo.
+  Rebuilding an unchanged view resets the orbit focus distance. Lua `look_at` and
+  MCP camera placement share a Y-up, zero-roll look rotation so a full camera orbit
+  keeps the horizon level.
 - **Script lists**: the inspector's script picker and the file sandbox are relative to the
   working directory. Run from the repo root.
 
@@ -357,6 +365,13 @@ agent workflow.
 
 - **Web filesystem limits**: Lua uses the vendored wasm libc/SjLj shim. File watching and
   authoring remain native-only; player assets load through HTTP, and audio needs a gesture.
+- **Browser project assets**: material filenames containing literal percent escapes
+  (such as `%2e` in an exported scene namespace) are passed directly to HTTP requests.
+  URL decoding changes the filename and can produce 404s even when the asset was staged.
+- **Browser GPU particles**: the pipeline supports traditional texture layouts, but
+  particle rendering still requests the global bindless texture group and panics on
+  adapters without that feature. A WASM build can compile and initialize its device,
+  then fail when a script emits its first particles.
 - **glTF data-URI images**: images embedded as `data:` URIs are treated as file paths, so
   `packaged_gltf_roundtrip_without_source` fails.
 - **Inspector script picker** lists only `scripts/` and `examples/scripts/`, not the open

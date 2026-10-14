@@ -66,10 +66,19 @@ impl SceneCamera {
             let current_forward = (camera.target - camera.eye).try_normalize();
             let unchanged = camera.eye.abs_diff_eq(eye, 1e-5)
                 && current_forward.is_some_and(|current| current.dot(forward) > 1.0 - 1e-6);
+            // Stored cameras may use world Y as their up hint. Compare the actual
+            // perpendicular view-up vector so an equivalent hint survives undo.
+            let current_up = current_forward
+                .and_then(|forward| (camera.up - forward * camera.up.dot(forward)).try_normalize());
+            let unchanged_up = current_up.is_some_and(|current| current.dot(up) > 1.0 - 1e-6);
 
             if !unchanged {
                 camera.eye = eye;
                 camera.target = eye + forward;
+            }
+            // Roll can change while eye and forward stay fixed. Sync it without
+            // shortening the camera's existing focus distance.
+            if !unchanged || !unchanged_up {
                 camera.up = up;
             }
         }
@@ -123,5 +132,24 @@ mod tests {
 
         let mut camera = SceneCamera::new();
         assert!(!camera.apply_from_entity(&world, entity));
+    }
+
+    #[test]
+    fn apply_from_entity_updates_roll_without_moving_or_turning_forward() {
+        let mut world = World::new();
+        let entity = world.spawn((TransformComponent(Transform::IDENTITY),));
+        let mut camera = SceneCamera::new();
+        assert!(camera.apply_from_entity(&world, entity));
+        camera.camera_mut().target = Vec3::NEG_Z * 10.0;
+        let rotation = Quat::from_rotation_z(0.7);
+        world
+            .get::<&mut TransformComponent>(entity)
+            .unwrap()
+            .0
+            .rotation = rotation;
+
+        assert!(camera.apply_from_entity(&world, entity));
+        assert!(camera.camera().up.abs_diff_eq(rotation * Vec3::Y, 1e-5));
+        assert_eq!(camera.camera().target, Vec3::NEG_Z * 10.0);
     }
 }

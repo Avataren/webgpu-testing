@@ -1,0 +1,20 @@
+{
+  "base_color": [
+    115,
+    212,
+    197,
+    255
+  ],
+  "flags": 0,
+  "base_color_texture": 0,
+  "metallic_roughness_texture": 0,
+  "normal_texture": 0,
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 31,
+  "roughness_factor": 61,
+  "emissive_strength": 395,
+  "kind": {
+    "type": "pbr"
+  }
+}

@@ -8,6 +8,7 @@ use hecs::{ComponentError, Entity, World};
 use log::warn;
 use serde_json::json;
 
+use crate::scene::transform::look_rotation;
 use crate::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, MaterialComponent, MeshComponent, Name,
     OrbitAnimation, Parent, ParticleEmitterComponent, PointLight, PrimitiveMeshComponent,
@@ -298,9 +299,8 @@ impl ScriptCommands {
 
     pub fn look_at(&mut self, handle: i64, target: Vec3) -> Result<(), mlua::Error> {
         if let Some(entry) = self.pending.get_mut(&handle) {
-            let direction = target - entry.translation.unwrap_or(Vec3::ZERO);
-            if direction.length_squared() > 0.0 {
-                entry.rotation = Some(Quat::from_rotation_arc(Vec3::NEG_Z, direction.normalize()));
+            if let Some(rotation) = look_rotation(entry.translation.unwrap_or(Vec3::ZERO), target) {
+                entry.rotation = Some(rotation);
             }
             return Ok(());
         }
@@ -691,10 +691,8 @@ impl ScriptCommands {
                 };
 
                 Self::modify_transform(world, entity, |transform| {
-                    let direction = (target - transform.translation).normalize();
-                    if direction.length_squared() > 0.0 {
-                        transform.rotation =
-                            glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, direction);
+                    if let Some(rotation) = look_rotation(transform.translation, target) {
+                        transform.rotation = rotation;
                     }
                 })?;
             }
@@ -1350,6 +1348,71 @@ mod tests {
         assert_eq!(transform.0.translation, Vec3::new(1.0, 6.0, 0.0));
         let forward = transform.0.rotation * Vec3::NEG_Z;
         assert!(forward.abs_diff_eq(Vec3::NEG_Y, 1e-5), "{forward}");
+    }
+
+    #[test]
+    fn look_at_keeps_the_horizon_level_through_a_full_orbit() {
+        let mut commands =
+            ScriptCommands::new(Rc::new(RefCell::new(EntityHandleRegistry::default())));
+        let mut world = World::new();
+        let target = Vec3::new(0.0, 3.7, 0.0);
+
+        for step in 0..=72 {
+            let angle = step as f32 * std::f32::consts::TAU / 72.0;
+            let eye = Vec3::new(angle.sin() * 20.2, 8.4, angle.cos() * 20.2);
+            let handle = commands.spawn_entity(None);
+            commands.set_translation(handle, eye).unwrap();
+            commands.look_at(handle, target).unwrap();
+            commands.apply(&mut world).unwrap();
+            let entity = Entity::from_bits(commands.resolve_entity_bits(handle).unwrap()).unwrap();
+
+            // Check both freshly spawned entities and commands on existing entities.
+            for existing in [false, true] {
+                if existing {
+                    commands.look_at(handle, target).unwrap();
+                    commands.apply(&mut world).unwrap();
+                }
+                let transform = world.get::<&TransformComponent>(entity).unwrap();
+                let rotation = transform.0.rotation;
+                let forward = rotation * Vec3::NEG_Z;
+                let up = rotation * Vec3::Y;
+                let right = rotation * Vec3::X;
+                assert!(
+                    forward.abs_diff_eq((target - eye).normalize(), 1e-5),
+                    "step {step}, existing {existing}: forward {forward}"
+                );
+                assert!(
+                    up.y > 0.9 && right.y.abs() < 1e-5,
+                    "step {step}, existing {existing}: up {up}, right {right}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn look_at_coincident_target_preserves_rotation() {
+        let mut commands =
+            ScriptCommands::new(Rc::new(RefCell::new(EntityHandleRegistry::default())));
+        let mut world = World::new();
+        let eye = Vec3::new(2.0, 3.0, 4.0);
+        let rotation = Quat::from_rotation_y(0.8);
+        let handle = commands.spawn_entity(None);
+        commands.set_translation(handle, eye).unwrap();
+        commands.set_rotation(handle, rotation).unwrap();
+        commands.look_at(handle, eye).unwrap();
+        commands.apply(&mut world).unwrap();
+        let entity = Entity::from_bits(commands.resolve_entity_bits(handle).unwrap()).unwrap();
+        assert_eq!(
+            world.get::<&TransformComponent>(entity).unwrap().0.rotation,
+            rotation
+        );
+
+        commands.look_at(handle, eye).unwrap();
+        commands.apply(&mut world).unwrap();
+        assert_eq!(
+            world.get::<&TransformComponent>(entity).unwrap().0.rotation,
+            rotation
+        );
     }
 
     #[test]

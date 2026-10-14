@@ -13,6 +13,7 @@ use glam::{EulerRot, Quat, Vec3};
 use hecs::{Entity, World};
 use serde_json::{json, Value};
 
+pub(crate) use crate::scene::transform::look_rotation;
 use crate::scene::{Name, Transform};
 
 pub(crate) fn opt_str<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
@@ -112,15 +113,6 @@ pub(crate) fn quat_from_json(value: &Value) -> Result<Quat, String> {
         }
         _ => Err(format!("expected [x, y, z, w], got {value}")),
     }
-}
-
-/// Rotation that points -Z (the engine's forward) from `eye` at `target`.
-pub(crate) fn look_rotation(eye: Vec3, target: Vec3) -> Option<Quat> {
-    let direction = (target - eye).try_normalize()?;
-    // Keep the horizon level: yaw first, then pitch, like a camera.
-    let yaw = (-direction.x).atan2(-direction.z);
-    let pitch = direction.y.clamp(-1.0, 1.0).asin();
-    Some(Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
 }
 
 pub fn transform_to_json(transform: &Transform) -> Value {

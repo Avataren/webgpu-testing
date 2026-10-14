@@ -62,7 +62,7 @@ use crate::scripting::lua::guards::{with_active_commands, with_active_world};
 /// - `get_world_rotation(entity)` - Get world rotation as {yaw, pitch, roll} table
 /// - `get_forward(entity)`, `get_right(entity)`, `get_up(entity)` - World-space unit
 ///   direction the entity faces (-Z), its +X and its +Y, as {x, y, z} tables
-/// - `look_at(entity, target_x, target_y, target_z)` - Orient to look at point
+/// - `look_at(entity, target_x, target_y, target_z)` - Aim -Z at a point with a level Y-up horizon
 ///
 /// ### Scale
 /// - `set_scale(entity, x, y, z)` - Set scale factors

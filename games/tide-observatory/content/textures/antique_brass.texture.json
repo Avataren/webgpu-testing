@@ -1,0 +1,24 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#98622e",
+      "#dfb674"
+    ],
+    "image": false,
+    "metallic": 0.78,
+    "name": "antique_brass",
+    "normal_strength": 0.0009,
+    "octaves": 2,
+    "pattern": "noise",
+    "roughness": 0.28,
+    "roughness_variation": 0.06,
+    "scale": 60,
+    "seed": 17,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

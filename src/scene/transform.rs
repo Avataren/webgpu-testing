@@ -1,5 +1,15 @@
 // scene/transform.rs - Verified transform composition
-use glam::{Mat4, Quat, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec3};
+
+/// Point -Z from `eye` towards `target`, keeping the horizon level in a Y-up world.
+/// A shortest-arc rotation only constrains forward and can roll or flip during an orbit.
+/// Coincident or non-finite positions have no valid look direction.
+pub(crate) fn look_rotation(eye: Vec3, target: Vec3) -> Option<Quat> {
+    let direction = (target - eye).try_normalize()?;
+    let yaw = (-direction.x).atan2(-direction.z);
+    let pitch = direction.y.clamp(-1.0, 1.0).asin();
+    Some(Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transform {

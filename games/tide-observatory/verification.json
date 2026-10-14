@@ -1,0 +1,161 @@
+{
+  "playtest": {
+    "ok": true,
+    "simulation_steps": 600,
+    "dt": 0.016666666666666666,
+    "assertions": [
+      {
+        "at_step": 0,
+        "name": "Starts unpaused",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 120,
+        "name": "Rings advance",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 180,
+        "name": "Space holds sculpture still",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 240,
+        "name": "Space resumes",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 300,
+        "name": "Captions can be hidden",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 330,
+        "name": "Reset restores composition",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 430,
+        "name": "Keyboard orbits camera",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 510,
+        "name": "Scroll zooms camera",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 600,
+        "name": "Animation keeps fixed geometry",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "failing_scripts": [],
+    "warnings": []
+  },
+  "native_player": {
+    "samples": 180,
+    "frame_time_ms": {
+      "max": 17.4284,
+      "median": 14.2004,
+      "p95": 15.7919,
+      "p99": 17.0439
+    },
+    "growth": {
+      "/assets/materials": {
+        "change": 0,
+        "first": 70,
+        "last": 70
+      },
+      "/assets/meshes": {
+        "change": 0,
+        "first": 37,
+        "last": 37
+      },
+      "/assets/textures": {
+        "change": 0,
+        "first": 12,
+        "last": 12
+      },
+      "/entities": {
+        "change": 0,
+        "first": 88,
+        "last": 88
+      },
+      "/scripts": {
+        "change": 0,
+        "first": 1,
+        "last": 1
+      }
+    },
+    "timing_scope": "CPU frame/stage timings; render_gpu measures submission, not GPU execution. Vsync and window waits affect frame time."
+  },
+  "project_validation": {
+    "ok": true,
+    "errors": [],
+    "warnings": []
+  },
+  "visually_checked": [
+    "16:9",
+    "4:3"
+  ],
+  "preview": "preview.png",
+  "repository_checks": {
+    "format": "passed",
+    "clippy_all_targets_all_features": "passed",
+    "full_test_suite": "passed",
+    "library_tests_passed": 374,
+    "native_gpu_smoke": [
+      "editor",
+      "player",
+      "pbr",
+      "bloom",
+      "shadow",
+      "animation"
+    ],
+    "wasm_build": "passed",
+    "browser_smoke": {
+      "ok": false,
+      "existing_issues": [
+        "HTTP decoding of literal percent escapes in material filenames",
+        "GPU particle renderer requires bindless textures"
+      ]
+    }
+  }
+}

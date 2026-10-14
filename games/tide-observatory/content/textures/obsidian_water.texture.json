@@ -1,0 +1,24 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#032024",
+      "#092d32"
+    ],
+    "image": false,
+    "metallic": 0.65,
+    "name": "obsidian_water",
+    "normal_strength": 0.002,
+    "octaves": 3,
+    "pattern": "noise",
+    "roughness": 0.12,
+    "roughness_variation": 0.02,
+    "scale": 9,
+    "seed": 90,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}
