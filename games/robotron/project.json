@@ -22,28 +22,7 @@
       1.0
     ],
     "ambient_intensity": 0.16,
-    "color_grading": {
-      "exposure": 1.0,
-      "saturation": 1.1,
-      "contrast": 1.05
-    },
     "hdr": null
-  },
-  "postprocess": {
-    "ssao": true,
-    "bloom": true,
-    "fxaa": true,
-    "ssao_settings": {
-      "radius": 0.2,
-      "bias": 0.05,
-      "intensity": 0.75,
-      "power": 1.25
-    },
-    "bloom_settings": {
-      "threshold": 0.8,
-      "knee": 0.4,
-      "scatter": 0.95
-    }
   },
   "engine_camera": {
     "eye": [

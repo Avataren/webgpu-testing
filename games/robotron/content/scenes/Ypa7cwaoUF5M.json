@@ -68,11 +68,6 @@
           1.0
         ],
         "ambient_intensity": 0.16,
-        "color_grading": {
-          "exposure": 1.0,
-          "saturation": 1.1,
-          "contrast": 1.05
-        },
         "hdr": null
       },
       "camera": null
@@ -558,6 +553,152 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Post Process Volume",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": 1,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "post_process_volume": {
+        "enabled": true,
+        "shape": {
+          "kind": "infinite"
+        },
+        "priority": 0,
+        "weight": 1.0,
+        "blend_distance": 2.0,
+        "settings": {
+          "exposure": {
+            "mode": "manual",
+            "compensation": 0.0,
+            "min_ev": -6.0,
+            "max_ev": 6.0,
+            "speed_up": 3.0,
+            "speed_down": 1.0,
+            "low_percent": 0.1,
+            "high_percent": 0.9
+          },
+          "tonemapping": "rolloff",
+          "color": {
+            "post_exposure": 0.0,
+            "temperature": 0.0,
+            "tint": 0.0,
+            "color_filter": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "hue_shift": 0.0,
+            "saturation": 1.1,
+            "vibrance": 0.0,
+            "contrast": 1.0,
+            "lift": [
+              1.0,
+              1.0,
+              1.0,
+              -0.024999976
+            ],
+            "gamma": [
+              1.0,
+              1.0,
+              1.0,
+              0.0
+            ],
+            "gain": [
+              1.0,
+              1.0,
+              1.0,
+              0.024999976
+            ]
+          },
+          "bloom": {
+            "enabled": true,
+            "intensity": 6.017427,
+            "threshold": 0.8,
+            "knee": 0.5,
+            "scatter": 0.75,
+            "tint": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          },
+          "ssao": {
+            "enabled": true,
+            "radius": 0.2,
+            "bias": 0.05,
+            "intensity": 0.75,
+            "power": 1.25
+          },
+          "vignette": {
+            "enabled": false,
+            "intensity": 0.3,
+            "smoothness": 0.4,
+            "roundness": 1.0,
+            "color": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "center": [
+              0.5,
+              0.5
+            ]
+          },
+          "chromatic_aberration": {
+            "enabled": false,
+            "intensity": 0.5
+          },
+          "film_grain": {
+            "enabled": false,
+            "intensity": 0.2,
+            "response": 0.8
+          },
+          "sharpen": {
+            "enabled": false,
+            "strength": 0.4
+          },
+          "anti_aliasing": "fxaa"
+        }
+      },
       "camera": null
     }
   ],
