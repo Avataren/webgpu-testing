@@ -1,21 +1,20 @@
 #[cfg(feature = "egui")]
+#[cfg(all(feature = "egui", target_arch = "wasm32"))]
+use console_log as wasm_console_log;
+#[cfg(feature = "egui")]
 use egui::{pos2, Color32, Label, RichText, TextWrapMode};
 #[cfg(feature = "egui")]
 use egui::{ScrollArea, Ui};
+#[cfg(all(feature = "egui", not(target_arch = "wasm32")))]
+use env_logger::Builder as EnvBuilder;
+#[cfg(all(feature = "egui", not(target_arch = "wasm32")))]
+use env_logger::Logger as EnvLogger;
 #[cfg(feature = "egui")]
 use log::{Level, LevelFilter, Log, Metadata, Record};
 #[cfg(feature = "egui")]
 use std::collections::{BTreeSet, VecDeque};
 #[cfg(feature = "egui")]
 use std::sync::{Arc, Mutex, OnceLock};
-#[cfg(feature = "egui")]
-
-#[cfg(all(feature = "egui", target_arch = "wasm32"))]
-use console_log as wasm_console_log;
-#[cfg(all(feature = "egui", not(target_arch = "wasm32")))]
-use env_logger::Builder as EnvBuilder;
-#[cfg(all(feature = "egui", not(target_arch = "wasm32")))]
-use env_logger::Logger as EnvLogger;
 
 #[cfg(feature = "egui")]
 const MAX_LOG_ENTRIES: usize = 1_000;

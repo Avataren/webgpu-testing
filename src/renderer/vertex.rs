@@ -73,7 +73,12 @@ mod tests {
 
     #[test]
     fn white_vertex_colour_is_left_out_of_json() {
-        let vertex = v([1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0], [1.0, 0.0, 0.0, 1.0]);
+        let vertex = v(
+            [1.0, 2.0, 3.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0],
+            [1.0, 0.0, 0.0, 1.0],
+        );
         let json = serde_json::to_string(&vertex).unwrap();
         assert!(!json.contains("color"), "{json}");
         let back: Vertex = serde_json::from_str(&json).unwrap();

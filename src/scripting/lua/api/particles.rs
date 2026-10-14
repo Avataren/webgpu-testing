@@ -147,9 +147,11 @@ pub(crate) fn burst_from_options(
             "drag" => burst.drag = options.get::<f32>("drag")?.max(0.0),
             "radius" => burst.radius = options.get::<f32>("radius")?.max(0.0),
             "intensity" | "shape" | "blend" => {}
-            other => return Err(error(format!(
+            other => {
+                return Err(error(format!(
                 "unknown emit_particles option {other:?}; see the guide's Particle effects section"
-            ))),
+            )))
+            }
         }
     }
     if let Value::String(shape) = get("shape")? {

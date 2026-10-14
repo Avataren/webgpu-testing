@@ -669,7 +669,7 @@ pub fn compose(parts: &[MeshPart]) -> Result<MeshData, String> {
         }
         let offset = combined.vertices.len() as u32;
         if mirrored {
-            for tri in data.indices.chunks_exact_mut(3) {
+            for tri in data.indices.as_chunks_mut::<3>().0 {
                 tri.swap(1, 2);
             }
         }
@@ -696,7 +696,7 @@ mod tests {
             assert!(n.dot(t).abs() < 1e-4);
             assert!(vertex.uv.iter().all(|x| x.is_finite()));
         }
-        for tri in mesh.indices.chunks_exact(3) {
+        for tri in mesh.indices.as_chunks::<3>().0 {
             let a = &mesh.vertices[tri[0] as usize];
             let b = &mesh.vertices[tri[1] as usize];
             let c = &mesh.vertices[tri[2] as usize];
@@ -724,7 +724,9 @@ mod tests {
         assert_eq!(mesh.vertices[32].uv[0], 1.0);
         let volume: f32 = mesh
             .indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| {
                 Vec3::from(mesh.vertices[t[0] as usize].pos).dot(
                     Vec3::from(mesh.vertices[t[1] as usize].pos)
@@ -752,7 +754,9 @@ mod tests {
             assert_frames_and_winding(&mesh);
             let cap_area: f32 = mesh
                 .indices
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .filter_map(|t| {
                     let a = &mesh.vertices[t[0] as usize];
                     if a.normal[2] != 1.0 {

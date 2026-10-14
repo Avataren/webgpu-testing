@@ -436,7 +436,10 @@ mod tests {
         let eye = Vec3::new(0.0, 40.0, 20.0);
         let forward = (Vec3::new(0.0, 0.0, -3.0) - eye).normalize();
         let focus = shadow_focus(eye, eye + forward, 24.0);
-        assert!(focus.abs_diff_eq(Vec3::new(0.0, 0.0, -3.0), 1e-3), "{focus:?}");
+        assert!(
+            focus.abs_diff_eq(Vec3::new(0.0, 0.0, -3.0), 1e-3),
+            "{focus:?}"
+        );
 
         // An orbit target in the scene is used as it is.
         let target = Vec3::new(1.0, 0.5, -2.0);
@@ -444,7 +447,10 @@ mod tests {
 
         // Looking at the horizon: half the shadow area ahead.
         let level = shadow_focus(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 2.0, -1.0), 10.0);
-        assert!(level.abs_diff_eq(Vec3::new(0.0, 2.0, -10.0), 1e-4), "{level:?}");
+        assert!(
+            level.abs_diff_eq(Vec3::new(0.0, 2.0, -10.0), 1e-4),
+            "{level:?}"
+        );
     }
 
     #[test]

@@ -194,7 +194,11 @@ mod tests {
             .unwrap();
         assert_eq!(n, 2, "both modules share one state module");
         assert!(same);
-        assert_eq!(lock(&dependencies).len(), 3, "nested modules are dependencies too");
+        assert_eq!(
+            lock(&dependencies).len(),
+            3,
+            "nested modules are dependencies too"
+        );
 
         let cycle = lua
             .load("require('game.loop1')")
