@@ -147,11 +147,25 @@ fn sample_shadow_pcf_viewdepth(
 // Per-Light Shadow Sampling
 // ============================================================================
 
-fn sample_directional_shadow(index: u32, world_pos: vec3<f32>) -> f32 {
+fn sample_directional_shadow(
+    index: u32,
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    L: vec3<f32>,
+) -> f32 {
     let info = shadow_info.directionals[index];
-    let proj = project_shadow(info.view_proj, world_pos);
-    let depth = clamp(proj.z, 0.0, 1.0);
     let texel = shadow_texel_size(directional_shadow_maps);
+    // World size of one shadow-map texel (the light's projection is orthographic: its
+    // first row is the x axis scaled by 2 / width).
+    let x_axis = vec3<f32>(info.view_proj[0].x, info.view_proj[1].x, info.view_proj[2].x);
+    let texel_world = 2.0 * texel.x / max(length(x_axis), 1e-6);
+    // Normal offset: look the shadow up a little above the surface, more where light
+    // grazes it, so curved low-poly surfaces do not shadow themselves (acne lines along
+    // triangle edges and a hard band before the terminator).
+    let n_dot_l = clamp(dot(N, L), 0.0, 1.0);
+    let offset = texel_world * (1.0 + 2.0 * (1.0 - n_dot_l));
+    let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, offset);
+    let depth = clamp(proj.z, 0.0, 1.0);
     
     // ALWAYS sample in uniform control flow
     let shadow_sample = sample_shadow_pcf(

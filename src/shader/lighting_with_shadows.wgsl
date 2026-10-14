@@ -25,7 +25,7 @@ fn calculate_scene_lighting(
         let light_dir = normalize(-light.direction.xyz);
         let light_color = light.color_intensity.xyz;
         let light_intensity = light.color_intensity.w;
-        let shadow = sample_directional_shadow(i, world_pos);
+        let shadow = sample_directional_shadow(i, world_pos, N, light_dir);
         Lo += shadow * calculate_light_contribution(
             N, V, light_dir, base_color, metallic, roughness,
             light_color, light_intensity
