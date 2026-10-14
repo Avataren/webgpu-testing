@@ -19,7 +19,7 @@ use wgpu_cube::asset::{
     ShaderMaterialMetadata,
 };
 use wgpu_cube::renderer::postprocess::{
-    setting_overridden, AntiAliasing, ExposureMode, PostProcessSettings, Tonemapper,
+    setting_overridden, AntiAliasing, ExposureMode, FocusMode, PostProcessSettings, Tonemapper,
     TRACKBALL_NEUTRAL,
 };
 use wgpu_cube::renderer::Material;
@@ -3128,6 +3128,117 @@ fn show_post_process_volume_section(
                     &mut settings.ssao.power,
                     0.5..=4.0,
                     0.01,
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
+            "Depth of Field",
+            "depth_of_field",
+            Some(&mut settings.depth_of_field.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.choice(
+                    ui,
+                    egui::Id::new(("post_dof_mode", entity)),
+                    "depth_of_field.mode",
+                    "Mode",
+                    &mut settings.depth_of_field.mode,
+                    &[
+                        (FocusMode::Physical, "Physical lens"),
+                        (FocusMode::Manual, "Manual ranges"),
+                    ],
+                );
+                match settings.depth_of_field.mode {
+                    FocusMode::Physical => {
+                        rows.checkbox(
+                            ui,
+                            "depth_of_field.autofocus",
+                            "Autofocus (centre)",
+                            &mut settings.depth_of_field.autofocus,
+                        );
+                        if !settings.depth_of_field.autofocus {
+                            rows.label(ui, "depth_of_field.focus_distance", "Focus distance");
+                            if ui
+                                .add(
+                                    DragValue::new(&mut settings.depth_of_field.focus_distance)
+                                        .speed(0.05)
+                                        .range(0.01..=100_000.0)
+                                        .max_decimals(2)
+                                        .suffix(" m"),
+                                )
+                                .changed()
+                            {
+                                rows.touched("depth_of_field.focus_distance");
+                            }
+                            ui.end_row();
+                        }
+                        rows.label(ui, "depth_of_field.aperture", "Aperture");
+                        if ui
+                            .add(
+                                wgpu_cube::ui::FineSlider::new(
+                                    &mut settings.depth_of_field.aperture,
+                                    0.7..=32.0,
+                                )
+                                .logarithmic(true)
+                                .suffix(" f/"),
+                            )
+                            .changed()
+                        {
+                            rows.touched("depth_of_field.aperture");
+                        }
+                        ui.end_row();
+                    }
+                    FocusMode::Manual => {
+                        for (path, label, value) in [
+                            (
+                                "depth_of_field.near_start",
+                                "Near blur max",
+                                &mut settings.depth_of_field.near_start,
+                            ),
+                            (
+                                "depth_of_field.near_end",
+                                "Near sharp from",
+                                &mut settings.depth_of_field.near_end,
+                            ),
+                            (
+                                "depth_of_field.far_start",
+                                "Far sharp until",
+                                &mut settings.depth_of_field.far_start,
+                            ),
+                            (
+                                "depth_of_field.far_end",
+                                "Far blur max",
+                                &mut settings.depth_of_field.far_end,
+                            ),
+                        ] {
+                            rows.label(ui, path, label);
+                            if ui
+                                .add(
+                                    DragValue::new(value)
+                                        .speed(0.05)
+                                        .range(0.0..=100_000.0)
+                                        .max_decimals(2)
+                                        .suffix(" m"),
+                                )
+                                .changed()
+                            {
+                                rows.touched(path);
+                            }
+                            ui.end_row();
+                        }
+                    }
+                }
+                rows.slider_with(
+                    ui,
+                    "depth_of_field.max_blur",
+                    "Max blur",
+                    &mut settings.depth_of_field.max_blur,
+                    0.0..=48.0,
+                    0.1,
+                    " px",
                 );
             },
         );

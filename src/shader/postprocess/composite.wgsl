@@ -14,6 +14,8 @@ var composite_sampler : sampler;
 var<storage, read> composite_exposure : ExposureState;
 @group(1) @binding(95)
 var composite_lut : texture_3d<f32>;
+@group(1) @binding(96)
+var composite_dof : texture_2d<f32>;
 
 fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
     let uv = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -23,6 +25,11 @@ fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
     color = min(color, vec3<f32>(65000.0));
     if post_uniform.effects.x > 0.5 {
         color = color * textureSampleLevel(composite_ssao, composite_sampler, uv, 0.0).r;
+    }
+    if post_uniform.dof_params.x > 0.5 {
+        // Blend toward the blurred image once the blur passes about a pixel.
+        let blurred = textureSampleLevel(composite_dof, composite_sampler, uv, 0.0);
+        color = mix(color, blurred.rgb, clamp(blurred.a - 1.0, 0.0, 1.0));
     }
     if post_uniform.effects.y > 0.5 {
         let bloom = textureSampleLevel(composite_bloom, composite_sampler, uv, 0.0).rgb;

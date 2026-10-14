@@ -108,6 +108,7 @@ pub fn build_composite(
             texture_entry(91),
             texture_entry(92),
             sampler_entry(93),
+            texture_entry(96),
             wgpu::BindGroupLayoutEntry {
                 binding: 95,
                 visibility: wgpu::ShaderStages::FRAGMENT,

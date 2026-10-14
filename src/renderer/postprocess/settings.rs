@@ -30,6 +30,7 @@ pub struct PostProcessSettings {
     pub lut: LutSettings,
     pub bloom: BloomSettings,
     pub ssao: SsaoSettings,
+    pub depth_of_field: DepthOfFieldSettings,
     pub vignette: VignetteSettings,
     pub chromatic_aberration: ChromaticAberrationSettings,
     pub film_grain: FilmGrainSettings,
@@ -56,6 +57,7 @@ impl PostProcessSettings {
             lut: self.lut.blend(&other.lut, t),
             bloom: self.bloom.blend(&other.bloom, t),
             ssao: self.ssao.blend(&other.ssao, t),
+            depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             vignette: self.vignette.blend(&other.vignette, t),
             chromatic_aberration: self
                 .chromatic_aberration
@@ -110,6 +112,14 @@ impl PostProcessSettings {
         grain.response = finite_or(grain.response, 0.8).clamp(0.0, 1.0);
         self.sharpen.strength = finite_or(self.sharpen.strength, 0.0).clamp(0.0, 1.0);
         self.lut.intensity = finite_or(self.lut.intensity, 0.0).clamp(0.0, 1.0);
+        let dof = &mut self.depth_of_field;
+        dof.focus_distance = finite_or(dof.focus_distance, 10.0).clamp(0.01, 100_000.0);
+        dof.aperture = finite_or(dof.aperture, 2.8).clamp(0.5, 64.0);
+        dof.max_blur = finite_or(dof.max_blur, 0.0).clamp(0.0, 64.0);
+        dof.near_start = finite_or(dof.near_start, 0.0).max(0.0);
+        dof.near_end = finite_or(dof.near_end, 0.0).max(dof.near_start);
+        dof.far_start = finite_or(dof.far_start, 0.0).max(dof.near_end);
+        dof.far_end = finite_or(dof.far_end, 0.0).max(dof.far_start);
         self.lut.path = self.lut.path.trim().to_string();
         self
     }
@@ -122,6 +132,11 @@ impl PostProcessSettings {
     /// Whether the scene needs the bloom passes this frame.
     pub fn bloom_active(&self) -> bool {
         self.bloom.enabled && self.bloom.intensity > 0.0
+    }
+
+    /// Whether the depth of field passes run this frame.
+    pub fn depth_of_field_active(&self) -> bool {
+        self.depth_of_field.enabled && self.depth_of_field.max_blur > 0.0
     }
 
     /// Whether exposure follows the scene's brightness.
@@ -533,6 +548,83 @@ impl SsaoSettings {
     }
 }
 
+/// How depth of field decides what is blurred.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusMode {
+    /// A real lens: the camera's field of view sets the focal length and `aperture` the
+    /// f-stop; distant scenes need a wide aperture (low f-number) to show blur.
+    #[default]
+    Physical,
+    /// Blur ramps up in front of `near_end` and beyond `far_start`, reaching `max_blur`
+    /// at `near_start` and `far_end`. Good for stylised looks such as tilt-shift.
+    Manual,
+}
+
+/// Blurs what is out of focus, with bokeh-shaped highlights.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DepthOfFieldSettings {
+    pub enabled: bool,
+    pub mode: FocusMode,
+    /// Distance to the sharpest plane, in meters (physical mode).
+    pub focus_distance: f32,
+    /// Focus on whatever is at the centre of the view instead of `focus_distance`.
+    pub autofocus: bool,
+    /// f-number: lower blurs more (physical mode).
+    pub aperture: f32,
+    /// Manual mode: where the foreground blur is strongest.
+    pub near_start: f32,
+    /// Manual mode: where the foreground becomes sharp.
+    pub near_end: f32,
+    /// Manual mode: where the background starts to blur.
+    pub far_start: f32,
+    /// Manual mode: where the background blur is strongest.
+    pub far_end: f32,
+    /// Largest blur radius, in pixels at 1080p (scaled with the view height).
+    pub max_blur: f32,
+}
+
+impl Default for DepthOfFieldSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: FocusMode::Physical,
+            focus_distance: 10.0,
+            autofocus: false,
+            aperture: 2.8,
+            near_start: 0.0,
+            near_end: 2.0,
+            far_start: 15.0,
+            far_end: 40.0,
+            max_blur: 16.0,
+        }
+    }
+}
+
+impl DepthOfFieldSettings {
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        let (from, to, enabled) = fade_pair(self, other, self.enabled, other.enabled, |s| {
+            DepthOfFieldSettings {
+                max_blur: 0.0,
+                ..*s
+            }
+        });
+        Self {
+            enabled,
+            mode: pick(from.mode, to.mode, t),
+            focus_distance: lerp(from.focus_distance, to.focus_distance, t),
+            autofocus: pick(from.autofocus, to.autofocus, t),
+            aperture: lerp(from.aperture, to.aperture, t),
+            near_start: lerp(from.near_start, to.near_start, t),
+            near_end: lerp(from.near_end, to.near_end, t),
+            far_start: lerp(from.far_start, to.far_start, t),
+            far_end: lerp(from.far_end, to.far_end, t),
+            max_blur: lerp(from.max_blur, to.max_blur, t),
+        }
+    }
+}
+
 /// Darkens (or tints) the edges of the frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -818,7 +910,7 @@ impl PostProcessSettings {
 
 /// Fields that make an effect fade in or out when its `enabled` flag differs between
 /// two blended settings.
-const FADE_FIELDS: [&str; 2] = ["intensity", "strength"];
+const FADE_FIELDS: [&str; 3] = ["intensity", "strength", "max_blur"];
 
 impl PostProcessSettings {
     /// Every setting's path, such as `"bloom.intensity"` or `"tonemapping"`, in

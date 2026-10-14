@@ -637,6 +637,16 @@ pub fn tools() -> Vec<Tool> {
                 "ssao": { "type": "object", "properties": {
                     "enabled": { "type": "boolean" }, "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" }
                 }},
+                "depth_of_field": { "type": "object", "description": "Bokeh depth of field", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "mode": { "type": "string", "enum": ["physical", "manual"], "description": "physical: real lens from the camera fov + aperture (distant scenes need a low f-number); manual: blur ramps by distance ranges (tilt-shift looks)" },
+                    "focus_distance": { "type": "number", "description": "Meters (physical)" },
+                    "autofocus": { "type": "boolean", "description": "Focus on what is at the centre of the view (physical)" },
+                    "aperture": { "type": "number", "description": "f-number, lower = more blur (physical)" },
+                    "near_start": { "type": "number" }, "near_end": { "type": "number" },
+                    "far_start": { "type": "number" }, "far_end": { "type": "number" },
+                    "max_blur": { "type": "number", "description": "Largest blur radius in pixels at 1080p" }
+                }},
                 "vignette": { "type": "object", "properties": {
                     "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "smoothness": { "type": "number" }, "roundness": { "type": "number", "description": "1 round corners, 0 square" }, "rounded": { "type": "boolean", "description": "circular on screen instead of following the frame" }, "color": { "type": "array" }, "center": { "type": "array" }
                 }},

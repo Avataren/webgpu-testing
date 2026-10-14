@@ -6,6 +6,7 @@
 //! grain and dither, onto the surface).
 
 mod bloom;
+mod dof;
 mod exposure;
 mod lut;
 mod pipelines;
@@ -16,12 +17,14 @@ mod ssao;
 pub use lut::CubeLut;
 pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
-    ExposureMode, ExposureSettings, FilmGrainSettings, LegacyBloomSettings, LegacyColorGrading,
-    LegacySsaoSettings, LutSettings, PostProcessEffects, PostProcessSettings, SharpenSettings,
-    SsaoSettings, Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
+    DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
+    LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, PostProcessEffects,
+    PostProcessSettings, SharpenSettings, SsaoSettings, Tonemapper, VignetteSettings,
+    TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
+use dof::DofStage;
 use exposure::ExposureStage;
 use lut::LutTexture;
 use pipelines::{
@@ -43,6 +46,8 @@ pub(crate) const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Tonemapped image waiting for anti-aliasing; half floats avoid banding before dither.
 const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Half-resolution depth of field colour, with the circle of confusion in alpha.
+pub(crate) const DOF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_POSITION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const GBUFFER_PICK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
@@ -124,6 +129,8 @@ pub struct PostProcess {
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     bloom_chain: Vec<BloomMip>,
+    dof_half: TextureBundle,
+    dof_blur: TextureBundle,
     display: TextureBundle,
     sampler_linear: wgpu::Sampler,
     sampler_noise: wgpu::Sampler,
@@ -137,6 +144,7 @@ pub struct PostProcess {
     ssao_stage: SsaoStage,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
+    dof_stage: DofStage,
     lut: LutTexture,
     size: wgpu::Extent3d,
     settings: PostProcessSettings,
@@ -330,6 +338,7 @@ pub(crate) fn postprocess_shader_source() -> String {
         ))
         .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
         .with_module(include_str!("../../shader/postprocess/auto_exposure.wgsl"))
+        .with_module(include_str!("../../shader/postprocess/dof.wgsl"))
         .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
         .with_module(include_str!("../../shader/postprocess/final.wgsl"))
         .build_modules_only()
@@ -417,6 +426,7 @@ impl PostProcess {
         let ssao_stage = SsaoStage::new(device, &uniform_layout, &postprocess_shader);
         let bloom_stage = BloomStage::new(device, &uniform_layout, &postprocess_shader);
         let exposure_stage = ExposureStage::new(device, &uniform_layout, &postprocess_shader);
+        let dof_stage = DofStage::new(device, &uniform_layout, &postprocess_shader);
         let composite_pipeline =
             build_composite(device, &uniform_layout, &postprocess_shader, DISPLAY_FORMAT);
         let final_pipeline =
@@ -433,6 +443,8 @@ impl PostProcess {
             ssao: targets.ssao,
             ssao_ping: targets.ssao_ping,
             bloom_chain: targets.bloom_chain,
+            dof_half: targets.dof_half,
+            dof_blur: targets.dof_blur,
             display: targets.display,
             sampler_linear,
             sampler_noise,
@@ -446,6 +458,7 @@ impl PostProcess {
             ssao_stage,
             bloom_stage,
             exposure_stage,
+            dof_stage,
             lut: LutTexture::new(device, queue),
             size,
             settings: PostProcessSettings::default(),
@@ -487,6 +500,8 @@ impl PostProcess {
         self.ssao = targets.ssao;
         self.ssao_ping = targets.ssao_ping;
         self.bloom_chain = targets.bloom_chain;
+        self.dof_half = targets.dof_half;
+        self.dof_blur = targets.dof_blur;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
         self.pick_target.invalidate();
@@ -672,6 +687,15 @@ impl PostProcess {
             );
         }
 
+        if self.settings.depth_of_field_active() {
+            self.dof_stage.render(
+                encoder,
+                &self.uniform_bind_group,
+                &self.dof_half.view,
+                &self.dof_blur.view,
+            );
+        }
+
         if self.settings.auto_exposure_active() {
             self.exposure_stage.render(
                 encoder,
@@ -725,6 +749,7 @@ impl PostProcess {
         self.ssao_stage.invalidate();
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
+        self.dof_stage.invalidate();
         self.bind_groups_dirty = true;
     }
 
@@ -787,6 +812,13 @@ impl PostProcess {
 
         self.exposure_stage
             .ensure_bind_group(device, &self.scene_source.view);
+        self.dof_stage.ensure_bind_groups(
+            device,
+            &self.scene_source.view,
+            &self.position_source.view,
+            &self.dof_half.view,
+            &self.sampler_linear,
+        );
 
         self.composite_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CompositeBindGroup"),
@@ -815,6 +847,10 @@ impl PostProcess {
                 wgpu::BindGroupEntry {
                     binding: 95,
                     resource: wgpu::BindingResource::TextureView(self.lut.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 96,
+                    resource: wgpu::BindingResource::TextureView(&self.dof_blur.view),
                 },
             ],
         }));
@@ -865,6 +901,8 @@ struct SizedTargets {
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     bloom_chain: Vec<BloomMip>,
+    dof_half: TextureBundle,
+    dof_blur: TextureBundle,
     display: TextureBundle,
     resolved_depth: Option<TextureBundle>,
 }
@@ -897,6 +935,8 @@ impl SizedTargets {
             ssao: TextureBundle::ssao(device, size),
             ssao_ping: TextureBundle::ssao(device, size),
             bloom_chain: create_bloom_chain(device, size),
+            dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
+            dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
             display: TextureBundle::color(device, size, DISPLAY_FORMAT, "PostDisplay"),
             resolved_depth: (sample_count > 1)
                 .then(|| TextureBundle::depth(device, size, "ResolvedDepth")),
@@ -915,6 +955,14 @@ fn create_msaa_target(
     let msaa = (sample_count > 1)
         .then(|| MsaaTarget::new(device, size, format, sample_count, &format!("{label}Msaa")));
     (source, msaa)
+}
+
+fn half_size(size: &wgpu::Extent3d) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width: (size.width / 2).max(1),
+        height: (size.height / 2).max(1),
+        depth_or_array_layers: 1,
+    }
 }
 
 fn create_bloom_chain(device: &wgpu::Device, size: &wgpu::Extent3d) -> Vec<BloomMip> {
@@ -1027,6 +1075,9 @@ struct PostProcessUniform {
     vignette_center: [f32; 4],
     lens: [f32; 4],
     output: [f32; 4],
+    dof_params: [f32; 4],
+    dof_ranges: [f32; 4],
+    dof_extra: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1125,6 +1176,26 @@ impl PostProcessUniform {
                 settings.film_grain.response,
                 effect_on(settings.sharpen.enabled, settings.sharpen.strength),
             ],
+            dof_params: if settings.depth_of_field_active() {
+                let dof = &settings.depth_of_field;
+                [
+                    match dof.mode {
+                        FocusMode::Physical => 1.0,
+                        FocusMode::Manual => 2.0,
+                    },
+                    dof.focus_distance,
+                    dof.aperture,
+                    // Authored at 1080p; keep the same share of the view at any size.
+                    dof.max_blur * resolution.y / 1080.0,
+                ]
+            } else {
+                [0.0; 4]
+            },
+            dof_ranges: {
+                let dof = &settings.depth_of_field;
+                [dof.near_start, dof.near_end, dof.far_start, dof.far_end]
+            },
+            dof_extra: [flag(settings.depth_of_field.autofocus), 0.0, 0.0, 0.0],
             output: [
                 flag(inputs.encode_srgb),
                 1.0,
@@ -1145,8 +1216,8 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        // 6 matrices, camera position, 8 vec2 pairs and 16 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 720);
+        // 6 matrices, camera position, 8 vec2 pairs and 19 vec4 blocks.
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 768);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 
