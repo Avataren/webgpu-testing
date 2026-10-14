@@ -1,7 +1,9 @@
 # Procedural chess
 
-A saved engine test project built through the engine MCP, with no imported models or
-texture artwork. Open this folder in the editor's project picker.
+A saved chess scene built through the engine MCP, with procedural models and
+material maps. Open this folder in the editor's project picker, or run
+`./runchess.sh` from the repository root for the
+[AI spectator game](../../../games/chess/README.md).
 
 - **Procedural Chess**: all 32 pieces in the starting position on an 8×8 board, with
   beveled wood squares, a walnut frame and brass rim. White's h1 square is light.
@@ -17,7 +19,10 @@ ivory/ebony marble, maple, walnut and brushed brass, including base color, norma
 metallic/roughness and occlusion maps. The JSON recipes are beside the PNGs.
 
 The scenes contain their mesh data and portable texture paths. They reopen and run
-without regenerating anything. This is a rendering test scene; it has no chess gameplay.
+without regenerating anything. The board scene includes the spectator game's
+display plinth, warmer ivory pieces, cooler light squares, generated sounds, and
+soft-focus attic HDRI. Self-play uses the dedicated native game executable; the
+generic editor and player display the saved scene.
 
 To regenerate through the actual stdio MCP server:
 

@@ -1,0 +1,21 @@
+[package]
+name = "chess-spectator"
+version = "0.1.0"
+edition = "2021"
+default-run = "chess-spectator"
+
+[dependencies]
+wgpu-cube = { path = "../..", features = ["egui"] }
+chess_board = { path = "../../../../rust_chess/chess_board" }
+chess_foundation = { path = "../../../../rust_chess/chess_foundation" }
+move_generator = { path = "../../../../rust_chess/move_generator" }
+glam = "0.28"
+hecs = "0.10"
+egui = "0.36"
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[patch.crates-io]
+lua-src = { path = "../../third_party/lua-src" }
+egui-winit = { path = "../../third_party/egui-winit" }

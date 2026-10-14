@@ -1,0 +1,26 @@
+# Compile the existing UCI source with an explicitly isolated HCE dependency.
+# This leaves the sibling chess workspace and its NNUE configuration untouched.
+[package]
+name = "xavchess-hce"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "xavchess-hce"
+path = "../../../../../rust_chess/chess_uci/src/main.rs"
+
+[features]
+default = ["classical-eval"]
+classical-eval = []
+nn-full-forward = []
+nn-incremental = []
+runtime-switch = []
+
+[dependencies]
+chess_foundation = { path = "../../../../../rust_chess/chess_foundation" }
+chess_board = { path = "../../../../../rust_chess/chess_board" }
+move_generator = { path = "../../../../../rust_chess/move_generator" }
+chess_evaluation = { path = "../../../../../rust_chess/chess_evaluation", default-features = false, features = ["classical-eval"] }
+serde_json = "1"
+shakmaty = "0.30"
+shakmaty-syzygy = "0.28"
