@@ -27,6 +27,7 @@ pub struct PostProcessSettings {
     pub exposure: ExposureSettings,
     pub tonemapping: Tonemapper,
     pub color: ColorAdjustments,
+    pub lut: LutSettings,
     pub bloom: BloomSettings,
     pub ssao: SsaoSettings,
     pub vignette: VignetteSettings,
@@ -52,6 +53,7 @@ impl PostProcessSettings {
             exposure: self.exposure.blend(&other.exposure, t),
             tonemapping: pick(self.tonemapping, other.tonemapping, t),
             color: self.color.blend(&other.color, t),
+            lut: self.lut.blend(&other.lut, t),
             bloom: self.bloom.blend(&other.bloom, t),
             ssao: self.ssao.blend(&other.ssao, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -107,6 +109,8 @@ impl PostProcessSettings {
         grain.intensity = finite_or(grain.intensity, 0.0).clamp(0.0, 1.0);
         grain.response = finite_or(grain.response, 0.8).clamp(0.0, 1.0);
         self.sharpen.strength = finite_or(self.sharpen.strength, 0.0).clamp(0.0, 1.0);
+        self.lut.intensity = finite_or(self.lut.intensity, 0.0).clamp(0.0, 1.0);
+        self.lut.path = self.lut.path.trim().to_string();
         self
     }
 
@@ -363,6 +367,53 @@ impl ColorAdjustments {
         let gamma = prepare(self.gamma, 1.0).map(|g| 1.0 / g.max(1e-3));
         let gain = prepare(self.gain, 1.0);
         (lift, gamma, gain)
+    }
+}
+
+/// A 3D colour lookup table (`.cube`) applied to the finished, display-encoded image:
+/// the usual way to bring in a grade made in Resolve, Photoshop or similar.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LutSettings {
+    pub enabled: bool,
+    /// `.cube` file, relative to the project (or absolute).
+    pub path: String,
+    /// How much of the LUT's change applies, 0-1.
+    pub intensity: f32,
+}
+
+impl Default for LutSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: String::new(),
+            intensity: 1.0,
+        }
+    }
+}
+
+impl LutSettings {
+    /// Whether a LUT should be applied this frame.
+    pub fn active(&self) -> bool {
+        self.enabled && self.intensity > 0.0 && !self.path.is_empty()
+    }
+
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        // One LUT texture at a time: the file switches halfway, the strength fades.
+        let (from, to, enabled) =
+            fade_pair(self, other, self.enabled, other.enabled, |s| LutSettings {
+                intensity: 0.0,
+                ..s.clone()
+            });
+        Self {
+            enabled,
+            path: if from.path.is_empty() || (t >= 0.5 && !to.path.is_empty()) {
+                to.path.clone()
+            } else {
+                from.path.clone()
+            },
+            intensity: lerp(from.intensity, to.intensity, t),
+        }
     }
 }
 
@@ -904,7 +955,7 @@ fn finite_or(value: f32, fallback: f32) -> f32 {
 /// The two endpoints to interpolate for an effect that may be off on either side: a
 /// disabled side is replaced by the enabled side's settings at zero strength, so the
 /// effect fades instead of switching.
-fn fade_pair<T: Copy>(
+fn fade_pair<T: Clone>(
     a: &T,
     b: &T,
     a_enabled: bool,
@@ -912,10 +963,10 @@ fn fade_pair<T: Copy>(
     silenced: impl Fn(&T) -> T,
 ) -> (T, T, bool) {
     match (a_enabled, b_enabled) {
-        (true, true) => (*a, *b, true),
-        (false, true) => (silenced(b), *b, true),
-        (true, false) => (*a, silenced(a), true),
-        (false, false) => (*a, *b, false),
+        (true, true) => (a.clone(), b.clone(), true),
+        (false, true) => (silenced(b), b.clone(), true),
+        (true, false) => (a.clone(), silenced(a), true),
+        (false, false) => (a.clone(), b.clone(), false),
     }
 }
 
@@ -1106,6 +1157,26 @@ mod tests {
             "colorful",
             &["color".to_string()].into()
         ));
+    }
+
+    #[test]
+    fn lut_fades_in_and_switches_file_halfway() {
+        let a = PostProcessSettings::default();
+        let mut b = a.clone();
+        b.lut = LutSettings {
+            enabled: true,
+            path: "luts/warm.cube".into(),
+            intensity: 0.8,
+        };
+        let early = a.blend(&b, 0.25);
+        assert!(early.lut.enabled);
+        assert_eq!(early.lut.path, "luts/warm.cube");
+        assert!((early.lut.intensity - 0.2).abs() < 1e-6);
+
+        let mut c = b.clone();
+        c.lut.path = "luts/cold.cube".into();
+        assert_eq!(b.blend(&c, 0.4).lut.path, "luts/warm.cube");
+        assert_eq!(b.blend(&c, 0.6).lut.path, "luts/cold.cube");
     }
 
     #[test]

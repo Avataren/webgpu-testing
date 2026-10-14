@@ -7,20 +7,23 @@
 
 mod bloom;
 mod exposure;
+mod lut;
 mod pipelines;
 mod resources;
 mod settings;
 mod ssao;
 
+pub use lut::CubeLut;
 pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     ExposureMode, ExposureSettings, FilmGrainSettings, LegacyBloomSettings, LegacyColorGrading,
-    LegacySsaoSettings, PostProcessEffects, PostProcessSettings, SharpenSettings, SsaoSettings,
-    Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
+    LegacySsaoSettings, LutSettings, PostProcessEffects, PostProcessSettings, SharpenSettings,
+    SsaoSettings, Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
 use exposure::ExposureStage;
+use lut::LutTexture;
 use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
     FinalPipeline,
@@ -134,6 +137,7 @@ pub struct PostProcess {
     ssao_stage: SsaoStage,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
+    lut: LutTexture,
     size: wgpu::Extent3d,
     settings: PostProcessSettings,
     depth_resolve_bind_group: Option<wgpu::BindGroup>,
@@ -442,6 +446,7 @@ impl PostProcess {
             ssao_stage,
             bloom_stage,
             exposure_stage,
+            lut: LutTexture::new(device, queue),
             size,
             settings: PostProcessSettings::default(),
             depth_resolve_bind_group: None,
@@ -565,8 +570,24 @@ impl PostProcess {
         }
     }
 
-    /// Apply new settings; values outside the supported ranges are clamped.
-    pub fn set_settings(&mut self, queue: &wgpu::Queue, settings: &PostProcessSettings) {
+    /// Apply new settings; values outside the supported ranges are clamped. A changed
+    /// LUT file is loaded here.
+    pub fn set_settings(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        settings: &PostProcessSettings,
+    ) {
+        let lut_path = if settings.lut.active() {
+            settings.lut.path.as_str()
+        } else {
+            ""
+        };
+        if self.lut.update(device, queue, lut_path) {
+            self.composite_bind_group = None;
+            self.bind_groups_dirty = true;
+            self.upload_uniform(queue);
+        }
         if self.settings != *settings {
             let was_auto = self.settings.auto_exposure_active();
             self.settings = settings.clone().sanitized();
@@ -791,6 +812,10 @@ impl PostProcess {
                     binding: 94,
                     resource: self.exposure_stage.state_buffer().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 95,
+                    resource: wgpu::BindingResource::TextureView(self.lut.view()),
+                },
             ],
         }));
 
@@ -819,6 +844,7 @@ impl PostProcess {
             viewport_offset: self.viewport_offset,
             viewport_scale: self.viewport_scale,
             settings: &self.settings,
+            lut_loaded: self.lut.is_loaded(),
             encode_srgb: self.encode_srgb,
             seconds: self.clock.seconds,
             delta: self.clock.delta,
@@ -959,6 +985,7 @@ struct UniformInputs<'a> {
     viewport_offset: Vec2,
     viewport_scale: Vec2,
     settings: &'a PostProcessSettings,
+    lut_loaded: bool,
     encode_srgb: bool,
     seconds: f32,
     delta: f32,
@@ -1098,7 +1125,16 @@ impl PostProcessUniform {
                 settings.film_grain.response,
                 effect_on(settings.sharpen.enabled, settings.sharpen.strength),
             ],
-            output: [flag(inputs.encode_srgb), 1.0, inputs.frame as f32, 0.0],
+            output: [
+                flag(inputs.encode_srgb),
+                1.0,
+                inputs.frame as f32,
+                if inputs.lut_loaded && settings.lut.active() {
+                    settings.lut.intensity
+                } else {
+                    0.0
+                },
+            ],
         }
     }
 }

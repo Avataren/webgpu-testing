@@ -2997,6 +2997,57 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Color Lookup (LUT)",
+            "lut",
+            Some(&mut settings.lut.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.label(ui, "lut.path", "File");
+                ui.horizontal(|ui| {
+                    let shown = if settings.lut.path.is_empty() {
+                        "None".to_string()
+                    } else {
+                        Path::new(&settings.lut.path)
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| settings.lut.path.clone())
+                    };
+                    ui.label(shown).on_hover_text(&settings.lut.path);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if ui.button("Select...").clicked() {
+                        if let Some(picked) = FileDialog::new()
+                            .add_filter("3D LUT", &["cube"])
+                            .pick_file()
+                        {
+                            match import_lut(&picked) {
+                                Ok(path) => {
+                                    settings.lut.path = path;
+                                    rows.touched("lut.path");
+                                }
+                                Err(err) => log::warn!("{err}"),
+                            }
+                        }
+                    }
+                    if !settings.lut.path.is_empty() && ui.button("Clear").clicked() {
+                        settings.lut.path.clear();
+                        rows.touched("lut.path");
+                    }
+                });
+                ui.end_row();
+                rows.slider(
+                    ui,
+                    "lut.intensity",
+                    "Intensity",
+                    &mut settings.lut.intensity,
+                    0.0..=1.0,
+                    0.01,
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Bloom",
             "bloom",
             Some(&mut settings.bloom.enabled),
@@ -3245,6 +3296,31 @@ fn show_post_process_volume_section(
             });
         }
     })
+}
+
+/// The path to store for a picked `.cube` file: project-relative, copying files from
+/// outside the project into `content/luts` so the project stays self-contained.
+#[cfg(not(target_arch = "wasm32"))]
+fn import_lut(picked: &Path) -> Result<String, String> {
+    let Some(root) = wgpu_cube::project::active_project_root() else {
+        return Ok(picked.to_string_lossy().into_owned());
+    };
+    let relative = |path: &Path| {
+        path.strip_prefix(&root)
+            .ok()
+            .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+    };
+    if let Some(rel) = relative(picked) {
+        return Ok(rel);
+    }
+    let file_name = picked
+        .file_name()
+        .ok_or_else(|| format!("{} has no file name", picked.display()))?;
+    let dir = root.join("content").join("luts");
+    fs::create_dir_all(&dir).map_err(|err| format!("creating {}: {err}", dir.display()))?;
+    let target = dir.join(file_name);
+    fs::copy(picked, &target).map_err(|err| format!("copying LUT: {err}"))?;
+    relative(&target).ok_or_else(|| "LUT copy is outside the project".to_string())
 }
 
 /// Settings whose values differ from the defaults, as override paths.

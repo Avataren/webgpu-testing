@@ -644,7 +644,8 @@ impl Renderer {
     /// Post-processing for the next frames, usually the scene's volumes blended at the
     /// camera (see [`crate::scene::PostProcessVolume`]).
     pub fn set_postprocess_settings(&mut self, settings: &PostProcessSettings) {
-        self.postprocess.set_settings(&self.context.queue, settings);
+        self.postprocess
+            .set_settings(&self.context.device, &self.context.queue, settings);
     }
 
     /// The post-processing settings in effect (after clamping).

@@ -12,6 +12,8 @@ var composite_bloom : texture_2d<f32>;
 var composite_sampler : sampler;
 @group(1) @binding(94)
 var<storage, read> composite_exposure : ExposureState;
+@group(1) @binding(95)
+var composite_lut : texture_3d<f32>;
 
 fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
     let uv = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -240,6 +242,20 @@ fn grade_ldr(input : vec3<f32>) -> vec3<f32> {
     return clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// A .cube LUT maps display-encoded (sRGB) colour to display-encoded colour.
+fn apply_lut(color : vec3<f32>) -> vec3<f32> {
+    let amount = post_uniform.output.w;
+    if amount <= 0.0 {
+        return color;
+    }
+    let encoded = linear_to_srgb(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)));
+    let size = f32(textureDimensions(composite_lut).x);
+    // Sample texel centres: 0 and 1 land on the first and last entries.
+    let coord = encoded * ((size - 1.0) / size) + 0.5 / size;
+    let graded = textureSampleLevel(composite_lut, composite_sampler, coord, 0.0).rgb;
+    return srgb_to_linear(mix(encoded, graded, amount));
+}
+
 @fragment
 fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     let viewport_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -249,5 +265,6 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     color = grade_hdr(color);
     color = tonemap(color);
     color = grade_ldr(color);
+    color = apply_lut(color);
     return vec4<f32>(color, 1.0);
 }

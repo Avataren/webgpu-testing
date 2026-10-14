@@ -623,6 +623,11 @@ pub fn tools() -> Vec<Tool> {
                     "gamma": { "type": "array", "description": "Midtones [r,g,b, offset]" },
                     "gain": { "type": "array", "description": "Highlights [r,g,b, offset]" }
                 }},
+                "lut": { "type": "object", "description": "3D colour lookup table (.cube from Resolve, Photoshop, ...) applied to the finished image", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "path": { "type": "string", "description": ".cube file, project-relative" },
+                    "intensity": { "type": "number", "description": "0-1" }
+                }},
                 "bloom": { "type": "object", "properties": {
                     "enabled": { "type": "boolean" }, "intensity": { "type": "number" },
                     "threshold": { "type": "number", "description": "HDR brightness where glow starts; 0 = physically based glow on everything" },

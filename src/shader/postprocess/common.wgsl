@@ -50,7 +50,8 @@ struct PostUniform {
     vignette_center : vec4<f32>,
     // chromatic aberration, grain intensity, grain response, sharpen strength
     lens : vec4<f32>,
-    // encode sRGB in the shader (surface without an sRGB format), dither, frame index, unused
+    // encode sRGB in the shader (surface without an sRGB format), dither, frame index,
+    // LUT intensity (0 = no LUT)
     output : vec4<f32>,
 };
 
