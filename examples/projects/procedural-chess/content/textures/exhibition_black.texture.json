@@ -1,0 +1,24 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#14191c",
+      "#272e30"
+    ],
+    "image": false,
+    "metallic": 0.04,
+    "name": "exhibition_black",
+    "normal_strength": 0.0012,
+    "overwrite": true,
+    "pattern": "noise",
+    "roughness": 0.22,
+    "roughness_variation": 0.035,
+    "scale": 4,
+    "seed": 92,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

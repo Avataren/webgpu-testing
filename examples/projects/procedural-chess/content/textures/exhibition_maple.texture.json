@@ -1,0 +1,23 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#73796e",
+      "#a3a88f"
+    ],
+    "image": false,
+    "name": "exhibition_maple",
+    "normal_strength": 0.0007,
+    "overwrite": true,
+    "pattern": "wood",
+    "roughness": 0.48,
+    "roughness_variation": 0.025,
+    "scale": 3,
+    "seed": 5,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

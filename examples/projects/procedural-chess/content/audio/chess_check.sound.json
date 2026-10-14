@@ -1,0 +1,21 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "attack": 0.025,
+    "decay": 1.5,
+    "duration": 0.4,
+    "end_frequency": 880,
+    "frequency": 660,
+    "image": false,
+    "lowpass_hz": 2600,
+    "name": "chess_check",
+    "noise_mix": 0,
+    "overwrite": true,
+    "preset": "tone",
+    "release": 0.27999999999999997,
+    "seed": 73,
+    "volume": 0.32,
+    "waveform": "sine"
+  },
+  "version": 1
+}

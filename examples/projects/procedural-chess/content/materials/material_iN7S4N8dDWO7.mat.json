@@ -7,21 +7,21 @@
   ],
   "flags": 23,
   "base_color_texture": {
-    "path": "content/textures/ivory_marble_base_color.png",
-    "name": "ivory_marble_base_color.png"
+    "path": "content/textures/exhibition_white_base_color.png",
+    "name": "exhibition_white_base_color.png"
   },
   "metallic_roughness_texture": {
-    "path": "content/textures/ivory_marble_metallic_roughness.png",
-    "name": "ivory_marble_metallic_roughness.png"
+    "path": "content/textures/exhibition_white_metallic_roughness.png",
+    "name": "exhibition_white_metallic_roughness.png"
   },
   "normal_texture": {
-    "path": "content/textures/ivory_marble_normal.png",
-    "name": "ivory_marble_normal.png"
+    "path": "content/textures/exhibition_white_normal.png",
+    "name": "exhibition_white_normal.png"
   },
   "emissive_texture": 0,
   "occlusion_texture": {
-    "path": "content/textures/ivory_marble_occlusion.png",
-    "name": "ivory_marble_occlusion.png"
+    "path": "content/textures/exhibition_white_occlusion.png",
+    "name": "exhibition_white_occlusion.png"
   },
   "metallic_factor": 255,
   "roughness_factor": 255,

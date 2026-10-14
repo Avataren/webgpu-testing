@@ -7,21 +7,21 @@
   ],
   "flags": 23,
   "base_color_texture": {
-    "path": "content/textures/maple_square_base_color.png",
-    "name": "maple_square_base_color.png"
+    "path": "content/textures/exhibition_maple_base_color.png",
+    "name": "exhibition_maple_base_color.png"
   },
   "metallic_roughness_texture": {
-    "path": "content/textures/maple_square_metallic_roughness.png",
-    "name": "maple_square_metallic_roughness.png"
+    "path": "content/textures/exhibition_maple_metallic_roughness.png",
+    "name": "exhibition_maple_metallic_roughness.png"
   },
   "normal_texture": {
-    "path": "content/textures/maple_square_normal.png",
-    "name": "maple_square_normal.png"
+    "path": "content/textures/exhibition_maple_normal.png",
+    "name": "exhibition_maple_normal.png"
   },
   "emissive_texture": 0,
   "occlusion_texture": {
-    "path": "content/textures/maple_square_occlusion.png",
-    "name": "maple_square_occlusion.png"
+    "path": "content/textures/exhibition_maple_occlusion.png",
+    "name": "exhibition_maple_occlusion.png"
   },
   "metallic_factor": 255,
   "roughness_factor": 255,
