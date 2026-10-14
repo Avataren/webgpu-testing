@@ -174,6 +174,8 @@ pub struct PostProcess {
     sample_count: u32,
     /// The surface has no sRGB format, so the final pass encodes itself.
     encode_srgb: bool,
+    /// Brightest value the display shows, relative to paper white (1 for SDR).
+    display_peak: f32,
     clock: FrameClock,
 }
 
@@ -494,7 +496,9 @@ impl PostProcess {
             viewport_offset: Vec2::ZERO,
             viewport_scale: Vec2::ONE,
             sample_count,
-            encode_srgb: !config.format.is_srgb(),
+            // Float targets (the HDR composition texture) take linear values.
+            encode_srgb: !config.format.is_srgb() && !is_float_format(config.format),
+            display_peak: 1.0,
             clock: FrameClock::new(),
         };
 
@@ -652,6 +656,12 @@ impl PostProcess {
 
     pub fn settings(&self) -> &PostProcessSettings {
         &self.settings
+    }
+
+    /// The display's headroom above paper white (HDR output); tonemapping uses it.
+    pub fn set_display_peak(&mut self, queue: &wgpu::Queue, peak: f32) {
+        self.display_peak = peak.max(1.0);
+        self.upload_uniform(queue);
     }
 
     /// Restart auto exposure adaptation, e.g. after switching scenes.
@@ -959,6 +969,7 @@ impl PostProcess {
             settings: &self.settings,
             lut_loaded: self.lut.is_loaded(),
             taa_history_valid: self.taa_history_valid,
+            display_peak: self.display_peak,
             encode_srgb: self.encode_srgb,
             seconds: self.clock.seconds,
             delta: self.clock.delta,
@@ -1041,6 +1052,13 @@ fn create_msaa_target(
     (source, msaa)
 }
 
+fn is_float_format(format: wgpu::TextureFormat) -> bool {
+    matches!(
+        format,
+        wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float
+    )
+}
+
 fn half_size(size: &wgpu::Extent3d) -> wgpu::Extent3d {
     wgpu::Extent3d {
         width: (size.width / 2).max(1),
@@ -1119,6 +1137,7 @@ struct UniformInputs<'a> {
     settings: &'a PostProcessSettings,
     lut_loaded: bool,
     taa_history_valid: bool,
+    display_peak: f32,
     encode_srgb: bool,
     seconds: f32,
     delta: f32,
@@ -1163,6 +1182,7 @@ struct PostProcessUniform {
     dof_params: [f32; 4],
     dof_ranges: [f32; 4],
     misc: [f32; 4],
+    display: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1280,6 +1300,12 @@ impl PostProcessUniform {
                 let dof = &settings.depth_of_field;
                 [dof.near_start, dof.near_end, dof.far_start, dof.far_end]
             },
+            display: [
+                inputs.display_peak,
+                flag(inputs.display_peak > 1.0),
+                0.0,
+                0.0,
+            ],
             misc: [
                 flag(settings.depth_of_field.autofocus),
                 flag(inputs.taa_history_valid),
@@ -1310,8 +1336,8 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        // 6 matrices, camera position, 8 vec2 pairs and 19 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 768);
+        // 6 matrices, camera position, 8 vec2 pairs and 20 vec4 blocks.
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 784);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 

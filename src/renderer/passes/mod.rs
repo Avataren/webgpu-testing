@@ -704,7 +704,10 @@ pub(crate) fn finish_frame(
         readback.ensure_mapping_requested();
     }
 
-    RenderFrame { frame }
+    RenderFrame {
+        frame,
+        output_resolved: std::cell::Cell::new(false),
+    }
 }
 
 pub(crate) fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {

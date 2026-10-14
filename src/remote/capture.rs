@@ -19,21 +19,27 @@ pub struct FrameCapture {
 /// blocks until the GPU finishes the copy, so it is meant for occasional captures,
 /// not every frame. The surface must have been configured with `COPY_SRC`.
 pub fn capture_surface(renderer: &Renderer, frame: &RenderFrame) -> Result<FrameCapture, String> {
+    // In HDR mode the surface is only written when the frame is presented.
+    renderer.resolve_output(frame);
     let texture = &frame.frame.texture;
     if !texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
         return Err("the surface does not support copies (no COPY_SRC usage)".into());
     }
 
     let format = texture.format();
-    let swap_red_blue = match format {
-        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
-        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+    // HDR surfaces are converted to an SDR image, clipped at paper white.
+    let (swap_red_blue, bytes_per_pixel, hdr) = match format {
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => (true, 4, false),
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => (false, 4, false),
+        wgpu::TextureFormat::Rgba16Float => (false, 8, true),
+        wgpu::TextureFormat::Rgb10a2Unorm => (false, 4, true),
         other => return Err(format!("unsupported surface format for capture: {other:?}")),
     };
+    let display = renderer.hdr_display();
 
     let width = texture.width();
     let height = texture.height();
-    let unpadded_bytes_per_row = width * 4;
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
     let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(alignment) * alignment;
 
@@ -94,13 +100,22 @@ pub fn capture_surface(renderer: &Renderer, frame: &RenderFrame) -> Result<Frame
         None => return Err("the capture buffer was not mapped".into()),
     }
 
-    let mut rgba = Vec::with_capacity((unpadded_bytes_per_row * height) as usize);
+    let mut rgba = Vec::with_capacity((width * 4 * height) as usize);
     {
         let data = slice
             .get_mapped_range()
             .map_err(|err| format!("failed to read the capture buffer: {err}"))?;
         for row in data.chunks_exact(padded_bytes_per_row as usize) {
-            rgba.extend_from_slice(&row[..unpadded_bytes_per_row as usize]);
+            let row = &row[..unpadded_bytes_per_row as usize];
+            if hdr {
+                for pixel in row.chunks_exact(bytes_per_pixel as usize) {
+                    rgba.extend_from_slice(&crate::renderer::hdr_output::hdr_pixel_to_srgb8(
+                        &display, pixel,
+                    ));
+                }
+            } else {
+                rgba.extend_from_slice(row);
+            }
         }
     }
     buffer.unmap();

@@ -16,6 +16,43 @@ pub struct RenderSettings {
     /// `ENGINE_MONITOR` environment variable overrides it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monitor: Option<String>,
+    /// Output to HDR displays. The `ENGINE_HDR` environment variable overrides it.
+    #[serde(default)]
+    pub hdr_output: HdrOutputSetting,
+    /// Brightness of white UI and of scene value 1.0 on an HDR display, in nits.
+    #[serde(default = "RenderSettings::default_paper_white_nits")]
+    pub hdr_paper_white_nits: f32,
+    /// Brightest highlight the HDR display shows, in nits.
+    #[serde(default = "RenderSettings::default_peak_nits")]
+    pub hdr_peak_nits: f32,
+}
+
+/// Environment variable that overrides [`RenderSettings::hdr_output`].
+pub const HDR_ENV_VAR: &str = "ENGINE_HDR";
+
+/// Whether frames go to the display in HDR.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HdrOutputSetting {
+    /// Standard dynamic range (the image is tonemapped to 0-1).
+    #[default]
+    Off,
+    /// HDR when the display offers it (scRGB, else HDR10), otherwise SDR.
+    Auto,
+    /// The HDR output path on an SDR display, with highlights compressed to fit: for
+    /// trying HDR settings and testing without an HDR screen.
+    Simulate,
+}
+
+impl HdrOutputSetting {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "false" | "sdr" => Some(Self::Off),
+            "auto" | "on" | "1" | "true" | "hdr" => Some(Self::Auto),
+            "simulate" | "sim" => Some(Self::Simulate),
+            _ => None,
+        }
+    }
 }
 
 /// Environment variable that overrides [`RenderSettings::monitor`].
@@ -29,6 +66,9 @@ impl Default for RenderSettings {
             resolution: Resolution::default(),
             present_mode: PresentModeSetting::default(),
             monitor: None,
+            hdr_output: HdrOutputSetting::default(),
+            hdr_paper_white_nits: Self::default_paper_white_nits(),
+            hdr_peak_nits: Self::default_peak_nits(),
         }
     }
 }
@@ -48,6 +88,12 @@ impl RenderSettings {
                 let monitor = monitor.trim();
                 if !monitor.is_empty() {
                     settings.monitor = Some(monitor.to_owned());
+                }
+            }
+            if let Ok(value) = std::env::var(HDR_ENV_VAR) {
+                match HdrOutputSetting::parse(&value) {
+                    Some(mode) => settings.hdr_output = mode,
+                    None => warn!("Ignoring {HDR_ENV_VAR}={value:?}; use off, auto or simulate"),
                 }
             }
             settings
@@ -118,6 +164,13 @@ impl RenderSettings {
             self.shadow_map_size = Self::default_shadow_map_size();
         }
 
+        if !(self.hdr_paper_white_nits.is_finite() && self.hdr_paper_white_nits >= 1.0) {
+            self.hdr_paper_white_nits = Self::default_paper_white_nits();
+        }
+        if !(self.hdr_peak_nits.is_finite() && self.hdr_peak_nits >= self.hdr_paper_white_nits) {
+            self.hdr_peak_nits = Self::default_peak_nits().max(self.hdr_paper_white_nits);
+        }
+
         if self.resolution.width == 0 || self.resolution.height == 0 {
             warn!("Resolution must be greater than zero. Using default resolution.");
             self.resolution = Resolution::default();
@@ -153,6 +206,14 @@ impl RenderSettings {
 
     const fn default_shadow_map_size() -> u32 {
         2048
+    }
+
+    const fn default_paper_white_nits() -> f32 {
+        200.0
+    }
+
+    const fn default_peak_nits() -> f32 {
+        1000.0
     }
 }
 
@@ -210,6 +271,7 @@ mod tests {
             },
             present_mode: PresentModeSetting::Immediate,
             monitor: None,
+            ..RenderSettings::default()
         }
     }
 
@@ -240,6 +302,7 @@ mod tests {
             },
             present_mode: PresentModeSetting::Mailbox,
             monitor: None,
+            ..RenderSettings::default()
         };
 
         let validated = valid.clone().validate();
@@ -276,6 +339,28 @@ mod tests {
         assert_eq!(settings.monitor, None);
         let settings: RenderSettings = serde_json::from_str(r#"{"monitor": "2"}"#).unwrap();
         assert_eq!(settings.monitor.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn hdr_output_parses_and_defaults_off() {
+        let settings: RenderSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.hdr_output, HdrOutputSetting::Off);
+        let settings: RenderSettings =
+            serde_json::from_str(r#"{"hdr_output": "auto", "hdr_peak_nits": 600}"#).unwrap();
+        assert_eq!(settings.hdr_output, HdrOutputSetting::Auto);
+        assert_eq!(settings.hdr_peak_nits, 600.0);
+        assert_eq!(
+            HdrOutputSetting::parse("Simulate"),
+            Some(HdrOutputSetting::Simulate)
+        );
+        assert_eq!(HdrOutputSetting::parse("bogus"), None);
+        let fixed = RenderSettings {
+            hdr_paper_white_nits: 400.0,
+            hdr_peak_nits: 100.0,
+            ..RenderSettings::default()
+        }
+        .validate();
+        assert!(fixed.hdr_peak_nits >= fixed.hdr_paper_white_nits);
     }
 
     #[test]

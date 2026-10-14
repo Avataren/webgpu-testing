@@ -30,6 +30,7 @@ pub(super) fn engine_info(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "width": size.width,
             "height": size.height,
             "format": format!("{:?}", ctx.gpu.renderer.surface_format()),
+            "hdr_output": ctx.gpu.renderer.hdr_display().mode.label(),
             "sample_count": ctx.gpu.renderer.sample_count(),
         },
         "project_root": crate::project::active_project_root().map(|path| path.display().to_string()),

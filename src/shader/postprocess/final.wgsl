@@ -87,8 +87,11 @@ fn fs_final(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<u32>(max(in.position.xy, vec2<f32>(0.0)));
     let frame = u32(post_uniform.output.z);
 
-    // Work in display encoding from here: grain and dither are perceptual.
-    var encoded = linear_to_srgb(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)));
+    // Work in display encoding from here: grain and dither are perceptual. HDR output
+    // keeps values up to the display's peak (the encoding extends past 1.0).
+    let peak = max(post_uniform.display.x, 1.0);
+    let max_encoded = linear_to_srgb(vec3<f32>(peak)).x;
+    var encoded = linear_to_srgb(clamp(color, vec3<f32>(0.0), vec3<f32>(peak)));
 
     let grain = post_uniform.lens.y;
     if grain > 0.0 {
@@ -104,7 +107,7 @@ fn fs_final(in : VertexOutput) -> @location(0) vec4<f32> {
         let d = noise_2d(pixel, frame + 1u) + noise_2d(pixel + vec2<u32>(3571u, 2903u), frame + 1u) - 1.0;
         encoded = encoded + vec3<f32>(d * dither / 255.0);
     }
-    encoded = clamp(encoded, vec3<f32>(0.0), vec3<f32>(1.0));
+    encoded = clamp(encoded, vec3<f32>(0.0), vec3<f32>(max_encoded));
 
     if post_uniform.output.x > 0.5 {
         return vec4<f32>(encoded, 1.0);

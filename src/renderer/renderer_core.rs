@@ -144,6 +144,8 @@ type UiHook =
     Box<dyn FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView)>;
 pub struct RenderFrame {
     pub frame: wgpu::SurfaceTexture,
+    /// In HDR mode, whether the present pass has already written this frame's surface.
+    pub(crate) output_resolved: std::cell::Cell<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -176,6 +178,9 @@ struct FrameState {
     render_region: Option<RenderRegion>,
     pick_active: bool,
     surface_view: wgpu::TextureView,
+    /// Where egui draws: the surface, or the HDR UI layer.
+    #[cfg_attr(not(feature = "egui"), allow(dead_code))]
+    ui_view: wgpu::TextureView,
     scene_view: wgpu::TextureView,
     scene_resolve_view: Option<wgpu::TextureView>,
     depth_view: wgpu::TextureView,
@@ -197,6 +202,8 @@ pub struct Renderer {
     shadows: ShadowResources,
     postprocess: PostProcess,
     pipeline: RenderPipeline,
+    /// Composes and presents frames in HDR mode; `None` for plain SDR output.
+    present_stage: Option<crate::renderer::hdr_output::PresentStage>,
 
     // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
@@ -245,17 +252,31 @@ impl Renderer {
             &lights_buffer,
             sample_count,
         );
-        let mut postprocess = PostProcess::new(
-            &context.device,
-            &context.queue,
-            &context.config,
-            sample_count,
-        );
+        let hdr_display = context.hdr_display;
+        let present_stage = hdr_display.is_hdr_path().then(|| {
+            crate::renderer::hdr_output::PresentStage::new(
+                &context.device,
+                &context.queue,
+                context.config.format,
+                context.config.width,
+                context.config.height,
+                &hdr_display,
+            )
+        });
+        // Post-processing writes the composed image when presenting goes through HDR.
+        let mut post_config = context.config.clone();
+        if present_stage.is_some() {
+            post_config.format = crate::renderer::hdr_output::PRESENT_SOURCE_FORMAT;
+        }
+        let mut postprocess =
+            PostProcess::new(&context.device, &context.queue, &post_config, sample_count);
+        postprocess.set_display_peak(&context.queue, hdr_display.peak_ratio());
         postprocess.set_depth_view(&context.depth.sampled_view);
 
         Self {
             context,
             pipeline,
+            present_stage,
             texture_binder,
             objects_buffer,
             camera_buffer,
@@ -356,7 +377,46 @@ impl Renderer {
 
     /// Presents a rendered frame to the window.
     pub fn present(&self, frame: RenderFrame) {
+        self.resolve_output(&frame);
         self.context.queue.present(frame.frame);
+    }
+
+    /// In HDR mode, composite the frame and its UI onto the surface (once per frame);
+    /// screenshots call this before reading the surface. Nothing to do in SDR mode.
+    pub fn resolve_output(&self, frame: &RenderFrame) {
+        let Some(stage) = self.present_stage.as_ref() else {
+            return;
+        };
+        if frame.output_resolved.replace(true) {
+            return;
+        }
+        let view = frame
+            .frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("PresentHdrEncoder"),
+                });
+        stage.present(&mut encoder, &view);
+        self.context.queue.submit(Some(encoder.finish()));
+    }
+
+    /// How frames reach the display.
+    pub fn hdr_display(&self) -> crate::renderer::hdr_output::HdrDisplay {
+        self.context.hdr_display
+    }
+
+    /// Format of what the scene, overlays and after-post-processing passes draw into:
+    /// the surface, or the HDR composition texture.
+    pub fn output_format(&self) -> wgpu::TextureFormat {
+        if self.present_stage.is_some() {
+            crate::renderer::hdr_output::PRESENT_SOURCE_FORMAT
+        } else {
+            self.context.config.format
+        }
     }
 
     pub fn get_device(&self) -> &wgpu::Device {
@@ -428,6 +488,13 @@ impl Renderer {
 
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         self.context.resize(new_size);
+        if let Some(stage) = self.present_stage.as_mut() {
+            stage.resize(
+                &self.context.device,
+                self.context.config.width,
+                self.context.config.height,
+            );
+        }
         self.postprocess.resize(
             &self.context.device,
             &self.context.queue,
@@ -600,8 +667,17 @@ impl Renderer {
             .as_ref()
             .is_some_and(|request| request.render_in_shadow_pass);
 
+        // In HDR mode everything meant for the surface goes to the composition texture,
+        // and egui to its own layer; the present pass combines them.
+        let (target_view, ui_view) = match self.present_stage.as_ref() {
+            Some(stage) => (stage.scene_view().clone(), stage.ui_view().clone()),
+            None => (surface_view.clone(), surface_view),
+        };
         let mut frame_state =
-            self.prepare_frame_state(batcher, environment, &lights, surface_view)?;
+            self.prepare_frame_state(batcher, environment, &lights, target_view, ui_view)?;
+        if let Some(stage) = self.present_stage.as_ref() {
+            stage.clear_ui(&mut frame_state.encoder);
+        }
 
         self.run_shadow_pass(
             &mut frame_state,
@@ -647,11 +723,17 @@ impl Renderer {
     /// Format UI overlays (egui) should render with: the surface format without its
     /// sRGB suffix. Use [`Self::ui_view`] to get a matching view of a surface texture.
     pub fn ui_format(&self) -> wgpu::TextureFormat {
+        if self.present_stage.is_some() {
+            return crate::renderer::hdr_output::UI_LAYER_FORMAT;
+        }
         self.context.config.format.remove_srgb_suffix()
     }
 
     /// A view of `surface_texture` in [`Self::ui_format`].
     pub fn ui_view(&self, surface_texture: &wgpu::Texture) -> wgpu::TextureView {
+        if let Some(stage) = self.present_stage.as_ref() {
+            return stage.ui_view().clone();
+        }
         surface_texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some("ui_surface_view"),
             format: Some(self.ui_format()),
@@ -666,7 +748,7 @@ impl Renderer {
     pub fn color_format_for_stage(&self, stage: CustomRenderStage) -> wgpu::TextureFormat {
         match stage {
             CustomRenderStage::BeforePostprocess => self.scene_texture_format(),
-            CustomRenderStage::AfterPostprocess => self.surface_format(),
+            CustomRenderStage::AfterPostprocess => self.output_format(),
             CustomRenderStage::Shadow(_) => wgpu::TextureFormat::Depth32Float,
         }
     }
@@ -809,6 +891,7 @@ impl Renderer {
         environment: &Environment,
         lights: &LightsData,
         surface_view: wgpu::TextureView,
+        ui_view: wgpu::TextureView,
     ) -> Result<FrameState, SurfaceError> {
         let encoder = self
             .context
@@ -874,6 +957,7 @@ impl Renderer {
             render_region,
             pick_active,
             surface_view,
+            ui_view,
             scene_view,
             scene_resolve_view,
             depth_view: self.context.depth.view.clone(),
@@ -1002,7 +1086,7 @@ impl Renderer {
     fn run_surface_passes(&mut self, frame: &mut FrameState, assets: &Assets) {
         let render_region = frame.render_region;
         let pick_active = frame.pick_active;
-        let surface_format = self.context.config.format;
+        let surface_format = self.output_format();
         let surface_view = frame.surface_view.clone();
         let depth_view = frame.depth_view.clone();
 
@@ -1066,7 +1150,7 @@ impl Renderer {
                 &self.context.device,
                 &self.context.queue,
                 &mut frame.encoder,
-                &frame.surface_view,
+                &frame.ui_view,
             );
         }
     }

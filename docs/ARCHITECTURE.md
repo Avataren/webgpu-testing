@@ -92,6 +92,19 @@ LUT; into a half-float display target) → final (FXAA, CAS sharpening, film gra
 dither; onto the surface). Later passes read the TAA/motion-blur output when those run.
 Overlays and gizmos draw after that, untonemapped, through an unjittered camera
 (`CameraBuffer::stable_bind_group`).
+- **HDR display output** (`src/renderer/hdr_output.rs`), opt-in through `settings.json`
+  (`"hdr_output": "off" | "auto" | "simulate"`, `"hdr_paper_white_nits"`,
+  `"hdr_peak_nits"`) or the `ENGINE_HDR` environment variable. `auto` picks scRGB
+  (`Rgba16Float` + extended linear sRGB), else HDR10 (`Rgb10a2Unorm` + BT.2100 PQ), else
+  logs a warning and stays SDR. In HDR mode the final post pass, overlays and the
+  `AfterPostprocess` stage draw into a half-float composition texture (linear, 1.0 =
+  paper white; `Renderer::output_format`), egui draws into its own 8-bit layer
+  (`ui_format`/`ui_view`), and `PresentStage` composites both and encodes for the display
+  when the frame is presented or captured (`Renderer::resolve_output`). Tonemapping then
+  rolls highlights off toward the display's peak instead of 1.0; lift/gamma/gain and the
+  LUT grade the paper-white range. `simulate` runs that path on an SDR surface, which is
+  how it is tested on machines without an HDR display; the scRGB/PQ encoders have unit
+  tests but have not been seen on an HDR screen.
 - **G-buffer**: colour (HDR), normal, world position and (while picking) the pick id —
   exactly WebGPU's 32-byte colour-attachment limit, so motion vectors share the normal
   texel: octahedral normal in xy, screen motion (UV per frame) in zw. Motion vectors

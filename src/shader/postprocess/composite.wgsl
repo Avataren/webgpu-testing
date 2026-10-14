@@ -229,7 +229,32 @@ fn tonemap_rolloff(input : vec3<f32>) -> vec3<f32> {
     return mix(color, vec3<f32>(new_peak), g);
 }
 
+fn hdr_output() -> bool {
+    return post_uniform.display.y > 0.5;
+}
+
+// HDR displays: keep everything up to 0.8 (around paper white) as authored and roll
+// highlights off toward the display's peak instead of toward 1.0.
+fn tonemap_to_peak(input : vec3<f32>, display_peak : f32) -> vec3<f32> {
+    let start_compression = 0.8;
+    let desaturation = 0.15;
+    var color = max(input, vec3<f32>(0.0));
+    let peak = max(color.r, max(color.g, color.b));
+    if peak < start_compression {
+        return color;
+    }
+    let d = display_peak - start_compression;
+    let new_peak = display_peak - d * d / (peak + d - start_compression);
+    color = color * (new_peak / peak);
+    let g = 1.0 - 1.0 / (desaturation * (peak - new_peak) + 1.0);
+    return mix(color, vec3<f32>(new_peak), g);
+}
+
 fn tonemap(color : vec3<f32>) -> vec3<f32> {
+    if hdr_output() {
+        // The SDR curves are built for a 0-1 display; HDR output keeps the headroom.
+        return tonemap_to_peak(color, max(post_uniform.display.x, 1.0));
+    }
     let mode = u32(post_uniform.grading.w + 0.5);
     switch mode {
         case 1u: { return tonemap_reinhard(color); }
@@ -241,8 +266,14 @@ fn tonemap(color : vec3<f32>) -> vec3<f32> {
     }
 }
 
-// Lift, gamma and gain on the display image (0-1).
+// Lift, gamma and gain on the display image (0-1). On HDR output they grade the
+// paper-white range the same way, and highlights above it pass through.
 fn grade_ldr(input : vec3<f32>) -> vec3<f32> {
+    let headroom = max(input - vec3<f32>(1.0), vec3<f32>(0.0));
+    return grade_display(input) + select(vec3<f32>(0.0), headroom, hdr_output());
+}
+
+fn grade_display(input : vec3<f32>) -> vec3<f32> {
     var color = clamp(input, vec3<f32>(0.0), vec3<f32>(1.0));
     color = color * post_uniform.gain.xyz + post_uniform.lift.xyz * (1.0 - color);
     color = pow(max(color, vec3<f32>(0.0)), post_uniform.gamma.xyz);
@@ -260,7 +291,8 @@ fn apply_lut(color : vec3<f32>) -> vec3<f32> {
     // Sample texel centres: 0 and 1 land on the first and last entries.
     let coord = encoded * ((size - 1.0) / size) + 0.5 / size;
     let graded = textureSampleLevel(composite_lut, composite_sampler, coord, 0.0).rgb;
-    return srgb_to_linear(mix(encoded, graded, amount));
+    let headroom = max(color - vec3<f32>(1.0), vec3<f32>(0.0));
+    return srgb_to_linear(mix(encoded, graded, amount)) + headroom;
 }
 
 @fragment

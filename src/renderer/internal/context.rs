@@ -23,6 +23,8 @@ pub(crate) struct RenderContext {
     pub(crate) supports_bindless_textures: bool,
     pub(crate) supports_wireframe: bool,
     pub(crate) sample_count: u32,
+    /// How frames reach the display (SDR, or one of the HDR modes).
+    pub(crate) hdr_display: crate::renderer::hdr_output::HdrDisplay,
 
     // GPU resources (must drop first)
     pub(crate) depth: Depth,
@@ -177,12 +179,14 @@ impl RenderContext {
 
         let surface_caps = surface.get_capabilities(&adapter);
 
-        let format = surface_caps
+        let sdr_format = surface_caps
             .formats
             .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
+        let (format, color_space, hdr_display) =
+            crate::renderer::hdr_output::choose_surface(settings, &surface_caps, sdr_format);
 
         let scene_texture_format = Self::scene_texture_format_for(format);
 
@@ -236,7 +240,7 @@ impl RenderContext {
             height: size.height.max(1),
             present_mode,
             alpha_mode: surface_caps.alpha_modes[0],
-            color_space: wgpu::SurfaceColorSpace::Auto,
+            color_space,
             // Allow a linear view of the sRGB surface for UI: egui does its own gamma
             // handling and looks washed out when rendered through an sRGB view.
             view_formats: if format.is_srgb() {
@@ -262,6 +266,7 @@ impl RenderContext {
             supports_bindless_textures,
             supports_wireframe,
             sample_count,
+            hdr_display,
         }
     }
 
