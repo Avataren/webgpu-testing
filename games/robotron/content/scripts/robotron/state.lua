@@ -15,7 +15,7 @@ local g = {
     trans_t = 0, trans_after = nil, tcx = 0, tcz = 0,
     bmx = 0, bmz = 0, bfx = 0, bfz = 0, bot_t = 0, aim_t = 0, bprev = 0, aprev = 0, hold_t = 0, b_humans = 0, b_killers = 0,
     popups = {}, stats = { kills = 0, rescued = 0, lost = 0, deaths = 0, shots = 0, waves = 0, games = 0, cleared = 0 },
-    ready = false, cam = nil, cam_fit = nil, walls = {}, wall_hue = 0, demo_t = 0, paused = false,
+    ready = false, cam = nil, cam_fit = nil, walls = {}, wall_bodies = {}, spills = {}, wall_hue = 0, demo_t = 0, paused = false,
 }
 
 local units = {}    -- every actor / hostile projectile, alive or pooled

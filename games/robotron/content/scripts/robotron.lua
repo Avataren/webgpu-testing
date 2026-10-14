@@ -44,6 +44,7 @@ local S = require("robotron.state")
 local g, units, pools, entities = S.g, S.units, S.pools, S.entities
 local Fx = require("robotron.fx")
 local update_effects, build_rects, update_walls = Fx.update_effects, Fx.build_rects, Fx.update_walls
+local build_lights, update_lights, update_hit = Fx.build_lights, Fx.update_lights, Fx.update_hit
 local Actors = require("robotron.actors")
 local show_unit, spawn_unit = Actors.show_unit, Actors.spawn_unit
 local clear_all_units = Actors.clear_all_units
@@ -72,9 +73,21 @@ function on_created(self_entity)
         local e = find_entity_by_name(n)
         if e then g.walls[#g.walls + 1] = e end
     end
+    for _, n in ipairs({ "Spill_N", "Spill_S", "Spill_W", "Spill_E" }) do
+        local e = find_entity_by_name(n)
+        if e then g.spills[#g.spills + 1] = e end
+    end
+    for _, n in ipairs({ "WallBody_N", "WallBody_S", "WallBody_W", "WallBody_E" }) do
+        local e = find_entity_by_name(n)
+        if e then g.wall_bodies[#g.wall_bodies + 1] = e end
+    end
+    g.rim = find_entity_by_name("FillWarm")
+    g.arena = find_entity_by_name("Arena")
+    g.hit_vol = find_entity_by_name("HitVolume")
     g.hi = tonumber(load_data("highscore") or "0") or 0
     build_player()
     build_rects()
+    build_lights()
     if PLAY_MUSIC then g.music = play_sound("content/audio/music.wav", { volume = MUSIC_VOLUME, loop = true }) end
     g.ready = true
     new_game(true)
@@ -112,8 +125,10 @@ function update(self_entity, dt)
     update_camera(dt)
     local c3 = clock()
     update_walls(dt)
+    update_lights(dt)
+    update_hit(dt)
     local c4 = clock()
-    if not g.demo and g.score >= g.hi and g.score > 0 and g.time - (g.hi_saved or 0) > 5 then
+    if not g.demo and not g.god and g.score >= g.hi and g.score > 0 and g.time - (g.hi_saved or 0) > 5 then
         g.hi_saved = g.time
         save_data("highscore", tostring(g.hi))
     end

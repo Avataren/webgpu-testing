@@ -39,7 +39,7 @@ local CL, SL = cos(LEAN), sin(LEAN) -- the actors' lean
 local FLASH = { "red", "orange", "yellow", "green", "cyan", "blue", "magenta", "white" }
 for _, n in ipairs(FLASH) do
     local c = COLORS[n == "green" and "lgreen" or n]
-    COLORS["fx_" .. n] = { c[1], c[2], c[3], 1.6, true }
+    COLORS["fx_" .. n] = { c[1], c[2], c[3], 3.0, true }
 end
 
 return {

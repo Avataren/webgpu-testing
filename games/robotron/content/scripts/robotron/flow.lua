@@ -8,6 +8,7 @@ local S = require("robotron.state")
 local g, units, sfx = S.g, S.units, S.sfx
 local Fx = require("robotron.fx")
 local explode, ring, add_shake = Fx.explode, Fx.ring, Fx.add_shake
+local flash_light, hit_flash, burst = Fx.flash_light, Fx.hit_flash, Fx.burst
 local update_transition = Fx.update_transition
 local Actors = require("robotron.actors")
 local show_unit, count_kind, alive_count = Actors.show_unit, Actors.count_kind, Actors.alive_count
@@ -96,7 +97,11 @@ local function step_game(dt)
             show_player(false)
             explode(S.player.m, g.px, 0, g.pz, nil, nil, 1.0, 7)
             ring(g.px, g.pz, 6.0, 0.7, "cyan")
+            ring(g.px, g.pz, 3.5, 0.45, "white")
+            burst("glow_white", g.px, 0.8, g.pz, 60, 14, 0.09)
+            flash_light(g.px, 1.2, g.pz, "cyan", 100, 12, 1.0)
             add_shake(0.8)
+            hit_flash(1.0)
         end
         if g.dying_t > 2.2 then
             if g.lives > 0 then

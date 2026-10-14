@@ -1,0 +1,23 @@
+{
+  "base_color": [
+    255,
+    51,
+    255,
+    140
+  ],
+  "flags": 225,
+  "base_color_texture": {
+    "path": "content/textures/wall_spill.png",
+    "name": "wall_spill.png"
+  },
+  "metallic_roughness_texture": 0,
+  "normal_texture": 0,
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 0,
+  "roughness_factor": 127,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

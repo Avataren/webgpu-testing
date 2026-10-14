@@ -95,6 +95,70 @@ end
 
 local function add_shake(a) g.shake = min(1.0, max(g.shake, a)) end
 
+-- LIGHT FLASHES: a few pooled point lights that light the floor and the actors around an
+-- explosion and fade out. The renderer takes four point lights; the player's light is the fourth.
+local N_FLASH = 3
+local flashes = {}
+local function build_lights()
+    for i = 1, N_FLASH do
+        local e = reg(spawn_light("point", { color = { 1, 1, 1 }, intensity = 0, range = 1 }, uname("RT_flash")))
+        set_translation(e, 0, -40, 0)
+        flashes[i] = { e = e, t = 0, dur = 1, peak = 0, on = false }
+    end
+    g.p_light = reg(spawn_light("point", { color = { 0.55, 0.8, 1.0 }, intensity = 0, range = 5.5 }, "RT_player_light"))
+    set_translation(g.p_light, 0, -40, 0)
+end
+
+local function flash_light(x, y, z, col, peak, range, dur)
+    -- reuse the dimmest light (an idle one first)
+    local best, bv = nil, 1e9
+    for i = 1, N_FLASH do
+        local f = flashes[i]
+        local v = f.on and f.peak * (1 - f.t / f.dur) or -1
+        if v < bv then best, bv = f, v end
+    end
+    if not best or bv > peak then return end
+    local c = COLORS[col] or COLORS.white
+    best.t, best.dur, best.peak, best.on = 0, dur or 0.3, peak, true
+    set_translation(best.e, x, y, z)
+    set_light(best.e, { color = { c[1], c[2], c[3] }, intensity = peak, range = range or 5 })
+end
+
+local function update_lights(dt)
+    for i = 1, N_FLASH do
+        local f = flashes[i]
+        if f.on then
+            f.t = f.t + dt
+            if f.t >= f.dur then
+                f.on = false
+                set_light(f.e, { intensity = 0 })
+                set_translation(f.e, 0, -40, 0)
+            else
+                local k = 1 - f.t / f.dur
+                set_light(f.e, { intensity = f.peak * k * k })
+            end
+        end
+    end
+end
+
+-- HIT FLASH: the HitVolume post-process volume (a sphere with a long blend distance) adds
+-- chromatic aberration, a vignette and a punch of exposure. Moving it toward the camera fades
+-- it in: at the camera it applies fully, one blend distance away not at all.
+local HIT_BLEND = 10.0
+local function hit_flash(a) g.hit = min(1.0, max(g.hit or 0, a)) end
+
+local function update_hit(dt)
+    local v = g.hit_vol
+    if not v or not g.cam then return end
+    local a = g.hit or 0
+    if a <= 0 and g.hit_shown == 0 then return end
+    a = max(0, a - dt * 1.6)
+    g.hit = a
+    g.hit_shown = a
+    local p = get_world_translation(g.cam)
+    set_translation(v, p.x, p.y + HIT_BLEND * (1 - a) + (a <= 0 and 100 or 0), p.z)
+end
+
 local function popup(x, z, text, col, size)
     if #g.popups >= 16 then table.remove(g.popups, 1) end
     g.popups[#g.popups + 1] = { x = x, z = z, text = text, col = col or "white", t = 0, size = size or 22 }
@@ -148,7 +212,7 @@ local function update_transition(dt)
             local e = p * p * (3 - 2 * p)
             local cx, cz = g.tcx * (1 - e), g.tcz * (1 - e)
             local hx, hz = 0.3 + (HW + 0.15 - 0.3) * e, 0.25 + (HD + 0.15 - 0.25) * e
-            local th, y = 0.14, 0.08
+            local th, y = 0.2, 0.12
             set_translation(r[1], cx, y, cz - hz)
             set_scale(r[1], hx * 2 + th, 0.1, th)
             set_translation(r[2], cx, y, cz + hz)
@@ -188,9 +252,28 @@ local function update_walls(dt)
     elseif i == 3 then r, gg, b = 0, q, 1
     elseif i == 4 then r, gg, b = f, 0, 1
     else r, gg, b = 1, 0, q end
-    local glow = 1.4 + g.shake * 3
+    local glow = 2.6 + g.shake * 3 + (g.hit or 0) * 2
     for n = 1, #g.walls do
         set_material(g.walls[n], { color = { r, gg, b }, emissive = glow })
+    end
+    -- the dark wall under the tube glows faintly in its colour
+    for n = 1, #g.wall_bodies do
+        set_material(g.wall_bodies[n], { color = { 0.05 + r * 0.25, 0.05 + gg * 0.25, 0.05 + b * 0.25 }, emissive = 0.15 + g.shake * 0.3 })
+    end
+    -- the border's light on the floor beside it
+    local sa = min(1, 0.35 + g.shake * 0.3 + (g.hit or 0) * 0.3)
+    for n = 1, #g.spills do
+        set_material(g.spills[n], { color = { r, gg, b, sa }, emissive = 0.2 + g.shake * 0.5 })
+    end
+    -- the border's colour spills onto the arena through the rim fill light
+    if g.rim then set_light(g.rim, { color = { 0.35 + r * 0.65, 0.35 + gg * 0.65, 0.35 + b * 0.65 } }) end
+    -- the floor grid pulses with explosions
+    if g.arena then
+        local pulse = 0.4 + g.shake * 0.4 + (g.hit or 0) * 0.6
+        if abs(pulse - (g.grid_glow or 0)) > 0.02 then
+            g.grid_glow = pulse
+            set_material(g.arena, { emissive = pulse })
+        end
     end
 end
 
@@ -198,4 +281,6 @@ return {
     px_particle = px_particle, materialize = materialize, explode = explode, afterimage = afterimage, burst = burst,
     ring = ring, add_shake = add_shake, popup = popup, update_effects = update_effects, build_rects = build_rects,
     update_transition = update_transition, update_walls = update_walls,
+    build_lights = build_lights, flash_light = flash_light, update_lights = update_lights,
+    hit_flash = hit_flash, update_hit = update_hit,
 }

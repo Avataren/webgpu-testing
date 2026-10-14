@@ -12,6 +12,7 @@ local Models = require("robotron.models")
 local model, build_model = Models.model, Models.build_model
 local Fx = require("robotron.fx")
 local explode, burst, ring, add_shake, popup = Fx.explode, Fx.burst, Fx.ring, Fx.add_shake, Fx.popup
+local flash_light, hit_flash = Fx.flash_light, Fx.hit_flash
 
 local sqrt, sin, abs, floor, min, max = math.sqrt, math.sin, math.abs, math.floor, math.min, math.max
 
@@ -87,7 +88,7 @@ end
 local function add_score(n)
     g.score = g.score + n
     g.scored = true
-    if not g.demo and g.score > g.hi then g.hi = g.score end
+    if not g.demo and not g.god and g.score > g.hi then g.hi = g.score end
     while g.score >= g.next_life do
         g.next_life = g.next_life + EXTRA_LIFE
         g.lives = g.lives + 1
@@ -103,14 +104,19 @@ local function kill_unit(u, by_player, dx, dz)
     local k = u.k
     u.alive = false
     show_unit(u, false)
+    local y = unit_y(u)
+    local big = k.pts and k.pts >= 500
     if k.proj then
-        burst(k.col, u.x, unit_y(u) + 0.2, u.z, 10, 5, 0.1)
+        burst(k.col, u.x, y + 0.2, u.z, 10, 5, 0.1)
     else
-        explode(u.m, u.x, unit_y(u), u.z, dx, dz)
+        explode(u.m, u.x, y, u.z, dx, dz)
+        burst(k.col, u.x, y + 0.6, u.z, big and 26 or 12, big and 9 or 6, 0.07)
+        flash_light(u.x, y + 0.9, u.z, k.col, big and 45 or 16, big and 8 or 5.5, big and 0.5 or 0.3)
     end
-    if k.pts and k.pts >= 500 then
+    if big then
         ring(u.x, u.z, 3.4, 0.5, k.col)
         add_shake(0.45)
+        hit_flash(0.25)
     end
     if k.sfx then sfx(k.sfx, frand(0.92, 1.12), (k.pts or 0) >= 500 and 1.0 or 0.75, 0.035) end
     if u.kind == "grunt" then

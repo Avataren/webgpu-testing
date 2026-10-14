@@ -10,7 +10,7 @@ local g, pbullets, reg, uname, sfx, set_vis = S.g, S.pbullets, S.reg, S.uname, S
 local Models = require("robotron.models")
 local mat_of, model, build_model = Models.mat_of, Models.model, Models.build_model
 local Fx = require("robotron.fx")
-local materialize = Fx.materialize
+local materialize, hit_flash = Fx.materialize, Fx.hit_flash
 local Autopilot = require("robotron.autopilot")
 local bot_think = Autopilot.bot_think
 
@@ -31,6 +31,11 @@ local function show_player(v)
     player.vis = v
     set_vis(player.e, v)
     if not v then set_translation(player.e, 0, -50, 0) end
+    -- the player carries a soft light that picks it out from the crowd
+    if g.p_light then
+        set_light(g.p_light, { intensity = v and 3 or 0 })
+        if not v then set_translation(g.p_light, 0, -40, 0) end
+    end
 end
 
 local function flash_player(col)
@@ -136,6 +141,7 @@ local function draw_player(mx, mz, dt)
     g.p_yaw = g.p_yaw + (want - g.p_yaw) * min(1, dt * 12)
     set_translation(player.e, g.px, 0, g.pz)
     set_rotation(player.e, g.p_yaw, -LEAN, 0)
+    if g.p_light then set_translation(g.p_light, g.px, 1.8, g.pz) end
 end
 
 local function update_player(dt)
@@ -182,6 +188,7 @@ local function kill_player()
     g.dying_t = 0
     g.exploded = false
     g.flash_i = 0
+    hit_flash(0.7)
     sfx("player_die", 1.0, 1.0)
 end
 

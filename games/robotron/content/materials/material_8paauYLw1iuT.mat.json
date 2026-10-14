@@ -1,19 +1,25 @@
 {
   "base_color": [
-    26,
-    26,
-    29,
+    82,
+    82,
+    87,
     255
   ],
-  "flags": 0,
-  "base_color_texture": 0,
+  "flags": 9,
+  "base_color_texture": {
+    "path": "content/textures/floor_base.png",
+    "name": "floor_base.png"
+  },
   "metallic_roughness_texture": 0,
   "normal_texture": 0,
-  "emissive_texture": 0,
+  "emissive_texture": {
+    "path": "content/textures/floor_glow.png",
+    "name": "floor_glow.png"
+  },
   "occlusion_texture": 0,
-  "metallic_factor": 0,
-  "roughness_factor": 204,
-  "emissive_strength": 0,
+  "metallic_factor": 38,
+  "roughness_factor": 56,
+  "emissive_strength": 230,
   "kind": {
     "type": "pbr"
   }
