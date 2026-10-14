@@ -13,8 +13,8 @@ mod settings;
 mod ssao;
 
 pub use settings::{
-    AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments, ExposureMode,
-    ExposureSettings, FilmGrainSettings, LegacyBloomSettings, LegacyColorGrading,
+    setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
+    ExposureMode, ExposureSettings, FilmGrainSettings, LegacyBloomSettings, LegacyColorGrading,
     LegacySsaoSettings, PostProcessEffects, PostProcessSettings, SharpenSettings, SsaoSettings,
     Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
 };
@@ -1083,7 +1083,12 @@ impl PostProcessUniform {
                 aspect,
             ],
             vignette_color: vec3_4(vignette.color, 0.0),
-            vignette_center: [vignette.center[0], vignette.center[1], 0.0, 0.0],
+            vignette_center: [
+                vignette.center[0],
+                vignette.center[1],
+                flag(vignette.rounded),
+                0.0,
+            ],
             lens: [
                 effect_on(
                     settings.chromatic_aberration.enabled,

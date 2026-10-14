@@ -200,7 +200,13 @@ pub fn handle_add_post_process_volume(ctx: &mut ActionContext, entity: Entity) -
         log::warn!("Entity {entity:?} already has a post-process volume");
         return ActionResult::no_change();
     }
-    match world.insert_one(entity, PostProcessVolume::infinite(settings)) {
+    let first = world.query::<&PostProcessVolume>().iter().next().is_none();
+    let volume = if first {
+        PostProcessVolume::infinite(settings)
+    } else {
+        PostProcessVolume::additional(settings)
+    };
+    match world.insert_one(entity, volume) {
         Ok(()) => ActionResult::scene_changed(),
         Err(err) => {
             log::warn!("Failed to add a post-process volume to {entity:?}: {err}");

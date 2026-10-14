@@ -13,12 +13,14 @@ use std::time::{Duration, Instant};
 
 use hecs::Entity;
 
+use std::collections::BTreeSet;
 use wgpu_cube::asset::{
     Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
     ShaderMaterialMetadata,
 };
 use wgpu_cube::renderer::postprocess::{
-    AntiAliasing, ExposureMode, PostProcessSettings, Tonemapper, TRACKBALL_NEUTRAL,
+    setting_overridden, AntiAliasing, ExposureMode, PostProcessSettings, Tonemapper,
+    TRACKBALL_NEUTRAL,
 };
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
@@ -1822,7 +1824,7 @@ fn show_environment_section(
             .num_columns(2)
             .striped(true)
             .show(ui, |ui| {
-                post_slider(
+                labeled_slider(
                     ui,
                     "Ambient intensity",
                     &mut edited.ambient_intensity,
@@ -2435,7 +2437,7 @@ fn shadow_checkbox_row(
 }
 
 /// A labelled fine-step slider row in a two-column grid.
-fn post_slider(
+fn labeled_slider(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut f32,
@@ -2450,45 +2452,193 @@ fn post_slider(
     ui.end_row();
 }
 
-fn post_color_row(ui: &mut egui::Ui, label: &str, color: &mut [f32; 3], changed: &mut bool) {
-    ui.label(label);
-    let mut clamped = color.map(|c| c.clamp(0.0, 1.0));
-    if color_edit_button_rgb(ui, &mut clamped).changed() {
-        *color = clamped;
-        *changed = true;
-    }
-    ui.end_row();
+/// Rows of post-process settings with their override checkboxes. While a volume
+/// overrides everything (`overrides` is `None`) the checkboxes are hidden; otherwise
+/// each row has one, and editing a value ticks it.
+struct PostRows<'a> {
+    changed: bool,
+    overrides: &'a mut Option<BTreeSet<String>>,
 }
 
-/// A collapsible group inside the post-process volume section, optionally with an
-/// "enabled" checkbox that greys out the controls when off.
+impl PostRows<'_> {
+    /// The label cell, with the override checkbox when the volume overrides selectively.
+    fn label(&mut self, ui: &mut egui::Ui, path: &str, label: &str) {
+        let Some(set) = self.overrides.as_mut() else {
+            ui.label(label);
+            return;
+        };
+        let mut on = setting_overridden(path, set);
+        ui.horizontal(|ui| {
+            if ui
+                .checkbox(&mut on, "")
+                .on_hover_text("Override: this volume sets this value; unticked, it comes from the volumes below")
+                .changed()
+            {
+                set_override(set, path, on);
+                self.changed = true;
+            }
+            if on {
+                ui.label(label);
+            } else {
+                ui.label(egui::RichText::new(label).color(theme::colors::TEXT_WEAK));
+            }
+        });
+    }
+
+    /// Record an edit of the setting at `path`, ticking its override.
+    fn touched(&mut self, path: &str) {
+        self.changed = true;
+        if let Some(set) = self.overrides.as_mut() {
+            if !setting_overridden(path, set) {
+                set.insert(path.to_string());
+            }
+        }
+    }
+
+    fn slider(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &str,
+        label: &str,
+        value: &mut f32,
+        range: RangeInclusive<f32>,
+        step: f32,
+    ) {
+        self.slider_with(ui, path, label, value, range, step, "");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn slider_with(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &str,
+        label: &str,
+        value: &mut f32,
+        range: RangeInclusive<f32>,
+        step: f32,
+        suffix: &str,
+    ) {
+        self.label(ui, path, label);
+        let mut slider = wgpu_cube::ui::FineSlider::new(value, range).step(step);
+        if !suffix.is_empty() {
+            slider = slider.suffix(suffix);
+        }
+        if ui.add(slider).changed() {
+            self.touched(path);
+        }
+        ui.end_row();
+    }
+
+    fn color(&mut self, ui: &mut egui::Ui, path: &str, label: &str, color: &mut [f32; 3]) {
+        self.label(ui, path, label);
+        let mut clamped = color.map(|c| c.clamp(0.0, 1.0));
+        if color_edit_button_rgb(ui, &mut clamped).changed() {
+            *color = clamped;
+            self.touched(path);
+        }
+        ui.end_row();
+    }
+
+    fn checkbox(&mut self, ui: &mut egui::Ui, path: &str, label: &str, value: &mut bool) {
+        self.label(ui, path, label);
+        if ui.checkbox(value, "").changed() {
+            self.touched(path);
+        }
+        ui.end_row();
+    }
+
+    /// A combo box row choosing one of `options`.
+    fn choice<T: Copy + PartialEq>(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        path: &str,
+        label: &str,
+        value: &mut T,
+        options: &[(T, &str)],
+    ) {
+        self.label(ui, path, label);
+        let current = options
+            .iter()
+            .find(|(option, _)| option == value)
+            .map_or("", |(_, name)| *name);
+        ComboBox::from_id_salt(id)
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for (option, name) in options {
+                    if ui.selectable_value(value, *option, *name).changed() {
+                        self.touched(path);
+                    }
+                }
+            });
+        ui.end_row();
+    }
+}
+
+/// Tick or untick `path`. Unticking a setting covered by a whole-group entry replaces
+/// the group with its other settings.
+fn set_override(set: &mut BTreeSet<String>, path: &str, on: bool) {
+    if on {
+        set.insert(path.to_string());
+        return;
+    }
+    set.remove(path);
+    let covering: Vec<String> = set
+        .iter()
+        .filter(|entry| path.starts_with(&format!("{entry}.")))
+        .cloned()
+        .collect();
+    for group in covering {
+        set.remove(&group);
+        let prefix = format!("{group}.");
+        set.extend(
+            PostProcessSettings::setting_paths()
+                .into_iter()
+                .filter(|leaf| leaf.starts_with(&prefix) && leaf != path),
+        );
+    }
+}
+
+/// A collapsible group of settings, optionally led by the effect's "enabled" switch,
+/// which greys out the other rows while off.
 fn post_group(
     ui: &mut egui::Ui,
     entity: Entity,
     title: &str,
+    group: &str,
     enabled: Option<&mut bool>,
-    changed: &mut bool,
-    add_rows: impl FnOnce(&mut egui::Ui, &mut bool),
+    rows: &mut PostRows<'_>,
+    add_rows: impl FnOnce(&mut egui::Ui, &mut PostRows<'_>),
 ) {
     let active = enabled.as_ref().is_none_or(|on| **on);
-    let header_text = if active {
-        egui::RichText::new(title).strong()
+    let touched = rows.overrides.as_ref().is_none_or(|set| {
+        set.iter()
+            .any(|entry| entry == group || entry.starts_with(&format!("{group}.")))
+    });
+    let mut header_text = egui::RichText::new(title);
+    header_text = if active && touched {
+        header_text.strong()
     } else {
-        egui::RichText::new(title).color(theme::colors::TEXT_WEAK)
+        header_text.color(theme::colors::TEXT_WEAK)
     };
     egui::CollapsingHeader::new(header_text)
         .id_salt(("post_process_group", entity, title))
         .default_open(false)
         .show(ui, |ui| {
-            if let Some(enabled) = enabled {
-                *changed |= ui.checkbox(enabled, "Enabled").changed();
-            }
-            ui.add_enabled_ui(active, |ui| {
-                Grid::new(("post_process_grid", entity, title))
-                    .num_columns(2)
-                    .striped(true)
-                    .show(ui, |ui| add_rows(ui, changed));
-            });
+            Grid::new(("post_process_grid", entity, title))
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    if let Some(enabled) = enabled {
+                        rows.checkbox(ui, &format!("{group}.enabled"), "Enabled", enabled);
+                    }
+                    if active {
+                        add_rows(ui, rows);
+                    } else {
+                        ui.add_enabled_ui(false, |ui| ui.label("(off)"));
+                        ui.end_row();
+                    }
+                });
         });
 }
 
@@ -2586,7 +2736,7 @@ fn show_post_process_volume_section(
                     .changed();
                 ui.end_row();
 
-                post_slider(
+                labeled_slider(
                     ui,
                     "Weight",
                     &mut edited.weight,
@@ -2605,112 +2755,134 @@ fn show_post_process_volume_section(
         );
         ui.add_space(4.0);
 
-        let settings = &mut edited.settings;
+        // Override mode: everything, or only the ticked settings.
+        let mut selective = edited.overrides.is_some();
+        if ui
+            .checkbox(&mut selective, "Override only ticked settings")
+            .on_hover_text(
+                "Off: this volume sets every value. On: unticked values come from the \
+                 volumes below it, so a local volume can change just a few things.",
+            )
+            .changed()
+        {
+            edited.overrides = if selective {
+                // Start with nothing ticked except what differs from the defaults.
+                Some(differing_settings(&edited.settings))
+            } else {
+                None
+            };
+            changed = true;
+        }
+        ui.add_space(2.0);
 
-        post_group(ui, entity, "Exposure", None, &mut changed, |ui, changed| {
-            ui.label("Mode");
-            ComboBox::from_id_salt(("post_exposure_mode", entity))
-                .selected_text(match settings.exposure.mode {
-                    ExposureMode::Manual => "Manual",
-                    ExposureMode::Auto => "Auto (eye adaptation)",
-                })
-                .show_ui(ui, |ui| {
-                    *changed |= ui
-                        .selectable_value(
-                            &mut settings.exposure.mode,
-                            ExposureMode::Manual,
-                            "Manual",
-                        )
-                        .changed();
-                    *changed |= ui
-                        .selectable_value(
-                            &mut settings.exposure.mode,
-                            ExposureMode::Auto,
-                            "Auto (eye adaptation)",
-                        )
-                        .changed();
-                });
-            ui.end_row();
-            let exposure = &mut settings.exposure;
-            ui.label("Compensation");
-            *changed |= ui
-                .add(
-                    wgpu_cube::ui::FineSlider::new(&mut exposure.compensation, -5.0..=5.0)
-                        .step(0.05)
-                        .suffix(" EV"),
-                )
-                .changed();
-            ui.end_row();
-            if exposure.mode == ExposureMode::Auto {
-                post_slider(
+        let settings = &mut edited.settings;
+        let mut rows = PostRows {
+            changed: false,
+            overrides: &mut edited.overrides,
+        };
+
+        post_group(
+            ui,
+            entity,
+            "Exposure",
+            "exposure",
+            None,
+            &mut rows,
+            |ui, rows| {
+                let exposure = &mut settings.exposure;
+                rows.choice(
                     ui,
-                    "Min EV",
-                    &mut exposure.min_ev,
-                    -12.0..=12.0,
-                    0.1,
-                    changed,
+                    egui::Id::new(("post_exposure_mode", entity)),
+                    "exposure.mode",
+                    "Mode",
+                    &mut exposure.mode,
+                    &[
+                        (ExposureMode::Manual, "Manual"),
+                        (ExposureMode::Auto, "Auto (eye adaptation)"),
+                    ],
                 );
-                post_slider(
+                rows.slider_with(
                     ui,
-                    "Max EV",
-                    &mut exposure.max_ev,
-                    -12.0..=12.0,
-                    0.1,
-                    changed,
+                    "exposure.compensation",
+                    "Compensation",
+                    &mut exposure.compensation,
+                    -5.0..=5.0,
+                    0.05,
+                    " EV",
                 );
-                post_slider(
-                    ui,
-                    "Darken speed",
-                    &mut exposure.speed_up,
-                    0.1..=10.0,
-                    0.1,
-                    changed,
-                );
-                post_slider(
-                    ui,
-                    "Brighten speed",
-                    &mut exposure.speed_down,
-                    0.1..=10.0,
-                    0.1,
-                    changed,
-                );
-                post_slider(
-                    ui,
-                    "Ignore darkest",
-                    &mut exposure.low_percent,
-                    0.0..=0.95,
-                    0.01,
-                    changed,
-                );
-                post_slider(
-                    ui,
-                    "Ignore above",
-                    &mut exposure.high_percent,
-                    0.05..=1.0,
-                    0.01,
-                    changed,
-                );
-            }
-        });
+                if exposure.mode == ExposureMode::Auto {
+                    rows.slider(
+                        ui,
+                        "exposure.min_ev",
+                        "Min EV",
+                        &mut exposure.min_ev,
+                        -12.0..=12.0,
+                        0.1,
+                    );
+                    rows.slider(
+                        ui,
+                        "exposure.max_ev",
+                        "Max EV",
+                        &mut exposure.max_ev,
+                        -12.0..=12.0,
+                        0.1,
+                    );
+                    rows.slider(
+                        ui,
+                        "exposure.speed_up",
+                        "Darken speed",
+                        &mut exposure.speed_up,
+                        0.1..=10.0,
+                        0.1,
+                    );
+                    rows.slider(
+                        ui,
+                        "exposure.speed_down",
+                        "Brighten speed",
+                        &mut exposure.speed_down,
+                        0.1..=10.0,
+                        0.1,
+                    );
+                    rows.slider(
+                        ui,
+                        "exposure.low_percent",
+                        "Ignore darkest",
+                        &mut exposure.low_percent,
+                        0.0..=0.95,
+                        0.01,
+                    );
+                    rows.slider(
+                        ui,
+                        "exposure.high_percent",
+                        "Ignore above",
+                        &mut exposure.high_percent,
+                        0.05..=1.0,
+                        0.01,
+                    );
+                }
+            },
+        );
 
         post_group(
             ui,
             entity,
             "Tonemapping",
+            "tonemapping",
             None,
-            &mut changed,
-            |ui, changed| {
-                ui.label("Curve");
-                ComboBox::from_id_salt(("post_tonemapper", entity))
-                    .selected_text(settings.tonemapping.label())
-                    .show_ui(ui, |ui| {
-                        for mapper in Tonemapper::ALL {
-                            *changed |= ui
-                                .selectable_value(&mut settings.tonemapping, mapper, mapper.label())
-                                .changed();
-                        }
-                    });
-                ui.end_row();
+            &mut rows,
+            |ui, rows| {
+                let options: Vec<(Tonemapper, &str)> = Tonemapper::ALL
+                    .iter()
+                    .map(|mapper| (*mapper, mapper.label()))
+                    .collect();
+                rows.choice(
+                    ui,
+                    egui::Id::new(("post_tonemapper", entity)),
+                    "tonemapping",
+                    "Curve",
+                    &mut settings.tonemapping,
+                    &options,
+                );
             },
         );
 
@@ -2718,74 +2890,88 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Color Grading",
+            "color",
             None,
-            &mut changed,
-            |ui, changed| {
+            &mut rows,
+            |ui, rows| {
                 let color = &mut settings.color;
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.post_exposure",
                     "Post exposure",
                     &mut color.post_exposure,
                     -3.0..=3.0,
                     0.05,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.temperature",
                     "Temperature",
                     &mut color.temperature,
                     -100.0..=100.0,
                     0.5,
-                    changed,
                 );
-                post_slider(ui, "Tint", &mut color.tint, -100.0..=100.0, 0.5, changed);
-                post_color_row(ui, "Color filter", &mut color.color_filter, changed);
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.tint",
+                    "Tint",
+                    &mut color.tint,
+                    -100.0..=100.0,
+                    0.5,
+                );
+                rows.color(
+                    ui,
+                    "color.color_filter",
+                    "Color filter",
+                    &mut color.color_filter,
+                );
+                rows.slider(
+                    ui,
+                    "color.hue_shift",
                     "Hue shift",
                     &mut color.hue_shift,
                     -180.0..=180.0,
                     0.5,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.saturation",
                     "Saturation",
                     &mut color.saturation,
                     0.0..=2.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.vibrance",
                     "Vibrance",
                     &mut color.vibrance,
                     -1.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "color.contrast",
                     "Contrast",
                     &mut color.contrast,
                     0.0..=2.0,
                     0.01,
-                    changed,
                 );
-                for (label, control) in [
-                    ("Shadows (lift)", &mut color.lift),
-                    ("Midtones (gamma)", &mut color.gamma),
-                    ("Highlights (gain)", &mut color.gain),
+                for (path, label, control) in [
+                    ("color.lift", "Shadows (lift)", &mut color.lift),
+                    ("color.gamma", "Midtones (gamma)", &mut color.gamma),
+                    ("color.gain", "Highlights (gain)", &mut color.gain),
                 ] {
-                    ui.label(label);
+                    rows.label(ui, path, label);
                     ui.horizontal(|ui| {
                         let mut tint =
                             [control[0], control[1], control[2]].map(|c| c.clamp(0.0, 1.0));
+                        let mut edited = false;
                         if color_edit_button_rgb(ui, &mut tint).changed() {
                             control[..3].copy_from_slice(&tint);
-                            *changed = true;
+                            edited = true;
                         }
-                        *changed |= ui
+                        edited |= ui
                             .add(
                                 wgpu_cube::ui::FineSlider::new(&mut control[3], -1.0..=1.0)
                                     .step(0.01),
@@ -2797,7 +2983,10 @@ fn show_post_process_volume_section(
                             .clicked()
                         {
                             *control = TRACKBALL_NEUTRAL;
-                            *changed = true;
+                            edited = true;
+                        }
+                        if edited {
+                            rows.touched(path);
                         }
                     });
                     ui.end_row();
@@ -2809,42 +2998,43 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Bloom",
+            "bloom",
             Some(&mut settings.bloom.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "bloom.intensity",
                     "Intensity",
                     &mut settings.bloom.intensity,
-                    0.0..=3.0,
+                    0.0..=8.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "bloom.threshold",
                     "Threshold",
                     &mut settings.bloom.threshold,
                     0.0..=5.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "bloom.knee",
                     "Knee",
                     &mut settings.bloom.knee,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "bloom.scatter",
                     "Scatter",
                     &mut settings.bloom.scatter,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_color_row(ui, "Tint", &mut settings.bloom.tint, changed);
+                rows.color(ui, "bloom.tint", "Tint", &mut settings.bloom.tint);
             },
         );
 
@@ -2852,40 +3042,41 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Ambient Occlusion",
+            "ssao",
             Some(&mut settings.ssao.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "ssao.intensity",
                     "Intensity",
                     &mut settings.ssao.intensity,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "ssao.radius",
                     "Radius",
                     &mut settings.ssao.radius,
                     0.01..=2.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "ssao.bias",
                     "Bias",
                     &mut settings.ssao.bias,
                     0.0..=0.2,
                     0.001,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "ssao.power",
                     "Power",
                     &mut settings.ssao.power,
                     0.5..=4.0,
                     0.01,
-                    changed,
                 );
             },
         );
@@ -2894,45 +3085,55 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Vignette",
+            "vignette",
             Some(&mut settings.vignette.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "vignette.intensity",
                     "Intensity",
                     &mut settings.vignette.intensity,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "vignette.smoothness",
                     "Smoothness",
                     &mut settings.vignette.smoothness,
                     0.01..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "vignette.roundness",
                     "Roundness",
                     &mut settings.vignette.roundness,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_color_row(ui, "Color", &mut settings.vignette.color, changed);
-                ui.label("Center");
+                rows.checkbox(
+                    ui,
+                    "vignette.rounded",
+                    "Circular",
+                    &mut settings.vignette.rounded,
+                );
+                rows.color(ui, "vignette.color", "Color", &mut settings.vignette.color);
+                rows.label(ui, "vignette.center", "Center");
                 ui.horizontal(|ui| {
                     for value in settings.vignette.center.iter_mut() {
-                        *changed |= ui
+                        if ui
                             .add(
                                 DragValue::new(value)
                                     .speed(0.005)
                                     .range(0.0..=1.0)
                                     .max_decimals(3),
                             )
-                            .changed();
+                            .changed()
+                        {
+                            rows.touched("vignette.center");
+                        }
                     }
                 });
                 ui.end_row();
@@ -2943,16 +3144,17 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Chromatic Aberration",
+            "chromatic_aberration",
             Some(&mut settings.chromatic_aberration.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "chromatic_aberration.intensity",
                     "Intensity",
                     &mut settings.chromatic_aberration.intensity,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
             },
         );
@@ -2961,24 +3163,25 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Film Grain",
+            "film_grain",
             Some(&mut settings.film_grain.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "film_grain.intensity",
                     "Intensity",
                     &mut settings.film_grain.intensity,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
-                post_slider(
+                rows.slider(
                     ui,
+                    "film_grain.response",
                     "Response",
                     &mut settings.film_grain.response,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
             },
         );
@@ -2987,16 +3190,17 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Sharpen",
+            "sharpen",
             Some(&mut settings.sharpen.enabled),
-            &mut changed,
-            |ui, changed| {
-                post_slider(
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
                     ui,
+                    "sharpen.strength",
                     "Strength",
                     &mut settings.sharpen.strength,
                     0.0..=1.0,
                     0.01,
-                    changed,
                 );
             },
         );
@@ -3005,45 +3209,34 @@ fn show_post_process_volume_section(
             ui,
             entity,
             "Anti-aliasing",
+            "anti_aliasing",
             None,
-            &mut changed,
-            |ui, changed| {
-                ui.label("Method");
-                ComboBox::from_id_salt(("post_anti_aliasing", entity))
-                    .selected_text(match settings.anti_aliasing {
-                        AntiAliasing::None => "None",
-                        AntiAliasing::Fxaa => "FXAA",
-                    })
-                    .show_ui(ui, |ui| {
-                        *changed |= ui
-                            .selectable_value(
-                                &mut settings.anti_aliasing,
-                                AntiAliasing::None,
-                                "None",
-                            )
-                            .changed();
-                        *changed |= ui
-                            .selectable_value(
-                                &mut settings.anti_aliasing,
-                                AntiAliasing::Fxaa,
-                                "FXAA",
-                            )
-                            .changed();
-                    });
-                ui.end_row();
+            &mut rows,
+            |ui, rows| {
+                rows.choice(
+                    ui,
+                    egui::Id::new(("post_anti_aliasing", entity)),
+                    "anti_aliasing",
+                    "Method",
+                    &mut settings.anti_aliasing,
+                    &[(AntiAliasing::None, "None"), (AntiAliasing::Fxaa, "FXAA")],
+                );
             },
         );
 
+        changed |= rows.changed;
+
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if ui
-                .button(format!("{}  Reset effects to defaults", icons::REVERT))
-                .clicked()
-            {
-                edited.settings = PostProcessSettings::default();
-                changed = true;
+        if ui
+            .button(format!("{}  Reset effects to defaults", icons::REVERT))
+            .clicked()
+        {
+            edited.settings = PostProcessSettings::default();
+            if edited.overrides.is_some() {
+                edited.overrides = Some(BTreeSet::new());
             }
-        });
+            changed = true;
+        }
 
         if changed && edited != component {
             actions.push(InspectorAction::UpdatePostProcessVolume {
@@ -3052,4 +3245,21 @@ fn show_post_process_volume_section(
             });
         }
     })
+}
+
+/// Settings whose values differ from the defaults, as override paths.
+fn differing_settings(settings: &PostProcessSettings) -> BTreeSet<String> {
+    let (Ok(current), Ok(defaults)) = (
+        serde_json::to_value(settings),
+        serde_json::to_value(PostProcessSettings::default()),
+    ) else {
+        return BTreeSet::new();
+    };
+    PostProcessSettings::setting_paths()
+        .into_iter()
+        .filter(|path| {
+            let pointer = format!("/{}", path.replace('.', "/"));
+            current.pointer(&pointer) != defaults.pointer(&pointer)
+        })
+        .collect()
 }

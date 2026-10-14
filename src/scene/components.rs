@@ -9,7 +9,7 @@ use crate::gpu_particles::behaviors::{
 use crate::gpu_particles::{
     ColorGradient, EmissionShape, ParticleEmitter, ParticleRenderMode, SizeCurve,
 };
-use crate::renderer::postprocess::{LegacyColorGrading, PostProcessSettings};
+use crate::renderer::postprocess::{setting_overridden, LegacyColorGrading, PostProcessSettings};
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::Material;
 use crate::renderer::Vertex;
@@ -17,6 +17,7 @@ use crate::scene::camera::{Camera, CameraProjection};
 use crate::scene::Transform;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use wgpu::Color;
 
@@ -130,6 +131,11 @@ pub struct PostProcessVolume {
     pub weight: f32,
     /// Distance outside a bounded shape over which the volume fades out, in world units.
     pub blend_distance: f32,
+    /// The settings this volume sets, as paths (`"bloom.intensity"`) or whole groups
+    /// (`"bloom"`); everything else comes from the volumes below it. `None` overrides
+    /// every setting, which is also what volumes saved before overrides existed get.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<BTreeSet<String>>,
     pub settings: PostProcessSettings,
 }
 
@@ -141,17 +147,52 @@ impl Default for PostProcessVolume {
             priority: 0,
             weight: 1.0,
             blend_distance: 2.0,
+            overrides: None,
             settings: PostProcessSettings::default(),
         }
     }
 }
 
 impl PostProcessVolume {
-    /// An infinite volume with the given settings.
+    /// An infinite volume that overrides everything with the given settings.
     pub fn infinite(settings: PostProcessSettings) -> Self {
         Self {
             settings,
             ..Self::default()
+        }
+    }
+
+    /// A volume for a scene that already has some: it starts from `settings` (what is
+    /// in effect) but overrides nothing until a setting is edited, so it neither changes
+    /// the picture nor freezes values the other volumes would later change.
+    pub fn additional(settings: PostProcessSettings) -> Self {
+        Self {
+            overrides: Some(BTreeSet::new()),
+            ..Self::infinite(settings)
+        }
+    }
+
+    /// Whether this volume sets the setting at `path` (see [`Self::overrides`]).
+    pub fn overrides_setting(&self, path: &str) -> bool {
+        self.overrides
+            .as_ref()
+            .is_none_or(|set| setting_overridden(path, set))
+    }
+
+    /// Tick the settings a JSON patch of [`PostProcessSettings`] sets (`{"bloom":
+    /// {"intensity": 2}}` ticks `bloom.intensity`), when this volume overrides
+    /// selectively.
+    pub fn tick_overrides_for_patch(&mut self, settings_patch: &serde_json::Value) {
+        if let Some(set) = self.overrides.as_mut() {
+            set.extend(PostProcessSettings::paths_in(settings_patch));
+        }
+    }
+
+    /// Blend this volume's overridden settings over `base` by `amount`.
+    pub fn apply(&self, base: &PostProcessSettings, amount: f32) -> PostProcessSettings {
+        match &self.overrides {
+            None => base.blend(&self.settings, amount),
+            Some(set) => base.blend_overridden(&self.settings, amount, set),
         }
     }
 }

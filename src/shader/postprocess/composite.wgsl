@@ -63,9 +63,12 @@ fn apply_vignette(color : vec3<f32>, viewport_uv : vec2<f32>) -> vec3<f32> {
     let aspect = post_uniform.vignette.w;
     // Same shape as Unity's post-processing vignette.
     var d = abs(viewport_uv - post_uniform.vignette_center.xy) * intensity * 3.0;
-    // Roundness 1 makes a circle on screen; 0 stretches it to the frame's shape.
-    d.x = d.x * mix(1.0, aspect, roundness);
-    d = pow(clamp(d, vec2<f32>(0.0), vec2<f32>(1.0)), vec2<f32>(mix(6.0, 1.0, roundness)));
+    // "Rounded" keeps it a circle on screen instead of following the frame's shape.
+    if post_uniform.vignette_center.z > 0.5 {
+        d.x = d.x * aspect;
+    }
+    // Roundness 1 gives round corners, 0 square ones.
+    d = pow(clamp(d, vec2<f32>(0.0), vec2<f32>(1.0)), vec2<f32>((1.0 - roundness) * 6.0 + roundness));
     let factor = pow(clamp(1.0 - dot(d, d), 0.0, 1.0), smoothness * 5.0);
     return color * mix(post_uniform.vignette_color.rgb, vec3<f32>(1.0), factor);
 }

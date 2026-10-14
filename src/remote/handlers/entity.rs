@@ -495,9 +495,13 @@ pub(super) fn spawn(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRe
         "post_process_volume" => {
             // Start from what is in effect, so the new volume changes nothing until edited.
             let settings =
-                crate::scene::blend_post_process_volumes(scene.main_world(), scene.camera().eye)
-                    .unwrap_or_default();
-            builder.add(PostProcessVolume::infinite(settings));
+                crate::scene::blend_post_process_volumes(scene.main_world(), scene.camera().eye);
+            builder.add(match settings {
+                None => PostProcessVolume::default(),
+                // Other volumes exist: start from what they give and override only what
+                // this call sets (apply_patch ticks those).
+                Some(settings) => PostProcessVolume::additional(settings),
+            });
         }
         "particles" => {
             let preset = particle_preset_from_name(
@@ -844,6 +848,11 @@ fn apply_patch(
                 value,
                 |volume: &mut PostProcessVolume, v| {
                     *volume = patch_serde(volume, v)?;
+                    if v.get("overrides").is_none() {
+                        if let Some(settings) = v.get("settings") {
+                            volume.tick_overrides_for_patch(settings);
+                        }
+                    }
                     Ok(())
                 },
             )?,

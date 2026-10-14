@@ -117,7 +117,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "particle_system": { "type": ["object", "null"], "description": "GPU particle system settings (fields as entity_get shows them, plus \"preset\": physics|starfield|boids|optimized_boids), or null to remove" },
         "particle_emitter": { "type": ["object", "null"], "description": "Particle emitter settings as entity_get shows them, or null" },
         "environment": { "type": ["object", "null"], "description": "Environment component (see environment_get for fields), or null" },
-        "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, settings: {...as postprocess_set}}. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
+        "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, overrides: [setting paths] or null for all, settings: {...as postprocess_set}}. A volume spawned into a scene that already has one overrides only the settings given. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -598,7 +598,8 @@ pub fn tools() -> Vec<Tool> {
                     "shape": { "type": "object", "description": "{kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}" },
                     "priority": { "type": "integer" },
                     "weight": { "type": "number", "description": "0-1" },
-                    "blend_distance": { "type": "number", "description": "Fade distance outside a bounded shape, meters" }
+                    "blend_distance": { "type": "number", "description": "Fade distance outside a bounded shape, meters" },
+                    "overrides": { "type": ["array", "null"], "description": "Setting paths this volume sets (\"bloom.intensity\", or a whole group \"bloom\"); the rest comes from volumes below. null = everything. Settings you set on a selective volume are ticked automatically." }
                 }},
                 "exposure": { "type": "object", "properties": {
                     "mode": { "type": "string", "enum": ["manual", "auto"], "description": "auto adapts to scene brightness like an eye" },
@@ -632,7 +633,7 @@ pub fn tools() -> Vec<Tool> {
                     "enabled": { "type": "boolean" }, "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" }
                 }},
                 "vignette": { "type": "object", "properties": {
-                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "smoothness": { "type": "number" }, "roundness": { "type": "number" }, "color": { "type": "array" }, "center": { "type": "array" }
+                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "smoothness": { "type": "number" }, "roundness": { "type": "number", "description": "1 round corners, 0 square" }, "rounded": { "type": "boolean", "description": "circular on screen instead of following the frame" }, "color": { "type": "array" }, "center": { "type": "array" }
                 }},
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},

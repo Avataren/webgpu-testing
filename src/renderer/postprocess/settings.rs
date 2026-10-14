@@ -5,6 +5,8 @@
 //! is off on one side fades in through its intensity instead of popping on.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// The full post-processing stack applied to the HDR scene.
 ///
@@ -489,8 +491,10 @@ pub struct VignetteSettings {
     pub intensity: f32,
     /// Width of the falloff, 0-1.
     pub smoothness: f32,
-    /// 1 is a circle, 0 follows the frame's aspect ratio.
+    /// 1 gives round corners, 0 square ones.
     pub roundness: f32,
+    /// Keep the vignette circular on screen instead of following the frame's shape.
+    pub rounded: bool,
     /// Colour of the edges.
     pub color: [f32; 3],
     /// Centre in screen UV (0.5, 0.5 is the middle).
@@ -502,8 +506,9 @@ impl Default for VignetteSettings {
         Self {
             enabled: false,
             intensity: 0.3,
-            smoothness: 0.4,
+            smoothness: 0.2,
             roundness: 1.0,
+            rounded: false,
             color: [0.0; 3],
             center: [0.5, 0.5],
         }
@@ -523,6 +528,7 @@ impl VignetteSettings {
             intensity: lerp(from.intensity, to.intensity, t),
             smoothness: lerp(from.smoothness, to.smoothness, t),
             roundness: lerp(from.roundness, to.roundness, t),
+            rounded: pick(from.rounded, to.rounded, t),
             color: lerp_array(from.color, to.color, t),
             center: lerp_array(from.center, to.center, t),
         }
@@ -759,6 +765,118 @@ impl PostProcessSettings {
     }
 }
 
+/// Fields that make an effect fade in or out when its `enabled` flag differs between
+/// two blended settings.
+const FADE_FIELDS: [&str; 2] = ["intensity", "strength"];
+
+impl PostProcessSettings {
+    /// Every setting's path, such as `"bloom.intensity"` or `"tonemapping"`, in
+    /// declaration order. Volumes list the paths they override.
+    pub fn setting_paths() -> Vec<String> {
+        let value = serde_json::to_value(Self::default()).unwrap_or(Value::Null);
+        let mut paths = Vec::new();
+        collect_leaf_paths(&value, String::new(), &mut paths);
+        paths
+    }
+
+    /// The setting paths a partial settings value (such as a JSON patch) contains.
+    pub fn paths_in(value: &Value) -> Vec<String> {
+        let mut paths = Vec::new();
+        collect_leaf_paths(value, String::new(), &mut paths);
+        paths
+    }
+
+    /// Blend toward `other` by `t`, but only the settings named in `overrides`: leaf paths
+    /// (`"bloom.intensity"`) or whole groups (`"bloom"`). Everything else keeps `self`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::collections::BTreeSet;
+    /// use wgpu_cube::renderer::postprocess::PostProcessSettings;
+    ///
+    /// let base = PostProcessSettings::default();
+    /// let mut volume = base.clone();
+    /// volume.exposure.compensation = 2.0;
+    /// volume.color.saturation = 0.0;
+    /// let only: BTreeSet<String> = ["exposure.compensation".to_string()].into();
+    /// let result = base.blend_overridden(&volume, 1.0, &only);
+    /// assert_eq!(result.exposure.compensation, 2.0);
+    /// assert_eq!(result.color.saturation, base.color.saturation);
+    /// ```
+    pub fn blend_overridden(&self, other: &Self, t: f32, overrides: &BTreeSet<String>) -> Self {
+        if overrides.is_empty() || t <= 0.0 {
+            return self.clone();
+        }
+        let blended = self.blend(other, t);
+        let (Ok(original), Ok(blended), Ok(target)) = (
+            serde_json::to_value(self),
+            serde_json::to_value(&blended),
+            serde_json::to_value(other),
+        ) else {
+            return self.clone();
+        };
+        let mut base = original.clone();
+        let mut leaves = Vec::new();
+        collect_leaf_paths(&original, String::new(), &mut leaves);
+        for path in leaves {
+            if !setting_overridden(&path, overrides) {
+                continue;
+            }
+            copy_path(&blended, &mut base, &path);
+            // Switching an effect on or off fades it through its strength, so that
+            // comes along even when only the switch is overridden.
+            if let Some(group) = path.strip_suffix(".enabled") {
+                let pointer = json_pointer(&path);
+                if original.pointer(&pointer) != target.pointer(&pointer) {
+                    for field in FADE_FIELDS {
+                        copy_path(&blended, &mut base, &format!("{group}.{field}"));
+                    }
+                }
+            }
+        }
+        serde_json::from_value(base).unwrap_or_else(|_| self.clone())
+    }
+}
+
+/// Whether `path` (a leaf such as `"bloom.intensity"`) is covered by `overrides`, which
+/// may name it or any of its parent groups.
+pub fn setting_overridden(path: &str, overrides: &BTreeSet<String>) -> bool {
+    if overrides.contains(path) {
+        return true;
+    }
+    path.match_indices('.')
+        .any(|(index, _)| overrides.contains(&path[..index]))
+}
+
+fn collect_leaf_paths(value: &Value, prefix: String, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect_leaf_paths(child, path, out);
+            }
+        }
+        _ if !prefix.is_empty() => out.push(prefix),
+        _ => {}
+    }
+}
+
+fn json_pointer(path: &str) -> String {
+    format!("/{}", path.replace('.', "/"))
+}
+
+fn copy_path(from: &Value, to: &mut Value, path: &str) {
+    let pointer = json_pointer(path);
+    if let (Some(source), Some(slot)) = (from.pointer(&pointer), to.pointer_mut(&pointer)) {
+        *slot = source.clone();
+    }
+}
+
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -935,6 +1053,59 @@ mod tests {
         assert_eq!(settings.bloom.threshold, 0.8);
         assert!((settings.bloom.knee - 0.5).abs() < 1e-6);
         assert!((settings.bloom.intensity - 6.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn overrides_blend_only_named_settings() {
+        let base = PostProcessSettings::default();
+        let mut volume = base.clone();
+        volume.exposure.compensation = 2.0;
+        volume.bloom.threshold = 3.0;
+        volume.bloom.scatter = 0.1;
+        volume.tonemapping = Tonemapper::Aces;
+
+        let group: BTreeSet<String> = ["bloom".to_string()].into();
+        let result = base.blend_overridden(&volume, 0.5, &group);
+        assert!((result.bloom.threshold - (base.bloom.threshold + 3.0) * 0.5).abs() < 1e-5);
+        assert_eq!(result.exposure.compensation, 0.0);
+        assert_eq!(result.tonemapping, base.tonemapping);
+
+        let leaves: BTreeSet<String> =
+            ["tonemapping".to_string(), "bloom.scatter".to_string()].into();
+        let result = base.blend_overridden(&volume, 1.0, &leaves);
+        assert_eq!(result.tonemapping, Tonemapper::Aces);
+        assert_eq!(result.bloom.scatter, 0.1);
+        assert_eq!(result.bloom.threshold, base.bloom.threshold);
+
+        assert_eq!(base.blend_overridden(&volume, 1.0, &BTreeSet::new()), base);
+    }
+
+    #[test]
+    fn overriding_enabled_fades_the_effect_in() {
+        let base = PostProcessSettings::default();
+        let mut volume = base.clone();
+        volume.vignette.enabled = true;
+        volume.vignette.intensity = 0.8;
+        let only: BTreeSet<String> = ["vignette.enabled".to_string()].into();
+        let half = base.blend_overridden(&volume, 0.5, &only);
+        assert!(half.vignette.enabled);
+        assert!((half.vignette.intensity - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn setting_paths_cover_every_leaf() {
+        let paths = PostProcessSettings::setting_paths();
+        assert!(paths.contains(&"bloom.intensity".to_string()));
+        assert!(paths.contains(&"tonemapping".to_string()));
+        assert!(paths.contains(&"color.lift".to_string()));
+        assert!(setting_overridden(
+            "color.lift",
+            &["color".to_string()].into()
+        ));
+        assert!(!setting_overridden(
+            "colorful",
+            &["color".to_string()].into()
+        ));
     }
 
     #[test]

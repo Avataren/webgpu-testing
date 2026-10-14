@@ -1340,9 +1340,21 @@ impl EditorApplication {
     /// change the picture until it is edited.
     pub(super) fn create_post_process_volume(ctx: &mut GpuUpdateContext) -> Option<Entity> {
         let settings = ctx.renderer.postprocess_settings().clone();
+        let first = ctx
+            .scene
+            .main_world()
+            .query::<&PostProcessVolume>()
+            .iter()
+            .next()
+            .is_none();
+        let volume = if first {
+            PostProcessVolume::infinite(settings)
+        } else {
+            PostProcessVolume::additional(settings)
+        };
         let entity = EntityBuilder::new(&mut ctx.scene)
             .with_name("Post Process Volume")
-            .with_component(PostProcessVolume::infinite(settings))
+            .with_component(volume)
             .spawn();
         Some(entity)
     }

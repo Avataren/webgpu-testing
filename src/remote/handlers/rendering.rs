@@ -302,7 +302,9 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
         .get::<&PostProcessVolume>(entity)
         .map(|volume| (*volume).clone())
         .map_err(|err| err.to_string())?;
-    volume.settings = patch_serde(&volume.settings, &settings_patch(params))?;
+    let patch = settings_patch(params);
+    volume.settings = patch_serde(&volume.settings, &patch)?;
+    volume.tick_overrides_for_patch(&patch);
     if let Some(volume_patch) = params.get("volume") {
         let settings = volume.settings.clone();
         volume = patch_serde(&volume, volume_patch)?;

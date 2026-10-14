@@ -47,7 +47,7 @@ fn invertible(matrix: Mat4) -> Option<Mat4> {
 
 /// The post-processing settings at `camera`: every enabled volume in `world` blended in
 /// order of priority (infinite volumes before bounded ones of the same priority), starting
-/// from the defaults. `None` when the world has no enabled volume.
+/// from the defaults. Each volume only changes the settings it overrides. `None` when the world has no enabled volume.
 pub fn blend_post_process_volumes(world: &World, camera: Vec3) -> Option<PostProcessSettings> {
     let mut volumes: Vec<(&PostProcessVolume, Mat4)> = Vec::new();
     let mut query = world.query::<(
@@ -74,7 +74,7 @@ pub fn blend_post_process_volumes(world: &World, camera: Vec3) -> Option<PostPro
     for (volume, transform) in volumes {
         let amount = volume.weight.clamp(0.0, 1.0) * volume_influence(volume, transform, camera);
         if amount > 0.0 {
-            settings = settings.blend(&volume.settings, amount);
+            settings = volume.apply(&settings, amount);
         }
     }
     Some(settings)
@@ -206,6 +206,28 @@ mod tests {
         world.spawn((weightless,));
         let settings = blend_post_process_volumes(&world, Vec3::ZERO).unwrap();
         assert_eq!(settings.exposure.compensation, 0.0);
+    }
+
+    #[test]
+    fn partial_volume_changes_only_its_overrides() {
+        let mut world = World::new();
+        let mut global = PostProcessVolume::default();
+        global.settings.color.saturation = 1.5;
+        global.settings.exposure.compensation = -1.0;
+        world.spawn((global,));
+        let mut local = bounded(
+            VolumeShape::Box {
+                size: [2.0, 2.0, 2.0],
+            },
+            3.0,
+        );
+        local.overrides = Some(["exposure.compensation".to_string()].into());
+        world.spawn((local, WorldTransform(Transform::IDENTITY)));
+
+        let inside = blend_post_process_volumes(&world, Vec3::ZERO).unwrap();
+        assert_eq!(inside.exposure.compensation, 3.0);
+        // The local volume's own (default) saturation does not leak in.
+        assert_eq!(inside.color.saturation, 1.5);
     }
 
     #[test]
