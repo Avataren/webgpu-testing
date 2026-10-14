@@ -1,0 +1,19 @@
+{
+  "assertions": [
+    {
+      "at_step": 10,
+      "code": "GAME.result=='defeat'",
+      "name": "party falls"
+    },
+    {
+      "code": "GAME.expeditions==2 and GAME.result==nil and GAME.heroes[1].gear.weapon.tier==0 and GAME.heroes[1].hp>0",
+      "name": "new expedition starts with fresh gear"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "lean": true,
+  "seed": 17,
+  "setup": "for _,h in ipairs(GAME.heroes) do h.hp=0 end",
+  "steps": 320
+}

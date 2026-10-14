@@ -1,0 +1,15 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.26,
+    "end_frequency": 55,
+    "frequency": 120,
+    "image": false,
+    "lowpass_hz": 1800,
+    "name": "bone",
+    "noise_mix": 0.8,
+    "preset": "hit",
+    "volume": 0.35
+  },
+  "version": 1
+}

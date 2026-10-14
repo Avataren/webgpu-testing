@@ -1,0 +1,13 @@
+{
+  "context": "Standalone native player, automatic gameplay resumed after reload",
+  "checks": {
+    "projectile_handles_exist": true,
+    "trap_marker_handle_exists": true,
+    "entity_count_before": 295,
+    "entity_count_after": 295,
+    "new_warning_count": 0,
+    "expedition_preserved": true,
+    "self_play_continued_to_victory": true
+  },
+  "workaround": "Resolve runtime-spawned effects by unique name on the first update and on_created after reload."
+}

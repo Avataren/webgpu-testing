@@ -1,0 +1,17 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "attack": 1,
+    "duration": 10,
+    "frequency": 30,
+    "image": false,
+    "lowpass_hz": 500,
+    "name": "embers",
+    "noise_mix": 1,
+    "preset": "tone",
+    "release": 1,
+    "volume": 0.05,
+    "waveform": "noise"
+  },
+  "version": 1
+}

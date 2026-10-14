@@ -1,0 +1,503 @@
+{
+  "step_seconds": 0.05,
+  "method": "Same gameplay tick as rendered sessions; only presentation disabled for the ten-seed sweep.",
+  "results": [
+    {
+      "defeats": 0,
+      "detected": 3,
+      "finishedAt": 710.3999999999016,
+      "hazardHits": 6,
+      "hp": [
+        70,
+        86,
+        93
+      ],
+      "kills": 51,
+      "loot": 19,
+      "mana": 45.422999999999824,
+      "phase": "victory",
+      "phaseTime": 0,
+      "position": [
+        1.928565505311678,
+        -634.8275976729584
+      ],
+      "potions": 5,
+      "pressure": 0.950084307193756,
+      "result": "victory",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 101,
+      "stops": 14,
+      "time": 710.3999999999016,
+      "upgrades": 16,
+      "victories": 1,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 3,
+      "finishedAt": 641.3999999999644,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 12,
+        "time": 498.05000000007897
+      },
+      "hazardHits": 6,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 41,
+      "loot": 15,
+      "mana": 30.66099999999952,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        62.4217858162501,
+        -492.5147775818471
+      ],
+      "potions": 0,
+      "pressure": 1.044027015529573,
+      "result": "defeat",
+      "room": 14,
+      "route": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "seed": 707,
+      "stops": 12,
+      "time": 641.3999999999644,
+      "upgrades": 12,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 3,
+      "finishedAt": 776.6999999998413,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 14,
+        "time": 655.7999999999513
+      },
+      "hazardHits": 12,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 50,
+      "loot": 18,
+      "mana": 16.704999999999444,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        2.5462496690084166,
+        -627.4535251014913
+      ],
+      "potions": 0,
+      "pressure": 1.1981178605556488,
+      "result": "defeat",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 1701,
+      "stops": 14,
+      "time": 776.6999999998413,
+      "upgrades": 13,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 0,
+      "detected": 3,
+      "finishedAt": 760.1499999998564,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 16,
+        "time": 707.9499999999039
+      },
+      "hazardHits": 4,
+      "hp": [
+        0,
+        27,
+        0
+      ],
+      "kills": 53,
+      "loot": 19,
+      "mana": 36.01999999999941,
+      "phase": "victory",
+      "phaseTime": 0,
+      "position": [
+        2.000000000342381,
+        -634.3764147621921
+      ],
+      "potions": 0,
+      "pressure": 0.9402323064953088,
+      "result": "victory",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 31001,
+      "stops": 14,
+      "time": 760.1499999998564,
+      "upgrades": 13,
+      "victories": 1,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 3,
+      "finishedAt": 767.6999999998495,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 15,
+        "time": 681.6499999999278
+      },
+      "hazardHits": 10,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 49,
+      "loot": 18,
+      "mana": 22.724999999998875,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        -2.828828137811227,
+        -625.4398330118124
+      ],
+      "potions": 0,
+      "pressure": 1.0529733338952063,
+      "result": "defeat",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 73013,
+      "stops": 14,
+      "time": 767.6999999998495,
+      "upgrades": 13,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 1,
+      "finishedAt": 812.4499999998088,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 16,
+        "time": 793.1499999998264
+      },
+      "hazardHits": 14,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 53,
+      "loot": 18,
+      "mana": 30.133999999998935,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        9.666591317937696,
+        -622.3101986575151
+      ],
+      "potions": 0,
+      "pressure": 1.1158190603926776,
+      "result": "defeat",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 8911,
+      "stops": 14,
+      "time": 812.4499999998088,
+      "upgrades": 12,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 3,
+      "finishedAt": 750.0499999998656,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 15,
+        "time": 659.8999999999476
+      },
+      "hazardHits": 8,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 48,
+      "loot": 18,
+      "mana": 83,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        -0.9999999999986112,
+        -609.319448589342
+      ],
+      "potions": 0,
+      "pressure": 1.0678441226109865,
+      "result": "defeat",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 91171,
+      "stops": 14,
+      "time": 750.0499999998656,
+      "upgrades": 12,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 3,
+      "finishedAt": 752.7499999998631,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 15,
+        "time": 655.2999999999518
+      },
+      "hazardHits": 4,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 49,
+      "loot": 18,
+      "mana": 83,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        5.04730980872909,
+        -622.1507040176513
+      ],
+      "potions": 0,
+      "pressure": 1.0634454184770583,
+      "result": "defeat",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 42117,
+      "stops": 14,
+      "time": 752.7499999998631,
+      "upgrades": 13,
+      "victories": 0,
+      "walkable": true
+    },
+    {
+      "defeats": 0,
+      "detected": 4,
+      "finishedAt": 742.3499999998726,
+      "hazardHits": 8,
+      "hp": [
+        74,
+        90,
+        70
+      ],
+      "kills": 54,
+      "loot": 19,
+      "mana": 20.55249999999941,
+      "phase": "victory",
+      "phaseTime": 0,
+      "position": [
+        1.957942496877166,
+        -634.8685606609025
+      ],
+      "potions": 3,
+      "pressure": 0.9980612394958734,
+      "result": "victory",
+      "room": 16,
+      "route": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "seed": 57177,
+      "stops": 14,
+      "time": 742.3499999998726,
+      "upgrades": 14,
+      "victories": 1,
+      "walkable": true
+    },
+    {
+      "defeats": 1,
+      "detected": 1,
+      "finishedAt": 721.9499999998911,
+      "firstFall": {
+        "name": "Ser Aldric",
+        "room": 15,
+        "time": 691.5499999999188
+      },
+      "hazardHits": 12,
+      "hp": [
+        0,
+        0,
+        0
+      ],
+      "kills": 47,
+      "loot": 17,
+      "mana": 15.374499999999426,
+      "phase": "defeat",
+      "phaseTime": 0,
+      "position": [
+        45.797251398787424,
+        -561.5868004382918
+      ],
+      "potions": 0,
+      "pressure": 1.0201537860184908,
+      "result": "defeat",
+      "room": 15,
+      "route": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "seed": 553,
+      "stops": 13,
+      "time": 721.9499999998911,
+      "upgrades": 10,
+      "victories": 0,
+      "walkable": true
+    }
+  ]
+}

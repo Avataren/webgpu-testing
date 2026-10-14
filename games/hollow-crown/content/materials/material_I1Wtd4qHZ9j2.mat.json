@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    135,
+    148,
+    136,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/abbey_stone_base_color.png",
+    "name": "abbey_stone_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/abbey_stone_metallic_roughness.png",
+    "name": "abbey_stone_metallic_roughness.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/abbey_stone_normal.png",
+    "name": "abbey_stone_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/abbey_stone_occlusion.png",
+    "name": "abbey_stone_occlusion.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.55,
+    "end_frequency": 900,
+    "frequency": 180,
+    "image": false,
+    "name": "arcane",
+    "noise_mix": 0.1,
+    "preset": "powerup",
+    "volume": 0.4,
+    "waveform": "sine"
+  },
+  "version": 1
+}

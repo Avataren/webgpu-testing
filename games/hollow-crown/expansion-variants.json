@@ -1,0 +1,1673 @@
+[
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "empty",
+      "name": "Enemy12",
+      "visible": false,
+      "scale": 1.1,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy12Carapace",
+      "parent": "Enemy12",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0,
+            0.68,
+            0.1
+          ],
+          "scale": [
+            0.52,
+            0.34,
+            0.73
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0,
+            0.65,
+            -0.65
+          ],
+          "scale": [
+            0.38,
+            0.25,
+            0.35
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#253332",
+        "roughness": 0.4,
+        "metallic": 0.3
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy12Legs",
+      "parent": "Enemy12",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.75,
+            0.975,
+            -0.7150000000000001
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.1051696702316798
+          ],
+          "rotation": [
+            -29.845382650091025,
+            -110.13630342824814,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.5499999999999998,
+            0.685,
+            -1.1275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.4184234205624215
+          ],
+          "rotation": [
+            52.81224882454291,
+            -125.26576765934561,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.2,
+            1.25,
+            -0.8800000000000001
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.75,
+            0.975,
+            -0.7150000000000001
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.1051696702316798
+          ],
+          "rotation": [
+            -29.845382650091025,
+            110.13630342824814,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.5499999999999998,
+            0.685,
+            -1.1275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.4184234205624215
+          ],
+          "rotation": [
+            52.81224882454291,
+            125.26576765934561,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.2,
+            1.25,
+            -0.8800000000000001
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.9,
+            0.975,
+            -0.20500000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3246131510746826
+          ],
+          "rotation": [
+            -24.532892468400778,
+            -95.23747606681252,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.7,
+            0.685,
+            -0.3425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.2100103305344132
+          ],
+          "rotation": [
+            69.04735908277414,
+            -112.41614747934366,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.5,
+            1.25,
+            -0.26
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.9,
+            0.975,
+            -0.20500000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3246131510746826
+          ],
+          "rotation": [
+            -24.532892468400778,
+            95.23747606681252,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.7,
+            0.685,
+            -0.3425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.2100103305344132
+          ],
+          "rotation": [
+            69.04735908277414,
+            112.41614747934366,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.5,
+            1.25,
+            -0.26
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.75,
+            0.975,
+            0.305
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.0604715932074749
+          ],
+          "rotation": [
+            -31.2408807646136,
+            -83.03174325862146,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.5499999999999998,
+            0.685,
+            0.4425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.3394495137928861
+          ],
+          "rotation": [
+            57.525463933828426,
+            -76.73667125659367,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.2,
+            1.25,
+            0.36
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.75,
+            0.975,
+            0.305
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.0604715932074749
+          ],
+          "rotation": [
+            -31.2408807646136,
+            83.03174325862146,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.5499999999999998,
+            0.685,
+            0.4425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.3394495137928861
+          ],
+          "rotation": [
+            57.525463933828426,
+            76.73667125659367,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.2,
+            1.25,
+            0.36
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.9,
+            0.975,
+            0.8150000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3606616037795731
+          ],
+          "rotation": [
+            -23.84195217180087,
+            -74.6237487511738,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.7,
+            0.685,
+            1.2275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.296890511955423
+          ],
+          "rotation": [
+            60.61179832772796,
+            -38.94101227602167,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.5,
+            1.25,
+            0.9800000000000002
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.9,
+            0.975,
+            0.8150000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3606616037795731
+          ],
+          "rotation": [
+            -23.84195217180087,
+            74.6237487511738,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.7,
+            0.685,
+            1.2275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.296890511955423
+          ],
+          "rotation": [
+            60.61179832772796,
+            38.94101227602167,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.5,
+            1.25,
+            0.9800000000000002
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#374944",
+        "roughness": 0.65
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy12Eyes",
+      "parent": "Enemy12",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.24,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.144,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.04799999999999999,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.04800000000000004,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.14400000000000002,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.24,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#c8a646",
+        "emissive": 0.8,
+        "unlit": true
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "empty",
+      "name": "Enemy12Weapon",
+      "parent": "Enemy12",
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "empty",
+      "name": "Enemy13",
+      "visible": false,
+      "scale": 1.1,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy13Carapace",
+      "parent": "Enemy13",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0,
+            0.68,
+            0.1
+          ],
+          "scale": [
+            0.52,
+            0.34,
+            0.73
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0,
+            0.65,
+            -0.65
+          ],
+          "scale": [
+            0.38,
+            0.25,
+            0.35
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#253332",
+        "roughness": 0.4,
+        "metallic": 0.3
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy13Legs",
+      "parent": "Enemy13",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.75,
+            0.975,
+            -0.7150000000000001
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.1051696702316798
+          ],
+          "rotation": [
+            -29.845382650091025,
+            -110.13630342824814,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.5499999999999998,
+            0.685,
+            -1.1275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.4184234205624215
+          ],
+          "rotation": [
+            52.81224882454291,
+            -125.26576765934561,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.2,
+            1.25,
+            -0.8800000000000001
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.75,
+            0.975,
+            -0.7150000000000001
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.1051696702316798
+          ],
+          "rotation": [
+            -29.845382650091025,
+            110.13630342824814,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.5499999999999998,
+            0.685,
+            -1.1275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.4184234205624215
+          ],
+          "rotation": [
+            52.81224882454291,
+            125.26576765934561,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.2,
+            1.25,
+            -0.8800000000000001
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.9,
+            0.975,
+            -0.20500000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3246131510746826
+          ],
+          "rotation": [
+            -24.532892468400778,
+            -95.23747606681252,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.7,
+            0.685,
+            -0.3425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.2100103305344132
+          ],
+          "rotation": [
+            69.04735908277414,
+            -112.41614747934366,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.5,
+            1.25,
+            -0.26
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.9,
+            0.975,
+            -0.20500000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3246131510746826
+          ],
+          "rotation": [
+            -24.532892468400778,
+            95.23747606681252,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.7,
+            0.685,
+            -0.3425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.2100103305344132
+          ],
+          "rotation": [
+            69.04735908277414,
+            112.41614747934366,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.5,
+            1.25,
+            -0.26
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.75,
+            0.975,
+            0.305
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.0604715932074749
+          ],
+          "rotation": [
+            -31.2408807646136,
+            -83.03174325862146,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.5499999999999998,
+            0.685,
+            0.4425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.3394495137928861
+          ],
+          "rotation": [
+            57.525463933828426,
+            -76.73667125659367,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.2,
+            1.25,
+            0.36
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.75,
+            0.975,
+            0.305
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.0604715932074749
+          ],
+          "rotation": [
+            -31.2408807646136,
+            83.03174325862146,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.5499999999999998,
+            0.685,
+            0.4425
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.3394495137928861
+          ],
+          "rotation": [
+            57.525463933828426,
+            76.73667125659367,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.2,
+            1.25,
+            0.36
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -0.9,
+            0.975,
+            0.8150000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3606616037795731
+          ],
+          "rotation": [
+            -23.84195217180087,
+            -74.6237487511738,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            -1.7,
+            0.685,
+            1.2275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.296890511955423
+          ],
+          "rotation": [
+            60.61179832772796,
+            -38.94101227602167,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -1.5,
+            1.25,
+            0.9800000000000002
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            0.9,
+            0.975,
+            0.8150000000000002
+          ],
+          "scale": [
+            0.075,
+            0.075,
+            1.3606616037795731
+          ],
+          "rotation": [
+            -23.84195217180087,
+            74.6237487511738,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cylinder",
+          "translation": [
+            1.7,
+            0.685,
+            1.2275
+          ],
+          "scale": [
+            0.065,
+            0.065,
+            1.296890511955423
+          ],
+          "rotation": [
+            60.61179832772796,
+            38.94101227602167,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            1.5,
+            1.25,
+            0.9800000000000002
+          ],
+          "scale": [
+            0.105,
+            0.105,
+            0.105
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#374944",
+        "roughness": 0.65
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "Enemy13Eyes",
+      "parent": "Enemy13",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.24,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.144,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -0.04799999999999999,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.04800000000000004,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.14400000000000002,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            0.24,
+            0.78,
+            -0.92
+          ],
+          "scale": [
+            0.045,
+            0.045,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#c8a646",
+        "emissive": 0.8,
+        "unlit": true
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "empty",
+      "name": "Enemy13Weapon",
+      "parent": "Enemy13",
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy7Blade",
+      "visible": false,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_sweep",
+    "arguments": {
+      "name": "Enemy7Bow",
+      "parent": "Enemy7Weapon",
+      "path": [
+        [
+          0,
+          -0.6,
+          0
+        ],
+        [
+          0.22,
+          0,
+          -0.18
+        ],
+        [
+          0,
+          0.6,
+          0
+        ]
+      ],
+      "radius": 0.045,
+      "segments": 8,
+      "material": {
+        "color": "#846548",
+        "roughness": 0.7
+      }
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy8Blade",
+      "visible": false,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_sweep",
+    "arguments": {
+      "name": "Enemy8Bow",
+      "parent": "Enemy8Weapon",
+      "path": [
+        [
+          0,
+          -0.6,
+          0
+        ],
+        [
+          0.22,
+          0,
+          -0.18
+        ],
+        [
+          0,
+          0.6,
+          0
+        ]
+      ],
+      "radius": 0.045,
+      "segments": 8,
+      "material": {
+        "color": "#846548",
+        "roughness": 0.7
+      }
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy9Eyes",
+      "material": {
+        "color": "#648ab5",
+        "emissive": 1
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy14Eyes",
+      "material": {
+        "color": "#648ab5",
+        "emissive": 1
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy15Eyes",
+      "material": {
+        "color": "#648ab5",
+        "emissive": 1
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy18Eyes",
+      "material": {
+        "color": "#bc93ed",
+        "emissive": 1
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy9Crown",
+      "visible": false,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy14Crown",
+      "visible": false,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "entity_update",
+    "arguments": {
+      "entity": "Enemy15Crown",
+      "visible": false,
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "KnightAxe",
+      "parent": "KnightWeapon",
+      "visible": false,
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.2,
+            -0.2
+          ],
+          "scale": [
+            0.06,
+            1.1,
+            0.07
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "extrude",
+          "polygon": [
+            [
+              -0.08,
+              0.32
+            ],
+            [
+              0.32,
+              0.5
+            ],
+            [
+              0.4,
+              0.75
+            ],
+            [
+              0.18,
+              0.92
+            ],
+            [
+              -0.08,
+              0.8
+            ]
+          ],
+          "depth": 0.1,
+          "bevel": 0.02,
+          "translation": [
+            0,
+            0,
+            -0.2
+          ]
+        }
+      ],
+      "material": {
+        "color": "#b9c6c7",
+        "metallic": 0.8,
+        "roughness": 0.35
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "RangerCrossbow",
+      "parent": "RangerWeapon",
+      "visible": false,
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            0.13,
+            0.16,
+            0.75
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0,
+            -0.26
+          ],
+          "scale": [
+            0.65,
+            0.055,
+            0.07
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.1,
+            -0.22
+          ],
+          "scale": [
+            0.5,
+            0.02,
+            0.02
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#98744b",
+        "roughness": 0.45,
+        "metallic": 0.3
+      }
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "MageRunes",
+      "parent": "MageWeapon",
+      "visible": false,
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "torus",
+          "translation": [
+            0,
+            1.07,
+            0
+          ],
+          "scale": [
+            0.15,
+            0.15,
+            0.05
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            1.07,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.36,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#8a79cd",
+        "emissive": 0.6,
+        "unlit": true
+      }
+    }
+  }
+]

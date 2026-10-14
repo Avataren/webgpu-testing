@@ -1,0 +1,15 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.2,
+    "end_frequency": 85,
+    "frequency": 340,
+    "image": false,
+    "lowpass_hz": 3000,
+    "name": "steel",
+    "noise_mix": 0.68,
+    "preset": "hit",
+    "volume": 0.45
+  },
+  "version": 1
+}

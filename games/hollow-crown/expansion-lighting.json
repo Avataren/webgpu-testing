@@ -1,0 +1,278 @@
+[
+  {
+    "tool": "mesh_lathe",
+    "arguments": {
+      "name": "Torch147iron",
+      "parent": "Room13",
+      "translation": [
+        -13,
+        0,
+        0
+      ],
+      "profile": [
+        [
+          0.4,
+          0
+        ],
+        [
+          0.4,
+          0.15
+        ],
+        [
+          0.15,
+          0.25
+        ],
+        [
+          0.12,
+          1.5
+        ],
+        [
+          0.47,
+          1.72
+        ],
+        [
+          0.43,
+          1.86
+        ]
+      ],
+      "segments": 10,
+      "material": {
+        "color": "#2d3940",
+        "metallic": 0.7,
+        "roughness": 0.5
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "sphere",
+      "name": "Torch147",
+      "parent": "Room13",
+      "translation": [
+        -13,
+        2.05,
+        0
+      ],
+      "scale": [
+        0.22,
+        0.42,
+        0.22
+      ],
+      "cast_shadow": false,
+      "material": {
+        "color": "#ff5712",
+        "emissive": 1.35,
+        "unlit": true
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_lathe",
+    "arguments": {
+      "name": "Torch148iron",
+      "parent": "Room13",
+      "translation": [
+        13,
+        0,
+        0
+      ],
+      "profile": [
+        [
+          0.4,
+          0
+        ],
+        [
+          0.4,
+          0.15
+        ],
+        [
+          0.15,
+          0.25
+        ],
+        [
+          0.12,
+          1.5
+        ],
+        [
+          0.47,
+          1.72
+        ],
+        [
+          0.43,
+          1.86
+        ]
+      ],
+      "segments": 10,
+      "material": {
+        "color": "#2d3940",
+        "metallic": 0.7,
+        "roughness": 0.5
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "sphere",
+      "name": "Torch148",
+      "parent": "Room13",
+      "translation": [
+        13,
+        2.05,
+        0
+      ],
+      "scale": [
+        0.22,
+        0.42,
+        0.22
+      ],
+      "cast_shadow": false,
+      "material": {
+        "color": "#ff5712",
+        "emissive": 1.35,
+        "unlit": true
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_lathe",
+    "arguments": {
+      "name": "Torch149iron",
+      "parent": "Room13",
+      "translation": [
+        -4,
+        0,
+        -13
+      ],
+      "profile": [
+        [
+          0.4,
+          0
+        ],
+        [
+          0.4,
+          0.15
+        ],
+        [
+          0.15,
+          0.25
+        ],
+        [
+          0.12,
+          1.5
+        ],
+        [
+          0.47,
+          1.72
+        ],
+        [
+          0.43,
+          1.86
+        ]
+      ],
+      "segments": 10,
+      "material": {
+        "color": "#2d3940",
+        "metallic": 0.7,
+        "roughness": 0.5
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "sphere",
+      "name": "Torch149",
+      "parent": "Room13",
+      "translation": [
+        -4,
+        2.05,
+        -13
+      ],
+      "scale": [
+        0.22,
+        0.42,
+        0.22
+      ],
+      "cast_shadow": false,
+      "material": {
+        "color": "#ff5712",
+        "emissive": 1.35,
+        "unlit": true
+      },
+      "quiet": true
+    }
+  },
+  {
+    "tool": "mesh_lathe",
+    "arguments": {
+      "name": "Torch150iron",
+      "parent": "Room13",
+      "translation": [
+        4,
+        0,
+        13
+      ],
+      "profile": [
+        [
+          0.4,
+          0
+        ],
+        [
+          0.4,
+          0.15
+        ],
+        [
+          0.15,
+          0.25
+        ],
+        [
+          0.12,
+          1.5
+        ],
+        [
+          0.47,
+          1.72
+        ],
+        [
+          0.43,
+          1.86
+        ]
+      ],
+      "segments": 10,
+      "material": {
+        "color": "#2d3940",
+        "metallic": 0.7,
+        "roughness": 0.5
+      }
+    }
+  },
+  {
+    "tool": "entity_spawn",
+    "arguments": {
+      "kind": "sphere",
+      "name": "Torch150",
+      "parent": "Room13",
+      "translation": [
+        4,
+        2.05,
+        13
+      ],
+      "scale": [
+        0.22,
+        0.42,
+        0.22
+      ],
+      "cast_shadow": false,
+      "material": {
+        "color": "#ff5712",
+        "emissive": 1.35,
+        "unlit": true
+      },
+      "quiet": true
+    }
+  }
+]

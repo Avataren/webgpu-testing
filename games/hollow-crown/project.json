@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "hollow-crown",
+    "description": "An atmospheric fantasy dungeon crawler with autonomous adventurers, branching routes, equipment upgrades, traps, and minibosses."
+  },
+  "scenes": [
+    {
+      "id": "FFOOtdhCiDYQ",
+      "name": "hollow-crown",
+      "relative_path": "content/scenes/FFOOtdhCiDYQ.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.0313725508749485,
+      0.054901961237192154,
+      0.0784313753247261,
+      1.0
+    ],
+    "ambient_intensity": 0.16,
+    "hdr": null
+  },
+  "engine_camera": {
+    "eye": [
+      18.0,
+      27.0,
+      28.0
+    ],
+    "target": [
+      0.0,
+      0.0,
+      -2.0
+    ],
+    "up": [
+      -0.40329453,
+      0.74780923,
+      -0.52738506
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 0.7853982,
+      "near": 0.1,
+      "far": 140.0
+    }
+  },
+  "imports": []
+}

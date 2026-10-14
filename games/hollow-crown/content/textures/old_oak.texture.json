@@ -1,0 +1,21 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#261b16",
+      "#62422a"
+    ],
+    "image": false,
+    "name": "old_oak",
+    "normal_strength": 0.03,
+    "pattern": "wood",
+    "roughness": 0.81,
+    "scale": 3,
+    "seed": 7,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

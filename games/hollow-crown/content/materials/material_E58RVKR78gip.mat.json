@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    177,
+    185,
+    179,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/crypt_paving_base_color.png",
+    "name": "crypt_paving_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/crypt_paving_metallic_roughness.png",
+    "name": "crypt_paving_metallic_roughness.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/crypt_paving_normal.png",
+    "name": "crypt_paving_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/crypt_paving_occlusion.png",
+    "name": "crypt_paving_occlusion.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

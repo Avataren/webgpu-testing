@@ -1,0 +1,19 @@
+{
+  "assertions": [
+    {
+      "code": "GAME.result == 'defeat' and GAME.fallen >= 3",
+      "name": "loss is possible"
+    },
+    {
+      "code": "GAME.stop >= 8 and GAME.elapsed > 400 and GAME.upgrades >= 5",
+      "name": "substantial progress before defeat"
+    }
+  ],
+  "dt": 0.1,
+  "entity": "DungeonDirector",
+  "eval": "return RT.status()",
+  "lean": true,
+  "seed": 17,
+  "setup": "RT.restart(707);GAME.solo=true",
+  "steps": 9000
+}

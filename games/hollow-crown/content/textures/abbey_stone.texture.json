@@ -1,0 +1,21 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#444a4d",
+      "#8c8f87"
+    ],
+    "image": false,
+    "name": "abbey_stone",
+    "normal_strength": 0.035,
+    "pattern": "noise",
+    "roughness": 0.89,
+    "scale": 9,
+    "seed": 13,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

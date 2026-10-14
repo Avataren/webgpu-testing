@@ -1,0 +1,18 @@
+{
+  "assertions": [
+    {
+      "code": "GAME.victories >= 2 and GAME.expeditions >= 3",
+      "name": "repeat victories"
+    },
+    {
+      "code": "GAME.potions >= 0 and GAME.heroes[3].mana >= 0 and RT.walkable()",
+      "name": "valid resources"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "eval": "return RT.status()",
+  "lean": true,
+  "seed": 71,
+  "steps": 6800
+}

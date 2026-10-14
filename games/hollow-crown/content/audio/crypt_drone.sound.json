@@ -1,0 +1,20 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "attack": 1.5,
+    "duration": 10,
+    "end_frequency": 55,
+    "frequency": 55,
+    "image": false,
+    "lowpass_hz": 140,
+    "name": "crypt_drone",
+    "noise_mix": 0.15,
+    "preset": "tone",
+    "release": 1.5,
+    "vibrato_depth": 0.015,
+    "vibrato_hz": 0.2,
+    "volume": 0.22,
+    "waveform": "sine"
+  },
+  "version": 1
+}

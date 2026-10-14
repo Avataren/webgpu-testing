@@ -1,0 +1,263 @@
+{
+  "first": {
+    "assets": {
+      "materials": 243,
+      "meshes": 93,
+      "textures": 12
+    },
+    "entities": 295,
+    "fps": 74.4,
+    "frame": 2109,
+    "frame_breakdown": {
+      "animations": {
+        "avg_ms": 0.074,
+        "last_ms": 0.0834
+      },
+      "gpu_systems": {
+        "avg_ms": 0.7053,
+        "last_ms": 0.5869
+      },
+      "present": {
+        "avg_ms": 0.1339,
+        "last_ms": 0.118
+      },
+      "render_collect": {
+        "avg_ms": 0.9457,
+        "last_ms": 0.8547
+      },
+      "render_gpu": {
+        "avg_ms": 4.9488,
+        "last_ms": 4.5783
+      },
+      "script_assets": {
+        "avg_ms": 0.0492,
+        "last_ms": 0.0448
+      },
+      "scripts": {
+        "avg_ms": 0.4806,
+        "last_ms": 1.4665
+      },
+      "transforms": {
+        "avg_ms": 0.7749,
+        "last_ms": 0.7965
+      },
+      "ui_build": {
+        "avg_ms": 0.9589,
+        "last_ms": 0.8957
+      },
+      "ui_render": {
+        "avg_ms": 0.8781,
+        "last_ms": 0.6687
+      },
+      "update_systems": {
+        "avg_ms": 0.4009,
+        "last_ms": 0.3307
+      }
+    },
+    "frame_breakdown_note": "Time per stage of the engine's frame loop (avg is a running average). The stages sum to 10.4 ms; the rest of frame_time_ms is waiting for the display (vsync) and window events. scripts = Lua update/on_created; render_collect = gathering visible meshes; render_gpu = batching, uploads and recording/submitting GPU passes; present may block on vsync; ui_build/ui_render = egui; gpu_systems = editor systems, particles and remote commands. Measure game performance in the player: the editor's UI and systems add their own cost.",
+    "frame_time_ms": 13.4338,
+    "renderer": {
+      "batches": 89,
+      "draw_calls": 269,
+      "instances": 201,
+      "opaque_draw_calls": 99,
+      "shadow_draw_calls": 81,
+      "transparent_draw_calls": 0
+    },
+    "script_timings": [
+      {
+        "cpu_ms": 774.7214729999981,
+        "entity": 4294967456,
+        "invocations": 4222,
+        "source": "game.lua"
+      }
+    ],
+    "scripts": 1
+  },
+  "frame_time_ms": {
+    "max": 17.6203,
+    "median": 13.1876,
+    "p95": 14.812,
+    "p99": 15.4701
+  },
+  "growth": {
+    "/assets/materials": {
+      "change": 0,
+      "first": 243,
+      "last": 243
+    },
+    "/assets/meshes": {
+      "change": 0,
+      "first": 93,
+      "last": 93
+    },
+    "/assets/textures": {
+      "change": 0,
+      "first": 12,
+      "last": 12
+    },
+    "/entities": {
+      "change": 0,
+      "first": 295,
+      "last": 295
+    },
+    "/scripts": {
+      "change": 0,
+      "first": 1,
+      "last": 1
+    }
+  },
+  "last": {
+    "assets": {
+      "materials": 243,
+      "meshes": 93,
+      "textures": 12
+    },
+    "entities": 295,
+    "fps": 65,
+    "frame": 2408,
+    "frame_breakdown": {
+      "animations": {
+        "avg_ms": 0.0738,
+        "last_ms": 0.0762
+      },
+      "gpu_systems": {
+        "avg_ms": 0.7262,
+        "last_ms": 0.6821
+      },
+      "present": {
+        "avg_ms": 0.1346,
+        "last_ms": 0.1467
+      },
+      "render_collect": {
+        "avg_ms": 0.9301,
+        "last_ms": 0.9008
+      },
+      "render_gpu": {
+        "avg_ms": 4.8824,
+        "last_ms": 4.7628
+      },
+      "script_assets": {
+        "avg_ms": 0.0485,
+        "last_ms": 0.0487
+      },
+      "scripts": {
+        "avg_ms": 0.3809,
+        "last_ms": 0.3646
+      },
+      "transforms": {
+        "avg_ms": 0.774,
+        "last_ms": 0.8038
+      },
+      "ui_build": {
+        "avg_ms": 0.6597,
+        "last_ms": 0.7199
+      },
+      "ui_render": {
+        "avg_ms": 0.8579,
+        "last_ms": 0.8627
+      },
+      "update_systems": {
+        "avg_ms": 0.3935,
+        "last_ms": 0.8439
+      }
+    },
+    "frame_breakdown_note": "Time per stage of the engine's frame loop (avg is a running average). The stages sum to 9.9 ms; the rest of frame_time_ms is waiting for the display (vsync) and window events. scripts = Lua update/on_created; render_collect = gathering visible meshes; render_gpu = batching, uploads and recording/submitting GPU passes; present may block on vsync; ui_build/ui_render = egui; gpu_systems = editor systems, particles and remote commands. Measure game performance in the player: the editor's UI and systems add their own cost.",
+    "frame_time_ms": 15.382,
+    "renderer": {
+      "batches": 89,
+      "draw_calls": 269,
+      "instances": 201,
+      "opaque_draw_calls": 99,
+      "shadow_draw_calls": 81,
+      "transparent_draw_calls": 0
+    },
+    "script_timings": [
+      {
+        "cpu_ms": 876.4929010000002,
+        "entity": 4294967456,
+        "invocations": 4820,
+        "source": "game.lua"
+      }
+    ],
+    "scripts": 1
+  },
+  "samples": 300,
+  "slow_scripts": [
+    {
+      "cpu_ms": 101.77142800000206,
+      "entity": 4294967456,
+      "invocations": 598,
+      "source": "game.lua"
+    }
+  ],
+  "stages_ms": {
+    "animations": {
+      "max": 0.1388,
+      "median": 0.0686,
+      "p95": 0.095,
+      "p99": 0.1129
+    },
+    "gpu_systems": {
+      "max": 1.1334,
+      "median": 0.7053,
+      "p95": 0.9358,
+      "p99": 1.0072
+    },
+    "present": {
+      "max": 0.337,
+      "median": 0.1271,
+      "p95": 0.1626,
+      "p99": 0.2463
+    },
+    "render_collect": {
+      "max": 2.2432,
+      "median": 0.9065,
+      "p95": 1.3025,
+      "p99": 1.7519
+    },
+    "render_gpu": {
+      "max": 5.769,
+      "median": 4.7863,
+      "p95": 5.3315,
+      "p99": 5.5903
+    },
+    "script_assets": {
+      "max": 0.1064,
+      "median": 0.0443,
+      "p95": 0.0677,
+      "p99": 0.0766
+    },
+    "scripts": {
+      "max": 2.7443,
+      "median": 0.3583,
+      "p95": 0.5501,
+      "p99": 1.4665
+    },
+    "transforms": {
+      "max": 1.1029,
+      "median": 0.7636,
+      "p95": 0.9346,
+      "p99": 1.0237
+    },
+    "ui_build": {
+      "max": 1.3147,
+      "median": 0.6368,
+      "p95": 0.9404,
+      "p99": 1.1588
+    },
+    "ui_render": {
+      "max": 1.3795,
+      "median": 0.8347,
+      "p95": 1.1117,
+      "p99": 1.1841
+    },
+    "update_systems": {
+      "max": 1.1774,
+      "median": 0.3145,
+      "p95": 0.8263,
+      "p99": 1.007
+    }
+  },
+  "timing_scope": "CPU frame/stage timings; render_gpu measures submission, not GPU execution. Vsync and window waits affect frame time."
+}

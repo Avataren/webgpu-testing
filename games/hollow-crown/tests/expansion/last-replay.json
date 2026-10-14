@@ -1,0 +1,343 @@
+{
+  "victory": {
+    "assertions": [
+      {
+        "at_step": 1500,
+        "name": "first upgrades",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 5500,
+        "name": "larger map stays walkable",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 9500,
+        "name": "complete long expedition",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 9500,
+        "name": "valid gear and resources",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "eval": {
+      "printed": [],
+      "result": {
+        "defeats": 0,
+        "detected": 3,
+        "finishedAt": 710.3999999999016,
+        "hazardHits": 6,
+        "hp": [
+          70,
+          86,
+          93
+        ],
+        "kills": 51,
+        "loot": 19,
+        "mana": 45.422999999999824,
+        "phase": "victory",
+        "potions": 5,
+        "pressure": 0.950084307193756,
+        "result": "victory",
+        "room": 16,
+        "route": [
+          1,
+          2,
+          3,
+          5,
+          6,
+          7,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "seed": 101,
+        "stops": 14,
+        "time": 710.3999999999016,
+        "upgrades": 16,
+        "victories": 1
+      }
+    },
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.1,
+      "game_time": 950.0000000001476,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 9500,
+      "steps": 4000
+    },
+    "warnings": []
+  },
+  "defeat": {
+    "assertions": [
+      {
+        "at_step": 9000,
+        "name": "loss is possible",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 9000,
+        "name": "substantial progress before defeat",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "eval": {
+      "printed": [],
+      "result": {
+        "defeats": 1,
+        "detected": 3,
+        "finishedAt": 641.3999999999644,
+        "firstFall": {
+          "name": "Ser Aldric",
+          "room": 12,
+          "time": 498.05000000007897
+        },
+        "hazardHits": 6,
+        "hp": [
+          0,
+          0,
+          0
+        ],
+        "kills": 41,
+        "loot": 15,
+        "mana": 30.66099999999952,
+        "phase": "defeat",
+        "potions": 0,
+        "pressure": 1.044027015529573,
+        "result": "defeat",
+        "room": 14,
+        "route": [
+          1,
+          2,
+          4,
+          5,
+          6,
+          7,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "seed": 707,
+        "stops": 12,
+        "time": 641.3999999999644,
+        "upgrades": 12,
+        "victories": 0
+      }
+    },
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.1,
+      "game_time": 900.0000000001361,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 9000,
+      "steps": 9000
+    },
+    "warnings": []
+  },
+  "equipment": {
+    "assertions": [
+      {
+        "at_step": 2,
+        "name": "upgrade affects attacks",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 2,
+        "name": "weaker loot rejected",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 2,
+        "name": "class restrictions honored",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 2,
+        "name": "armor adds protection without free healing",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.05,
+      "game_time": 0.1,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 2,
+      "steps": 2
+    },
+    "warnings": []
+  },
+  "recovery": {
+    "assertions": [
+      {
+        "at_step": 10,
+        "name": "party falls",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 320,
+        "name": "new expedition starts with fresh gear",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.05,
+      "game_time": 16.000000000000092,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 320,
+      "steps": 310
+    },
+    "warnings": []
+  },
+  "manual": {
+    "assertions": [
+      {
+        "at_step": 62,
+        "name": "manual movement",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 80,
+        "name": "pause",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      },
+      {
+        "at_step": 150,
+        "name": "resume and equipment",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.05,
+      "game_time": 7.499999999999981,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 150,
+      "steps": 70
+    },
+    "warnings": []
+  },
+  "manual-arrival": {
+    "assertions": [
+      {
+        "at_step": 1,
+        "name": "manual route arrival without exact waypoints",
+        "observed": {
+          "printed": [],
+          "result": true
+        },
+        "passed": true
+      }
+    ],
+    "failing_scripts": [],
+    "first_failure": null,
+    "ok": true,
+    "stopped": "the scene is back to its state before play",
+    "time_scale": 0.0,
+    "waited": {
+      "dt": 0.05,
+      "game_time": 0.05,
+      "manual": true,
+      "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+      "simulation_steps": 1,
+      "steps": 1
+    },
+    "warnings": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "assertions": [
+    {
+      "at_step": 10,
+      "code": "GAME.phase == 'defeat' and GAME.defeats == 1",
+      "name": "party defeat"
+    },
+    {
+      "code": "GAME.expeditions == 2 and GAME.heroes[1].hp == GAME.heroes[1].maxhp",
+      "name": "automatic recovery"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "eval": "return RT.status()",
+  "lean": true,
+  "seed": 6,
+  "setup": "for _,h in ipairs(GAME.heroes) do h.hp=0 end",
+  "steps": 200
+}

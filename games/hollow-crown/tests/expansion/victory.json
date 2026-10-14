@@ -1,0 +1,29 @@
+{
+  "assertions": [
+    {
+      "at_step": 1500,
+      "code": "GAME.stop >= 3 and GAME.upgrades > 0",
+      "name": "first upgrades"
+    },
+    {
+      "at_step": 5500,
+      "code": "RT.walkable() and GAME.stop >= 8",
+      "name": "larger map stays walkable"
+    },
+    {
+      "code": "GAME.result == 'victory' and GAME.elapsed > 600 and GAME.stop == 14",
+      "name": "complete long expedition"
+    },
+    {
+      "code": "GAME.potions >= 0 and GAME.heroes[3].mana >= 0 and GAME.upgrades >= 8",
+      "name": "valid gear and resources"
+    }
+  ],
+  "dt": 0.1,
+  "entity": "DungeonDirector",
+  "eval": "return RT.status()",
+  "lean": true,
+  "seed": 17,
+  "setup": "RT.restart(101);GAME.solo=true",
+  "steps": 9500
+}

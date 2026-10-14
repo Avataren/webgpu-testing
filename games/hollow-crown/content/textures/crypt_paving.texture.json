@@ -1,0 +1,21 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#303c3c",
+      "#666b60"
+    ],
+    "image": false,
+    "name": "crypt_paving",
+    "normal_strength": 0.025,
+    "pattern": "voronoi",
+    "roughness": 0.64,
+    "scale": 4,
+    "seed": 31,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

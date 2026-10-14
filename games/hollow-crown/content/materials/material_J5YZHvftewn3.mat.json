@@ -1,0 +1,26 @@
+{
+  "base_color": [
+    165,
+    133,
+    91,
+    255
+  ],
+  "flags": 5,
+  "base_color_texture": {
+    "path": "content/textures/old_oak_base_color.png",
+    "name": "old_oak_base_color.png"
+  },
+  "metallic_roughness_texture": 0,
+  "normal_texture": {
+    "path": "content/textures/old_oak_normal.png",
+    "name": "old_oak_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 0,
+  "roughness_factor": 217,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

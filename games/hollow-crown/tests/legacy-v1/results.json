@@ -1,0 +1,203 @@
+[
+  {
+    "scenario": "games/hollow-crown/tests/endurance.json",
+    "report": {
+      "assertions": [
+        {
+          "at_step": 6800,
+          "name": "repeat victories",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        },
+        {
+          "at_step": 6800,
+          "name": "valid resources",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        }
+      ],
+      "eval": {
+        "printed": [],
+        "result": {
+          "auto": true,
+          "defeats": 0,
+          "depth": 3,
+          "enemies": 0,
+          "expeditions": 3,
+          "gold": 1056,
+          "hp": [
+            98,
+            79,
+            69
+          ],
+          "kills": 57,
+          "phase": "victory",
+          "rolls": 438,
+          "room": 5,
+          "time": 340.00000000004303,
+          "victories": 3
+        }
+      },
+      "failing_scripts": [],
+      "first_failure": null,
+      "ok": true,
+      "stopped": "the scene is back to its state before play",
+      "time_scale": 0,
+      "waited": {
+        "dt": 0.05,
+        "game_time": 340.00000000004303,
+        "manual": true,
+        "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+        "simulation_steps": 6800,
+        "steps": 6800
+      },
+      "warnings": []
+    }
+  },
+  {
+    "scenario": "games/hollow-crown/tests/recovery.json",
+    "report": {
+      "assertions": [
+        {
+          "at_step": 10,
+          "name": "party defeat",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        },
+        {
+          "at_step": 200,
+          "name": "automatic recovery",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        }
+      ],
+      "eval": {
+        "printed": [],
+        "result": {
+          "auto": true,
+          "defeats": 1,
+          "depth": 1,
+          "enemies": 3,
+          "expeditions": 2,
+          "gold": 0,
+          "hp": [
+            120,
+            85,
+            75
+          ],
+          "kills": 0,
+          "phase": "intro",
+          "rolls": 0,
+          "room": 1,
+          "time": 10.000000000000009,
+          "victories": 0
+        }
+      },
+      "failing_scripts": [],
+      "first_failure": null,
+      "ok": true,
+      "stopped": "the scene is back to its state before play",
+      "time_scale": 0,
+      "waited": {
+        "dt": 0.05,
+        "game_time": 10.000000000000009,
+        "manual": true,
+        "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+        "simulation_steps": 200,
+        "steps": 190
+      },
+      "warnings": []
+    }
+  },
+  {
+    "scenario": "games/hollow-crown/tests/manual-controls.json",
+    "report": {
+      "assertions": [
+        {
+          "at_step": 5,
+          "name": "manual command",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        },
+        {
+          "at_step": 62,
+          "name": "manual motion",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        },
+        {
+          "at_step": 80,
+          "name": "paused",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        },
+        {
+          "at_step": 150,
+          "name": "resumed and safe",
+          "observed": {
+            "printed": [],
+            "result": true
+          },
+          "passed": true
+        }
+      ],
+      "eval": {
+        "printed": [],
+        "result": {
+          "auto": false,
+          "defeats": 0,
+          "depth": 1,
+          "enemies": 3,
+          "expeditions": 1,
+          "gold": 0,
+          "hp": [
+            120,
+            85,
+            75
+          ],
+          "kills": 0,
+          "phase": "fight",
+          "rolls": 0,
+          "room": 1,
+          "time": 5.749999999999988,
+          "victories": 0
+        }
+      },
+      "failing_scripts": [],
+      "first_failure": null,
+      "ok": true,
+      "stopped": "the scene is back to its state before play",
+      "time_scale": 0,
+      "waited": {
+        "dt": 0.05,
+        "game_time": 7.499999999999981,
+        "manual": true,
+        "scope": "Lua gameplay and scene animation; rendering, GPU particles and custom application systems are not stepped",
+        "simulation_steps": 150,
+        "steps": 70
+      },
+      "warnings": []
+    }
+  }
+]

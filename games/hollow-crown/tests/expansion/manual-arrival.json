@@ -1,0 +1,14 @@
+{
+  "assertions": [
+    {
+      "code": "GAME.room==2 and GAME.phase=='intro'",
+      "name": "manual route arrival without exact waypoints"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "lean": true,
+  "seed": 17,
+  "setup": "GAME.auto=false;GAME.phase='travel';GAME.nextRoom=2;GAME.link=require('navigation').link(1,2);GAME.waypoint=1;GAME.travelTrap=true;local r=require('world').rooms[2];GAME.heroes[1].x=r.x;GAME.heroes[1].z=r.z+2",
+  "steps": 1
+}

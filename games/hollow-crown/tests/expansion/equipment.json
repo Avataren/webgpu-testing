@@ -1,0 +1,26 @@
+{
+  "assertions": [
+    {
+      "code": "GAME.upgradeProof",
+      "name": "upgrade affects attacks"
+    },
+    {
+      "code": "GAME.downgradeProof",
+      "name": "weaker loot rejected"
+    },
+    {
+      "code": "GAME.classProof",
+      "name": "class restrictions honored"
+    },
+    {
+      "code": "GAME.noFreeHeal",
+      "name": "armor adds protection without free healing"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "lean": true,
+  "seed": 17,
+  "setup": "local L=require('loot');local h=GAME.heroes[1];h.hp=10;local better={name='Test blade',slot='weapon',class='knight',tier=2,color='#bbbbbb',score=40,stats={damage=10,hit=1}};local worse={name='Rusty blade',slot='weapon',class='knight',tier=1,color='#bbbbbb',score=1,stats={damage=1}};GAME.upgradeProof=L.equip(h,better) and h.damage==10 and h.hit==5;GAME.downgradeProof=not L.equip(h,worse) and h.gear.weapon.name=='Test blade';GAME.classProof=not L.equip(GAME.heroes[2],better);local armor={name='Test plate',slot='armor',class='knight',tier=2,color='#bbbbbb',score=30,stats={ac=2,hp=10}};L.equip(h,armor);GAME.noFreeHeal=h.hp==10 and h.maxhp==145 and h.ac==18",
+  "steps": 2
+}

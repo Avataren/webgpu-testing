@@ -1,0 +1,14 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.6,
+    "end_frequency": 880,
+    "frequency": 440,
+    "image": false,
+    "name": "treasure",
+    "preset": "pickup",
+    "volume": 0.32,
+    "waveform": "triangle"
+  },
+  "version": 1
+}

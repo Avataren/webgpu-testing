@@ -1,0 +1,54 @@
+{
+  "assertions": [
+    {
+      "at_step": 5,
+      "code": "not GAME.auto",
+      "name": "manual command"
+    },
+    {
+      "at_step": 62,
+      "code": "math.abs(GAME.heroes[1].x-GAME.startx)>1",
+      "name": "manual motion"
+    },
+    {
+      "at_step": 80,
+      "code": "GAME.paused",
+      "name": "paused"
+    },
+    {
+      "code": "not GAME.paused and RT.walkable()",
+      "name": "resumed and safe"
+    }
+  ],
+  "dt": 0.05,
+  "entity": "DungeonDirector",
+  "eval": "return RT.status()",
+  "input": [
+    {
+      "delay": 0,
+      "key": "Tab"
+    },
+    {
+      "action": "down",
+      "delay": 2,
+      "key": "D"
+    },
+    {
+      "action": "up",
+      "delay": 60,
+      "key": "D"
+    },
+    {
+      "delay": 65,
+      "key": "P"
+    },
+    {
+      "delay": 100,
+      "key": "P"
+    }
+  ],
+  "lean": true,
+  "seed": 42,
+  "setup": "GAME.startx=GAME.heroes[1].x;GAME.startz=GAME.heroes[1].z",
+  "steps": 150
+}

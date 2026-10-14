@@ -1,0 +1,3205 @@
+[
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R1 saints of the vigil",
+      "parts": [
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.7,
+              0
+            ],
+            [
+              0.7,
+              0.25
+            ],
+            [
+              0.5,
+              0.3
+            ],
+            [
+              0.43,
+              1
+            ],
+            [
+              0.6,
+              1.6
+            ],
+            [
+              0.48,
+              2.1
+            ],
+            [
+              0.25,
+              2.25
+            ]
+          ],
+          "segments": 8,
+          "translation": [
+            -4.5,
+            0,
+            -5.4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            -4.5,
+            2.52,
+            -5.4
+          ],
+          "scale": [
+            0.28,
+            0.32,
+            0.26
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5,
+            1.7,
+            -5.4
+          ],
+          "scale": [
+            0.18,
+            0.8,
+            0.22
+          ],
+          "rotation": [
+            0,
+            0,
+            -20
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4,
+            1.7,
+            -5.4
+          ],
+          "scale": [
+            0.18,
+            0.8,
+            0.22
+          ],
+          "rotation": [
+            0,
+            0,
+            20
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.5,
+            1.2,
+            -5.72
+          ],
+          "scale": [
+            0.09,
+            1.7,
+            0.07
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.5,
+            1.92,
+            -5.72
+          ],
+          "scale": [
+            0.58,
+            0.08,
+            0.09
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.7,
+              0
+            ],
+            [
+              0.7,
+              0.25
+            ],
+            [
+              0.5,
+              0.3
+            ],
+            [
+              0.43,
+              1
+            ],
+            [
+              0.6,
+              1.6
+            ],
+            [
+              0.48,
+              2.1
+            ],
+            [
+              0.25,
+              2.25
+            ]
+          ],
+          "segments": 8,
+          "translation": [
+            4.5,
+            0,
+            -5.4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "sphere",
+          "translation": [
+            4.5,
+            2.52,
+            -5.4
+          ],
+          "scale": [
+            0.28,
+            0.32,
+            0.26
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4,
+            1.7,
+            -5.4
+          ],
+          "scale": [
+            0.18,
+            0.8,
+            0.22
+          ],
+          "rotation": [
+            0,
+            0,
+            -20
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5,
+            1.7,
+            -5.4
+          ],
+          "scale": [
+            0.18,
+            0.8,
+            0.22
+          ],
+          "rotation": [
+            0,
+            0,
+            20
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.5,
+            1.2,
+            -5.72
+          ],
+          "scale": [
+            0.09,
+            1.7,
+            0.07
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.5,
+            1.92,
+            -5.72
+          ],
+          "scale": [
+            0.58,
+            0.08,
+            0.09
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "base_color_texture": "content/textures/abbey_stone_base_color.png",
+        "color": "#bbc5bb",
+        "metallic": 1,
+        "metallic_roughness_texture": "content/textures/abbey_stone_metallic_roughness.png",
+        "normal_texture": "content/textures/abbey_stone_normal.png",
+        "occlusion_texture": "content/textures/abbey_stone_occlusion.png",
+        "roughness": 1
+      },
+      "translation": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 library oak",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.9,
+            1.4,
+            -5.2
+          ],
+          "scale": [
+            2.4,
+            2.8,
+            0.35
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -6.1000000000000005,
+            1.4,
+            -4.95
+          ],
+          "scale": [
+            0.12,
+            2.8,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -3.7,
+            1.4,
+            -4.95
+          ],
+          "scale": [
+            0.12,
+            2.8,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.9,
+            0.3,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.9,
+            1.2,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.9,
+            2.1,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.9,
+            1.4,
+            -5.2
+          ],
+          "scale": [
+            2.4,
+            2.8,
+            0.35
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            3.7,
+            1.4,
+            -4.95
+          ],
+          "scale": [
+            0.12,
+            2.8,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            6.1000000000000005,
+            1.4,
+            -4.95
+          ],
+          "scale": [
+            0.12,
+            2.8,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.9,
+            0.3,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.9,
+            1.2,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.9,
+            2.1,
+            -4.9
+          ],
+          "scale": [
+            2.4,
+            0.12,
+            0.65
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "base_color_texture": "content/textures/old_oak_base_color.png",
+        "color": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallic": 1,
+        "metallic_roughness_texture": "content/textures/old_oak_metallic_roughness.png",
+        "normal_texture": "content/textures/old_oak_normal.png",
+        "occlusion_texture": "content/textures/old_oak_occlusion.png",
+        "roughness": 1
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 old tomes 0",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.92,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.17,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.42,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.92,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.17,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.42,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.92,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.17,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.42,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            3.8800000000000003,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.630000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.380000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            3.8800000000000003,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.630000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.380000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            3.8800000000000003,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.630000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.380000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        }
+      ],
+      "material": {
+        "color": "#563643",
+        "roughness": 0.8
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 old tomes 1",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.67,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.92,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.17,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.67,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.92,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.17,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.67,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.92,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.17,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.130000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.880000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.630000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.130000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.880000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.630000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.130000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.880000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.630000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            8
+          ]
+        }
+      ],
+      "material": {
+        "color": "#25494d",
+        "roughness": 0.8
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 old tomes 2",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.42,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.67,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -3.92,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.42,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.67,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -3.92,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -5.42,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -4.67,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -3.92,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.380000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.130000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.880000000000001,
+            0.64,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.380000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.130000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.880000000000001,
+            1.54,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            4.380000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            4
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.130000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            5.880000000000001,
+            2.44,
+            -4.84
+          ],
+          "scale": [
+            0.18,
+            0.53,
+            0.42
+          ],
+          "rotation": [
+            0,
+            0,
+            -4
+          ]
+        }
+      ],
+      "material": {
+        "color": "#7c6747",
+        "roughness": 0.8
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 moonstone growths",
+      "parts": [
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              0.8
+            ],
+            [
+              0,
+              1.1
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            -2.5,
+            0,
+            -4.4
+          ],
+          "rotation": [
+            0,
+            0,
+            15
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              0.9500000000000001
+            ],
+            [
+              0,
+              1.3
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            -2.3,
+            0,
+            -4.1000000000000005
+          ],
+          "rotation": [
+            10,
+            0,
+            5
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              1.1
+            ],
+            [
+              0,
+              1.5
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            -2.1,
+            0,
+            -3.8000000000000003
+          ],
+          "rotation": [
+            20,
+            0,
+            -5
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              0.8
+            ],
+            [
+              0,
+              1.1
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            2.5,
+            0,
+            -4.4
+          ],
+          "rotation": [
+            0,
+            0,
+            15
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              0.9500000000000001
+            ],
+            [
+              0,
+              1.3
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            2.7,
+            0,
+            -4.1000000000000005
+          ],
+          "rotation": [
+            10,
+            0,
+            5
+          ]
+        },
+        {
+          "shape": "lathe",
+          "profile": [
+            [
+              0.16,
+              0
+            ],
+            [
+              0.22,
+              0.2
+            ],
+            [
+              0.16,
+              1.1
+            ],
+            [
+              0,
+              1.5
+            ]
+          ],
+          "segments": 5,
+          "translation": [
+            2.9,
+            0,
+            -3.8000000000000003
+          ],
+          "rotation": [
+            20,
+            0,
+            -5
+          ]
+        }
+      ],
+      "material": {
+        "color": "#378f9f",
+        "metallic": 0.3,
+        "roughness": 0.3,
+        "emissive": 0.8
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R3 silver moonwell inscription",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.1,
+            0.14,
+            -2
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.059649088846784,
+            0.14,
+            -1.5903103237661307
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -11.25,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.9401470182737022,
+            0.14,
+            -1.1963647920333114
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -22.5,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.7460861858353451,
+            0.14,
+            -0.8333025106588354
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -33.75,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.48492424049175,
+            0.14,
+            -0.5150757595082502
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -45,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.1666974893411648,
+            0.14,
+            -0.25391381416465486
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -56.25,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.8036352079666887,
+            0.14,
+            -0.05985298172629783
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -67.5,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.40968967623386954,
+            0.14,
+            0.05964908884678399
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -78.75,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.285879139104721e-16,
+            0.14,
+            0.10000000000000009
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -90,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.4096896762338692,
+            0.14,
+            0.05964908884678399
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -101.24999999999999,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.8036352079666884,
+            0.14,
+            -0.05985298172629783
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -112.5,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.1666974893411641,
+            0.14,
+            -0.2539138141646544
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -123.74999999999999,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.4849242404917498,
+            0.14,
+            -0.51507575950825
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -135,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.7460861858353454,
+            0.14,
+            -0.8333025106588354
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -146.25000000000003,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.9401470182737022,
+            0.14,
+            -1.1963647920333111
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -157.5,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.059649088846784,
+            0.14,
+            -1.59031032376613
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -168.74999999999997,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.1,
+            0.14,
+            -1.9999999999999998
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -180,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.059649088846784,
+            0.14,
+            -2.4096896762338695
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -191.25000000000003,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.9401470182737024,
+            0.14,
+            -2.803635207966688
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -202.49999999999997,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.7460861858353456,
+            0.14,
+            -3.166697489341164
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -213.74999999999997,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.4849242404917502,
+            0.14,
+            -3.4849242404917495
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -225,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.1666974893411646,
+            0.14,
+            -3.7460861858353454
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -236.25000000000003,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.8036352079666897,
+            0.14,
+            -3.9401470182737017
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -247.49999999999997,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.4096896762338702,
+            0.14,
+            -4.0596490888467835
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -258.75,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -3.8576374173141627e-16,
+            0.14,
+            -4.1
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -270,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.4096896762338695,
+            0.14,
+            -4.059649088846784
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -281.25,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.8036352079666891,
+            0.14,
+            -3.940147018273702
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -292.50000000000006,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.166697489341164,
+            0.14,
+            -3.7460861858353454
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -303.75,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.4849242404917495,
+            0.14,
+            -3.4849242404917504
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.28
+          ],
+          "rotation": [
+            0,
+            -315,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.7460861858353451,
+            0.14,
+            -3.1666974893411646
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -326.25,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.9401470182737017,
+            0.14,
+            -2.80363520796669
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -337.49999999999994,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.0596490888467835,
+            0.14,
+            -2.4096896762338704
+          ],
+          "scale": [
+            0.04,
+            0.025,
+            0.1
+          ],
+          "rotation": [
+            0,
+            -348.75,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#4f99a5",
+        "emissive": 0.65,
+        "unlit": true
+      },
+      "translation": [
+        22,
+        0,
+        -22
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R4 trapped paving",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2,
+            0.12,
+            0
+          ],
+          "scale": [
+            1.5,
+            0.035,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2,
+            0.12,
+            0
+          ],
+          "scale": [
+            1.5,
+            0.035,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.12,
+            -3
+          ],
+          "scale": [
+            1.5,
+            0.035,
+            1.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#2e2b26",
+        "metallic": 0.6,
+        "roughness": 0.65
+      },
+      "translation": [
+        22,
+        0,
+        -44
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R4 ember inlay",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.6,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2,
+            0.15,
+            -0.6
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.4,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2,
+            0.15,
+            0.6
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.4,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -2.13,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.8599999999999999,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.5899999999999999,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.4,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2,
+            0.15,
+            -0.6
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.6,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2,
+            0.15,
+            0.6
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.6,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.87,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.14,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            2.41,
+            0.15,
+            0
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.6,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.15,
+            -3.6
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.6,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            1.2
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.15,
+            -2.4
+          ],
+          "scale": [
+            1.2,
+            0.01,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.4,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -0.13,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.14,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0.41000000000000003,
+            0.15,
+            -3
+          ],
+          "scale": [
+            0.04,
+            0.01,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#9d5933",
+        "metallic": 0.6,
+        "roughness": 0.5,
+        "emissive": 0.35
+      },
+      "translation": [
+        22,
+        0,
+        -44
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R5 empty throne",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            0.45,
+            -5.1
+          ],
+          "scale": [
+            2.5,
+            0.6,
+            1.8
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            1.1,
+            -5.1
+          ],
+          "scale": [
+            1.85,
+            0.3,
+            1.4
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            -1.1,
+            1.4,
+            -5.1
+          ],
+          "scale": [
+            0.25,
+            1.8,
+            1.6
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            1.1,
+            1.4,
+            -5.1
+          ],
+          "scale": [
+            0.25,
+            1.8,
+            1.6
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "extrude",
+          "polygon": [
+            [
+              -1,
+              -1.5
+            ],
+            [
+              1,
+              -1.5
+            ],
+            [
+              1,
+              1.9
+            ],
+            [
+              0.3,
+              2.6
+            ],
+            [
+              0,
+              2.25
+            ],
+            [
+              -0.4,
+              2.65
+            ],
+            [
+              -1,
+              1.8
+            ]
+          ],
+          "depth": 0.38,
+          "bevel": 0.05,
+          "translation": [
+            0,
+            2.2,
+            -5.7
+          ]
+        }
+      ],
+      "material": {
+        "base_color_texture": "content/textures/abbey_stone_base_color.png",
+        "color": "#8e9e98",
+        "metallic": 1,
+        "metallic_roughness_texture": "content/textures/abbey_stone_metallic_roughness.png",
+        "normal_texture": "content/textures/abbey_stone_normal.png",
+        "occlusion_texture": "content/textures/abbey_stone_occlusion.png",
+        "roughness": 1
+      },
+      "translation": [
+        0,
+        0,
+        -44
+      ]
+    }
+  },
+  {
+    "tool": "mesh_compose",
+    "arguments": {
+      "name": "R5 gilded throne sigil",
+      "parts": [
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            3.9,
+            -5.48
+          ],
+          "scale": [
+            0.1,
+            1.1,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "shape": "primitive",
+          "primitive": "cube",
+          "translation": [
+            0,
+            4.12,
+            -5.48
+          ],
+          "scale": [
+            0.6,
+            0.1,
+            0.04
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "material": {
+        "color": "#b89955",
+        "metallic": 0.8,
+        "roughness": 0.35
+      },
+      "translation": [
+        0,
+        0,
+        -44
+      ]
+    }
+  }
+]
