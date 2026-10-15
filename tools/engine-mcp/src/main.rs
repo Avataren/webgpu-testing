@@ -55,7 +55,15 @@ restores the pre-play scene.
 5. lua_eval runs arbitrary Lua against the live world for queries and bulk edits.
 6. project_save persists the work. engine_output shows crashes and GPU validation errors.
 
-Look at the result (screenshot) after visual changes instead of assuming they worked.";
+Look at the result (screenshot) after visual changes instead of assuming they worked.
+
+Troubleshooting: an error reading \"MCP tool call requires approval, but approval policy is never\" \
+comes from the MCP client, not the engine: its approval policy forbids calls that need \
+confirmation (reads may still work while edits are refused). Allow this server's tools in the \
+client's approval settings and retry. A real connection problem looks different: engine_status \
+reports whether the engine process is running and reachable, and engine_output shows its log.
+For web builds, project_validate's browser block lists what the browser would not find (web_build \
+stages only project.json and content/); web_build stops on those errors before the slow wasm build.";
 
 fn main() {
     let mut repo: Option<PathBuf> = std::env::var_os("ENGINE_REPO").map(PathBuf::from);
@@ -286,7 +294,7 @@ impl Server {
             .and_then(Value::as_array)
             .ok_or("calls must be an array of {tool, arguments}")?;
         if args["atomic"].as_bool().unwrap_or(false) || args["dry_run"].as_bool().unwrap_or(false) {
-            let calls=calls.iter().map(|call| {
+            let transaction_calls=calls.iter().map(|call| {
                 let name=call["tool"].as_str().ok_or("every call needs tool")?;
                 let tool=self.tools.iter().find(|t|t.name==name).ok_or_else(||format!("unknown tool {name:?}"))?;
                 let Action::Engine(method)=tool.action else {return Err(format!("{name} is not a scene-only engine tool"));};
@@ -298,12 +306,10 @@ impl Server {
                 .engine
                 .call(
                     "scene.transaction",
-                    json!({"calls":calls,"dry_run":args["dry_run"].as_bool().unwrap_or(false)}),
+                    json!({"calls":transaction_calls,"dry_run":args["dry_run"].as_bool().unwrap_or(false)}),
                 )
                 .map(|mut result| {
-                    if args["quiet"].as_bool().unwrap_or(false) {
-                        summarize_batch(&mut result);
-                    }
+                    shape_batch_report(&mut result, args, calls);
                     Output::Json(result)
                 })
                 .map_err(|e| e.to_string());
@@ -356,9 +362,7 @@ impl Server {
             "failed": failed,
             "results": results,
         });
-        if args["quiet"].as_bool().unwrap_or(false) {
-            summarize_batch(&mut report);
-        }
+        shape_batch_report(&mut report, args, calls);
         Ok(Output::Json(report))
     }
 
@@ -375,6 +379,17 @@ impl Server {
                     .map_err(|e| e.to_string())?;
                 if validation["ok"] != true {
                     return Ok(Output::Json(json!({"ok":false,"validation":validation})));
+                }
+                // Assets web_build would not stage 404 in the browser however well the
+                // project validates natively; stop before the slow wasm build.
+                if validation["browser"]["ok"] == false
+                    && !args["ignore_browser_issues"].as_bool().unwrap_or(false)
+                {
+                    return Ok(Output::Json(json!({
+                        "ok": false,
+                        "validation": validation,
+                        "note": "The project is not browser-ready (validation.browser.errors). Fix them, or pass ignore_browser_issues: true to package it anyway.",
+                    })));
                 }
                 let mut result = self
                     .engine
@@ -1275,6 +1290,99 @@ impl Server {
     }
 }
 
+/// Apply the batch's `aggregate` / `quiet` options to its finished report.
+fn shape_batch_report(report: &mut Value, args: &Value, calls: &[Value]) {
+    if args["aggregate"].as_bool().unwrap_or(false) {
+        aggregate_batch(report, calls);
+    } else if args["quiet"].as_bool().unwrap_or(false) {
+        summarize_batch(report);
+    }
+}
+
+/// Most entities a batch aggregate lists one by one; larger sets give a count, first and last.
+const AGGREGATE_LIST_LIMIT: usize = 24;
+
+/// Replace a batch's per-call results with totals: calls per tool, the entities they
+/// returned, the aliases that were named and every failed call in full. The report's own
+/// verdict (`ok`, `failure`, `rolled_back`, `committed`...) is left as it is.
+fn aggregate_batch(report: &mut Value, calls: &[Value]) {
+    let Some(Value::Array(rows)) = report.as_object_mut().and_then(|r| r.remove("results")) else {
+        return;
+    };
+    let mut by_tool = serde_json::Map::new();
+    let mut entities: Vec<Value> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut aliases = serde_json::Map::new();
+    let mut failed_calls = Vec::new();
+
+    let mut note_entity = |entity: &Value| {
+        if let Some(id) = entity.get("id").filter(|id| id.is_number()) {
+            if seen.insert(id.to_string()) {
+                entities.push(
+                    json!({ "id": id, "name": entity.get("name").cloned().unwrap_or(Value::Null) }),
+                );
+            }
+        }
+    };
+
+    for (index, row) in rows.iter().enumerate() {
+        let call = calls.get(index);
+        let tool = call
+            .and_then(|call| call["tool"].as_str())
+            .or_else(|| row["tool"].as_str())
+            .or_else(|| row["method"].as_str())
+            .unwrap_or("?");
+        let result = &row["result"];
+        if row.get("error").is_some() || result["ok"] == false {
+            let mut failed = json!({ "index": index, "tool": tool });
+            for key in ["error", "result"] {
+                if let Some(value) = row.get(key) {
+                    failed[key] = value.clone();
+                }
+            }
+            failed_calls.push(failed);
+            continue;
+        }
+        let count = by_tool.get(tool).and_then(Value::as_u64).unwrap_or(0);
+        by_tool.insert(tool.to_string(), json!(count + 1));
+
+        note_entity(result);
+        for key in ["first", "last"] {
+            note_entity(&result[key]);
+        }
+        for copy in result["copies"].as_array().into_iter().flatten() {
+            note_entity(copy);
+        }
+        if let Some(alias) = call.and_then(|call| call["as"].as_str()) {
+            aliases.insert(
+                alias.to_string(),
+                result.get("id").cloned().unwrap_or(Value::Null),
+            );
+        }
+    }
+
+    let mut summary = json!({ "calls": by_tool });
+    if !entities.is_empty() {
+        summary["entities"] = if entities.len() <= AGGREGATE_LIST_LIMIT {
+            json!({ "count": entities.len(), "list": entities })
+        } else {
+            json!({
+                "count": entities.len(),
+                "first": entities[0],
+                "last": entities[entities.len() - 1],
+                "note": "Address them by name; ids need not be consecutive.",
+            })
+        };
+    }
+    if !aliases.is_empty() {
+        summary["aliases"] = Value::Object(aliases);
+    }
+    report["summary"] = summary;
+    if !failed_calls.is_empty() {
+        report["failed_calls"] = Value::Array(failed_calls);
+    }
+}
+
 /// Keep batch failures and result identities without echoing generated geometry.
 fn summarize_batch(report: &mut Value) {
     if let Some(results) = report["results"].as_array_mut() {
@@ -1432,6 +1540,58 @@ mod tests {
             .unwrap()
             .contains_key("mesh"));
         assert!(report.to_string().len() < 600);
+    }
+
+    #[test]
+    fn aggregate_batch_totals_calls_and_lists_entities_and_failures() {
+        let calls = vec![
+            json!({"tool":"entity_spawn","as":"root","arguments":{}}),
+            json!({"tool":"entity_duplicate","arguments":{}}),
+            json!({"tool":"entity_update","arguments":{}}),
+            json!({"tool":"mesh_lathe","arguments":{}}),
+        ];
+        let mut report = json!({"ok":false,"committed":false,"rolled_back":true,
+            "failure":{"index":3,"method":"mesh.lathe","message":"bad profile"},
+            "results":[
+                {"method":"entity.spawn","result":{"id":7,"name":"Group","components":vec![json!({"big":1});50]}},
+                {"method":"entity.duplicate","result":{"count":2,"first":{"id":8,"name":"Wall 1"},
+                    "last":{"id":9,"name":"Wall 2"}}},
+                {"method":"entity.update","result":{"id":7,"name":"Group"}},
+                {"method":"mesh.lathe","error":"bad profile"}]});
+        aggregate_batch(&mut report, &calls);
+        assert!(report.get("results").is_none());
+        assert_eq!(report["rolled_back"], true);
+        assert_eq!(report["failure"]["message"], "bad profile");
+        let summary = &report["summary"];
+        assert_eq!(summary["calls"]["entity_spawn"], 1);
+        assert_eq!(summary["calls"]["entity_update"], 1);
+        assert!(summary["calls"].get("mesh_lathe").is_none());
+        // Entity 7 comes back twice and is listed once.
+        assert_eq!(summary["entities"]["count"], 3);
+        assert_eq!(summary["entities"]["list"][2]["name"], "Wall 2");
+        assert_eq!(summary["aliases"]["root"], 7);
+        assert_eq!(report["failed_calls"][0]["index"], 3);
+        assert_eq!(report["failed_calls"][0]["tool"], "mesh_lathe");
+        assert!(report.to_string().len() < 1200, "{report}");
+    }
+
+    #[test]
+    fn aggregate_batch_collapses_large_entity_sets_to_first_and_last() {
+        let calls: Vec<Value> = (0..100)
+            .map(|_| json!({"tool":"entity_spawn","arguments":{}}))
+            .collect();
+        let rows: Vec<Value> = (0..100)
+            .map(|i| json!({"tool":"entity_spawn","result":{"id":100 + i,"name":format!("Brick {i}")}}))
+            .collect();
+        let mut report = json!({"ok":true,"ran":100,"of":100,"failed":0,"results":rows});
+        aggregate_batch(&mut report, &calls);
+        assert_eq!(report["summary"]["calls"]["entity_spawn"], 100);
+        assert_eq!(report["summary"]["entities"]["count"], 100);
+        assert!(report["summary"]["entities"].get("list").is_none());
+        assert_eq!(report["summary"]["entities"]["first"]["name"], "Brick 0");
+        assert_eq!(report["summary"]["entities"]["last"]["name"], "Brick 99");
+        assert!(report.get("failed_calls").is_none());
+        assert!(report.to_string().len() < 700);
     }
 
     #[test]

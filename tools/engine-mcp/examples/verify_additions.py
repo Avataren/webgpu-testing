@@ -103,6 +103,15 @@ def main():
         assert failed['rolled_back'] and tool('scene_list_entities')['total'] == before
         committed = tool('batch', {'atomic': True, 'quiet': True, 'calls': calls})
         assert committed['committed'] and tool('scene_list_entities')['total'] == before + 2
+        # aggregate: one summary instead of a row per call, and the verdict is untouched
+        aggregated = tool('batch', {'atomic': True, 'dry_run': True, 'aggregate': True, 'calls': calls})
+        assert 'results' not in aggregated and aggregated['summary']['calls'] == {'entity_spawn': 2}
+        assert aggregated['summary']['entities']['count'] == 2 and 'group' in aggregated['summary']['aliases']
+        broken = tool('batch', {'atomic': True, 'aggregate': True, 'calls': calls + [
+            {'tool': 'entity_update', 'arguments': {'entity': 'DoesNotExist', 'visible': False}}
+        ]}, error=True)
+        assert broken['rolled_back'] and broken['failure']['index'] == 2 and broken['summary']['calls']
+        assert tool('scene_list_entities')['total'] == before + 2
         crate = committed['results'][1]['result']['id']
         tool('editor_undo'); tool('wait', {'frames': 3})
         assert tool('scene_list_entities')['total'] == before
@@ -225,6 +234,7 @@ def main():
         assert reopened['instance_entities'] and reopened['instance_overrides']
         validation = tool('project_validate')
         assert validation['ok'], validation
+        assert validation['browser']['ok'], validation['browser']
         print('Profile capture, comparison, persistence and project validation passed', flush=True)
         tool('screenshot', {'camera': 'game', 'save_path': str(work / 'scene.png')})
         # A second MCP server attaches to the editor without owning its process.
@@ -261,10 +271,31 @@ def main():
         if opts.web:
             tool('engine_launch', {'target': 'editor', 'build': False,
                                    'project': str(work / 'fixture'), 'env': desktop})
-            built = tool('web_build', {'project': str(work / 'fixture'), 'overwrite': True})
+            fixture = work / 'fixture'
+            # An asset outside content/ validates natively but is never staged, so the browser
+            # preflight must catch it before the slow wasm build.
+            (fixture / 'textures').mkdir(exist_ok=True)
+            (fixture / 'textures/outside.json').write_text('{}')
+            (fixture / 'content/scenes/outside.json').write_text('{"material": "textures/outside.json"}')
+            native = tool('project_validate', {'path': str(fixture)})
+            assert native['ok'] and not native['browser']['ok'], native
+            blocked = tool('web_build', {'project': str(fixture), 'overwrite': True}, error=True)
+            assert blocked['ok'] is False and 'browser-ready' in blocked['note'], blocked
+            (fixture / 'content/scenes/outside.json').unlink()
+            (fixture / 'textures/outside.json').unlink()
+            (fixture / 'textures').rmdir()
+            # B20: file names holding literal percent escapes must load in the browser.
+            (fixture / 'content/scripts').mkdir(parents=True, exist_ok=True)
+            (fixture / 'content/scripts/pct%2ehello.lua').write_text(
+                'function on_created(self) print("PCT_SCRIPT_LOADED") end\n')
+            marker = tool('entity_spawn', {'kind': 'empty', 'name': 'PctMarker'})['id']
+            tool('entity_update', {'entity': marker, 'script': {'path': 'content/scripts/pct%2ehello.lua'}})
+            tool('project_save')
+            built = tool('web_build', {'project': str(fixture), 'overwrite': True})
             browser = tool('web_playtest', {'directory': built['directory'], 'seconds': 2})
             assert browser['ready'] and browser['ok'], browser
-            print('WASM packaging and WebGPU browser smoke test passed', flush=True)
+            assert any('PCT_SCRIPT_LOADED' in line['text'] for line in browser['console']), browser['console']
+            print('WASM packaging, browser preflight and WebGPU browser smoke test passed', flush=True)
         (work / 'report.json').write_text(json.dumps({'profile': profile, 'validation': validation}, indent=2))
         print(f'Artifacts: {work}', flush=True)
     finally:

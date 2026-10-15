@@ -35,7 +35,7 @@ impl Tool {
                 vec!["total", "offset", "entities", "precision"],
             ),
             "project_validate" => (
-                json!({"ok":{"type":"boolean"},"project":{"type":"string"},"files_checked":{"type":"integer"},"errors":{"type":"array","items":{"type":"object"}},"warnings":{"type":"array","items":{"type":"object"}}}),
+                json!({"ok":{"type":"boolean"},"project":{"type":"string"},"files_checked":{"type":"integer"},"errors":{"type":"array","items":{"type":"object"}},"warnings":{"type":"array","items":{"type":"object"}},"browser":{"type":"object","description":"Browser preflight: ok, errors, warnings"}}),
                 vec!["ok", "project", "files_checked", "errors", "warnings"],
             ),
             "profile_capture" => (
@@ -335,7 +335,8 @@ pub fn tools() -> Vec<Tool> {
                     }
                 },
                 "stop_on_error": { "type": "boolean", "description": "Default true" },
-                "quiet": { "type": "boolean", "default": false, "description": "Return identifiers and counts instead of full successful results/geometry recipes; errors and rollback details remain. Applies to sequential, atomic and dry-run batches." }
+                "quiet": { "type": "boolean", "default": false, "description": "Return identifiers and counts instead of full successful results/geometry recipes; errors and rollback details remain. Applies to sequential, atomic and dry-run batches." },
+                "aggregate": { "type": "boolean", "default": false, "description": "Return one summary instead of a row per call: calls per tool, the entities they returned (listed up to 24, else count/first/last), alias ids, and every failed call in full. Overrides quiet; the ok/failure/rolled_back verdict stays. Use for large scene builds." }
             }), &["calls"]),
             action: Action::Local,
         },
@@ -935,8 +936,8 @@ fn additional_tools() -> Vec<Tool> {
         Tool{name:"profile_capture",description:"Sample consecutive engine frames and report median/p95/p99 CPU frame and stage times, script cost and entity/asset growth. Optional baseline compares frame latency. Measure player performance; GPU execution timestamps are not included.",schema:object(json!({"frames":{"type":"integer","minimum":2,"maximum":10000,"default":300},"baseline":{"type":"object"}}),&[]),action:Action::Engine("profile.capture")},
         Tool{name:"mesh_sweep",description:"Sweep a circular or polygon cross-section along an open 3D polyline, with transported frames, UVs, normals, tangents and caps. Sharp bends may self-intersect. Geometry is persisted by project_save.",schema:object(Value::Object(sweep),&["path"]),action:Action::Engine("mesh.sweep")},
         Tool{name:"mesh_heightfield",description:"Generate XZ terrain with upward slope normals from explicit heights, an image or seeded fractal noise. UVs/tangents and embedded geometry persist with project_save. Shares the procedural vertex budget.",schema:object(Value::Object(terrain),&[]),action:Action::Engine("mesh.heightfield")},
-        Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},
-        Tool{name:"web_build",description:"Validate and package a saved project using the existing wasm build pipeline. Returns its output directory. Does not launch a server or publish. Existing artifacts require overwrite true.",schema:object(json!({"project":{"type":"string"},"overwrite":{"type":"boolean","default":false}}),&["project"]),action:Action::Local},
+        Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files. The browser block is a preflight for web builds: assets web_build would not serve (only project.json and content/ are staged), files differing only in case, and Lua calls that need a file system.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},
+        Tool{name:"web_build",description:"Validate and package a saved project using the existing wasm build pipeline. Returns its output directory. Stops before building when the browser preflight finds errors (see project_validate) unless ignore_browser_issues is true. Does not launch a server or publish. Existing artifacts require overwrite true.",schema:object(json!({"project":{"type":"string"},"overwrite":{"type":"boolean","default":false},"ignore_browser_issues":{"type":"boolean","default":false,"description":"Package even when the browser preflight (validation.browser) reports errors, such as assets outside content/"}}),&["project"]),action:Action::Local},
         Tool{name:"web_playtest",description:"Browser smoke test of a web_build artifact using Node 22+ and Chromium's DevTools protocol, with no npm dependencies. Returns console/page/network failures and a screenshot; sends input to unlock audio. No deployment.",schema:object(json!({"directory":{"type":"string"},"seconds":{"type":"number","minimum":0,"maximum":60,"default":3},"viewport_size":{"type":"array","items":{"type":"integer","minimum":64,"maximum":4096},"minItems":2,"maxItems":2},"browser":{"type":"string","description":"Chromium/Brave executable, or ENGINE_BROWSER"},"save_path":{"type":"string","description":"Optional screenshot file; otherwise returned inline"}}),&["directory"]),action:Action::Local},
     ]
 }

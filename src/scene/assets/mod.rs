@@ -222,6 +222,49 @@ mod tests {
     }
 
     #[test]
+    fn post_process_volume_survives_save_and_load() {
+        // Post-processing is saved with the scene (as a volume entity), not with the
+        // engine: tuned bloom and the overrides it sets come back after a reload.
+        let mut settings = crate::renderer::postprocess::PostProcessSettings::default();
+        settings.bloom.threshold = 0.7;
+        settings.bloom.intensity = 0.42;
+        let mut volume = crate::scene::components::PostProcessVolume::infinite(settings);
+        volume.overrides = Some(["bloom".to_string()].into());
+        volume.priority = 3;
+
+        let mut world = World::new();
+        world.spawn((
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+            volume.clone(),
+        ));
+        let assets = Assets::new();
+        let (entities, _) = serialize_world(&world, &assets);
+        let asset = SceneAsset {
+            name: "Volume".into(),
+            root_transform: SerializedTransform::identity(),
+            entities,
+            animations: Vec::new(),
+            animation_states: Vec::new(),
+            mesh_data: Vec::new(),
+            active_camera: None,
+        };
+
+        let json = asset.to_json().expect("serialize scene");
+        let mut loaded: SceneAsset = serde_json::from_str(&json).expect("parse scene");
+        loaded
+            .persist_material_assets(tempdir().unwrap().path())
+            .expect("persist materials");
+        let mut assets = Assets::new();
+        let instance = loaded.instantiate(None, &mut assets);
+        let mut query = instance
+            .world()
+            .query::<&crate::scene::components::PostProcessVolume>();
+        let restored: Vec<_> = query.iter().map(|(_, volume)| volume.clone()).collect();
+        assert_eq!(restored, vec![volume]);
+    }
+
+    #[test]
     fn serialize_world_preserves_billboard() {
         let mut world = World::new();
         let billboard = Billboard::new(BillboardOrientation::FaceCamera)

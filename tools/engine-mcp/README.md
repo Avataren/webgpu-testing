@@ -332,6 +332,12 @@ It works with sequential, atomic and dry-run batches; errors and rollback detail
 Alias resolution still uses the complete results. Call tools individually, or omit
 `quiet`, when you need detailed results.
 
+`batch {aggregate: true, ...}` goes further and drops the row per call: `summary.calls`
+counts successful calls per tool, `summary.entities` lists the entities they returned
+(up to 24, otherwise the count with the first and last), `summary.aliases` maps each `as`
+alias to its id, and `failed_calls` keeps every failed call in full. The report's verdict
+(`ok`, `failure`, `rolled_back`, `committed`) is unchanged. It overrides `quiet`.
+
 ## Prefabs, geometry and performance
 
 `prefab_create {entity, name}` saves a hierarchy as a scene document with embedded geometry,
@@ -361,6 +367,15 @@ submission and display waits; they do not measure GPU execution. Use the player 
 game costs without editor overhead. Reloading/despawning scripts during a capture can
 reset or remove their cumulative counters.
 
+## Troubleshooting
+
+An error reading `MCP tool call requires approval, but approval policy is never` is raised by
+the MCP client, never by this server or the engine: the client's approval policy forbids calls
+that need confirmation. Reads can keep working while edits are refused, which looks like a
+broken engine. Allow this server's tools in the client's approval settings and retry.
+A real connection problem looks different: `engine_status` reports whether the engine process
+is running and reachable, and `engine_output` shows its log.
+
 ## Validation and web verification
 
 `project_validate {path}` uses the running native engine to inspect saved project/scene
@@ -368,9 +383,21 @@ JSON, missing/nonportable asset paths, camera settings, hierarchy structure, mes
 duplicate identifiers/names and Lua syntax. It neither executes scripts nor migrates files.
 Without `path`, it checks the active project. Dynamic script paths and gameplay need tests.
 
+Its `browser` block is a preflight for web builds, separate from the native verdict: a project
+can pass natively and still not be browser-ready. It reports as errors the asset references
+that `web_build` would not serve (it stages only `project.json` and `content/`, so paths
+outside `content/` or outside the project 404), and as warnings files under `content/` that
+differ only in letter case and Lua calls that need a file system (`read_file`, `write_file`,
+`file_exists`, `list_files`, the dialogs, `io.open`, `os.getenv`...; use `save_data` /
+`load_data` instead). It also warns about script string literals under `content/` that name a
+missing file. It reads source text only: paths built at run time are not seen, and GPU or
+adapter differences (an adapter without bindless textures, for one) only show in a browser,
+so confirm with `web_playtest`.
+
 `web_build {project, overwrite}` validates the project and invokes `build_web.sh --project
-<dir> --no-serve`, returning `target/web/<project-directory-name>`. Existing artifacts require
-`overwrite: true`. `web_playtest {directory, seconds, viewport_size, browser, save_path}`
+<dir> --no-serve`, returning `target/web/<project-directory-name>`. It stops before the slow
+build when the browser preflight reports errors (`ignore_browser_issues: true` packages
+anyway). Existing artifacts require `overwrite: true`. `web_playtest {directory, seconds, viewport_size, browser, save_path}`
 serves that artifact on a temporary loopback port and tests it in a fresh headless Chromium
 profile. It checks device/canvas initialization and reports console, exception and network
 failures with a screenshot. A Shift press unlocks web audio. Node 22+ and Chromium/Brave are

@@ -93,6 +93,16 @@ A regression test covers 144 combinations of orbit angle, height and distance;
 native captures at low, middle and high views with maximum zoom-out show the full
 shadow, and the user confirmed the disappearing-shadow issue was resolved.
 
+Cleanup round (2026-10-15): worked through what the Tide Observatory round left open. B20 and B21
+are fixed, and fixing B21 exposed B23 (particle readbacks that cannot work in a browser), also fixed.
+Tide Observatory now loads and animates in a WebGPU browser with no errors. The post-processing
+pain point turned out to be done already (post-process volumes), the two performance wish items were
+measured instead of changed (they are cheap in a release build), and the MCP gained
+`batch {aggregate}`, a browser preflight in `project_validate` / `web_build`, and a note on approval
+failures. Not done: the visual comparison tool (see the wish list). Checked with Rust tests, strict
+Clippy, native smoke runs (with and without bindless textures), `verify_additions.py --web`, and a
+WebGPU browser through `web_playtest`.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -232,8 +242,9 @@ How to read the sections:
   `set_component(e, "Visible", false)` and `set_component(e, "CanCastShadow", false)` in one
   `lua_eval` chunk leaves the entity with `visible: false` and `cast_shadow: false`, and Neon
   Rift's pool creation now uses `set_component` directly (the deferred-finish workaround is
-  gone). Still undocumented: the Lua guide does not list which commands accept a handle
-  spawned in the same chunk.
+  gone). The Lua guide's "Entity Handles" section lists which commands accept a handle spawned
+  in the same hook and which need an entity that already exists (checked against `commands.rs`
+  on 2026-10-15; this note used to say it was undocumented).
 
 ### B10. `screenshot {camera: "game"}` returns the whole editor window by default (fixed, engine)
 
@@ -358,24 +369,59 @@ How to read the sections:
   visual check, not a guarantee of identical frames. The projection regression test
   passes, and the user confirmed the scene looked stable with TAA re-enabled.
 
-### B20. Browser material requests decode literal percent escapes (confirmed, engine)
+### B20. Browser material requests decode literal percent escapes (fixed, engine)
 
 - Repro: export a scene whose material filenames contain `%2e` in the scene namespace,
   then package and run it with `web_build` and `web_playtest`. The files exist in the
   staged output, but material requests return HTTP 404.
 - Cause: the filesystem path is passed directly to the HTTP request. URL decoding
-  changes the literal filename. **Open:** encode filesystem path segments when forming
-  asset URLs, including literal percent signs, and test the complete browser load.
+  changes the literal filename.
+- **Resolution:** web requests percent-encode the path (`io::percent_encode_path`: everything
+  except `A-Za-z0-9-._~/`), so `%2e` in a file name is requested as `%252e` and the server decodes
+  it back to the exact name. glTF URIs are already encoded by spec, so the web glTF loader decodes
+  them before joining them to a path; absolute `http(s)://` URLs pass through. Unit tests cover
+  literal `%`, spaces, `#`, `?`, non-ASCII names and round trips through `percent_decode_uri`.
+  Verified in a WebGPU browser with the Tide Observatory build: the old build gave 71 errors (HTTP
+  404 for each `%2e` material); the rebuilt one has 0 errors and 0 network failures. A scratch
+  project with a script named `pct%2ehello.lua` also runs in the browser (`verify_additions.py
+  --web` checks its console output).
 
-### B21. Browser GPU particles require a bindless group at draw time (confirmed, engine)
+### B21. Browser GPU particles require a bindless group at draw time (fixed, engine)
 
 - Repro: run Tide Observatory in a WebGPU browser on an adapter without bindless
   textures. The device initializes and the scene starts loading, then its emitted
   particles trigger `GPU-driven particles require bindless textures`.
 - Cause: particle pipelines support traditional layouts, but the render path still
-  requests the renderer's global bindless texture group. **Open:** bind the traditional
-  material textures when needed, or explicitly report unsupported effects without a
-  panic. A successful WASM package build is insufficient evidence of a working demo.
+  requests the renderer's global bindless texture group. A successful WASM package build is
+  insufficient evidence of a working demo.
+- **Resolution:** without bindless textures the particle system binds its own material's textures
+  (group 3 is the per-material layout there; `Renderer::material_textures_bind_group`) instead of
+  `expect`ing the global group. The adapter check in the renderer was a hard-coded `false`; it is
+  now the `WGPU_CUBE_FORCE_TRADITIONAL_TEXTURES=1` environment variable, so this path can be tested
+  natively: `particle_effects` renders its textured and untextured systems with it and without
+  it. A WebGPU browser never offers bindless textures, so every web build takes this path. The next
+  failure there was B23.
+
+### B23. Particle readbacks block on the GPU, which a browser cannot do (fixed, engine)
+
+- Repro: run Tide Observatory in a WebGPU browser after the B21 fix. 200+ errors:
+  `Particle dead list mapping did not complete` and `Failed to map particle dead list: Error
+  occurred when trying to async map a buffer`. The dead list is how dead particle slots are
+  reclaimed, so slots never came back and a system would stop emitting after `max_particles`
+  spawns. Alpha-sorted systems had the same problem with their sort readback, silently (an
+  unsorted draw is the fallback). B21's panic had hidden all of it.
+- Cause: both readbacks called `map_async` and then `device.poll(Wait)` in the same frame. A
+  browser cannot wait, so the callback had not run, the buffer stayed in a pending map and every
+  later `map_async` failed. Natively the blocking poll also stalled the CPU on the GPU each frame.
+- **Resolution:** a non-blocking `AsyncReadback` (`gpu_particles/system/readback.rs`): record the
+  copy this frame, map the buffer next frame, and take the data on the first frame after the
+  callback has run (`poll(Poll)` natively; the browser calls back between frames). The GPU dead
+  list now keeps accumulating deaths until a copy is taken and restarts only then (a particle dies
+  once: its lifetime becomes -1), so none are lost while a readback is in flight. Reclaimed slots
+  arrive two or three frames later than before, and a sort order is a couple of frames older.
+  Verified: `particle_effects` (a 25,000-slot fountain, fireworks and an alpha-sorted smoke trail)
+  still emits after 30 s natively with a clean log, and Tide Observatory runs in a WebGPU browser
+  with 0 errors and 0 network failures.
 
 ### B22. Lua camera focus is lost, moving the directional shadow volume (fixed, engine)
 
@@ -574,7 +620,9 @@ How to read the sections:
   and the skill says to measure in the player. Measured (debug build, scratch scene): the
   editor spends about 6.5 ms in `ui_build` and 5 ms in `render_gpu`; Robotron in the player
   sums to 7.4 ms (render_gpu 2.7, ui_build 1.6, render_collect 0.8, scripts 0.6). The editor's
-  own cost was not reduced.
+  own cost was not reduced. Measured again on 2026-10-15 in the release editor: `ui_build` is
+  0.43 ms with a few entities (324 fps; the 6.5 ms above was a debug build), so there is nothing
+  to fix there; debug-build editor timings say little about the game.
 - **Hidden entities seem to cost frame time.** Observed in the player (noisy, not isolated): 460
   entities 8.4 ms (119 fps), about 900 entities 16 to 21 ms, about 1400 entities 22 ms; 500 extra
   `Visible = false` cubes at y = -80 read 22.6 ms, and 21 ms again after they were despawned,
@@ -584,6 +632,11 @@ How to read the sections:
   **Partly done:** hidden entities are now dropped before any render work, despawning no longer
   leaks (B11), and `frame_breakdown` shows render_collect and transforms separately. Hidden
   entities still go through transform propagation; not re-measured with a large pool.
+  **Measured** on 2026-10-15 (release editor; a hidden root, 300 hidden groups and 2,700 hidden
+  cubes, 3,006 entities): `transforms` 0.34 ms per frame (two propagation passes, about 0.06 us per
+  entity per pass), `render_collect` 0.12 ms, `ui_build` 1.4 to 1.8 ms; the frame was 6.5 ms (150
+  fps) against 3.1 ms with 5 entities. In a debug editor the same pool costs 6 ms of `transforms`
+  and 11 ms of `ui_build`, which is why it looked expensive. Hidden pools are cheap.
 - **Every primitive has its own material and there is no way to share one.** 100 sparks of
   one color are 100 materials. Robotron keeps one pool per palette color so a spark never needs
   `set_material`. Wish: `spawn_primitive(kind, name, {material_of = other_entity})` or a
@@ -645,7 +698,12 @@ How to read the sections:
   threshold, SSAO radius) changes the running engine only; after `project_save` and a restart
   `postprocess_get` showed the defaults again, and Lua cannot set them. Robotron's look had to be
   tuned against the defaults. Wish: keep them in `project.json` like the environment, or a
-  `set_postprocess` Lua call.
+  `set_postprocess` Lua call. **Done** (by the post-process volumes work, which post-dates this
+  note): post-processing lives on `Post Process Volume` entities that `postprocess_set` edits (it
+  creates an infinite one when the scene has none) and that save with the scene; the old
+  `project.json` `postprocess` block and the environment's colour grading are migrated into a
+  volume on load. The test `post_process_volume_survives_save_and_load` covers the scene round trip
+  (settings, overrides, priority). Lua still cannot change post-processing; see the wish list.
 
 - **Visual comparisons require manual state management.** Diagnosing B19 meant pausing
   animation, recording the camera and effect settings, toggling one effect at a time,
@@ -653,17 +711,33 @@ How to read the sections:
   the sculpture did not disable camera input; live dragging invalidated some early
   comparisons. **Open:** capture an isolated scene snapshot with fixed camera and
   simulation, and record the effective settings and frame/jitter indices with each image.
+  Not started; see the visual comparison tool in the wish list.
 - **Approval failures can look like engine failures.** This session initially accepted
   launch and project creation, then blocked scene edits with `MCP tool call requires
   approval, but approval policy is never`. Changing the client approval configuration
-  restored editing. This was a host/session policy issue, not an engine bug. **Open:**
-  explain this failure mode in the authoring workflow and distinguish it from connection
-  failures; retain the client's approval controls.
+  restored editing. This was a host/session policy issue, not an engine bug. **Done:** the
+  `engine://workflow` resource and the README ("Troubleshooting") say that the error comes from
+  the client, that reads can work while edits are refused, and how `engine_status` /
+  `engine_output` tell a real connection problem apart. The client's approval controls are
+  untouched.
 - **Quiet batches still return a report for every successful call.** `quiet: true`
   successfully omits full geometry recipes, but a large scene batch still returns many
   component counts and bounds. Consuming `structuredContent` directly helped avoid
-  repeating the text copy. **Open:** an optional aggregate summary with created IDs,
-  counts and the complete failure/rollback report; keep detailed results available.
+  repeating the text copy. **Done:** `batch {aggregate: true}` returns one summary instead of a
+  row per call: calls per tool, the entities returned (listed up to 24, else count, first and
+  last), alias ids, every failed call in full, and the unchanged `ok` / `failure` /
+  `rolled_back` verdict. A 66-entity atomic batch came back as 476 bytes instead of 13,287.
+  The detailed report is still the default.
+- **Browser readiness is easy to overestimate.** Native `project_validate` and a WASM build both
+  passed while B20 and B21 broke the browser run, and `web_build` stages only `project.json` and
+  `content/`, so an asset anywhere else 404s however well the project validates natively.
+  **Done:** `project_validate` has a `browser` block (errors: references `web_build` would not
+  serve; warnings: files differing only in letter case, Lua calls that need a file system such as
+  `read_file`/`write_file`/`io.open`/`os.getenv`, script string literals naming a missing file) and
+  `web_build` stops on its errors before the slow build (`ignore_browser_issues: true` packages
+  anyway). It reads source text only: paths built at run time and adapter differences still need
+  `web_playtest`, which is how B23 was found. Run over the six game projects it raised no false
+  positives.
 
 ## Wish list
 
@@ -737,15 +811,33 @@ How to read the sections:
 - ✅ A skill note: expose a global `RT` table of test hooks (`jump`, `spawn`, `god`, `units`)
   next to the `GAME` state table; it made every enemy type testable in seconds. (Also in the
   Lua reference's remote-control notes.)
-- ⬜ Make the editor's own frame cheaper (`ui_build` about 6.5 ms in a debug build), and skip
-  hidden subtrees in transform propagation.
+- ✅ Make the editor's own frame cheaper (`ui_build` about 6.5 ms in a debug build), and skip
+  hidden subtrees in transform propagation. (Closed by measurement, no change: see the two pain
+  points above. In a release editor `ui_build` is 0.43 ms and 3,000 hidden entities cost 0.34 ms of
+  transforms. Skipping hidden subtrees would also freeze lights, cameras and script reads under a
+  hidden parent, which do not follow `Visible`, for a gain of about 5% of a frame. A single-lookup
+  rewrite of the propagation loop was tried and gained only about 10% in a debug build, so it was
+  not kept.)
 
 - ⬜ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
   rendered frames for several effect configurations, and report difference images,
   per-region variation and settings. Preserve and restore the user's running scene.
   Cover the actual render/TAA frames, not only deterministic Lua simulation steps.
-- ⬜ **Browser capability preflight:** report unsupported effects and asset URL issues
+  Not started (2026-10-15): it is a new feature with open design choices rather than a fix. Sketch:
+  an engine-side render-only post-process override (so no scene edit has to be undone), a
+  `visual_compare` MCP tool that freezes the simulation, sets one variant at a time, waits for TAA
+  history to settle and captures N frames per variant with the effective settings, jitter index and
+  camera recorded, then reports per-region differences and writes difference images (the MCP crate
+  would need a PNG decoder; today it depends only on `serde_json`).
+- ✅ **Browser capability preflight:** report unsupported effects and asset URL issues
   before treating a saved project's native validation or WASM build as browser readiness.
+  (`project_validate`'s `browser` block and `web_build`'s early stop; see the pain point above.
+  The "unsupported effects" half is mostly moot now: the bindless-texture case is handled (B21)
+  rather than reported, and no other effect is gated on a browser-only capability that is known
+  statically.)
+- ⬜ Lua `set_postprocess(settings)` (or `set_component` support for `PostProcessVolume`), so a game
+  can change bloom, vignette or colour grading at run time. Persistence is solved (volumes); scripts
+  still cannot touch them.
 
 ## Tide Observatory: what worked well
 

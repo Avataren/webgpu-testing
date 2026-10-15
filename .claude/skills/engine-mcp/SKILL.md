@@ -65,7 +65,8 @@ engine you launched; save first).
 - For many objects: `entity_duplicate {entity, count, step, row_step, columns}` lays out a
   row or grid in one call; `entity_update`/`entity_delete` take `entities` or
   `name_contains` to change or remove many at once; `batch` runs a list of tool calls in
-  one round trip. Pass `quiet: true` for terse results.
+  one round trip. Pass `quiet: true` for terse results, or `aggregate: true` for one summary
+  (calls per tool, entities returned, aliases, failed calls in full) instead of a row per call.
 - `camera_set {focus: <entity>}` or `{position, target}` to frame the shot, then
   `screenshot {target: "viewport"}` (just the 3D view) or `"window"` (with the editor
   UI). `screenshot {camera: "game"}` (or a camera entity) renders that one frame through
@@ -224,9 +225,11 @@ Facts that change how you write scripts:
   explicit/image heights. Both persist embedded geometry with `project_save`.
 - `profile_capture {frames}` captures CPU latency percentiles, stage/script cost and asset
   growth. `baseline` compares a previous report. It does not measure GPU execution.
-- After `project_save`, call `project_validate` for paths, structure and Lua syntax.
-  `web_build {project}` packages the existing web pipeline; replacing artifacts needs
-  `overwrite: true`. `web_playtest {directory}` returns browser failures and a screenshot.
+- After `project_save`, call `project_validate` for paths, structure and Lua syntax. Its
+  `browser` block is a separate web preflight (assets outside `content/` are not staged,
+  case clashes, Lua file-system calls); native `ok: true` does not mean browser-ready.
+  `web_build {project}` packages the existing web pipeline and stops on browser errors;
+  replacing artifacts needs `overwrite: true`. `web_playtest {directory}` returns browser failures and a screenshot.
   It needs Node 22+ and Chromium/Brave (`ENGINE_BROWSER`); no npm dependencies or deployment.
 
 ## Injecting input (frame-based sessions)
