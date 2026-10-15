@@ -52,19 +52,26 @@ end
 -- light enough to catch the neon and glossy enough to mirror it, and a brighter tube.
 -- `floor` is the Arena's material; the raster values are the scene's own. `ambient` is the
 -- environment's ambient light, which path-traced rays also see as a grey sky: too much of it
--- washes out the neon.
+-- washes out the neon. `hdr` is the environment's sky: with path tracing a neon skyline at night
+-- (Poly Haven's Shanghai Bund, CC0) lights the scene softly from every side and glints in the
+-- glossy floor and robots. It is not drawn behind the arena (`background = false`): seen
+-- directly, its lower half is cut off by the black Floor plane and looks out of place, so the
+-- void around the arena stays black.
 local LOOK = {
     raster = {
         sun = 2.4, fill_cool = 0.55, fill_warm = 0.35, spills = true, ambient = 0.18,
         wall_glow = 2.6, body_emissive = 0.15, grid = 0.4,
         floor = { color = { 0.3216, 0.3216, 0.3412 }, roughness = 0.2196, metallic = 0.149,
             base_color_texture = "content/textures/floor_base.png" },
+        hdr = { enabled = false },
     },
     pt = {
         sun = 1.4, fill_cool = 0.0, fill_warm = 0.0, spills = false, ambient = 0.03,
         wall_glow = 10.0, body_emissive = 0.0, grid = 0.6,
         floor = { color = { 1.0, 1.0, 1.0 }, roughness = 0.12, metallic = 0.0,
             base_color_texture = "content/textures/floor_base_pt.png" },
+        hdr = { enabled = true, intensity = 1.0, background = false,
+            path = "content/textures/shanghai_bund_2k.hdr" },
     },
 }
 

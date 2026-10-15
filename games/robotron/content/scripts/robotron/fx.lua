@@ -4,7 +4,7 @@
 
 local C = require("robotron.config")
 local COLORS, HW, HD, VOX, SPREAD, TRANS_T = C.COLORS, C.HW, C.HD, C.VOX, C.SPREAD, C.TRANS_T
-local FLASH, LOOK = C.FLASH, C.LOOK
+local FLASH, LOOK, LEAN = C.FLASH, C.LOOK, C.LEAN
 local U = require("robotron.util")
 local frand = U.frand
 local S = require("robotron.state")
@@ -12,11 +12,24 @@ local g, reg, uname, set_vis = S.g, S.reg, S.uname, S.set_vis
 local Models = require("robotron.models")
 local mat_of = Models.mat_of
 
-local abs, floor, min, max = math.abs, math.floor, math.min, math.max
+local abs, floor, min, max, sqrt = math.abs, math.floor, math.min, math.max, math.sqrt
 
 -- model-space point (x, height) of an upright, leaning, camera-facing actor at (wx, wy, wz) -> world
 local function lean_pt(wx, wy, wz, x, h)
     return wx + x, wy + h * g.lean_c, wz - h * g.lean_s
+end
+
+-- The sprite's vertical for the effects: the way pixels spread or fly "up the sprite", as a
+-- unit (0, ay, az), with `base` the height (from the feet) they spread from and `scale` how
+-- far. From the game's steep view they move along the floor (-z), centred on the sprite, which
+-- reads as up and down on screen like the arcade's; from a low camera that runs into the view,
+-- so they rise from the actor's feet instead (centred, half would go under the floor). Between,
+-- the two blend with the actors' lean, which follows the camera (camera.lua).
+local function sprite_vertical(m)
+    local k = g.lean / LEAN
+    local ay, az = 1 - k, -k
+    local l = sqrt(ay * ay + az * az)
+    return ay / l, az / l, m.height * 0.5 * k, 0.5 + 0.5 * k
 end
 
 -- one pixel as a GPU particle: no drag, so it travels in a straight line for `life` seconds
@@ -33,19 +46,20 @@ end
 -- MATERIALIZE: the sprite's pixel rows (mode "v") or columns ("h") start far apart and close up;
 -- "r" spreads both ways a little (an enforcer growing out of a spheroid)
 local function materialize(m, wx, wy, wz, mode, t)
-    local hc = m.height * 0.5
+    local ay, az, base, scale = sprite_vertical(m)
     for i = 1, #m.px do
         local p = m.px[i]
         local fx, fy, fz = lean_pt(wx, wy, wz, p[1], p[2])
-        local ox, oz = 0, 0
+        local ox, o = 0, 0
         if mode == "h" then
             ox = p[1] * SPREAD * 1.6
         elseif mode == "v" then
-            oz = -(p[2] - hc) * SPREAD
+            o = (p[2] - base) * SPREAD * scale
         else
-            ox, oz = p[1] * 3.5, -(p[2] - hc) * 3.5
+            ox, o = p[1] * 3.5, (p[2] - base) * 3.5 * scale
         end
-        px_particle(fx + ox, fy, fz + oz, p[3], -ox / t, 0, -oz / t, t, 1.7, false)
+        local oy, oz = o * ay, o * az
+        px_particle(fx + ox, fy + oy, fz + oz, p[3], -ox / t, -oy / t, -oz / t, t, 1.7, false)
     end
 end
 
@@ -53,21 +67,21 @@ end
 local function explode(m, wx, wy, wz, dx, dz, life, k)
     life = life or 0.55
     k = k or 9.0
-    local hc = m.height * 0.5
+    local ay, az, base, scale = sprite_vertical(m)
     local horiz = dx and abs(dx) >= abs(dz)
     local vert = dx and not horiz
     for i = 1, #m.px do
         local p = m.px[i]
         local fx, fy, fz = lean_pt(wx, wy, wz, p[1], p[2])
-        local vx, vz = 0, 0
+        local vx, v, push = 0, 0, 0
         if horiz then
             vx = p[1] * k * 1.6 + dx * 3.0
         elseif vert then
-            vz = -(p[2] - hc) * k + dz * 3.0
+            v, push = (p[2] - base) * k * scale, dz * 3.0
         else
-            vx, vz = p[1] * k, -(p[2] - hc) * k
+            vx, v = p[1] * k, (p[2] - base) * k * scale
         end
-        px_particle(fx, fy, fz, p[3], vx, 0, vz, life * frand(0.8, 1.1), 2.0, true)
+        px_particle(fx, fy, fz, p[3], vx, v * ay, v * az + push, life * frand(0.8, 1.1), 2.0, true)
     end
 end
 
@@ -253,7 +267,7 @@ local function apply_look(pt)
     if g.rim then set_light(g.rim, { intensity = L.fill_warm }) end
     for n = 1, #g.spills do set_vis(g.spills[n], L.spills) end
     if g.arena then set_material(g.arena, L.floor) end
-    if set_environment then set_environment({ ambient_intensity = L.ambient }) end
+    if set_environment then set_environment({ ambient_intensity = L.ambient, hdr = L.hdr }) end
     g.grid_glow = nil
 end
 

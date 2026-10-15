@@ -708,7 +708,8 @@ pub fn tools() -> Vec<Tool> {
                 "clear_color": color("Background color"),
                 "ambient_intensity": { "type": "number" },
                 "hdr": { "type": "object", "properties": {
-                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "path": { "type": "string", "description": ".hdr image" }
+                    "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "path": { "type": "string", "description": ".hdr image" },
+                    "background": { "type": "boolean", "description": "Draw the sky behind the scene (default true); false keeps it to lighting and reflections, with clear_color behind" }
                 }}
             }), &[]),
             action: Action::Engine("environment.set"),

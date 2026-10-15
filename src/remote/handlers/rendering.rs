@@ -166,7 +166,7 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
 }
 
 /// Check an environment change (`ambient_intensity`, `clear_color` as `[r, g, b(, a)]` or
-/// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`}) and return it in the form
+/// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`, `background`}) and return it in the form
 /// [`patch_environment`] takes: the colour as four numbers, the sky's path resolved.
 pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     if params.get("color_grading").is_some() {

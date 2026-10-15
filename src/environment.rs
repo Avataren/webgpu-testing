@@ -21,6 +21,9 @@ pub struct HdrBackground {
     enabled: bool,
     image_path: PathBuf,
     intensity: f32,
+    /// Whether the image is drawn behind the scene. Off, it only lights the scene and
+    /// shows in reflections (and to path-traced rays); the clear colour shows behind.
+    background: bool,
 }
 
 impl Environment {
@@ -116,6 +119,13 @@ impl Environment {
     pub fn is_hdr_enabled(&self) -> bool {
         self.active_hdr_background().is_some()
     }
+
+    /// Whether the active HDR image is drawn behind the scene, not only used for light
+    /// and reflections.
+    pub fn is_hdr_background_visible(&self) -> bool {
+        self.active_hdr_background()
+            .is_some_and(HdrBackground::background)
+    }
 }
 
 impl Default for Environment {
@@ -138,6 +148,7 @@ impl HdrBackground {
             enabled: true,
             image_path: image_path.into(),
             intensity: 1.0,
+            background: true,
         }
     }
 
@@ -171,5 +182,14 @@ impl HdrBackground {
     pub fn with_intensity(mut self, intensity: f32) -> Self {
         self.set_intensity(intensity);
         self
+    }
+
+    /// Whether the image is drawn behind the scene (see the field).
+    pub fn background(&self) -> bool {
+        self.background
+    }
+
+    pub fn set_background(&mut self, background: bool) {
+        self.background = background;
     }
 }

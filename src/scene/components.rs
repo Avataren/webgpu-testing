@@ -218,6 +218,14 @@ pub struct EnvironmentHdrSettings {
     pub enabled: bool,
     pub intensity: f32,
     pub path: Option<PathBuf>,
+    /// Draw the image behind the scene (default); false keeps it to lighting and
+    /// reflections, with the clear colour behind.
+    #[serde(default = "default_true")]
+    pub background: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl EnvironmentComponent {
@@ -286,6 +294,7 @@ impl EnvironmentHdrSettings {
         let mut background = HdrBackground::new(path);
         background.set_enabled(self.enabled);
         background.set_intensity(self.intensity);
+        background.set_background(self.background);
         Some(background)
     }
 }
@@ -296,6 +305,7 @@ impl Default for EnvironmentHdrSettings {
             enabled: false,
             intensity: 1.0,
             path: None,
+            background: true,
         }
     }
 }
@@ -306,6 +316,7 @@ impl From<&HdrBackground> for EnvironmentHdrSettings {
             enabled: background.enabled(),
             intensity: background.intensity(),
             path: Some(background.path().to_path_buf()),
+            background: background.background(),
         }
     }
 }
@@ -329,8 +340,24 @@ mod tests {
             .expect("HDR background should be active");
 
         assert!(environment.is_hdr_enabled());
+        assert!(environment.is_hdr_background_visible());
         assert_eq!(background.path(), Path::new("assets/test_environment.hdr"));
         assert!((background.intensity() - 2.5).abs() < f32::EPSILON);
+
+        // Lighting only: still enabled, not drawn behind the scene; older scenes without
+        // the field draw it.
+        component.hdr_settings_mut().background = false;
+        let environment = component.to_environment();
+        assert!(environment.is_hdr_enabled());
+        assert!(!environment.is_hdr_background_visible());
+        assert!(!EnvironmentComponent::from_environment(&environment)
+            .hdr
+            .unwrap()
+            .background);
+        let old: EnvironmentHdrSettings =
+            serde_json::from_str(r#"{"enabled": true, "intensity": 1.0, "path": "a.hdr"}"#)
+                .unwrap();
+        assert!(old.background);
     }
 }
 

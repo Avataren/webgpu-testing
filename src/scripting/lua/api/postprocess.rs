@@ -28,7 +28,8 @@ use crate::scripting::lua::guards::with_active_commands;
 /// the volume itself. Unknown setting names are an error.
 ///
 /// - `set_environment(settings)` - change the scene's environment: `ambient_intensity`,
-///   `clear_color` (`{r, g, b[, a]}` or `"#rrggbb"`), `hdr = { enabled, intensity, path }`
+///   `clear_color` (`{r, g, b[, a]}` or `"#rrggbb"`), `hdr = { enabled, intensity, path,
+///   background }` (`background = false`: light and reflections only)
 pub(crate) fn register_postprocess_api(lua: &Lua) -> LuaResult<()> {
     lua.globals().set(
         "set_postprocess",

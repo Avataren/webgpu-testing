@@ -22,8 +22,9 @@ aberration, a red vignette and a punch of exposure. The rest of the stack is ACE
 TAA, a vignette and light film grain.
 
 With path tracing on (the settings page, Escape in the demo) the arena switches to a night
-look lit by the rail itself: the fake glow strips and fill lights go, the sun dims to a moon,
-the sky darkens, and the brighter tube throws real coloured light across a lighter, glossier
+look lit by the rail itself: the fake glow strips and fill lights go, the sun dims,
+the flat ambient sky gives way to an HDR night skyline (Poly Haven's Shanghai Bund, CC0) that
+lights the arena softly and glints in the glossy floor and robots, and the brighter tube throws real coloured light across a lighter, glossier
 floor that mirrors it and the actors. The switch follows the setting live (`config.LOOK`,
 `fx.update_look`).
 

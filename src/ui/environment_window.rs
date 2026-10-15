@@ -15,6 +15,8 @@ pub struct EnvironmentSettingsControls {
     pub hdr_enabled: bool,
     pub hdr_available: bool,
     pub hdr_intensity: f32,
+    /// Draw the image behind the scene, not only for light and reflections.
+    pub hdr_background: bool,
     pub dirty: bool,
 }
 
@@ -26,6 +28,7 @@ impl EnvironmentSettingsControls {
         let hdr_available = hdr_background.is_some();
         let hdr_enabled = environment.is_hdr_enabled();
         let hdr_intensity = hdr_background.map(|hdr| hdr.intensity()).unwrap_or(1.0);
+        let hdr_visible = hdr_background.is_none_or(|hdr| hdr.background());
 
         Self {
             clear_color: [color.r as f32, color.g as f32, color.b as f32],
@@ -33,6 +36,7 @@ impl EnvironmentSettingsControls {
             hdr_enabled: hdr_enabled && hdr_available,
             hdr_available,
             hdr_intensity,
+            hdr_background: hdr_visible,
             dirty: false,
         }
     }
@@ -49,6 +53,7 @@ impl EnvironmentSettingsControls {
         if let Some(hdr) = environment.hdr_background_mut() {
             hdr.set_enabled(self.hdr_enabled && self.hdr_available);
             hdr.set_intensity(self.hdr_intensity);
+            hdr.set_background(self.hdr_background);
         }
     }
 }
@@ -118,6 +123,13 @@ impl EnvironmentWindow {
                     "Intensity",
                     &mut changed,
                 );
+                changed |= ui
+                    .checkbox(&mut controls.hdr_background, "Show behind the scene")
+                    .on_hover_text(
+                        "Off: the image only lights the scene and shows in reflections; \
+                         the clear colour is drawn behind",
+                    )
+                    .changed();
             } else {
                 ui.label("No HDR background is loaded.");
             }

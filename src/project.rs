@@ -778,6 +778,7 @@ impl SerializedEnvironment {
                 enabled: background.enabled(),
                 image_path: Some(background.path().to_path_buf()),
                 intensity: background.intensity(),
+                background: background.background(),
                 source_path: Some(background.path().to_path_buf()),
             });
 
@@ -878,6 +879,7 @@ impl SerializedEnvironment {
                 let mut background = HdrBackground::new(path);
                 background.set_enabled(hdr.enabled);
                 background.set_intensity(hdr.intensity);
+                background.set_background(hdr.background);
                 environment.set_hdr_background(Some(background));
             }
         }
@@ -914,11 +916,17 @@ fn paths_refer_to_same_file(source: &Path, target: &Path) -> std::io::Result<boo
     }
 }
 
+fn default_hdr_background() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerializedHdrBackground {
     enabled: bool,
     image_path: Option<PathBuf>,
     intensity: f32,
+    #[serde(default = "default_hdr_background")]
+    background: bool,
     #[serde(skip)]
     source_path: Option<PathBuf>,
 }

@@ -477,7 +477,7 @@ pub(crate) fn main_color_pass(
         ))
         .set_depth(FrameGraphDepthAttachment::load(depth_view));
 
-    let hdr_enabled = environment.is_hdr_enabled();
+    let hdr_background = environment.is_hdr_background_visible();
     let sample_count = renderer.context.sample_count;
     let batches = prepared_batches.opaque();
     let materials = prepared_batches.materials();
@@ -495,7 +495,7 @@ pub(crate) fn main_color_pass(
     let mut draw_calls = 0u32;
 
     frame_graph.execute_pass(plan, render_region, |pass| {
-        if hdr_enabled {
+        if hdr_background {
             recorder.draw_environment_background(pass);
         }
 

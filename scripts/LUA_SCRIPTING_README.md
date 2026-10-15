@@ -357,7 +357,8 @@ end
 - `set_environment(settings)` - Change the scene's environment: `ambient_intensity` (the
   flat ambient light, and the sky that path-traced rays see where nothing is in the way),
   `clear_color` (the background, `{r, g, b[, a]}` or `"#rrggbb"`) and `hdr = { enabled,
-  intensity, path }` (an HDR sky). Only the settings you name change; an unknown name is an
+  intensity, path, background }` (an HDR sky; `background = false` keeps it to lighting and
+  reflections, with `clear_color` drawn behind the scene). Only the settings you name change; an unknown name is an
   error. Undone when play mode stops.
 
 ```lua
