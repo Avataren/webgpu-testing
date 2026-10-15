@@ -17,6 +17,7 @@ pub(super) fn get() -> RemoteResult {
         "capabilities": {
             "ray_tracing": graphics.capabilities.ray_tracing,
             "path_tracing": graphics.capabilities.path_tracing,
+            "global_illumination": graphics.capabilities.path_tracing,
             "upscaling": graphics.capabilities.upscaling,
             "vsync_optional": graphics.capabilities.vsync_optional,
         },

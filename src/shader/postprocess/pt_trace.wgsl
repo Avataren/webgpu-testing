@@ -22,6 +22,12 @@
 // (sky, transmissive surfaces the refraction pass draws, geometry not in the acceleration
 // structure) are marked with emission alpha -1 and keep the main pass's colour.
 //
+// Global illumination (fs_gi_trace, fs_gi_composite) traces only the diffuse paths, at
+// one pixel per target pixel (every scene pixel, or one of every 2x2 at half resolution),
+// with no direct light at the primary surface: the main pass lights it directly and the
+// reflection pass adds its specular light. After the denoiser, the composite adds the
+// light times the surface's diffuse colour to the main pass's colour at full resolution.
+//
 // Needs `enable wgpu_ray_query;`, post-processing's fullscreen and common modules, the main
 // pass's constants, material, lighting and environment modules, an rt_textures_* module,
 // rt_common.wgsl and pt_common.wgsl.
@@ -40,6 +46,12 @@ var pt_scene_color : texture_2d<f32>;
 var pt_radiance_cache : texture_2d<f32>;
 @group(1) @binding(197)
 var pt_prev_geometry : texture_2d<f32>;
+// Global illumination's composite: the denoised indirect diffuse light and the geometry
+// it was traced for (pt_denoise.wgsl's geometry target), at the targets' resolution.
+@group(1) @binding(198)
+var pt_gi_light : texture_2d<f32>;
+@group(1) @binding(199)
+var pt_gi_geometry : texture_2d<f32>;
 
 struct PtTraceOutput {
     // Demodulated diffuse light (rgb) and its rays' mean hit distance (a).
@@ -440,7 +452,8 @@ fn pt_cached_radiance(position : vec3<f32>, n : vec3<f32>) -> vec4<f32> {
     if abs(geometry.z - depth) > 0.01 * depth + 4.0 * pt_footprint(depth) {
         return vec4<f32>(0.0);
     }
-    return vec4<f32>(textureLoad(pt_radiance_cache, q, 0).rgb, 1.0);
+    // The cache is the scene region's size; the geometry may be half of it.
+    return vec4<f32>(textureLoad(pt_radiance_cache, q * i32(pt.scale.x), 0).rgb, 1.0);
 }
 
 // Light arriving along a ray from `origin` through up to `bounces` surfaces. `width` and
@@ -612,23 +625,25 @@ fn pt_view_ray(scene_uv : vec2<f32>) -> array<vec3<f32>, 2> {
     return array<vec3<f32>, 2>(a - direction * dot(a - camera, direction), direction);
 }
 
-@fragment
-fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
-    var out : PtTraceOutput;
-    out.emission = vec4<f32>(0.0, 0.0, 0.0, -1.0);
-    let local = vec2<i32>(in.position.xy);
-    let pixel = local + vec2<i32>(pt.region.xy);
+// The surface a scene pixel shows, as the G-buffer has it, found in the acceleration
+// structure for its material and a full-precision position.
+struct PtPrimary {
+    found : bool,
+    position : vec3<f32>,
+    // The view ray's direction and the distance along it.
+    direction : vec3<f32>,
+    t : f32,
+    material : RtMaterial,
+};
+
+// The G-buffer surface at `pixel` in the acceleration structure: along the view ray, within
+// the half-float position's precision of where the G-buffer has it.
+fn pt_primary_hit(pixel : vec2<i32>) -> PtPrimary {
+    var out : PtPrimary;
     let surface = textureLoad(pt_gbuffer_position, pixel, 0);
     if surface.w < 0.5 {
         return out;
     }
-    // Transmissive surfaces (marked by a negative alpha) are the refraction pass's.
-    if textureLoad(pt_scene_color, pixel, 0).a < 0.0 {
-        return out;
-    }
-
-    // The G-buffer surface in the acceleration structure: along the view ray, within the
-    // half-float position's precision of where the G-buffer has it.
     let dims = vec2<f32>(textureDimensions(pt_gbuffer_position));
     let ray = pt_view_ray((vec2<f32>(pixel) + 0.5) / dims);
     let expected = dot(surface.xyz - ray[0], ray[1]);
@@ -637,9 +652,64 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
     if primary.kind == RAY_QUERY_INTERSECTION_NONE {
         return out;
     }
-    let position = ray[0] + ray[1] * primary.t;
+    out.found = true;
+    out.position = ray[0] + ray[1] * primary.t;
+    out.direction = ray[1];
+    out.t = primary.t;
+    out.material = rt_material(primary, ray[1], pt.footprint.z * primary.t);
+    return out;
+}
+
+// The G-buffer's (normal mapped) normal at `pixel`, on the side of the interpolated normal
+// `ng` and bent to face the viewer `v`: what shades the surface. `ng` offsets rays off it.
+fn pt_shading_normal(pixel : vec2<i32>, ng : vec3<f32>, v : vec3<f32>) -> vec3<f32> {
+    var n = pt_decode_normal(textureLoad(pt_gbuffer_normal, pixel, 0).xy);
+    if dot(n, ng) < 0.0 {
+        n = -n;
+    }
+    let n_dot_v_raw = dot(n, v);
+    if n_dot_v_raw < 0.02 {
+        n = normalize(n + v * (0.02 - n_dot_v_raw));
+    }
+    return n;
+}
+
+// One cosine-weighted diffuse path from the primary surface along `l`: the light it brings
+// (demodulated, times what Fresnel leaves for diffuse) and its first hit's distance.
+fn pt_diffuse_path(
+    origin : vec3<f32>,
+    l : vec3<f32>,
+    ng : vec3<f32>,
+    v : vec3<f32>,
+    f0 : vec3<f32>,
+    width : f32,
+    bounces : u32,
+) -> vec4<f32> {
+    if dot(l, ng) <= 0.0 {
+        return vec4<f32>(0.0, 0.0, 0.0, PT_MISS_DISTANCE);
+    }
+    let fresnel = fresnel_schlick(max(dot(v, normalize(v + l)), 0.0), f0);
+    let incoming = pt_trace_path(origin, l, bounces, width, PT_DIFFUSE_SPREAD, 1.0);
+    return vec4<f32>((vec3<f32>(1.0) - fresnel) * incoming.rgb, incoming.a);
+}
+
+@fragment
+fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
+    var out : PtTraceOutput;
+    out.emission = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+    let local = vec2<i32>(in.position.xy);
+    let pixel = local + vec2<i32>(pt.region.xy);
+    // Transmissive surfaces (marked by a negative alpha) are the refraction pass's.
+    if textureLoad(pt_scene_color, pixel, 0).a < 0.0 {
+        return out;
+    }
+    let primary = pt_primary_hit(pixel);
+    if !primary.found {
+        return out;
+    }
+    let position = primary.position;
     let pixel_angle = pt.footprint.z;
-    let material = rt_material(primary, ray[1], pixel_angle * primary.t);
+    let material = primary.material;
     if material.transmission > 0.0 {
         return out;
     }
@@ -651,18 +721,11 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
         return out;
     }
 
-    let v = -ray[1];
+    let v = -primary.direction;
     // The interpolated normal facing the ray offsets rays off the surface; the G-buffer's
     // (normal mapped) shades it, bent to face the camera.
     let ng = material.normal;
-    var n = pt_decode_normal(textureLoad(pt_gbuffer_normal, pixel, 0).xy);
-    if dot(n, ng) < 0.0 {
-        n = -n;
-    }
-    let n_dot_v_raw = dot(n, v);
-    if n_dot_v_raw < 0.02 {
-        n = normalize(n + v * (0.02 - n_dot_v_raw));
-    }
+    let n = pt_shading_normal(pixel, ng, v);
     let n_dot_v = max(dot(n, v), 1e-4);
     let roughness = material.roughness;
     let alpha = roughness * roughness;
@@ -671,7 +734,6 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
     let specular_albedo = max(pt_specular_albedo(f0, n_dot_v, roughness), vec3<f32>(1e-3));
     let bias = 0.005 + 1e-3 * primary.t;
     let origin = position + ng * bias;
-
     pt_rng_state = pt_hash(u32(pixel.x) + pt_hash(u32(pixel.y) + pt_hash(pt.frame.x)));
     // Each pixel's own shift of the R2 sequence (both dimensions from both coordinates).
     let pixel_seed = pt_hash(u32(pixel.x) + pt_hash(u32(pixel.y)));
@@ -712,14 +774,9 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
         let index = pt.frame.x * samples + k;
         if trace_diffuse {
             let l = pt_cosine_direction(n, pt_r2(offset_diffuse, index));
-            if dot(l, ng) > 0.0 {
-                let fresnel = fresnel_schlick(max(dot(v, normalize(v + l)), 0.0), f0);
-                let incoming = pt_trace_path(origin, l, bounces, width, PT_DIFFUSE_SPREAD, 1.0);
-                diffuse_indirect += (vec3<f32>(1.0) - fresnel) * incoming.rgb;
-                diffuse_distance += incoming.a;
-            } else {
-                diffuse_distance += PT_MISS_DISTANCE;
-            }
+            let incoming = pt_diffuse_path(origin, l, ng, v, f0, width, bounces);
+            diffuse_indirect += incoming.rgb;
+            diffuse_distance += incoming.a;
         }
         let h = pt_sample_ggx_normal(n, v, alpha, pt_r2(offset_specular, index));
         let l = reflect(-v, h);
@@ -744,4 +801,134 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
     out.material = vec4<f32>(clamp(material.base_color, vec3<f32>(0.0), vec3<f32>(1.0)), max(roughness, 0.012));
     out.emission = vec4<f32>(min(material.emissive, vec3<f32>(PT_MAX_RADIANCE)), clamp(material.metallic, 0.0, 1.0));
     return out;
+}
+
+// Global illumination: the indirect diffuse light at the scene pixel a target pixel stands
+// for, demodulated, with the material and geometry the denoiser needs. Nothing is written
+// for specular light (the reflection pass has it) or emission (the main pass draws it).
+@fragment
+fn fs_gi_trace(in : VertexOutput) -> PtTraceOutput {
+    var out : PtTraceOutput;
+    out.emission = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+    let pixel = pt_scene_pixel(vec2<i32>(in.position.xy));
+    if textureLoad(pt_scene_color, pixel, 0).a < 0.0 {
+        return out;
+    }
+    let primary = pt_primary_hit(pixel);
+    let material = primary.material;
+    if !primary.found || material.transmission > 0.0 {
+        return out;
+    }
+    out.material = vec4<f32>(clamp(material.base_color, vec3<f32>(0.0), vec3<f32>(1.0)), max(material.roughness, 0.012));
+    out.emission = vec4<f32>(0.0, 0.0, 0.0, clamp(material.metallic, 0.0, 1.0));
+    out.specular = vec4<f32>(0.0, 0.0, 0.0, PT_MISS_DISTANCE);
+    out.diffuse = vec4<f32>(0.0, 0.0, 0.0, PT_MISS_DISTANCE);
+    let diffuse_color = material.base_color * (1.0 - material.metallic);
+    if material.unlit || pt_luminance(diffuse_color) <= 1e-3 {
+        return out;
+    }
+
+    let v = -primary.direction;
+    let ng = material.normal;
+    let n = pt_shading_normal(pixel, ng, v);
+    let f0 = mix(vec3<f32>(0.04), material.base_color, material.metallic);
+    let origin = primary.position + ng * (0.005 + 1e-3 * primary.t);
+    pt_rng_state = pt_hash(u32(pixel.x) + pt_hash(u32(pixel.y) + pt_hash(pt.frame.x)));
+    let pixel_seed = pt_hash(u32(pixel.x) + pt_hash(u32(pixel.y)));
+    let offset = vec2<u32>(pt_hash(pixel_seed ^ 0x68bc21ebu), pt_hash(pixel_seed ^ 0x02e5be93u));
+
+    let samples = max(pt.frame.z, 1u);
+    let bounces = max(pt.frame.y, 1u);
+    // A target pixel covers `scale` scene pixels across.
+    let width = pt.footprint.z * pt.scale.x * primary.t;
+    var light = vec3<f32>(0.0);
+    var distance = 0.0;
+    for (var k = 0u; k < samples; k = k + 1u) {
+        let l = pt_cosine_direction(n, pt_r2(offset, pt.frame.x * samples + k));
+        let incoming = pt_diffuse_path(origin, l, ng, v, f0, width, bounces);
+        light += incoming.rgb;
+        distance += incoming.a;
+    }
+    let inv_samples = 1.0 / f32(samples);
+    light = light * inv_samples;
+    light = clamp(select(light, vec3<f32>(0.0), light != light), vec3<f32>(0.0), vec3<f32>(PT_MAX_RADIANCE));
+    out.diffuse = vec4<f32>(light, distance * inv_samples);
+    return out;
+}
+
+// The denoised global illumination at region position `local`, upsampled from the target
+// pixels around it that show the same surface (G-buffer normal `n` and view depth `depth`,
+// seen along `v`): bilinear weights from the nearest four times how well each one's normal
+// and depth match, or a wider ring's matches where none of the four does. w is 0 where
+// nothing matches.
+fn pt_gi_upsample(local : vec2<i32>, n : vec3<f32>, depth : f32, v : vec3<f32>) -> vec4<f32> {
+    let size = vec2<i32>(pt.region.zw);
+    let coord = vec2<f32>(local) / pt.scale.x;
+    let base = vec2<i32>(floor(coord));
+    let f = coord - floor(coord);
+    let c = clamp(abs(dot(n, v)), 0.1, 1.0);
+    let tolerance = 0.02 * depth + 2.0 * pt_footprint(depth) * (1.0 + sqrt(1.0 - c * c) / c);
+    var near = vec4<f32>(0.0);
+    var wide = vec4<f32>(0.0);
+    for (var y = -1; y <= 2; y = y + 1) {
+        for (var x = -1; x <= 2; x = x + 1) {
+            let q = base + vec2<i32>(x, y);
+            if any(q < vec2<i32>(0)) || any(q >= size) {
+                continue;
+            }
+            let geometry = textureLoad(pt_gi_geometry, q, 0);
+            if geometry.w <= 0.0 {
+                continue;
+            }
+            let w_normal = pow(max(dot(n, pt_decode_normal(geometry.xy)), 0.0), 16.0);
+            let w = w_normal * exp(-abs(geometry.z - depth) / tolerance);
+            if w <= 1e-4 {
+                continue;
+            }
+            let light = vec4<f32>(textureLoad(pt_gi_light, q, 0).rgb, 1.0);
+            if x >= 0 && x <= 1 && y >= 0 && y <= 1 {
+                let fw = select(vec2<f32>(1.0) - f, f, vec2<i32>(x, y) == vec2<i32>(1));
+                near += light * (fw.x * fw.y * w);
+            }
+            let d = vec2<f32>(q) - coord;
+            wide += light * (w * exp(-0.5 * dot(d, d)));
+        }
+    }
+    if near.w > 1e-3 {
+        return vec4<f32>(near.rgb / near.w, 1.0);
+    }
+    if wide.w > 1e-6 {
+        return vec4<f32>(wide.rgb / wide.w, 1.0);
+    }
+    return vec4<f32>(0.0);
+}
+
+// Global illumination's composite, at every scene pixel: the upsampled light times the
+// surface's diffuse colour (from its material here, at full resolution), added to the
+// main pass's colour. Alpha is kept by the blend state.
+@fragment
+fn fs_gi_composite(in : VertexOutput) -> @location(0) vec4<f32> {
+    let pixel = vec2<i32>(in.position.xy);
+    let local = pixel - vec2<i32>(pt.region.xy);
+    if any(local < vec2<i32>(0)) || any(local >= vec2<i32>(pt.scale.yz)) {
+        discard;
+    }
+    let primary = pt_primary_hit(pixel);
+    let material = primary.material;
+    if !primary.found || material.transmission > 0.0 || material.unlit {
+        discard;
+    }
+    let diffuse_color = material.base_color * (1.0 - material.metallic);
+    if pt_luminance(diffuse_color) <= 1e-3 {
+        discard;
+    }
+    let world = textureLoad(pt_gbuffer_position, pixel, 0).xyz;
+    let n = pt_decode_normal(textureLoad(pt_gbuffer_normal, pixel, 0).xy);
+    let depth = max(pt_view_depth(world), 1e-3);
+    let light = pt_gi_upsample(local, n, depth, -primary.direction);
+    if light.w <= 0.0 {
+        discard;
+    }
+    let color = light.rgb * diffuse_color;
+    return vec4<f32>(select(color, vec3<f32>(0.0), color != color), 0.0);
 }

@@ -12,7 +12,7 @@ use crate::renderer::internal::{
 };
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
-    postprocess::{PostProcess, PostProcessCamera, PostProcessSettings},
+    postprocess::{PostProcess, PostProcessCamera, PostProcessSettings, TracedLighting},
     CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
     RenderPass, RenderRegion, SamplerFilterMode, Vertex,
 };
@@ -84,6 +84,8 @@ pub struct RendererStats {
     pub ray_tracing: Option<crate::renderer::raytracing::RayTracingStats>,
     /// The frame's lighting was path traced.
     pub path_traced: bool,
+    /// The frame's indirect diffuse light was ray traced (global illumination).
+    pub global_illumination: bool,
 }
 
 impl RendererStats {
@@ -131,6 +133,8 @@ struct FramePlan {
     refraction: bool,
     /// The opaque lighting is path traced.
     path_tracing: bool,
+    /// The opaque surfaces' indirect diffuse light is ray traced (global illumination).
+    global_illumination: bool,
     /// Nothing but the main pass's opaque PBR surfaces reads the shadow maps: no
     /// transparent surfaces, shader materials, custom shadow passes or lit particles.
     /// Maps the ray-traced mask replaces can then be skipped.
@@ -152,6 +156,10 @@ impl FramePlan {
 
     fn path_trace(&self) -> bool {
         self.ray_traced && self.path_tracing
+    }
+
+    fn trace_global_illumination(&self) -> bool {
+        self.ray_traced && self.global_illumination
     }
 
     fn may_skip_shadow_maps(&self) -> bool {
@@ -1031,14 +1039,25 @@ impl Renderer {
         self.gpu_timer
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, plan.trace_rt_shadows());
+        // Traced global illumination brings the diffuse light the main pass would take
+        // from the environment, and ray-traced reflections the sky's reflection.
+        let gi = plan.trace_global_illumination();
+        let traced_reflections = plan.ray_traced && self.postprocess.wants_ray_traced_reflections();
+        self.environment
+            .set_traced(&self.context.queue, gi, traced_reflections);
         self.run_main_color_pass(&mut frame_state, environment, assets);
-        // Path traced lighting replaces the main pass's on opaque surfaces, before
-        // particles and transparent surfaces are drawn over them.
-        let path_traced = plan.path_trace() && {
+        // Path traced lighting replaces the main pass's on opaque surfaces (traced global
+        // illumination adds to it), before particles and transparent surfaces are drawn
+        // over them.
+        let lighting = if plan.path_trace() || plan.trace_global_illumination() {
             self.gpu_timer.mark(&mut frame_state.encoder, "main");
             self.run_path_tracing(&mut frame_state, &lights)
+        } else {
+            TracedLighting::Raster
         };
+        let path_traced = lighting == TracedLighting::PathTraced;
         frame_state.stats.path_traced = path_traced;
+        frame_state.stats.global_illumination = lighting == TracedLighting::GlobalIllumination;
         // Shader materials draw their own colour (after path tracing, which lights only
         // the PBR surfaces).
         self.run_shader_material_pass(&mut frame_state, assets, path_traced);
@@ -1066,7 +1085,7 @@ impl Renderer {
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "transparent");
-        self.execute_postprocess(&mut frame_state, &plan, path_traced);
+        self.execute_postprocess(&mut frame_state, &plan, lighting);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "post_process");
         self.run_custom_stage(
@@ -1465,6 +1484,7 @@ impl Renderer {
             refraction: self.ray_traced_transmission()
                 && batches.materials.iter().any(Material::is_transmissive),
             path_tracing: self.postprocess.wants_path_tracing(),
+            global_illumination: self.postprocess.wants_global_illumination(),
             only_main_pass_reads_shadow_maps: !custom_shadow_enabled
                 && !particles_lit
                 && !shader_materials
@@ -1559,12 +1579,12 @@ impl Renderer {
             .set_rt_shadow_bits(&self.context.queue, bits);
     }
 
-    fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> bool {
+    fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> TracedLighting {
         let Some(rt_scene) = self.ray_tracing.as_ref() else {
-            return false;
+            return TracedLighting::Raster;
         };
         let Some(scene) = rt_scene.bind_group() else {
-            return false;
+            return TracedLighting::Raster;
         };
         let ray_tracing = crate::renderer::raytracing::RayTracingFrame {
             lights: &self.lights_buffer.bind_group,
@@ -1586,7 +1606,12 @@ impl Renderer {
         )
     }
 
-    fn execute_postprocess(&mut self, frame: &mut FrameState, plan: &FramePlan, path_traced: bool) {
+    fn execute_postprocess(
+        &mut self,
+        frame: &mut FrameState,
+        plan: &FramePlan,
+        lighting: TracedLighting,
+    ) {
         let refraction = plan.refraction;
         let ray_tracing = self
             .ray_tracing
@@ -1607,7 +1632,7 @@ impl Renderer {
             frame.render_region,
             frame.scene_region,
             ray_tracing,
-            path_traced,
+            lighting,
             &mut self.gpu_timer,
         );
         frame.resolved_depth_view = self.postprocess.after_postprocess_depth_view().cloned();

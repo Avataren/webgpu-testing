@@ -8,6 +8,7 @@
 struct EnvironmentSettings {
     flags_intensity: vec4<f32>,  // x: hdr_enabled, y: hdr_intensity, z: ambient_intensity, w: max_lod
     ambient_color: vec4<f32>,    // rgb: tint, a: ambient_intensity (duplicate for driver compatibility)
+    traced: vec4<f32>,           // x: 1 while ray-traced global illumination lights opaque surfaces' diffuse light, y: 1 while ray-traced reflections also bring them the sky's reflection
 };
 
 // ============================================================================
@@ -28,6 +29,19 @@ fn environment_hdr_enabled() -> bool {
 
 fn environment_hdr_intensity() -> f32 {
     return environment_settings.flags_intensity.y;
+}
+
+// Whether ray-traced global illumination brings opaque surfaces their indirect diffuse
+// light this frame (pt_trace.wgsl's fs_gi_composite adds it after the main pass).
+fn environment_diffuse_traced() -> bool {
+    return environment_settings.traced.x > 0.5;
+}
+
+// Whether, with traced global illumination, ray-traced reflections bring opaque surfaces
+// the sky's reflection where their rays reach it (rt_reflections.wgsl), so the main pass
+// leaves it out instead of reflecting the sky through walls.
+fn environment_specular_traced() -> bool {
+    return environment_settings.traced.y > 0.5;
 }
 
 fn environment_ambient_intensity() -> f32 {
@@ -127,4 +141,32 @@ fn calculate_environment_lighting(
 
     // When no HDR is available, apply occlusion to the fallback ambient
     return fallback_ambient * occlusion;
+}
+
+// What calculate_environment_lighting leaves while ray-traced global illumination brings
+// the diffuse light: the sky's specular reflection (unless ray-traced reflections bring
+// it, environment_specular_traced), and on metals the flat ambient that stands in for
+// their surroundings (the reflection passes take it off where they find a reflection).
+// The sky's irradiance and the flat ambient on diffuse surfaces are traced instead, with
+// the scene in the way.
+fn calculate_environment_specular(
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    occlusion: f32,
+) -> vec3<f32> {
+    let hdr_enabled = environment_hdr_enabled();
+    let ambient_tint = select(vec3<f32>(1.0), environment_settings.ambient_color.rgb, hdr_enabled);
+    var light = ambient_tint * environment_ambient_intensity() * base_color * metallic;
+    if (hdr_enabled && !environment_specular_traced()) {
+        let max_lod = environment_settings.flags_intensity.w;
+        let reflected = reflect(-V, N);
+        let spec_sample = sample_environment_hdr(reflected, max_lod * roughness * roughness) * environment_hdr_intensity();
+        let specular_color = mix(vec3<f32>(0.04), base_color, vec3<f32>(metallic));
+        let specular_strength = max(pow(clamp(1.0 - roughness, 0.0, 1.0), 4.0), 0.05);
+        light += spec_sample * specular_color * specular_strength;
+    }
+    return light * occlusion;
 }

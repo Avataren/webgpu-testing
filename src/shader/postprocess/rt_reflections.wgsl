@@ -98,8 +98,46 @@ fn rt_blended_particles(
     return vec4<f32>(color, transmittance);
 }
 
+// Random numbers for rt_gi_light, seeded per pixel and frame by the entry point.
+var<private> rt_rng_state : u32;
+
+fn rt_rand() -> f32 {
+    let state = rt_rng_state * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    rt_rng_state = (word >> 22u) ^ word;
+    return f32(rt_rng_state >> 8u) * (1.0 / 16777216.0);
+}
+
+// With traced global illumination (environment_diffuse_traced), the diffuse light at a
+// reflected hit the screen does not show, from one cosine-weighted ray: the sky where it
+// leaves the scene, the screen's lit colour where it lands on what the screen shows, and
+// nothing where it lands on an unseen surface. The surfaces around the hit thus shade it
+// as the traced global illumination shades what the screen shows (a room's walls are not
+// lit by the sky through them). Noisy; the reflection's temporal filter averages it.
+fn rt_gi_light(position : vec3<f32>, n : vec3<f32>) -> vec3<f32> {
+    let u = vec2<f32>(rt_rand(), rt_rand());
+    let r = sqrt(u.x);
+    let phi = TWO_PI * u.y;
+    let t = normalize(select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(n.x) > 0.9) - n * dot(n, select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(n.x) > 0.9)));
+    let b = cross(n, t);
+    let l = normalize(t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(1.0 - u.x, 0.0)));
+    let start = position + n * RT_SHADOW_BIAS;
+    let hit = rt_closest_hit(start, l, 1.0e3);
+    if hit.kind == RAY_QUERY_INTERSECTION_NONE {
+        let tint = select(vec3<f32>(1.0), environment_settings.ambient_color.rgb, environment_hdr_enabled());
+        var sky = tint * environment_ambient_intensity();
+        if environment_hdr_enabled() {
+            sky += sample_environment_hdr(l, environment_settings.flags_intensity.w) * environment_hdr_intensity();
+        }
+        return sky;
+    }
+    let screen = rt_screen_radiance(start + l * hit.t);
+    return screen.rgb * screen.w;
+}
+
 // What the main pass would have drawn at a hit: lights (each behind a shadow ray),
-// environment and emission, without the surface's own reflection.
+// environment and emission, without the surface's own reflection. With traced global
+// illumination the environment's light comes from rt_gi_light instead.
 fn rt_light(material : RtMaterial, position : vec3<f32>, direction : vec3<f32>) -> vec3<f32> {
     if material.unlit {
         return material.base_color + material.emissive;
@@ -111,10 +149,15 @@ fn rt_light(material : RtMaterial, position : vec3<f32>, direction : vec3<f32>) 
     let direct = rt_direct_lighting(
         position, material.normal, v, lit_color, material.metallic, material.roughness
     );
-    let ambient = calculate_environment_lighting(
-        material.normal, v, lit_color, material.metallic, material.roughness,
-        material.occlusion
-    );
+    var ambient : vec3<f32>;
+    if environment_diffuse_traced() {
+        ambient = rt_gi_light(position, material.normal) * lit_color * (1.0 - material.metallic);
+    } else {
+        ambient = calculate_environment_lighting(
+            material.normal, v, lit_color, material.metallic, material.roughness,
+            material.occlusion
+        );
+    }
     return ambient + direct + material.emissive;
 }
 
@@ -242,6 +285,7 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     }
     let n = decode_normal_oct(textureLoad(rt_gbuffer_normal, pixel, 0).xy);
     let origin = position.xyz;
+    rt_rng_state = (u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(post_uniform.output.z) * 26699u) | 1u;
     let v = normalize(origin - post_uniform.camera_position.xyz);
     let r = reflect(v, n);
     if dot(r, n) <= 0.0 {
@@ -267,11 +311,17 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if missed {
         // Misses reflect the environment, which the main pass's lighting already adds;
         // particles in front of it add their light to that (with no weight, the rest of
-        // the reflection stays the main pass's).
-        if all(particles.rgb <= vec3<f32>(0.0)) {
+        // the reflection stays the main pass's). With traced global illumination the main
+        // pass leaves the sky's reflection to this pass (environment_specular_traced), so
+        // it is added here, where the ray reaches it.
+        var light = particles.rgb;
+        if environment_specular_traced() {
+            light += rt_environment(r) * particles.a;
+        }
+        if all(light <= vec3<f32>(0.0)) {
             return vec4<f32>(0.0);
         }
-        var light = select(particles.rgb, vec3<f32>(0.0), particles.rgb != particles.rgb);
+        light = select(light, vec3<f32>(0.0), light != light);
         light = clamp(light, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
         return vec4<f32>(ssr_compress(light), 0.0);
     }

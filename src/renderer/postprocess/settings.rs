@@ -34,6 +34,7 @@ pub struct PostProcessSettings {
     pub rt_shadows: RayTracedShadowSettings,
     pub refraction: RefractionSettings,
     pub path_tracing: PathTracingSettings,
+    pub global_illumination: GlobalIlluminationSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
@@ -70,6 +71,7 @@ impl PostProcessSettings {
             },
             // Switched rather than blended: path tracing on or off changes the whole frame.
             path_tracing: pick(self.path_tracing, other.path_tracing, t),
+            global_illumination: pick(self.global_illumination, other.global_illumination, t),
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -152,6 +154,9 @@ impl PostProcessSettings {
             PathTracingSettings::MIN_CAUSTIC_PHOTONS,
             PathTracingSettings::MAX_CAUSTIC_PHOTONS,
         );
+        let gi = &mut self.global_illumination;
+        gi.bounces = gi.bounces.clamp(1, PathTracingSettings::MAX_BOUNCES);
+        gi.max_history = gi.max_history.clamp(1, PathTracingSettings::MAX_HISTORY);
         let blur = &mut self.motion_blur;
         blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
         blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
@@ -809,6 +814,38 @@ impl Default for PathTracingSettings {
             max_history: 32,
             caustics: true,
             caustic_photons: 256 * 1024,
+        }
+    }
+}
+
+/// Ray-traced global illumination: the main pass keeps the direct light (with ray-traced
+/// shadows) and the ray-traced reflections keep the specular light, while the diffuse light
+/// that arrives indirectly (bounced off other surfaces, from emissive surfaces, from the
+/// sky through openings) is traced with the path tracer and denoised, replacing the
+/// environment's diffuse light and the flat ambient the main pass would add everywhere.
+/// Ambient occlusion stands down (the traced light is occluded already). Path tracing,
+/// which traces all the light, wins when both are on. Needs what path tracing needs.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GlobalIlluminationSettings {
+    pub enabled: bool,
+    /// Trace one pixel of every 2x2 and upsample (by normal and depth) into the scene:
+    /// about a quarter of the rays.
+    pub half_resolution: bool,
+    /// Surfaces a path bounces off (1 to 8); light from surfaces seen last frame also
+    /// carries every earlier bounce.
+    pub bounces: u32,
+    /// Most frames the denoiser accumulates.
+    pub max_history: u32,
+}
+
+impl Default for GlobalIlluminationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            half_resolution: true,
+            bounces: 2,
+            max_history: 32,
         }
     }
 }
@@ -1596,5 +1633,32 @@ mod tests {
         let fixed = settings.sanitized();
         assert_eq!(fixed.bloom.intensity, 0.0);
         assert!(fixed.exposure.max_ev >= fixed.exposure.min_ev);
+    }
+
+    #[test]
+    fn global_illumination_is_switched_and_clamped() {
+        let mut settings = PostProcessSettings::default();
+        assert!(!settings.global_illumination.enabled);
+        assert!(settings.global_illumination.half_resolution);
+        settings.global_illumination.bounces = 0;
+        settings.global_illumination.max_history = 10_000;
+        let fixed = settings.clone().sanitized();
+        assert_eq!(fixed.global_illumination.bounces, 1);
+        assert_eq!(
+            fixed.global_illumination.max_history,
+            PathTracingSettings::MAX_HISTORY
+        );
+        // On or off changes the whole frame's lighting: switched halfway, not faded.
+        let mut on = PostProcessSettings::default();
+        on.global_illumination.enabled = true;
+        let off = PostProcessSettings::default();
+        assert!(!off.blend(&on, 0.4).global_illumination.enabled);
+        assert!(off.blend(&on, 0.6).global_illumination.enabled);
+        // Volumes saved before it existed load with it off.
+        let loaded: PostProcessSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            loaded.global_illumination,
+            GlobalIlluminationSettings::default()
+        );
     }
 }

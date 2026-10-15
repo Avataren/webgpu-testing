@@ -1,7 +1,9 @@
 // The path tracer's denoiser: a spatiotemporal filter after NVIDIA's ReLAX (Zhdan,
 // "ReBLUR/ReLAX", NRD; itself a descendant of SVGF, Schied et al. 2017), run on the
 // demodulated diffuse and specular light separately. Every pass works on the scene
-// region; the path tracing targets are its size (pixel (0, 0) is the region's corner).
+// region; the path tracing targets are its size (pixel (0, 0) is the region's corner), or
+// half of it for half-resolution global illumination, whose target pixels each stand for
+// the top-left scene pixel of their 2x2 block (pt_scene_pixel).
 //
 // 1. Temporal accumulation (cs_pt_temporal): each pixel's history is reprojected with
 //    the G-buffer's motion vectors, bilinearly, from the history taps that show the same
@@ -206,7 +208,7 @@ fn cs_pt_temporal(@builtin(global_invocation_id) id : vec3<u32>) {
     if !pt_in_region(p) {
         return;
     }
-    let g = p + vec2<i32>(pt.region.xy);
+    let g = pt_scene_pixel(p);
     let material = textureLoad(ta_material, p, 0);
     let surface = textureLoad(ta_gbuffer_position, g, 0);
     if material.a <= 0.0 || surface.w < 0.5 {
@@ -538,7 +540,7 @@ fn cs_pt_atrous(@builtin(global_invocation_id) id : vec3<u32>) {
     let n = pt_decode_normal(geometry.xy);
     let depth = geometry.z;
     let roughness = geometry.w;
-    let world = textureLoad(at_gbuffer_position, p + vec2<i32>(pt.region.xy), 0).xyz;
+    let world = textureLoad(at_gbuffer_position, pt_scene_pixel(p), 0).xyz;
     let v = pt_view_direction(world);
     let slope = pt_depth_slope(depth, n, v);
     let footprint = pt_footprint(depth);

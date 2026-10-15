@@ -101,6 +101,18 @@ engine you launched; save first).
   them back after testing), and `postprocess_get`'s `rendered` shows the result. To
   compare those effects without changing the player's choice, use `visual_capture`
   variants, which apply last. `show_fps` draws the yellow FPS readout (on by default).
+- Ray-traced global illumination (`graphics_set {global_illumination: "ray_traced"}`, or a
+  volume's `global_illumination` group with `half_resolution`, `bounces`, `max_history`) sits
+  between raster and path tracing: the main pass keeps its direct light and ray-traced
+  shadows, the reflection passes keep the specular light, and the path tracer traces only the
+  indirect diffuse light (bounces, emissive surfaces, the sky through openings), denoised and
+  added on top. The environment's diffuse light and flat ambient leave the main pass then (no
+  more sky light through walls), and SSAO stands down. Path tracing wins when both are on.
+  `engine_stats` `renderer.global_illumination` confirms a frame used it; `renderer.gpu` splits
+  out `global_illumination` (the trace), `gi_denoise` and `gi_composite`. On the chess study at
+  about 1045x687 it costs about 1.1 ms against path tracing's 6.5 ms, and the image comes out
+  close to the path-traced one. Like path tracing, its bounce rays reuse last frame's image,
+  so let a still view settle for a second before judging; switch it off when done.
 - Path tracing (`graphics_set {path_tracing: true, path_tracing_bounces, path_tracing_samples,
   path_tracing_denoiser}`, or a volume's `path_tracing` group) replaces the raster lighting of
   opaque surfaces with denoised path-traced light; it needs `engine_info`

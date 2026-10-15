@@ -75,6 +75,10 @@ impl Default for CameraUniform {
 pub struct EnvironmentUniform {
     pub flags_intensity: [f32; 4],
     pub ambient_color: [f32; 4],
+    /// x: 1 while ray-traced global illumination brings opaque surfaces their indirect
+    /// diffuse light (the main pass leaves the environment's diffuse light out); y: 1
+    /// while ray-traced reflections also bring them the sky's reflection.
+    pub traced: [f32; 4],
 }
 
 impl EnvironmentUniform {
@@ -82,6 +86,7 @@ impl EnvironmentUniform {
         Self {
             flags_intensity: [0.0, 1.0, 0.003, 0.0],
             ambient_color: [0.003, 0.003, 0.003, 0.003],
+            traced: [0.0; 4],
         }
     }
 }

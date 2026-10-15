@@ -3,7 +3,9 @@
 //!
 //! With path tracing on, [`PostProcess::path_trace`] runs first, right after the main
 //! pass (see `path_tracing`): it replaces the opaque lighting, and the reflection and
-//! ambient occlusion passes below stand down for that frame.
+//! ambient occlusion passes below stand down for that frame. Ray-traced global
+//! illumination runs there too, adding indirect diffuse light to the main pass's; only
+//! ambient occlusion stands down for it.
 //!
 //! Frame order: depth resolve (MSAA only) -> screen-space reflections (added to the scene)
 //! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> composite
@@ -37,10 +39,10 @@ pub use lut::CubeLut;
 pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
-    LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
-    PathTracingSettings, PostProcessEffects, PostProcessSettings, ReflectionSettings,
-    SharpenSettings, SsaoSettings, Tonemapper, Upscaler, UpscalingSettings, VignetteSettings,
-    TRACKBALL_NEUTRAL,
+    GlobalIlluminationSettings, LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings,
+    LutSettings, MotionBlurSettings, PathTracingSettings, PostProcessEffects, PostProcessSettings,
+    ReflectionSettings, SharpenSettings, SsaoSettings, Tonemapper, Upscaler, UpscalingSettings,
+    VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use crate::renderer::shader_source::wgsl;
@@ -50,7 +52,7 @@ use exposure::ExposureStage;
 use fsr::{FsrFrame, FsrUpscaler, ReactiveFrame};
 use lut::LutTexture;
 pub(crate) use path_tracing::CausticSources;
-use path_tracing::{PathTracingFrame, PathTracingInputs, PathTracingStage};
+use path_tracing::{PathTracingFrame, PathTracingInputs, PathTracingStage, TraceMode};
 use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
     FinalPipeline,
@@ -67,6 +69,18 @@ use crate::renderer::raytracing::RayTracingFrame;
 use crate::renderer::{RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
+
+/// How a frame's opaque lighting was traced (see [`PostProcess::path_trace`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TracedLighting {
+    /// The main pass's lighting alone.
+    #[default]
+    Raster,
+    /// The main pass's direct light with ray-traced indirect diffuse light added.
+    GlobalIllumination,
+    /// Path traced, replacing the main pass's lighting.
+    PathTraced,
+}
 
 const NOISE_TEXTURE_SIZE: u32 = 4;
 pub(crate) const BLOOM_MIP_COUNT: usize = 6;
@@ -937,7 +951,7 @@ impl PostProcess {
             }
             self.upload_uniform(queue);
         }
-        if !self.settings.path_tracing.enabled {
+        if !self.settings.path_tracing.enabled && !self.settings.global_illumination.enabled {
             if let Some(stage) = self.path_tracing_stage.as_mut() {
                 stage.release();
             }
@@ -1017,9 +1031,17 @@ impl PostProcess {
         self.path_tracing_available() && self.settings.path_tracing.enabled
     }
 
-    /// Path trace the opaque scene and write it over the main pass's colour (call after
-    /// the main pass, before particles and transparent surfaces). `lamp_radius` and
-    /// `sun_size_degrees` size the lights. Returns whether it ran.
+    /// Whether this frame's indirect diffuse light would be ray traced (global
+    /// illumination) if the scene is ready. Path tracing, which traces all of it, wins.
+    pub(crate) fn wants_global_illumination(&self) -> bool {
+        self.path_tracing_available()
+            && self.settings.global_illumination.enabled
+            && !self.settings.path_tracing.enabled
+    }
+
+    /// Path trace the opaque scene and write it over the main pass's colour, or with
+    /// global illumination add its traced indirect diffuse light to it (call after the
+    /// main pass, before particles and transparent surfaces). Returns what ran.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn path_trace(
         &mut self,
@@ -1030,18 +1052,43 @@ impl PostProcess {
         caustics: CausticSources<'_>,
         scene_region: Option<RenderRegion>,
         timer: &mut crate::renderer::gpu_timer::GpuTimer,
-    ) -> bool {
-        if !self.wants_path_tracing() {
-            return false;
-        }
+    ) -> TracedLighting {
+        let gi = &self.settings.global_illumination;
+        let (mode, settings, lighting) = if self.wants_path_tracing() {
+            (
+                TraceMode::Paths,
+                self.settings.path_tracing,
+                TracedLighting::PathTraced,
+            )
+        } else if self.wants_global_illumination() {
+            (
+                TraceMode::GlobalIllumination {
+                    scale: if gi.half_resolution { 2 } else { 1 },
+                },
+                // One diffuse path a pixel, always denoised (the composite reads the
+                // denoiser's geometry); no caustics.
+                PathTracingSettings {
+                    enabled: true,
+                    bounces: gi.bounces,
+                    samples: 1,
+                    denoiser: true,
+                    max_history: gi.max_history,
+                    caustics: false,
+                    ..PathTracingSettings::default()
+                },
+                TracedLighting::GlobalIllumination,
+            )
+        } else {
+            return TracedLighting::Raster;
+        };
         let Some(region) = scene_region
             .or_else(|| RenderRegion::full(self.size.width, self.size.height))
             .and_then(|region| region.clamp(self.size.width, self.size.height))
         else {
-            return false;
+            return TracedLighting::Raster;
         };
         let Some(stage) = self.path_tracing_stage.as_mut() else {
-            return false;
+            return TracedLighting::Raster;
         };
         let frame = PathTracingFrame {
             uniform_bind_group: &self.scene_uniform_bind_group,
@@ -1052,8 +1099,9 @@ impl PostProcess {
                 position: &self.position_source.view,
                 scene: &self.scene_source.view,
             },
+            mode,
             camera: &self.camera,
-            settings: &self.settings.path_tracing,
+            settings: &settings,
             sun_size_degrees: self.settings.rt_shadows.softness,
             lamp_radius: self.settings.rt_shadows.light_radius,
             region,
@@ -1061,7 +1109,11 @@ impl PostProcess {
             scene: &self.scene_source.view,
             scene_texture: self.scene_source.texture(),
         };
-        stage.run(device, queue, encoder, frame, timer)
+        if stage.run(device, queue, encoder, frame, timer) {
+            lighting
+        } else {
+            TracedLighting::Raster
+        }
     }
 
     /// Whether transmissive surfaces are refracted with ray tracing (otherwise they are
@@ -1074,6 +1126,7 @@ impl PostProcess {
     /// if the scene is ready.
     pub(crate) fn wants_ray_tracing(&self) -> bool {
         self.wants_path_tracing()
+            || self.wants_global_illumination()
             || self.wants_ray_traced_reflections()
             || (self.rt_ao_stage.is_some()
                 && self.settings.ssao_active()
@@ -1184,8 +1237,9 @@ impl PostProcess {
         self.exposure_stage.reset(queue);
     }
 
-    /// Post-process the scene into `target`. `path_traced`: this frame's opaque lighting
-    /// was path traced (it has reflections and occlusion, so those passes stand down).
+    /// Post-process the scene into `target`. `lighting`: how this frame's opaque lighting
+    /// was traced (path traced light has reflections and occlusion, so those passes stand
+    /// down; traced global illumination is occluded, so ambient occlusion does).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute(
         &mut self,
@@ -1196,9 +1250,10 @@ impl PostProcess {
         region: Option<RenderRegion>,
         scene_region: Option<RenderRegion>,
         ray_tracing: Option<RayTracingFrame<'_>>,
-        path_traced: bool,
+        lighting: TracedLighting,
         timer: &mut crate::renderer::gpu_timer::GpuTimer,
     ) {
+        let path_traced = lighting == TracedLighting::PathTraced;
         self.ensure_cached_bind_groups(device);
         let scene_uniform = &self.scene_uniform_bind_group.clone();
         // Before reflections and refraction change the scene.
@@ -1241,7 +1296,7 @@ impl PostProcess {
         }
 
         // Path traced lighting has its reflections and occlusion already.
-        if !path_traced {
+        if lighting == TracedLighting::Raster {
             if let Some(stage) = self.path_tracing_stage.as_mut() {
                 stage.reset_history();
             }
@@ -1311,7 +1366,7 @@ impl PostProcess {
             output: &self.ssao.view,
             ping: &self.ssao_ping.view,
         };
-        if self.settings.ssao_active() && !path_traced {
+        if self.settings.ssao_active() && lighting == TracedLighting::Raster {
             let traced = match (self.rt_ao_stage.as_ref(), ray_tracing.as_ref()) {
                 (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => stage.trace(
                     encoder,

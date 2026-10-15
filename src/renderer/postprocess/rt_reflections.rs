@@ -268,3 +268,25 @@ impl RtReflectionStage {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rt_reflection_shaders_validate() {
+        for textures in [false, true] {
+            let source = rt_reflections_shader_source(textures);
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::RAY_QUERY
+                    | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY
+                    | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING,
+            )
+            .validate(&module)
+            .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        }
+    }
+}

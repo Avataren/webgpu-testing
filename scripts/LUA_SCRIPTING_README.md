@@ -356,7 +356,8 @@ end
 ```
 
 - `set_environment(settings)` - Change the scene's environment: `ambient_intensity` (the
-  flat ambient light, and the sky that path-traced rays see where nothing is in the way),
+  flat ambient light, and the sky that path-traced and global illumination rays see where
+  nothing is in the way),
   `clear_color` (the background, `{r, g, b[, a]}` or `"#rrggbb"`) and `hdr = { enabled,
   intensity, path, background }` (an HDR sky; `background = false` keeps it to lighting and
   reflections, with `clear_color` drawn behind the scene). Only the settings you name change; an unknown name is an
@@ -475,6 +476,11 @@ Escape opens and closes it.
   itself, so a game can drop lighting it fakes for the raster renderer (glow decals, fill
   lights) and make more things glow; check it every frame, since the player can switch
   it on the settings page at any time
+- `ray_traced_gi()` → `bool` - true while ray-traced global illumination lights the
+  scene: the player has it on, the GPU can run it and path tracing (which wins) is off.
+  Bounce light, glowing surfaces and the sky through windows and doors then reach the
+  scene traced and occluded, while the raster renderer keeps the direct light; fill
+  lights faked for the raster lighting can go, as for `path_traced()`
 
 ```lua
 function update(self, dt)

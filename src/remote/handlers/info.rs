@@ -111,6 +111,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "shadow_draw_calls": stats.shadow_draw_calls,
             "render_scale": ctx.gpu.renderer.render_scale(),
             "path_traced": stats.path_traced,
+            "global_illumination": stats.global_illumination,
             "ray_tracing": stats.ray_tracing.map(|rt| json!({
                 "tlas_instances": rt.instances,
                 "meshes": rt.meshes,
@@ -122,7 +123,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),
                 "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
-                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
+                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; with ray-traced global illumination they are global_illumination (the trace), gi_denoise and gi_composite (full-resolution upsample and add, with the radiance cache copy); reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
             })),
         },
         "assets": {

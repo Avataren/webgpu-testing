@@ -41,6 +41,17 @@ pub enum EffectQuality {
     RayTraced,
 }
 
+/// Diffuse light that arrives indirectly (bounced, from glowing surfaces, from the sky
+/// through openings): off (the environment lights every surface as if nothing were in
+/// the way) or ray traced (raster direct light plus traced, denoised indirect light).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobalIllumination {
+    #[default]
+    Off,
+    RayTraced,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GraphicsSettings {
@@ -63,6 +74,9 @@ pub struct GraphicsSettings {
     pub ambient_occlusion: EffectQuality,
     /// Light bends through glass and gems (otherwise they are drawn see-through).
     pub ray_traced_refraction: bool,
+    /// Ray-traced indirect diffuse light over the raster lighting: between the raster
+    /// lighting and path tracing in cost and look. Path tracing wins when both are on.
+    pub global_illumination: GlobalIllumination,
     /// Path-traced lighting with a denoiser instead of the raster lighting: soft shadows,
     /// bounced light, emissive surfaces lighting the scene. Reflections and ambient
     /// occlusion come with it.
@@ -93,6 +107,7 @@ impl Default for GraphicsSettings {
             reflections: EffectQuality::RayTraced,
             ambient_occlusion: EffectQuality::RayTraced,
             ray_traced_refraction: true,
+            global_illumination: GlobalIllumination::Off,
             path_tracing: false,
             path_tracing_bounces: 2,
             path_tracing_samples: 1,
@@ -125,7 +140,7 @@ impl GraphicsSettings {
 
     /// Post-processing settings (dotted paths) these replace: the scene's volumes set
     /// them in vain.
-    pub const CONTROLLED_PATHS: [&'static str; 13] = [
+    pub const CONTROLLED_PATHS: [&'static str; 14] = [
         "anti_aliasing",
         "upscaling",
         "rt_shadows.enabled",
@@ -134,6 +149,7 @@ impl GraphicsSettings {
         "ssao.enabled",
         "ssao.ray_traced",
         "refraction.ray_traced",
+        "global_illumination.enabled",
         "path_tracing.enabled",
         "path_tracing.bounces",
         "path_tracing.samples",
@@ -153,6 +169,8 @@ impl GraphicsSettings {
         post.ssao.enabled = self.ambient_occlusion != EffectQuality::Off;
         post.ssao.ray_traced = self.ambient_occlusion == EffectQuality::RayTraced;
         post.refraction.ray_traced = self.ray_traced_refraction;
+        post.global_illumination.enabled =
+            self.global_illumination == GlobalIllumination::RayTraced;
         post.path_tracing.enabled = self.path_tracing;
         post.path_tracing.bounces = self.path_tracing_bounces;
         post.path_tracing.samples = self.path_tracing_samples;
@@ -190,7 +208,8 @@ impl GraphicsSettings {
 pub struct GraphicsCapabilities {
     /// Hardware ray tracing (otherwise ray-traced effects fall back to raster ones).
     pub ray_tracing: bool,
-    /// Path tracing can run (hardware ray tracing and no MSAA).
+    /// Path tracing and ray-traced global illumination can run (hardware ray tracing and
+    /// no MSAA).
     pub path_tracing: bool,
     /// Upscaling works (it does not with MSAA, which renders at full resolution).
     pub upscaling: bool,
@@ -318,6 +337,13 @@ mod tests {
         assert!(!applied.ssao.enabled);
         assert!(applied.rt_shadows.enabled);
         assert!(!applied.path_tracing.enabled);
+        assert!(!applied.global_illumination.enabled);
+        let traced = GraphicsSettings {
+            global_illumination: GlobalIllumination::RayTraced,
+            ..GraphicsSettings::default()
+        }
+        .apply(PostProcessSettings::default());
+        assert!(traced.global_illumination.enabled);
         let path_traced = GraphicsSettings {
             path_tracing: true,
             path_tracing_bounces: 3,
@@ -342,5 +368,9 @@ mod tests {
         assert_eq!(settings.path_tracing_bounces, 1);
         // Fields missing from an older file keep their defaults.
         assert!(settings.show_fps);
+        assert_eq!(settings.global_illumination, GlobalIllumination::Off);
+        let settings: GraphicsSettings =
+            serde_json::from_str(r#"{"global_illumination": "ray_traced"}"#).unwrap();
+        assert_eq!(settings.global_illumination, GlobalIllumination::RayTraced);
     }
 }

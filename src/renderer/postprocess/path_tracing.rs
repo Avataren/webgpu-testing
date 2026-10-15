@@ -19,6 +19,13 @@
 //!
 //! The targets are the scene region's size and exist only while path tracing is on
 //! (about 125 bytes a pixel: 260 MB at 1080p).
+//!
+//! The same stage traces global illumination ([`TraceMode::GlobalIllumination`]): only
+//! the indirect diffuse light (`fs_gi_trace`), at full or half resolution, through the
+//! same denoiser, then added to the main pass's colour at full resolution
+//! (`fs_gi_composite`, which upsamples by normal and depth and multiplies in the surface's
+//! diffuse colour). The main pass keeps its direct light and leaves out the environment's
+//! diffuse light; the reflection passes keep the specular light.
 
 use crate::renderer::shader_source::wgsl;
 use bytemuck::{Pod, Zeroable};
@@ -53,12 +60,40 @@ struct PtUniform {
     frame: [u32; 4],
     params: [f32; 4],
     footprint: [f32; 4],
+    scale: [f32; 4],
 }
 
 /// `PtUniform.frame.w` flags (PT_FLAG_* in pt_common.wgsl).
 const FLAG_HISTORY_VALID: u32 = 1;
 const FLAG_DENOISE: u32 = 2;
 const FLAG_CAUSTICS: u32 = 4;
+const FLAG_GI: u32 = 8;
+
+/// What the stage traces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TraceMode {
+    /// All the light of opaque surfaces, replacing the main pass's lighting.
+    Paths,
+    /// The indirect diffuse light alone, added to the main pass's lighting, traced at one
+    /// scene pixel of every `scale` x `scale` block.
+    GlobalIllumination { scale: u32 },
+}
+
+impl TraceMode {
+    /// Scene pixels per target pixel along each axis.
+    fn scale(self) -> u32 {
+        match self {
+            Self::Paths => 1,
+            Self::GlobalIllumination { scale } => scale.max(1),
+        }
+    }
+
+    /// The targets' size for a scene region of `size`.
+    fn target_size(self, size: (u32, u32)) -> (u32, u32) {
+        let scale = self.scale();
+        (size.0.div_ceil(scale).max(1), size.1.div_ceil(scale).max(1))
+    }
+}
 
 use crate::renderer::raytracing::MAX_CAUSTIC_CASTERS;
 /// Format of the photon grid's (unused) colour target: one fragment per photon.
@@ -340,7 +375,9 @@ impl History {
 }
 
 struct Targets {
+    /// The targets' size, then the scene region's (the radiance cache's).
     size: (u32, u32),
+    region_size: (u32, u32),
     /// The trace's light, then the a-trous iterations' ping (and the composite's input).
     diffuse_a: Target,
     specular_a: Target,
@@ -358,11 +395,12 @@ struct Targets {
 }
 
 impl Targets {
-    fn new(device: &wgpu::Device, size: (u32, u32)) -> Self {
+    fn new(device: &wgpu::Device, size: (u32, u32), region_size: (u32, u32)) -> Self {
         let render = |format, label| Target::new(device, size, format, label, true);
         let storage = |label| Target::new(device, size, SIGNAL_FORMAT, label, false);
         Self {
             size,
+            region_size,
             diffuse_a: render(SIGNAL_FORMAT, "PtDiffuseA"),
             specular_a: render(SIGNAL_FORMAT, "PtSpecularA"),
             material: render(MATERIAL_FORMAT, "PtMaterial"),
@@ -372,7 +410,7 @@ impl Targets {
             history: [History::new(device, size, 0), History::new(device, size, 1)],
             radiance: Target::with_usage(
                 device,
-                size,
+                region_size,
                 crate::renderer::postprocess::HDR_FORMAT,
                 "PtRadianceCache",
                 wgpu::TextureUsages::TEXTURE_BINDING
@@ -406,6 +444,7 @@ struct BindGroups {
     history_fix: [wgpu::BindGroup; 2],
     atrous: [[wgpu::BindGroup; ATROUS_ITERATIONS]; 2],
     composite: wgpu::BindGroup,
+    gi_composite: [wgpu::BindGroup; 2],
     photons: wgpu::BindGroup,
     caustic_resolve: wgpu::BindGroup,
 }
@@ -416,6 +455,7 @@ pub struct PathTracingFrame<'a> {
     pub ray_tracing: &'a RayTracingFrame<'a>,
     pub caustics: CausticSources<'a>,
     pub inputs: PathTracingInputs<'a>,
+    pub mode: TraceMode,
     pub camera: &'a PostProcessCamera,
     pub settings: &'a PathTracingSettings,
     /// Ray-traced shadows' sun size (degrees) and lamp radius (m): lights have the same
@@ -435,6 +475,9 @@ pub struct PathTracingFrame<'a> {
 pub struct PathTracingStage {
     trace_inputs_layout: wgpu::BindGroupLayout,
     trace_pipeline: wgpu::RenderPipeline,
+    gi_trace_pipeline: wgpu::RenderPipeline,
+    gi_composite_layout: wgpu::BindGroupLayout,
+    gi_composite_pipeline: wgpu::RenderPipeline,
     temporal_layout: wgpu::BindGroupLayout,
     temporal_pipeline: wgpu::ComputePipeline,
     history_fix_layout: wgpu::BindGroupLayout,
@@ -461,8 +504,8 @@ pub struct PathTracingStage {
     previous: Option<CameraSnapshot>,
     /// Last frame's history may be reprojected.
     history_valid: bool,
-    /// The region last frame traced (a different one starts the history over).
-    last_region: Option<RenderRegion>,
+    /// The region last frame traced and how (a different one starts the history over).
+    last_region: Option<(RenderRegion, TraceMode)>,
     frame: u32,
 }
 
@@ -563,6 +606,16 @@ impl PathTracingStage {
             .with_label("PtTracePipeline")
             .with_vertex_entry("vs_fullscreen")
             .with_fragment_entry("fs_pt_trace")
+            .with_color_target(SIGNAL_FORMAT, None)
+            .with_color_target(SIGNAL_FORMAT, None)
+            .with_color_target(MATERIAL_FORMAT, None)
+            .with_color_target(SIGNAL_FORMAT, None)
+            .with_no_culling()
+            .build();
+        let gi_trace_pipeline = PipelineBuilder::new(device, &trace_layout, &trace_shader)
+            .with_label("GiTracePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_gi_trace")
             .with_color_target(SIGNAL_FORMAT, None)
             .with_color_target(SIGNAL_FORMAT, None)
             .with_color_target(MATERIAL_FORMAT, None)
@@ -752,6 +805,39 @@ impl PathTracingStage {
                 .with_color_target(SIGNAL_FORMAT, Some(add_keep_alpha))
                 .with_no_culling()
                 .build();
+        // Global illumination's composite: in the trace module (it finds each pixel's
+        // material), adding to the scene colour and keeping its alpha.
+        let gi_composite_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GiCompositeLayout"),
+                entries: &[
+                    uniform_entry(190, fragment),
+                    texture_entry(191, fragment),
+                    texture_entry(192, fragment),
+                    texture_entry(198, fragment),
+                    texture_entry(199, fragment),
+                ],
+            });
+        let gi_composite_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("GiCompositePipelineLayout"),
+                bind_group_layouts: &[
+                    Some(post_uniform_layout),
+                    Some(&gi_composite_layout),
+                    Some(lights_layout),
+                    Some(scene_layout),
+                    textures_layout,
+                ],
+                immediate_size: 0,
+            });
+        let gi_composite_pipeline =
+            PipelineBuilder::new(device, &gi_composite_pipeline_layout, &trace_shader)
+                .with_label("GiCompositePipeline")
+                .with_vertex_entry("vs_fullscreen")
+                .with_fragment_entry("fs_gi_composite")
+                .with_color_target(HDR_FORMAT, Some(add_keep_alpha))
+                .with_no_culling()
+                .build();
         let caustic_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("PtCaustics"),
             size: std::mem::size_of::<PtCaustics>() as u64,
@@ -796,6 +882,9 @@ impl PathTracingStage {
         Ok(Self {
             trace_inputs_layout,
             trace_pipeline,
+            gi_trace_pipeline,
+            gi_composite_layout,
+            gi_composite_pipeline,
             temporal_layout,
             temporal_pipeline,
             history_fix_layout,
@@ -824,7 +913,8 @@ impl PathTracingStage {
     }
 
     /// The path tracer's targets, for reading back (see [`crate::renderer::readback`]).
-    /// They are the scene region's size (pixel (0, 0) is its corner).
+    /// They are the scene region's size (pixel (0, 0) is its corner), or half of it for
+    /// half-resolution global illumination; the radiance cache is always the region's.
     pub(crate) fn fetchable_textures<'a>(
         &'a self,
         out: &mut Vec<crate::renderer::readback::FetchableTexture<'a>>,
@@ -846,7 +936,9 @@ impl PathTracingStage {
             "diffuse",
             "Path tracing, final diffuse light (demodulated: before the base colour multiplies \
              it). With the denoiser: rgb filtered, a its variance; without: the raw trace with \
-             caustics added, a the rays' mean hit distance",
+             caustics added, a the rays' mean hit distance. With ray-traced global \
+             illumination: the indirect diffuse light alone (pt.specular is empty), at half \
+             the scene region's resolution when global_illumination.half_resolution",
             &targets.diffuse_a,
         );
         add(
@@ -932,13 +1024,13 @@ impl PathTracingStage {
         self.previous = None;
     }
 
-    fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+    fn ensure_targets(&mut self, device: &wgpu::Device, size: (u32, u32), region_size: (u32, u32)) {
         if self
             .targets
             .as_ref()
-            .is_none_or(|targets| targets.size != size)
+            .is_none_or(|targets| targets.size != size || targets.region_size != region_size)
         {
-            self.targets = Some(Targets::new(device, size));
+            self.targets = Some(Targets::new(device, size, region_size));
             self.bind_groups = None;
             self.history_valid = false;
         }
@@ -1059,6 +1151,22 @@ impl PathTracingStage {
                 view(55, inputs.position),
             ],
         });
+        let gi_composite = [0, 1].map(|current| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("GiComposite"),
+                layout: &self.gi_composite_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 190,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    view(191, inputs.normal),
+                    view(192, inputs.position),
+                    view(198, &targets.diffuse_a.view),
+                    view(199, &targets.history[current].geometry.view),
+                ],
+            })
+        });
         let photons = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PtPhotons"),
             layout: &self.photon_layout,
@@ -1097,6 +1205,7 @@ impl PathTracingStage {
             history_fix,
             atrous,
             composite,
+            gi_composite,
             photons,
             caustic_resolve,
         });
@@ -1110,7 +1219,9 @@ impl PathTracingStage {
             position: camera.position,
         });
         let region = frame.region;
-        let height = region.height().max(1) as f32;
+        let scale = frame.mode.scale();
+        let size = frame.mode.target_size((region.width(), region.height()));
+        let height = size.1 as f32;
         let scale_y = camera.proj.y_axis.y.abs().max(1e-6);
         let perspective = camera.proj.w_axis.w == 0.0;
         // World size of a pixel: per meter of depth in perspective, fixed in orthographic.
@@ -1129,8 +1240,13 @@ impl PathTracingStage {
         if settings.denoiser {
             flags |= FLAG_DENOISE;
         }
-        if settings.caustics && !frame.caustics.casters.is_empty() {
-            flags |= FLAG_CAUSTICS;
+        match frame.mode {
+            TraceMode::Paths => {
+                if settings.caustics && !frame.caustics.casters.is_empty() {
+                    flags |= FLAG_CAUSTICS;
+                }
+            }
+            TraceMode::GlobalIllumination { .. } => flags |= FLAG_GI,
         }
         let uniform = PtUniform {
             view_proj: camera.unjittered_view_proj.to_cols_array_2d(),
@@ -1146,8 +1262,8 @@ impl PathTracingStage {
             region: [
                 region.x() as f32,
                 region.y() as f32,
-                region.width() as f32,
-                region.height() as f32,
+                size.0 as f32,
+                size.1 as f32,
             ],
             frame: [self.frame, settings.bounces, settings.samples, flags],
             params: [
@@ -1161,6 +1277,12 @@ impl PathTracingStage {
                 footprint[1],
                 // Orthographic rays do not spread.
                 if perspective { output_pixel_angle } else { 0.0 },
+                0.0,
+            ],
+            scale: [
+                scale as f32,
+                region.width() as f32,
+                region.height() as f32,
                 0.0,
             ],
         };
@@ -1183,12 +1305,15 @@ impl PathTracingStage {
             (false, _) => None,
         };
         let region = frame.region;
-        let size = (region.width(), region.height());
-        self.ensure_targets(device, size);
+        let mode = frame.mode;
+        let gi = mode != TraceMode::Paths;
+        let region_size = (region.width(), region.height());
+        let size = mode.target_size(region_size);
+        self.ensure_targets(device, size, region_size);
         self.ensure_bind_groups(device, &frame.inputs);
-        if self.last_region != Some(region) {
+        if self.last_region != Some((region, mode)) {
             self.history_valid = false;
-            self.last_region = Some(region);
+            self.last_region = Some((region, mode));
         }
         let valid = self.history_valid && self.previous.is_some();
         self.write_uniform(queue, &frame, valid);
@@ -1196,7 +1321,7 @@ impl PathTracingStage {
         let casters = frame.caustics.casters.len().min(MAX_CAUSTIC_CASTERS) as u32;
         let flux = frame.caustics.pair_flux();
         let pairs = flux.len() as u32;
-        let photon_grid = if frame.settings.caustics && casters > 0 && pairs > 0 {
+        let photon_grid = if !gi && frame.settings.caustics && casters > 0 && pairs > 0 {
             let width = (frame.settings.caustic_photons as f32)
                 .sqrt()
                 .ceil()
@@ -1250,7 +1375,11 @@ impl PathTracingStage {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.trace_pipeline);
+            pass.set_pipeline(if gi {
+                &self.gi_trace_pipeline
+            } else {
+                &self.trace_pipeline
+            });
             pass.set_bind_group(0, frame.uniform_bind_group, &[]);
             pass.set_bind_group(1, &groups.trace[current], &[]);
             pass.set_bind_group(2, frame.ray_tracing.lights, &[]);
@@ -1260,7 +1389,14 @@ impl PathTracingStage {
             }
             pass.draw(0..3, 0..1);
         }
-        timer.mark(encoder, "path_tracing");
+        timer.mark(
+            encoder,
+            if gi {
+                "global_illumination"
+            } else {
+                "path_tracing"
+            },
+        );
 
         if let (Some(_), Some((_, grid))) = (photon_grid, self.photon_target.as_ref()) {
             encoder.clear_buffer(&targets.caustic_sums, 0, None);
@@ -1322,7 +1458,25 @@ impl PathTracingStage {
             }
         }
 
-        {
+        if gi {
+            timer.mark(encoder, "gi_denoise");
+            let mut pass = begin_color_pass(
+                encoder,
+                "GiComposite",
+                ColorAttachment::single(frame.scene),
+                wgpu::LoadOp::Load,
+                Some(region),
+            );
+            pass.set_pipeline(&self.gi_composite_pipeline);
+            pass.set_bind_group(0, frame.uniform_bind_group, &[]);
+            pass.set_bind_group(1, &groups.gi_composite[current], &[]);
+            pass.set_bind_group(2, frame.ray_tracing.lights, &[]);
+            pass.set_bind_group(3, frame.ray_tracing.scene, &[]);
+            if let Some(textures) = textures {
+                pass.set_bind_group(4, textures, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        } else {
             let mut pass = begin_color_pass(
                 encoder,
                 "PtComposite",
@@ -1354,12 +1508,12 @@ impl PathTracingStage {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
+                width: region_size.0,
+                height: region_size.1,
                 depth_or_array_layers: 1,
             },
         );
-        timer.mark(encoder, "denoise");
+        timer.mark(encoder, if gi { "gi_composite" } else { "denoise" });
 
         // The history only carries over while the denoiser keeps writing it.
         self.history_valid = frame.settings.denoiser;
@@ -1427,12 +1581,26 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<PtUniform>(), 416);
+        assert_eq!(std::mem::size_of::<PtUniform>(), 432);
         assert_eq!(std::mem::size_of::<AtrousStep>(), 16);
         assert_eq!(
             std::mem::size_of::<PtCaustics>(),
             16 * (MAX_CAUSTIC_CASTERS + PAIR_START_VECTORS + 1)
         );
+    }
+
+    #[test]
+    fn global_illumination_traces_a_block_per_target_pixel() {
+        let half = TraceMode::GlobalIllumination { scale: 2 };
+        assert_eq!(half.target_size((1920, 1080)), (960, 540));
+        // Odd sizes keep a target pixel for the last row and column.
+        assert_eq!(half.target_size((801, 451)), (401, 226));
+        assert_eq!(TraceMode::Paths.target_size((801, 451)), (801, 451));
+        assert_eq!(
+            TraceMode::GlobalIllumination { scale: 1 }.target_size((640, 360)),
+            (640, 360)
+        );
+        assert_eq!(TraceMode::GlobalIllumination { scale: 0 }.scale(), 1);
     }
 
     #[test]

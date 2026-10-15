@@ -116,7 +116,9 @@ impl EnvironmentResources {
         self.current_max_lod = active_levels.saturating_sub(1) as f32;
 
         let hdr_intensity = active_hdr.map(|hdr| hdr.intensity()).unwrap_or(1.0);
-        let new_uniform = build_uniform(environment, use_hdr, hdr_intensity, self.current_max_lod);
+        let mut new_uniform =
+            build_uniform(environment, use_hdr, hdr_intensity, self.current_max_lod);
+        new_uniform.traced = self.uniform.traced;
         if new_uniform != self.uniform {
             self.uniform = new_uniform;
             queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
@@ -126,6 +128,19 @@ impl EnvironmentResources {
         self.current_view_is_hdr = use_hdr;
 
         texture_changed
+    }
+
+    /// Whether ray-traced global illumination brings opaque surfaces their indirect diffuse
+    /// light this frame (`diffuse`: the main pass then leaves the environment's diffuse
+    /// light out), and whether ray-traced reflections bring them the sky's reflection too
+    /// (`specular`: the main pass leaves that out as well).
+    pub(crate) fn set_traced(&mut self, queue: &wgpu::Queue, diffuse: bool, specular: bool) {
+        let flag = |on: bool| if on { 1.0 } else { 0.0 };
+        let traced = [flag(diffuse), flag(diffuse && specular), 0.0, 0.0];
+        if self.uniform.traced != traced {
+            self.uniform.traced = traced;
+            queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
+        }
     }
 
     pub(crate) fn uniform_buffer(&self) -> &wgpu::Buffer {
@@ -186,6 +201,7 @@ fn build_uniform(
             color.b as f32,
             ambient_intensity,
         ],
+        traced: [0.0; 4],
     }
 }
 

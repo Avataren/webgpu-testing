@@ -3363,6 +3363,38 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Global illumination",
+            "global_illumination",
+            Some(&mut settings.global_illumination.enabled),
+            &mut rows,
+            |ui, rows| {
+                use wgpu_cube::renderer::postprocess::PathTracingSettings;
+                rows.checkbox(
+                    ui,
+                    "global_illumination.half_resolution",
+                    "Half resolution",
+                    &mut settings.global_illumination.half_resolution,
+                );
+                rows.integer(
+                    ui,
+                    "global_illumination.bounces",
+                    "Bounces",
+                    &mut settings.global_illumination.bounces,
+                    1..=PathTracingSettings::MAX_BOUNCES,
+                );
+                rows.integer(
+                    ui,
+                    "global_illumination.max_history",
+                    "Max history (frames)",
+                    &mut settings.global_illumination.max_history,
+                    1..=PathTracingSettings::MAX_HISTORY,
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Path tracing",
             "path_tracing",
             Some(&mut settings.path_tracing.enabled),

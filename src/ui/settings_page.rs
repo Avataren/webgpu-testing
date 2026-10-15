@@ -2,7 +2,8 @@
 //! [`crate::graphics_settings`]).
 
 use crate::graphics_settings::{
-    graphics_settings, DisplayMode, EffectQuality, GraphicsCapabilities, GraphicsSettings,
+    graphics_settings, DisplayMode, EffectQuality, GlobalIllumination, GraphicsCapabilities,
+    GraphicsSettings,
 };
 use crate::renderer::postprocess::{AntiAliasing, Upscaler};
 
@@ -346,15 +347,19 @@ fn ray_tracing_rows(
     );
     ui.end_row();
 
-    // Path tracing traces its own reflections and occlusion.
+    // Path tracing traces its own reflections and occlusion; traced global illumination
+    // is occluded already.
     let path_traced = capabilities.path_tracing && settings.path_tracing;
+    let gi_traced = capabilities.path_tracing
+        && !settings.path_tracing
+        && settings.global_illumination == GlobalIllumination::RayTraced;
     effect_row(
         ui,
         "Reflections",
         "engine_settings_reflections",
         &mut settings.reflections,
         rt,
-        !path_traced,
+        (!path_traced).then_some(()).ok_or("Part of path tracing"),
     );
     effect_row(
         ui,
@@ -362,8 +367,42 @@ fn ray_tracing_rows(
         "engine_settings_ambient_occlusion",
         &mut settings.ambient_occlusion,
         rt,
-        !path_traced,
+        if path_traced {
+            Err("Part of path tracing")
+        } else if gi_traced {
+            Err("Part of the traced global illumination")
+        } else {
+            Ok(())
+        },
     );
+
+    let name = |gi: GlobalIllumination| match gi {
+        GlobalIllumination::Off => "Off",
+        GlobalIllumination::RayTraced => "Ray traced",
+    };
+    ui.label("Global illumination");
+    ui.add_enabled_ui(capabilities.path_tracing && !path_traced, |ui| {
+        egui::ComboBox::from_id_salt("engine_settings_global_illumination")
+            .selected_text(name(settings.global_illumination))
+            .show_ui(ui, |ui| {
+                for gi in [GlobalIllumination::Off, GlobalIllumination::RayTraced] {
+                    ui.selectable_value(&mut settings.global_illumination, gi, name(gi));
+                }
+            });
+    })
+    .response
+    .on_hover_text(
+        "Light bounced off other surfaces and the sky seen through openings, traced and \
+         denoised over the raster lighting: closer to path tracing at a fraction of its cost.",
+    )
+    .on_disabled_hover_text(if path_traced {
+        "Part of path tracing"
+    } else if capabilities.ray_tracing {
+        "Ray-traced global illumination needs MSAA off"
+    } else {
+        "Ray-traced global illumination needs hardware ray tracing"
+    });
+    ui.end_row();
 
     ui.label("Ray-traced refraction");
     ui.add_enabled(
@@ -379,7 +418,8 @@ fn effect_row(
     id: &str,
     value: &mut EffectQuality,
     rt: bool,
-    enabled: bool,
+    // Err: why it is disabled.
+    enabled: Result<(), &str>,
 ) {
     let name = |quality: EffectQuality| match quality {
         EffectQuality::Off => "Off",
@@ -387,7 +427,7 @@ fn effect_row(
         EffectQuality::RayTraced => "Ray traced",
     };
     ui.label(label);
-    ui.add_enabled_ui(enabled, |ui| {
+    ui.add_enabled_ui(enabled.is_ok(), |ui| {
         egui::ComboBox::from_id_salt(id)
             .selected_text(name(*value))
             .show_ui(ui, |ui| {
@@ -403,7 +443,7 @@ fn effect_row(
             });
     })
     .response
-    .on_disabled_hover_text("Part of path tracing");
+    .on_disabled_hover_text(enabled.err().unwrap_or_default());
     ui.end_row();
 }
 

@@ -281,10 +281,21 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
         select(vec2<f32>(-1.0), in.pos.xy, opaque)
     );
     
-    // This function is from environment.wgsl
-    let environment_light = calculate_environment_lighting(
-        N, V, lit_color, metallic, roughness, occlusion
-    );
+    // This function is from environment.wgsl. While ray-traced global illumination lights
+    // opaque surfaces, their diffuse share of the environment comes from it instead
+    // (billboards turn to the camera and are not in the acceleration structure; glass is
+    // the refraction pass's).
+    var environment_light: vec3<f32>;
+    let traced = opaque && transmission <= 0.0 && (material_flags & FLAG_BILLBOARDED) == 0u;
+    if (traced && environment_diffuse_traced()) {
+        environment_light = calculate_environment_specular(
+            N, V, lit_color, metallic, roughness, occlusion
+        );
+    } else {
+        environment_light = calculate_environment_lighting(
+            N, V, lit_color, metallic, roughness, occlusion
+        );
+    }
     
     // Conditionally use lighting based on material flags
     var color: vec3<f32>;
