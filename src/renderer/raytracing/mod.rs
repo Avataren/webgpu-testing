@@ -68,6 +68,8 @@ pub struct RayTracingFrame<'a> {
     pub lights: &'a wgpu::BindGroup,
     /// The scene's acceleration structure and geometry (group 3).
     pub scene: &'a wgpu::BindGroup,
+    /// The bindless texture array (group 4), on adapters that have one.
+    pub textures: Option<&'a wgpu::BindGroup>,
 }
 
 /// Ray tracing counters for the last frame.

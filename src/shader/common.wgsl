@@ -305,13 +305,30 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     
     // Linear HDR: post-processing applies exposure and tonemapping.
 
+    // Reflections need the surface's smoothness and specular colour (none when unlit).
+    let lit = (material_flags & FLAG_UNLIT) == 0u;
+    let smoothness = select(0.0, clamp(1.0 - roughness, 0.0, 1.0), lit);
+    let specular_color = mix(vec3<f32>(0.04), base_color.rgb, metallic);
     return ShadedFragment(
         vec4<f32>(color, base_color.a),
         vec4<f32>(normalize(N), 1.0),
-        // w: 1 marks a surface; the fraction above it is the smoothness reflections use
-        // (none on unlit surfaces).
-        vec4<f32>(in.world_pos, 1.0 + select(clamp(1.0 - roughness, 0.0, 1.0), 0.0, (material_flags & FLAG_UNLIT) != 0u)),
+        vec4<f32>(in.world_pos, encode_surface_w(smoothness, specular_color)),
     );
+}
+
+// The G-buffer position's w (a half float): below 0.5 there is no surface. A surface
+// stores a 14-bit code in the bits of a half float of at least 1 (1.0 itself is code 0:
+// rough, dielectric): the top 4 bits pick the power of two, the low 10 the mantissa, so
+// the value is exact in the half-float target. The code holds the smoothness reflections
+// use (5 bits, highest) over the specular colour F0 (3 bits a channel, 0 = the dielectric
+// 0.04, square-root spaced up to 1). Decoded by ssr_smoothness / ssr_specular_color in
+// postprocess/reflection_common.wgsl.
+fn encode_surface_w(smoothness: f32, specular_color: vec3<f32>) -> f32 {
+    let s = u32(round(clamp(smoothness, 0.0, 1.0) * 31.0));
+    let above_dielectric = clamp((specular_color - vec3<f32>(0.04)) / 0.96, vec3<f32>(0.0), vec3<f32>(1.0));
+    let f0 = vec3<u32>(round(sqrt(above_dielectric) * 7.0));
+    let code = (s << 9u) | (f0.r << 6u) | (f0.g << 3u) | f0.b;
+    return exp2(f32(code >> 10u)) * (1.0 + f32(code & 1023u) / 1024.0);
 }
 
 @fragment

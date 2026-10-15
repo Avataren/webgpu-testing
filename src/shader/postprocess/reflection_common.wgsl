@@ -21,10 +21,33 @@ fn ssr_expand(color : vec3<f32>) -> vec3<f32> {
     return color / max(1.0 - luminance_rec709(color), 1e-3);
 }
 
-// The main pass stores 1 + smoothness (1 - roughness) in the position's w; below 0.5
-// there is no surface.
+// The main pass packs smoothness (1 - roughness) and the specular colour into the bits
+// of the position's half-float w (encode_surface_w in common.wgsl); below 0.5 there is
+// no surface. The f32 read back has the half's power of two and its 10 mantissa bits at
+// the top of its own.
+fn ssr_surface_code(position : vec4<f32>) -> u32 {
+    let bits = bitcast<u32>(position.w);
+    let power = i32((bits >> 23u) & 0xffu) - 127;
+    if power < 0 {
+        return 0u;
+    }
+    return min((u32(power) << 10u) | ((bits >> 13u) & 1023u), 0x3fffu);
+}
+
 fn ssr_smoothness(position : vec4<f32>) -> f32 {
-    return clamp(position.w - 1.0, 0.0, 1.0);
+    return f32(ssr_surface_code(position) >> 9u) / 31.0;
+}
+
+// F0: how much of a reflection the surface shows head-on, per channel (0.04 for
+// dielectrics, the base colour for metals).
+fn ssr_specular_color(position : vec4<f32>) -> vec3<f32> {
+    let code = ssr_surface_code(position);
+    let encoded = vec3<f32>(
+        f32((code >> 6u) & 7u),
+        f32((code >> 3u) & 7u),
+        f32(code & 7u),
+    ) / 7.0;
+    return vec3<f32>(0.04) + 0.96 * encoded * encoded;
 }
 
 fn ssr_view_depth(world : vec3<f32>) -> f32 {

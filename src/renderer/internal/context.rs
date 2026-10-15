@@ -172,9 +172,13 @@ impl RenderContext {
 
         let mut ray_tracing = crate::renderer::raytracing::RayTracingSupport::probe(&adapter);
         let (device, queue) = if ray_tracing.is_available() {
-            let rt_limits = limits
+            let mut rt_limits = limits
                 .clone()
                 .using_acceleration_structure_values(adapter.limits());
+            // The ray-traced reflection pass binds the texture array as a fifth group.
+            rt_limits.max_bind_groups = rt_limits
+                .max_bind_groups
+                .max(adapter.limits().max_bind_groups.min(5));
             match adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("Device"),

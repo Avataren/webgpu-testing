@@ -130,9 +130,20 @@ traces reflections with ray queries and falls back to SSR when the device has no
 queries (`engine_info` `surface.ray_tracing` says why). Code: `renderer/raytracing/`
 (support probe, geometry pool, BLAS cache, per-frame TLAS), `postprocess/rt_reflections.rs`
 and `shader/postprocess/rt_reflections.wgsl`. Hits the screen shows reuse the lit scene
-colour; other hits are shaded from material factors with ray-traced shadow rays. Not yet:
-skinned meshes, alpha-blended and billboarded geometry, texture sampling at hits, GPU
-timing. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
+colour; other hits are shaded from the material (base colour, metallic-roughness, emissive
+and occlusion maps from the bindless texture array, mip level from ray cones) with
+ray-traced shadow rays. The apply pass weights reflections by the surface's specular
+colour (F0, packed with smoothness into the G-buffer position's w), so metals reflect fully
+and in their own colour. Skinned instances are traced too: each frame the deformed
+vertices are copied into the pool and their BLAS rebuilt (wgpu 30 has no refit). Both
+reflection paths accumulate the half-resolution trace over frames before the blur, which
+removes the shimmer TAA's jitter caused on curved and detailed mirrors (in `games/rt-lab`,
+pixels changing between frames went from 0.47% to 0.15%, the same as with reflections
+off). Test scene: `games/rt-lab`. Not yet: alpha-blended and billboarded geometry, normal
+maps at hits, GPU timing. Known issues: the
+trace is half resolution, so mirrors look soft; the main pass's ambient (and environment
+specular) is not taken away where a reflection replaces it, which leaves a grey haze on
+mirrors. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
 
 ### What wgpu 30 provides
 

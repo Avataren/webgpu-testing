@@ -38,7 +38,7 @@ use pipelines::{
 use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
 use rt_reflections::{RtReflectionInputs, RtReflectionStage};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
-use ssr::{SsrInputs, SsrStage};
+use ssr::{SsrInputs, SsrStage, SsrTargets};
 use temporal::{TemporalInputs, TemporalStage};
 
 use crate::renderer::raytracing::RayTracingFrame;
@@ -141,6 +141,8 @@ pub struct PostProcess {
     ssao_ping: TextureBundle,
     ssr_half: TextureBundle,
     ssr_ping: TextureBundle,
+    ssr_accumulated: TextureBundle,
+    ssr_history: TextureBundle,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -169,6 +171,9 @@ pub struct PostProcess {
     temporal_stage: TemporalStage,
     /// The history holds last frame's TAA result (false after a resize or turning TAA on).
     taa_history_valid: bool,
+    /// How last frame's reflections were traced (Some(true) = ray traced), None when
+    /// none ran: the reflection history only carries over while this stays the same.
+    reflection_history: Option<bool>,
     /// Which temporal passes the cached bind groups were built for (TAA, motion blur).
     temporal_routing: (bool, bool),
     lut: LutTexture,
@@ -491,6 +496,8 @@ impl PostProcess {
             ssao_ping: targets.ssao_ping,
             ssr_half: targets.ssr_half,
             ssr_ping: targets.ssr_ping,
+            ssr_accumulated: targets.ssr_accumulated,
+            ssr_history: targets.ssr_history,
             bloom_chain: targets.bloom_chain,
             dof_half: targets.dof_half,
             dof_blur: targets.dof_blur,
@@ -516,6 +523,7 @@ impl PostProcess {
             dof_stage,
             temporal_stage,
             taa_history_valid: false,
+            reflection_history: None,
             temporal_routing: (false, false),
             lut: LutTexture::new(device, queue),
             size,
@@ -561,6 +569,8 @@ impl PostProcess {
         self.ssao_ping = targets.ssao_ping;
         self.ssr_half = targets.ssr_half;
         self.ssr_ping = targets.ssr_ping;
+        self.ssr_accumulated = targets.ssr_accumulated;
+        self.ssr_history = targets.ssr_history;
         self.bloom_chain = targets.bloom_chain;
         self.dof_half = targets.dof_half;
         self.dof_blur = targets.dof_blur;
@@ -568,6 +578,7 @@ impl PostProcess {
         self.taa_history = targets.taa_history;
         self.motion_output = targets.motion_output;
         self.taa_history_valid = false;
+        self.reflection_history = None;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
         self.pick_target.invalidate();
@@ -604,6 +615,7 @@ impl PostProcess {
             self.viewport_scale = scale;
             // The history no longer lines up with the view.
             self.taa_history_valid = false;
+            self.reflection_history = None;
             self.upload_uniform(queue);
         }
     }
@@ -692,16 +704,23 @@ impl PostProcess {
     }
 
     /// Build the ray-traced reflection pass. `lights_layout` is the main pass's lights
-    /// group and `scene_layout` the ray tracing scene's. On error reflections stay
+    /// group, `scene_layout` the ray tracing scene's and `textures_layout` the bindless
+    /// texture array's (None: hits use material factors only). On error reflections stay
     /// screen-space.
     pub(crate) fn enable_ray_traced_reflections(
         &mut self,
         device: &wgpu::Device,
         lights_layout: &wgpu::BindGroupLayout,
         scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Result<(), String> {
-        let stage =
-            RtReflectionStage::new(device, &self.uniform_layout, lights_layout, scene_layout)?;
+        let stage = RtReflectionStage::new(
+            device,
+            &self.uniform_layout,
+            lights_layout,
+            scene_layout,
+            textures_layout,
+        )?;
         self.rt_reflection_stage = Some(stage);
         self.mark_bind_groups_dirty();
         Ok(())
@@ -783,12 +802,18 @@ impl PostProcess {
                 ),
                 _ => false,
             };
+            let targets = SsrTargets {
+                reflection: &self.ssr_half,
+                ping: &self.ssr_ping.view,
+                accumulated: &self.ssr_accumulated,
+                history: &self.ssr_history,
+                history_valid: self.reflection_history == Some(traced),
+            };
             if traced {
                 self.ssr_stage.resolve(
                     encoder,
                     &self.uniform_bind_group,
-                    &self.ssr_half.view,
-                    &self.ssr_ping.view,
+                    &targets,
                     &self.scene_source.view,
                     region,
                 );
@@ -796,12 +821,14 @@ impl PostProcess {
                 self.ssr_stage.render(
                     encoder,
                     &self.uniform_bind_group,
-                    &self.ssr_half.view,
-                    &self.ssr_ping.view,
+                    &targets,
                     &self.scene_source.view,
                     region,
                 );
             }
+            self.reflection_history = Some(traced);
+        } else {
+            self.reflection_history = None;
         }
 
         let (taa, motion_blur) = self.temporal_routing;
@@ -970,6 +997,8 @@ impl PostProcess {
                 sampler: &self.sampler_linear,
                 reflection: &self.ssr_half.view,
                 ping: &self.ssr_ping.view,
+                accumulated: &self.ssr_accumulated.view,
+                history: &self.ssr_history.view,
             },
         );
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
@@ -1110,6 +1139,8 @@ struct SizedTargets {
     ssao_ping: TextureBundle,
     ssr_half: TextureBundle,
     ssr_ping: TextureBundle,
+    ssr_accumulated: TextureBundle,
+    ssr_history: TextureBundle,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -1147,8 +1178,20 @@ impl SizedTargets {
             position_msaa,
             ssao: TextureBundle::ssao(device, size),
             ssao_ping: TextureBundle::ssao(device, size),
-            ssr_half: TextureBundle::color(device, &half_size(size), HDR_FORMAT, "SsrHalf"),
+            ssr_half: TextureBundle::copyable(device, &half_size(size), HDR_FORMAT, "SsrHalf"),
             ssr_ping: TextureBundle::color(device, &half_size(size), HDR_FORMAT, "SsrPing"),
+            ssr_accumulated: TextureBundle::copyable(
+                device,
+                &half_size(size),
+                HDR_FORMAT,
+                "SsrAccumulated",
+            ),
+            ssr_history: TextureBundle::copyable(
+                device,
+                &half_size(size),
+                HDR_FORMAT,
+                "SsrHistory",
+            ),
             bloom_chain: create_bloom_chain(device, size),
             dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
             dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
@@ -1527,17 +1570,44 @@ mod tests {
         .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
     }
 
+    /// `encode_surface_w` (common.wgsl) and `ssr_surface_code` (reflection_common.wgsl),
+    /// mirrored here: every code must survive the half-float G-buffer target exactly and
+    /// read as a surface.
+    #[test]
+    fn surface_w_codes_survive_the_half_float_target() {
+        let encode =
+            |code: u32| (2f32).powi((code >> 10) as i32) * (1.0 + (code & 1023) as f32 / 1024.0);
+        let decode = |w: f32| {
+            let bits = w.to_bits();
+            let power = ((bits >> 23) & 0xff) as i32 - 127;
+            if power < 0 {
+                return 0;
+            }
+            (((power as u32) << 10) | ((bits >> 13) & 1023)).min(0x3fff)
+        };
+        for code in 0..0x4000u32 {
+            let stored = half::f16::from_f32(encode(code)).to_f32();
+            assert!(stored >= 0.5, "code {code} would read as no surface");
+            assert_eq!(decode(stored), code);
+        }
+        assert_eq!(decode(0.0), 0);
+    }
+
     #[test]
     fn rt_reflections_shader_validates() {
-        let source = rt_reflections::rt_reflections_shader_source();
-        let module = naga::front::wgsl::parse_str(&source)
+        for textures in [false, true] {
+            let source = rt_reflections::rt_reflections_shader_source(textures);
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::RAY_QUERY
+                    | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY
+                    | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING,
+            )
+            .validate(&module)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::RAY_QUERY,
-        )
-        .validate(&module)
-        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        }
     }
 
     #[test]

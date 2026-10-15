@@ -88,6 +88,16 @@ impl TextureBundle {
         Self { view, texture }
     }
 
+    /// Copy the whole texture into `other`, which must match it in size and format (both
+    /// made with [`Self::copyable`]).
+    pub fn copy_to(&self, encoder: &mut wgpu::CommandEncoder, other: &TextureBundle) {
+        encoder.copy_texture_to_texture(
+            self.texture.as_image_copy(),
+            other.texture.as_image_copy(),
+            self.texture.size(),
+        );
+    }
+
     pub fn depth(device: &wgpu::Device, size: &wgpu::Extent3d, label: &str) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),

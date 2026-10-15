@@ -1,20 +1,25 @@
 use crate::renderer::PipelineBuilder;
 
 use super::pipelines::{sampler_entry, texture_entry};
+use super::resources::TextureBundle;
 use super::{begin_color_pass, fullscreen_vertex, ColorAttachment, HDR_FORMAT};
 use crate::renderer::RenderRegion;
 
-/// Screen-space reflections: a half-resolution trace, a separable blur, and a pass that
-/// adds the result to the HDR scene before the temporal and later passes read it.
+/// Screen-space reflections: a half-resolution trace, temporal accumulation, a separable
+/// blur, and a pass that adds the result to the HDR scene before the temporal and later
+/// passes read it.
 pub struct SsrStage {
     trace_layout: wgpu::BindGroupLayout,
     trace_pipeline: wgpu::RenderPipeline,
+    temporal_layout: wgpu::BindGroupLayout,
+    temporal_pipeline: wgpu::RenderPipeline,
     blur_layout: wgpu::BindGroupLayout,
     blur_horizontal_pipeline: wgpu::RenderPipeline,
     blur_vertical_pipeline: wgpu::RenderPipeline,
     apply_layout: wgpu::BindGroupLayout,
     apply_pipeline: wgpu::RenderPipeline,
     trace_bind_group: Option<wgpu::BindGroup>,
+    temporal_bind_group: Option<wgpu::BindGroup>,
     blur_horizontal_bind_group: Option<wgpu::BindGroup>,
     blur_vertical_bind_group: Option<wgpu::BindGroup>,
     apply_bind_group: Option<wgpu::BindGroup>,
@@ -29,6 +34,23 @@ pub struct SsrInputs<'a> {
     pub reflection: &'a wgpu::TextureView,
     /// Half resolution: the horizontal blur's output.
     pub ping: &'a wgpu::TextureView,
+    /// Half resolution: the trace accumulated over frames.
+    pub accumulated: &'a wgpu::TextureView,
+    /// Half resolution: last frame's `accumulated`.
+    pub history: &'a wgpu::TextureView,
+}
+
+/// The half-resolution textures one frame of reflections goes through.
+#[derive(Clone, Copy)]
+pub struct SsrTargets<'a> {
+    /// The trace, then the blurred result.
+    pub reflection: &'a TextureBundle,
+    pub ping: &'a wgpu::TextureView,
+    pub accumulated: &'a TextureBundle,
+    pub history: &'a TextureBundle,
+    /// Whether `history` holds last frame's accumulated reflection of this view, traced
+    /// the same way; when not, accumulation restarts from this frame's trace.
+    pub history_valid: bool,
 }
 
 impl SsrStage {
@@ -54,6 +76,15 @@ impl SsrStage {
                 unfilterable(141),
                 unfilterable(142),
                 sampler_entry(143),
+            ],
+        });
+        let temporal_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SsrTemporalLayout"),
+            entries: &[
+                unfilterable(155),
+                texture_entry(156),
+                unfilterable(157),
+                sampler_entry(158),
             ],
         });
         let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -107,6 +138,12 @@ impl SsrStage {
                 &trace_layout,
                 replace,
             ),
+            temporal_pipeline: make_pipeline(
+                "SsrTemporalPipeline",
+                "fs_ssr_temporal",
+                &temporal_layout,
+                replace,
+            ),
             blur_horizontal_pipeline: make_pipeline(
                 "SsrBlurHorizontalPipeline",
                 "fs_ssr_blur_horizontal",
@@ -121,9 +158,11 @@ impl SsrStage {
             ),
             apply_pipeline: make_pipeline("SsrApplyPipeline", "fs_ssr_apply", &apply_layout, add),
             trace_layout,
+            temporal_layout,
             blur_layout,
             apply_layout,
             trace_bind_group: None,
+            temporal_bind_group: None,
             blur_horizontal_bind_group: None,
             blur_vertical_bind_group: None,
             apply_bind_group: None,
@@ -132,6 +171,7 @@ impl SsrStage {
 
     pub fn invalidate(&mut self) {
         self.trace_bind_group = None;
+        self.temporal_bind_group = None;
         self.blur_horizontal_bind_group = None;
         self.blur_vertical_bind_group = None;
         self.apply_bind_group = None;
@@ -156,12 +196,22 @@ impl SsrStage {
                 sampler(143),
             ],
         }));
+        self.temporal_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SsrTemporalBindGroup"),
+            layout: &self.temporal_layout,
+            entries: &[
+                texture(155, inputs.reflection),
+                texture(156, inputs.history),
+                texture(157, inputs.normal),
+                sampler(158),
+            ],
+        }));
         self.blur_horizontal_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SsrBlurHorizontalBindGroup"),
                 layout: &self.blur_layout,
                 entries: &[
-                    texture(150, inputs.reflection),
+                    texture(150, inputs.accumulated),
                     sampler(151),
                     texture(152, inputs.position),
                 ],
@@ -188,13 +238,13 @@ impl SsrStage {
         }));
     }
 
-    /// Trace and blur into `reflection`, then add it to `scene` inside `region`.
+    /// Trace into `targets.reflection`, accumulate and blur it, then add it to `scene`
+    /// inside `region`.
     pub fn render(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         uniform_bind_group: &wgpu::BindGroup,
-        reflection: &wgpu::TextureView,
-        ping: &wgpu::TextureView,
+        targets: &SsrTargets<'_>,
         scene: &wgpu::TextureView,
         region: Option<RenderRegion>,
     ) {
@@ -207,29 +257,49 @@ impl SsrStage {
             &self.trace_pipeline,
             uniform_bind_group,
             trace,
-            reflection,
+            &targets.reflection.view,
         );
-        self.resolve(encoder, uniform_bind_group, reflection, ping, scene, region);
+        self.resolve(encoder, uniform_bind_group, targets, scene, region);
     }
 
-    /// Blur a traced `reflection` (screen-space or ray-traced) and add it to `scene`
-    /// inside `region`.
+    /// Accumulate and blur a traced `targets.reflection` (screen-space or ray-traced) and
+    /// add it to `scene` inside `region`.
     pub fn resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         uniform_bind_group: &wgpu::BindGroup,
-        reflection: &wgpu::TextureView,
-        ping: &wgpu::TextureView,
+        targets: &SsrTargets<'_>,
         scene: &wgpu::TextureView,
         region: Option<RenderRegion>,
     ) {
-        let (Some(horizontal), Some(vertical), Some(apply)) = (
+        let (Some(temporal), Some(horizontal), Some(vertical), Some(apply)) = (
+            self.temporal_bind_group.as_ref(),
             self.blur_horizontal_bind_group.as_ref(),
             self.blur_vertical_bind_group.as_ref(),
             self.apply_bind_group.as_ref(),
         ) else {
             return;
         };
+        let SsrTargets {
+            reflection,
+            ping,
+            accumulated,
+            history,
+            history_valid,
+        } = *targets;
+        if !history_valid {
+            // Start the accumulation from this frame's trace.
+            reflection.copy_to(encoder, history);
+        }
+        Self::fullscreen(
+            encoder,
+            "SsrTemporal",
+            &self.temporal_pipeline,
+            uniform_bind_group,
+            temporal,
+            &accumulated.view,
+        );
+        accumulated.copy_to(encoder, history);
         Self::fullscreen(
             encoder,
             "SsrBlurHorizontal",
@@ -244,7 +314,7 @@ impl SsrStage {
             &self.blur_vertical_pipeline,
             uniform_bind_group,
             vertical,
-            reflection,
+            &reflection.view,
         );
         let mut pass = begin_color_pass(
             encoder,

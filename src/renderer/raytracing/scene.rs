@@ -1,12 +1,14 @@
 //! The ray-traced view of the scene: one bottom-level acceleration structure (BLAS) per
-//! mesh, a top-level structure (TLAS) rebuilt each frame from the opaque batches, and the
-//! geometry a hit shader reads to shade what a ray found.
+//! mesh and per skinned instance, a top-level structure (TLAS) rebuilt each frame from the
+//! opaque batches, and the geometry a hit shader reads to shade what a ray found.
 //!
-//! All mesh geometry lives in one pool of storage buffers (positions, normals, uvs and
-//! colours, plus mesh-relative indices), so a shader can fetch any hit triangle through
-//! one binding. Each BLAS is built from its mesh's range of the pool. The pool only
-//! grows; when meshes that are gone or changed waste most of it, it is rebuilt from the
-//! meshes still in use.
+//! All geometry lives in one pool of storage buffers (vertices in the engine's own
+//! [`Vertex`] layout, plus mesh-relative indices), so a shader can fetch any hit triangle
+//! through one binding. Each BLAS is built from its range of the pool. A rigid mesh is
+//! uploaded and built once; a skinned instance gets a range of its own, which each frame
+//! receives a GPU copy of the vertices the skinning pass just deformed, and its BLAS is
+//! rebuilt from it (wgpu 30 cannot refit). The pool only grows; when geometry that is gone
+//! or changed wastes most of it, it is rebuilt from what is still in use.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,21 +18,10 @@ use glam::Mat4;
 
 use super::RayTracingStats;
 use crate::asset::{Assets, Handle, Mesh, MeshData};
-use crate::renderer::batch::InstanceSource;
+use crate::renderer::batch::{InstanceSource, SkinKey};
 use crate::renderer::internal::PreparedBatches;
-use crate::renderer::Material;
-
-/// One vertex as the hit shader reads it (`RtVertex` in rt_reflections.wgsl). The
-/// position comes first so the BLAS builds read it straight from the pool.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-struct RtVertex {
-    position: [f32; 3],
-    u: f32,
-    normal: [f32; 3],
-    v: f32,
-    color: [f32; 4],
-}
+use crate::renderer::skinning::SkinningStage;
+use crate::renderer::{Material, Vertex};
 
 /// What a hit shader needs about a TLAS instance (`RtInstance` in the shader), found by
 /// the instance's custom data.
@@ -43,7 +34,9 @@ struct RtInstance {
     _padding: u32,
 }
 
-const VERTEX_STRIDE: u64 = std::mem::size_of::<RtVertex>() as u64;
+/// Pool vertices are the engine's [`Vertex`] (`RtVertex` in rt_reflections.wgsl), so
+/// skinned vertex buffers copy straight in and BLAS builds read the position at offset 0.
+const VERTEX_STRIDE: u64 = std::mem::size_of::<Vertex>() as u64;
 const INITIAL_POOL_VERTICES: u64 = 64 * 1024;
 const INITIAL_POOL_INDICES: u64 = 192 * 1024;
 const INITIAL_INSTANCES: u32 = 256;
@@ -51,6 +44,13 @@ const INITIAL_INSTANCES: u32 = 256;
 const UNUSED_FRAMES_BEFORE_EVICT: u64 = 600;
 /// TLAS instance custom data is 24 bits wide.
 const MAX_INSTANCES: u32 = 1 << 24;
+
+/// What a BLAS is built from: a rigid mesh, or one skinned instance's deformed copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum GeometryKey {
+    Mesh(Handle<Mesh>),
+    Skin(SkinKey),
+}
 
 struct MeshEntry {
     /// The geometry the BLAS was built from: a different `Arc` means the mesh changed.
@@ -138,7 +138,9 @@ pub(crate) struct RayTracingScene {
     indices: PoolBuffer,
     /// Pool elements still referenced by live entries, to know when to compact.
     live_vertices: u64,
-    meshes: HashMap<Handle<Mesh>, MeshEntry>,
+    meshes: HashMap<GeometryKey, MeshEntry>,
+    /// This frame's skinned vertex buffers and where in the pool they are copied.
+    deformed_copies: Vec<(wgpu::Buffer, u64, u64)>,
     tlas: wgpu::Tlas,
     tlas_capacity: u32,
     /// Instances written into `tlas` last frame (slots past this are already empty).
@@ -146,8 +148,8 @@ pub(crate) struct RayTracingScene {
     instances: wgpu::Buffer,
     instance_capacity: u32,
     instance_scratch: Vec<RtInstance>,
-    /// Mesh and transform of each entry in `instance_scratch`.
-    instance_transforms: Vec<(Handle<Mesh>, [f32; 12])>,
+    /// Geometry and transform of each entry in `instance_scratch`.
+    instance_transforms: Vec<(GeometryKey, [f32; 12])>,
     layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     /// The materials buffer `bind_group` was made with (it is replaced when it grows).
@@ -191,6 +193,7 @@ impl RayTracingScene {
             indices: PoolBuffer::new(device, "RtIndexPool", 4, INITIAL_POOL_INDICES),
             live_vertices: 0,
             meshes: HashMap::new(),
+            deformed_copies: Vec::new(),
             tlas: Self::create_tlas(device, INITIAL_INSTANCES),
             tlas_capacity: INITIAL_INSTANCES,
             tlas_used: 0,
@@ -239,8 +242,9 @@ impl RayTracingScene {
     }
 
     /// Bring the acceleration structures up to date with this frame's opaque batches and
-    /// record their builds into `encoder`. `materials` is the buffer the batches'
-    /// material indices refer to.
+    /// record their builds into `encoder`, after the skinning pass `skinning` recorded.
+    /// `materials` is the buffer the batches' material indices refer to.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         device: &wgpu::Device,
@@ -248,27 +252,35 @@ impl RayTracingScene {
         encoder: &mut wgpu::CommandEncoder,
         assets: &Assets,
         batches: &PreparedBatches,
+        skinning: &SkinningStage,
         materials: &wgpu::Buffer,
     ) {
         self.frame += 1;
         let mut buffers_changed = self.compact_if_wasteful();
 
-        // Meshes first: the instances below need their pool offsets and BLAS.
+        // Geometry first: the instances below need their pool offsets and BLAS.
+        self.deformed_copies.clear();
         let opaque = &batches.batches[batches.opaque_range.clone()];
         for batch in opaque {
-            if !Self::traceable(batch) {
+            if batch.alpha_blend {
                 continue;
             }
-            buffers_changed |= self.ensure_mesh(device, queue, encoder, assets, batch.mesh);
+            buffers_changed |=
+                self.ensure_geometry(device, queue, encoder, assets, skinning, batch);
+        }
+        // After any pool growth above, which copies the old contents in this encoder.
+        for (buffer, offset, size) in &self.deformed_copies {
+            encoder.copy_buffer_to_buffer(buffer, 0, &self.vertices.buffer, *offset, *size);
         }
 
         self.instance_scratch.clear();
         self.instance_transforms.clear();
         for batch in opaque {
-            if !Self::traceable(batch) {
+            if batch.alpha_blend {
                 continue;
             }
-            let Some(entry) = self.meshes.get(&batch.mesh) else {
+            let key = Self::geometry_key(batch);
+            let Some(entry) = self.meshes.get(&key) else {
                 continue;
             };
             for instance in &batch.instances {
@@ -290,7 +302,7 @@ impl RayTracingScene {
                     _padding: 0,
                 });
                 self.instance_transforms
-                    .push((batch.mesh, affine_rows(instance.transform.matrix())));
+                    .push((key, affine_rows(instance.transform.matrix())));
             }
         }
         let count = self.instance_scratch.len() as u32;
@@ -303,8 +315,8 @@ impl RayTracingScene {
             buffers_changed = true;
         }
         // The custom data finds the instance's entry in `instances`.
-        for (slot, (mesh, transform)) in self.instance_transforms.iter().enumerate() {
-            let blas = &self.meshes[mesh].blas;
+        for (slot, (key, transform)) in self.instance_transforms.iter().enumerate() {
+            let blas = &self.meshes[key].blas;
             self.tlas[slot] = Some(wgpu::TlasInstance::new(blas, *transform, slot as u32, 0xff));
         }
         for slot in count..self.tlas_used {
@@ -375,36 +387,52 @@ impl RayTracingScene {
         };
     }
 
-    /// Opaque, rigid batches. Skinned meshes are deformed per instance on the GPU and are
-    /// not traced yet.
-    fn traceable(batch: &crate::renderer::internal::OrderedBatch) -> bool {
-        !batch.alpha_blend && batch.skin.is_none()
+    fn geometry_key(batch: &crate::renderer::internal::OrderedBatch) -> GeometryKey {
+        match batch.skin {
+            Some(skin) => GeometryKey::Skin(skin),
+            None => GeometryKey::Mesh(batch.mesh),
+        }
     }
 
-    /// Make sure `handle` has an up-to-date BLAS, uploading its geometry to the pool when
-    /// it is new or changed. Returns whether a pool buffer was replaced.
-    fn ensure_mesh(
+    /// Make sure `batch`'s geometry has an up-to-date BLAS, uploading it to the pool when
+    /// it is new or changed. A skinned instance (only once the skinning pass deformed it)
+    /// is queued in `deformed_copies` and rebuilt. Returns whether a pool buffer was
+    /// replaced.
+    fn ensure_geometry(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         assets: &Assets,
-        handle: Handle<Mesh>,
+        skinning: &SkinningStage,
+        batch: &crate::renderer::internal::OrderedBatch,
     ) -> bool {
-        if assets.meshes.is_released(handle) {
-            return false;
-        }
-        let Some(mesh) = assets.meshes.get(handle) else {
+        let key = Self::geometry_key(batch);
+        let mesh = match batch.skin {
+            Some(skin) => skinning.mesh(skin),
+            None if assets.meshes.is_released(batch.mesh) => None,
+            None => assets.meshes.get(batch.mesh),
+        };
+        let Some(mesh) = mesh else {
             return false;
         };
+        let deformed = batch.skin.is_some();
         let source = mesh.shared_data();
-        if let Some(entry) = self.meshes.get_mut(&handle) {
+        if let Some(entry) = self.meshes.get_mut(&key) {
             if Arc::ptr_eq(&entry.source, source) {
+                if entry.last_used != self.frame && deformed {
+                    entry.needs_build = true;
+                    self.deformed_copies.push((
+                        mesh.vertex_buffer().clone(),
+                        entry.vertex_base as u64 * VERTEX_STRIDE,
+                        entry.size.vertex_count as u64 * VERTEX_STRIDE,
+                    ));
+                }
                 entry.last_used = self.frame;
                 return false;
             }
         }
-        if let Some(stale) = self.meshes.remove(&handle) {
+        if let Some(stale) = self.meshes.remove(&key) {
             self.live_vertices -= stale.size.vertex_count as u64;
         }
 
@@ -419,24 +447,14 @@ impl RayTracingScene {
         let vertex_count = data.vertices.len() as u32;
         let indices = &data.indices[..triangles * 3];
         if indices.iter().any(|&index| index >= vertex_count) {
-            log::warn!("Ray tracing skips mesh {handle:?}: index out of range");
+            log::warn!("Ray tracing skips {key:?}: index out of range");
             return false;
         }
 
-        let vertices: Vec<RtVertex> = data
-            .vertices
-            .iter()
-            .map(|v| RtVertex {
-                position: v.pos,
-                u: v.uv[0],
-                normal: v.normal,
-                v: v.uv[1],
-                color: v.color,
-            })
-            .collect();
+        // A skinned instance starts from its rest pose; the deformed copy replaces it.
         let (vertex_base, vertices_grew) =
             self.vertices
-                .append(device, queue, encoder, bytemuck::cast_slice(&vertices));
+                .append(device, queue, encoder, bytemuck::cast_slice(&data.vertices));
         let (index_base, indices_grew) =
             self.indices
                 .append(device, queue, encoder, bytemuck::cast_slice(indices));
@@ -450,8 +468,13 @@ impl RayTracingScene {
         };
         let blas = device.create_blas(
             &wgpu::CreateBlasDescriptor {
-                label: Some("MeshBlas"),
-                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+                label: Some(if deformed { "SkinnedBlas" } else { "MeshBlas" }),
+                // Skinned structures are rebuilt every frame, so build speed matters more.
+                flags: if deformed {
+                    wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD
+                } else {
+                    wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE
+                },
                 update_mode: wgpu::AccelerationStructureUpdateMode::Build,
             },
             wgpu::BlasGeometrySizeDescriptors::Triangles {
@@ -459,8 +482,15 @@ impl RayTracingScene {
             },
         );
         self.live_vertices += vertex_count as u64;
+        if deformed {
+            self.deformed_copies.push((
+                mesh.vertex_buffer().clone(),
+                vertex_base * VERTEX_STRIDE,
+                vertex_count as u64 * VERTEX_STRIDE,
+            ));
+        }
         self.meshes.insert(
-            handle,
+            key,
             MeshEntry {
                 source: Arc::clone(source),
                 blas,
@@ -573,7 +603,10 @@ mod tests {
 
     #[test]
     fn gpu_structs_match_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<RtVertex>(), 48);
+        // RtVertex in rt_reflections.wgsl: scalar position, normal and uv, then two vec4s.
+        assert_eq!(std::mem::size_of::<Vertex>(), 64);
+        assert_eq!(std::mem::offset_of!(Vertex, tangent), 32);
+        assert_eq!(std::mem::offset_of!(Vertex, color), 48);
         assert_eq!(std::mem::size_of::<RtInstance>(), 16);
     }
 }

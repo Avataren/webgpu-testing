@@ -288,10 +288,19 @@ impl Renderer {
         let mut ray_tracing_support = context.ray_tracing.clone();
         let ray_tracing = if ray_tracing_support.is_available() {
             let scene = crate::renderer::raytracing::RayTracingScene::new(&context.device);
+            // Hits sample material textures from the bindless array, which the trace pass
+            // binds as a fifth group.
+            let textures_layout = (texture_binder.global_bind_group().is_some()
+                && context.device.limits().max_bind_groups >= 5)
+                .then(|| texture_binder.bind_layout());
+            if textures_layout.is_none() {
+                log::info!("Ray-traced reflections shade hits without material textures");
+            }
             match postprocess.enable_ray_traced_reflections(
                 &context.device,
                 &lights_buffer.bind_layout,
                 scene.layout(),
+                textures_layout,
             ) {
                 Ok(()) => Some(scene),
                 Err(error) => {
@@ -1147,6 +1156,7 @@ impl Renderer {
             &mut frame.encoder,
             assets,
             &frame.prepared_batches,
+            &self.skinning,
             &self.objects_buffer.materials,
         );
         frame.stats.ray_tracing = Some(scene.stats());
@@ -1162,6 +1172,7 @@ impl Renderer {
             .map(|scene| crate::renderer::raytracing::RayTracingFrame {
                 lights: &self.lights_buffer.bind_group,
                 scene,
+                textures: self.texture_binder.global_bind_group(),
             });
         self.postprocess.execute(
             &mut frame.encoder,

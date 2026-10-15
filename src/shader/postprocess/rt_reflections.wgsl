@@ -8,8 +8,9 @@
 // its material, the environment and the lights, each light behind a shadow ray.
 //
 // Needs `enable wgpu_ray_query;` (prepended by the Rust side), post-processing's common
-// and reflection_common modules, and the main pass's constants, material, lighting and
-// environment modules (the lights bind group is group 2, as in the main pass).
+// and reflection_common modules, the main pass's constants, material, lighting and
+// environment modules (the lights bind group is group 2, as in the main pass), and one
+// of rt_textures_bindless.wgsl / rt_textures_none.wgsl for `rt_sample_texture`.
 
 @group(1) @binding(170)
 var rt_scene_color : texture_2d<f32>;
@@ -20,14 +21,29 @@ var rt_gbuffer_position : texture_2d<f32>;
 @group(1) @binding(173)
 var rt_scene_sampler : sampler;
 
-// Mirrors `RtVertex` / `RtInstance` in src/renderer/raytracing/scene.rs.
+// The engine's `Vertex` (src/renderer/vertex.rs), as the ray tracing pool stores it;
+// scalars keep the vec3s at their packed offsets. `RtInstance` mirrors
+// src/renderer/raytracing/scene.rs.
 struct RtVertex {
-    position : vec3<f32>,
+    px : f32,
+    py : f32,
+    pz : f32,
+    nx : f32,
+    ny : f32,
+    nz : f32,
     u : f32,
-    normal : vec3<f32>,
     v : f32,
+    tangent : vec4<f32>,
     color : vec4<f32>,
 };
+
+fn rt_vertex_position(vertex : RtVertex) -> vec3<f32> {
+    return vec3<f32>(vertex.px, vertex.py, vertex.pz);
+}
+
+fn rt_vertex_normal(vertex : RtVertex) -> vec3<f32> {
+    return vec3<f32>(vertex.nx, vertex.ny, vertex.nz);
+}
 
 struct RtInstance {
     vertex_base : u32,
@@ -93,6 +109,9 @@ struct RtSurface {
     uv : vec2<f32>,
     color : vec4<f32>,
     material_index : u32,
+    // log2 of the triangle's uv extent per meter (half the log of the area ratio): with
+    // the ray cone's width it picks the texture level.
+    uv_density : f32,
 };
 
 // The hit triangle's interpolated attributes, with the normal in world space and facing
@@ -105,7 +124,7 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     let c = rt_vertices[instance.vertex_base + rt_indices[first + 2u]];
     let w = vec3<f32>(1.0 - hit.barycentrics.x - hit.barycentrics.y, hit.barycentrics);
 
-    let object_normal = a.normal * w.x + b.normal * w.y + c.normal * w.z;
+    let object_normal = rt_vertex_normal(a) * w.x + rt_vertex_normal(b) * w.y + rt_vertex_normal(c) * w.z;
     // Normals transform by the inverse transpose: the transpose of world_to_object.
     let m = hit.world_to_object;
     var normal = vec3<f32>(dot(m[0], object_normal), dot(m[1], object_normal), dot(m[2], object_normal));
@@ -119,11 +138,23 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
         normal = -normal;
     }
 
+    let uv_a = vec2<f32>(a.u, a.v);
+    let uv_b = vec2<f32>(b.u, b.v);
+    let uv_c = vec2<f32>(c.u, c.v);
+    let uv_edge_1 = uv_b - uv_a;
+    let uv_edge_2 = uv_c - uv_a;
+    let uv_area = abs(uv_edge_1.x * uv_edge_2.y - uv_edge_2.x * uv_edge_1.y);
+    let world_area = length(cross(
+        hit.object_to_world * vec4<f32>(rt_vertex_position(b) - rt_vertex_position(a), 0.0),
+        hit.object_to_world * vec4<f32>(rt_vertex_position(c) - rt_vertex_position(a), 0.0),
+    ));
+
     var out : RtSurface;
     out.normal = normal;
-    out.uv = vec2<f32>(a.u, a.v) * w.x + vec2<f32>(b.u, b.v) * w.y + vec2<f32>(c.u, c.v) * w.z;
+    out.uv = uv_a * w.x + uv_b * w.y + uv_c * w.z;
     out.color = a.color * w.x + b.color * w.y + c.color * w.z;
     out.material_index = instance.material_index;
+    out.uv_density = 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12));
     return out;
 }
 
@@ -211,22 +242,54 @@ fn rt_direct_lighting(
     return lo;
 }
 
-// What the main pass would have drawn at the hit, from the material's factors. Textures
-// are not sampled yet: a textured surface shows its base colour factor.
-fn rt_shade(hit : RayIntersection, position : vec3<f32>, direction : vec3<f32>) -> vec3<f32> {
+// What the main pass would have drawn at the hit: the material with its base colour,
+// metallic-roughness, emissive and occlusion maps (normal maps are left out: the pool has
+// no tangents). `cone_width` is how wide the pixel's ray cone has grown at the hit, in
+// meters; it picks the texture level, as screen-space derivatives do in the main pass
+// (ray cones, Akenine-Möller et al. 2019, "Texture Level of Detail Strategies for
+// Real-Time Ray Tracing").
+fn rt_shade(
+    hit : RayIntersection,
+    position : vec3<f32>,
+    direction : vec3<f32>,
+    cone_width : f32,
+) -> vec3<f32> {
     let surface = rt_surface(hit, direction);
     let material = rt_materials[surface.material_index];
-    let base_color = material.color.rgb * surface.color.rgb;
-    let emissive = base_color * material.emissive_strength;
-    if (material.material_flags & FLAG_UNLIT) != 0u {
+    let flags = material.material_flags;
+    let facing = max(abs(dot(surface.normal, direction)), 0.05);
+    let lod_base = surface.uv_density + log2(max(cone_width, 1e-6) / facing);
+    let nearest = (flags & FLAG_USE_NEAREST_FILTERING) != 0u;
+
+    var base_color = material.color.rgb * surface.color.rgb;
+    if (flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u {
+        base_color *= rt_sample_texture(material.base_color_texture, surface.uv, lod_base, nearest).rgb;
+    }
+    var emissive = base_color * material.emissive_strength;
+    if (flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u {
+        emissive = rt_sample_texture(material.emissive_texture, surface.uv, lod_base, nearest).rgb
+            * material.emissive_strength;
+    }
+    if (flags & FLAG_UNLIT) != 0u {
         return base_color + emissive;
     }
-    let metallic = material.metallic_factor;
-    let roughness = max(material.roughness_factor, 0.01);
+    var metallic = material.metallic_factor;
+    var roughness = material.roughness_factor;
+    if (flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u {
+        let mr = rt_sample_texture(material.metallic_roughness_texture, surface.uv, lod_base, nearest);
+        metallic *= mr.b;
+        roughness *= mr.g;
+    }
+    roughness = max(roughness, 0.01);
+    var occlusion = 1.0;
+    if (flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u {
+        occlusion = rt_sample_texture(material.occlusion_texture, surface.uv, lod_base, nearest).r;
+    }
+
     let v = -direction;
     let direct = rt_direct_lighting(position, surface.normal, v, base_color, metallic, roughness);
     let ambient = calculate_environment_lighting(
-        surface.normal, v, base_color, metallic, roughness, 1.0
+        surface.normal, v, base_color, metallic, roughness, occlusion
     );
     return ambient + direct + emissive;
 }
@@ -286,7 +349,10 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if screen.w > 0.5 {
         color = screen.rgb;
     } else {
-        color = rt_shade(hit, hit_position, r);
+        // Angle one trace pixel (two screen pixels) covers, from the projection.
+        let pixel_angle = 4.0 / (post_uniform.proj[1][1] * f32(dims.y));
+        let travelled = distance(post_uniform.camera_position.xyz, origin) + hit.t;
+        color = rt_shade(hit, hit_position, r, pixel_angle * travelled);
     }
     color = select(color, vec3<f32>(0.0), color != color);
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));

@@ -1,6 +1,7 @@
 // Screen-space reflections. A half-resolution pass reflects the view ray off every smooth
 // surface and marches it through the G-buffer positions until it passes behind something,
-// two separable blur passes, as wide as each surface is rough, turn the result into a
+// a temporal pass averages it over frames, two separable blur passes, as wide as each
+// surface is rough, turn the result into a
 // glossy sheen, and a full-resolution pass adds it to the HDR scene (before TAA), weighted
 // by the surface's smoothness and the viewing angle.
 //
@@ -149,6 +150,55 @@ fn fs_ssr_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(ssr_compress(color) * weight, weight);
 }
 
+@group(1) @binding(155)
+var ssr_temporal_current : texture_2d<f32>;
+@group(1) @binding(156)
+var ssr_temporal_history : texture_2d<f32>;
+@group(1) @binding(157)
+var ssr_temporal_motion : texture_2d<f32>;
+@group(1) @binding(158)
+var ssr_temporal_sampler : sampler;
+
+// Share of each new trace in the accumulated reflection (about the last eight frames).
+const SSR_TEMPORAL_BLEND : f32 = 0.125;
+
+// Temporal accumulation of the half-resolution trace, before the blur. TAA jitters the
+// G-buffer by a fraction of a pixel every frame, and on curved or detailed mirrors that
+// sends a pixel's reflected ray to very different things from one frame to the next (a
+// neon rail, then the dark wall beside it). TAA's tight neighbourhood clip cannot tell
+// that from motion and lets it through as shimmer. Averaging here first hands TAA a steady
+// reflection. The history follows the surface's motion and is kept inside the range the
+// current trace shows around the pixel, so moving reflections do not smear.
+@fragment
+fn fs_ssr_temporal(in : VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(ssr_temporal_current));
+    let pixel = vec2<i32>(in.position.xy);
+    let current = textureLoad(ssr_temporal_current, pixel, 0);
+    var lo = current;
+    var hi = current;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let p = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), dims - vec2<i32>(1));
+            let c = textureLoad(ssr_temporal_current, p, 0);
+            lo = min(lo, c);
+            hi = max(hi, c);
+        }
+    }
+
+    // The full-resolution pixel the trace started from (see fs_ssr_trace).
+    let full_dims = vec2<i32>(textureDimensions(ssr_temporal_motion));
+    let source = min(vec2<i32>(in.position.xy * 2.0), full_dims - vec2<i32>(1));
+    let motion = textureLoad(ssr_temporal_motion, source, 0).zw;
+    let previous_uv = in.uv - motion * post_uniform.viewport_scale;
+    let lo_uv = post_uniform.viewport_offset;
+    let hi_uv = lo_uv + post_uniform.viewport_scale;
+    if any(previous_uv < lo_uv) || any(previous_uv > hi_uv) {
+        return current;
+    }
+    let history = textureSampleLevel(ssr_temporal_history, ssr_temporal_sampler, previous_uv, 0.0);
+    return mix(clamp(history, lo, hi), current, SSR_TEMPORAL_BLEND);
+}
+
 // 9-tap Gaussian, as wide as the surface is rough: a smooth floor keeps a crisp mirror
 // image, a rough one a glossy sheen. The blur setting scales it (at 1 a fully rough surface
 // spreads 8 half-res texels between taps). `pixel` is the half-res fragment position.
@@ -180,7 +230,8 @@ fn fs_ssr_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
 }
 
 // Added to the scene: smoother surfaces and grazing views reflect more (Schlick's
-// Fresnel for a dielectric, with a floor so a surface seen head-on still shows a sheen).
+// Fresnel from the surface's specular colour, so metals reflect fully and in their own
+// colour; dielectrics get a floor so a surface seen head-on still shows a sheen).
 @fragment
 fn fs_ssr_apply(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
@@ -192,8 +243,11 @@ fn fs_ssr_apply(in : VertexOutput) -> @location(0) vec4<f32> {
     let n = decode_normal_oct(textureLoad(ssr_apply_normal, pixel, 0).xy);
     let v = normalize(post_uniform.camera_position.xyz - position.xyz);
     let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
-    let fresnel = 0.04 + 0.96 * pow(1.0 - n_dot_v, 5.0);
-    let weight = post_uniform.ssr.x * smoothness * smoothness * (0.2 + 0.8 * fresnel);
+    let f0 = ssr_specular_color(position);
+    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - n_dot_v, 5.0);
+    let metalness = clamp((max(f0.r, max(f0.g, f0.b)) - 0.04) / 0.5, 0.0, 1.0);
+    let sheen = 0.2 * (1.0 - metalness);
+    let weight = post_uniform.ssr.x * smoothness * smoothness * (sheen + (1.0 - sheen) * fresnel);
     let reflection = textureSampleLevel(ssr_reflection, ssr_apply_sampler, viewport_to_scene_uv(in.uv), 0.0);
     return vec4<f32>(ssr_expand(reflection.rgb) * weight, 0.0);
 }

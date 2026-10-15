@@ -11,6 +11,8 @@ pub struct RtReflectionStage {
     inputs_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     inputs_bind_group: Option<wgpu::BindGroup>,
+    /// Whether hits sample material textures (group 4 is the bindless texture array).
+    textures: bool,
 }
 
 pub struct RtReflectionInputs<'a> {
@@ -21,8 +23,14 @@ pub struct RtReflectionInputs<'a> {
 }
 
 /// The trace shader: post-processing helpers plus the main pass's material, lighting and
-/// environment code, with ray queries enabled.
-pub(crate) fn rt_reflections_shader_source() -> String {
+/// environment code, with ray queries enabled. With `textures`, hits sample material
+/// textures from the bindless texture array bound as group 4.
+pub(crate) fn rt_reflections_shader_source(textures: bool) -> String {
+    let textures_module = if textures {
+        include_str!("../../shader/postprocess/rt_textures_bindless.wgsl")
+    } else {
+        include_str!("../../shader/postprocess/rt_textures_none.wgsl")
+    };
     let modules = ShaderBuilder::new()
         .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
         .with_module(include_str!("../../shader/postprocess/common.wgsl"))
@@ -33,6 +41,7 @@ pub(crate) fn rt_reflections_shader_source() -> String {
         .with_material_system()
         .with_lighting()
         .with_environment()
+        .with_module(textures_module)
         .with_module(include_str!("../../shader/postprocess/rt_reflections.wgsl"))
         .build_modules_only();
     format!("enable wgpu_ray_query;\n\n{modules}")
@@ -41,12 +50,14 @@ pub(crate) fn rt_reflections_shader_source() -> String {
 impl RtReflectionStage {
     /// Build the trace pipeline. Fails (instead of raising an uncaptured device error)
     /// when the driver or wgpu rejects the shader or pipeline, so the caller can keep
-    /// screen-space reflections.
+    /// screen-space reflections. `textures_layout` is the bindless texture array's
+    /// layout, when hits can sample material textures.
     pub fn new(
         device: &wgpu::Device,
         uniform_layout: &wgpu::BindGroupLayout,
         lights_layout: &wgpu::BindGroupLayout,
         scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Result<Self, String> {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -72,7 +83,9 @@ impl RtReflectionStage {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RtReflectionShader"),
-            source: wgpu::ShaderSource::Wgsl(rt_reflections_shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(
+                rt_reflections_shader_source(textures_layout.is_some()).into(),
+            ),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RtReflectionPipelineLayout"),
@@ -81,6 +94,7 @@ impl RtReflectionStage {
                 Some(&inputs_layout),
                 Some(lights_layout),
                 Some(scene_layout),
+                textures_layout,
             ],
             immediate_size: 0,
         });
@@ -102,6 +116,7 @@ impl RtReflectionStage {
             inputs_layout,
             pipeline,
             inputs_bind_group: None,
+            textures: textures_layout.is_some(),
         })
     }
 
@@ -130,7 +145,8 @@ impl RtReflectionStage {
     }
 
     /// Trace into `reflection` (half resolution). Returns false, drawing nothing, when
-    /// the bind groups are not ready.
+    /// the bind groups are not ready (including the texture array the pipeline was
+    /// built for).
     pub fn trace(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -140,6 +156,11 @@ impl RtReflectionStage {
     ) -> bool {
         let Some(inputs) = self.inputs_bind_group.as_ref() else {
             return false;
+        };
+        let textures = match (self.textures, frame.textures) {
+            (true, Some(textures)) => Some(textures),
+            (true, None) => return false,
+            (false, _) => None,
         };
         let mut pass = begin_color_pass(
             encoder,
@@ -153,6 +174,9 @@ impl RtReflectionStage {
         pass.set_bind_group(1, inputs, &[]);
         pass.set_bind_group(2, frame.lights, &[]);
         pass.set_bind_group(3, frame.scene, &[]);
+        if let Some(textures) = textures {
+            pass.set_bind_group(4, textures, &[]);
+        }
         pass.draw(0..3, 0..1);
         true
     }
