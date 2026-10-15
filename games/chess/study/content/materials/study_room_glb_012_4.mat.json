@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/gltf/study_room/textures/oak_floor_base_color.png",
+    "name": "EmbeddedTexture_19"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/gltf/study_room/textures/oak_floor_mr.png",
+    "name": "EmbeddedTexture_20"
+  },
+  "normal_texture": {
+    "path": "content/gltf/study_room/textures/oak_floor_normal.png",
+    "name": "EmbeddedTexture_18"
+  },
+  "emissive_texture": 107,
+  "occlusion_texture": 107,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

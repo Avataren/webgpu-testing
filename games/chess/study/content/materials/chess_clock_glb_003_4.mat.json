@@ -1,0 +1,23 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 1,
+  "base_color_texture": {
+    "path": "content/gltf/chess_clock/textures/dial_base_color.png",
+    "name": "EmbeddedTexture_3"
+  },
+  "metallic_roughness_texture": 179,
+  "normal_texture": 179,
+  "emissive_texture": 179,
+  "occlusion_texture": 179,
+  "metallic_factor": 0,
+  "roughness_factor": 89,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

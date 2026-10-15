@@ -7,7 +7,7 @@ repository root, or open a saved project directory in the editor and press Play.
 | --- | --- |
 | [Tide Observatory](tide-observatory/README.md) — kinetic brass sculpture, reflecting basin, and orbital camera | `./run-tide-observatory.sh` |
 | [Hollow Crown](hollow-crown/README.md) | `./run-hollow-crown.sh` |
-| [Chess](chess/README.md) — AI spectator | `./run-chess.sh` |
+| [Chess](chess/README.md) — AI spectator in a path-traced study | `./run-chess.sh` |
 | [Robotron](robotron/README.md) | `cargo run --all-features --bin player -- games/robotron` |
 | [Breakout](breakout/project.json) | `cargo run --all-features --bin player -- games/breakout` |
 | [Neon Rift](neon-rift/project.json) | `cargo run --all-features --bin player -- games/neon-rift` |

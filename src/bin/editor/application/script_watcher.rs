@@ -22,6 +22,8 @@ const WATCHED_EXTENSIONS: &[&str] = &["lua", "png", "jpg", "jpeg", "tga", "bmp"]
 pub(super) struct ScriptWatcher {
     watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<notify::Event>>,
+    /// The roots as last requested, before canonicalising or skipping missing ones.
+    requested_roots: Vec<PathBuf>,
     watched_roots: Vec<PathBuf>,
     last_change_time: std::collections::HashMap<PathBuf, Instant>,
     debounce_duration: Duration,
@@ -39,6 +41,7 @@ impl ScriptWatcher {
         Ok(Self {
             watcher,
             receiver,
+            requested_roots: Vec::new(),
             watched_roots: Vec::new(),
             last_change_time: std::collections::HashMap::new(),
             debounce_duration: Duration::from_millis(500), // 500ms debounce
@@ -46,20 +49,17 @@ impl ScriptWatcher {
     }
 
     /// Ensures the watcher is monitoring the provided root directories (recursively).
+    /// Called every frame, so it compares against the roots as requested: the watched
+    /// list holds canonical paths and leaves out missing directories, and comparing
+    /// against it re-watched everything each frame.
     pub(super) fn watch_roots(&mut self, roots: &[PathBuf]) -> notify::Result<()> {
-        // Check if roots have changed
-        if self.watched_roots.len() == roots.len()
-            && self
-                .watched_roots
-                .iter()
-                .zip(roots.iter())
-                .all(|(a, b)| a == b)
-        {
+        if self.requested_roots == roots {
             return Ok(());
         }
 
         // Clear old watches
         self.clear();
+        self.requested_roots = roots.to_vec();
 
         // Watch new roots
         for root in roots {
@@ -85,6 +85,7 @@ impl ScriptWatcher {
 
     /// Stops watching all current roots.
     pub(super) fn clear(&mut self) {
+        self.requested_roots.clear();
         for root in self.watched_roots.drain(..) {
             if let Err(err) = self.watcher.unwatch(&root) {
                 warn!("Failed to unwatch script directory {:?}: {err}", root);

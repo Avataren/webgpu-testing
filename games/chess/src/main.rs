@@ -9,12 +9,13 @@ use std::{collections::HashMap, path::PathBuf};
 use wgpu_cube::{
     app::{StartupContext, UpdateContext},
     audio::{self, PlayOptions},
+    graphics_settings::graphics_settings,
     project::ProjectManifest,
     remote::{RemoteContext, RemoteResult},
     render_application::{run_application, DefaultUI, RenderApplication},
     scene::{
-        MeshBounds, MeshComponent, Name, Scene, SceneLibrary, Transform, TransformComponent,
-        Visible,
+        MeshBounds, MeshComponent, Name, Parent, Scene, SceneLibrary, Transform,
+        TransformComponent, Visible, WorldTransform,
     },
 };
 
@@ -22,12 +23,113 @@ const GOLD: Color32 = Color32::from_rgb(205, 175, 116);
 const INK: Color32 = Color32::from_rgb(17, 22, 25);
 const PAPER: Color32 = Color32::from_rgb(238, 230, 212);
 
-fn square_position(square: usize) -> Vec3 {
-    Vec3::new(
-        -4.2 + 1.2 * (square % 8) as f32,
-        0.226,
-        4.2 - 1.2 * (square / 8) as f32,
-    )
+/// The scene to show: the study's scene, or the project's first.
+const SCENE_NAME: &str = "Chess Study";
+
+/// Where the squares are, in the space the pieces are placed in (their parent's).
+/// White starts at +Z. Worked out from the starting position, so a set can be any
+/// size and stand anywhere.
+#[derive(Clone, Copy, Debug)]
+struct BoardFrame {
+    center: Vec3,
+    square: f32,
+}
+
+impl Default for BoardFrame {
+    /// The original procedural board: 1.2 m squares around the origin.
+    fn default() -> Self {
+        Self {
+            center: Vec3::new(0.0, 0.226, 0.0),
+            square: 1.2,
+        }
+    }
+}
+
+impl BoardFrame {
+    /// From the 32 pieces of the starting position: the centre is their mean
+    /// (the set-up is symmetric) and the square size comes from the white rooks.
+    fn from_start(pieces: &[(Vec3, bool, String)]) -> Option<Self> {
+        if pieces.is_empty() {
+            return None;
+        }
+        let center = pieces.iter().map(|p| p.0).sum::<Vec3>() / pieces.len() as f32;
+        let rooks: Vec<f32> = pieces
+            .iter()
+            .filter(|(_, white, kind)| *white && kind == "rook")
+            .map(|p| p.0.x)
+            .collect();
+        let (min, max) = rooks
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        let square = (max - min) / 7.0;
+        (rooks.len() == 2 && square > 1e-4).then_some(Self { center, square })
+    }
+
+    fn position(&self, square: usize) -> Vec3 {
+        self.center
+            + Vec3::new(
+                ((square % 8) as f32 - 3.5) * self.square,
+                0.0,
+                (3.5 - (square / 8) as f32) * self.square,
+            )
+    }
+
+    fn square_at(&self, position: Vec3) -> Option<usize> {
+        let file = ((position.x - self.center.x) / self.square + 3.5).round();
+        let rank = (3.5 - (position.z - self.center.z) / self.square).round();
+        ((0.0..8.0).contains(&file) && (0.0..8.0).contains(&rank))
+            .then_some(rank as usize * 8 + file as usize)
+    }
+}
+
+/// Where captured pieces of one colour go: `per_line` slots along `along`, then the
+/// next line one `across` further on.
+#[derive(Clone, Copy, Debug)]
+struct CaptureRail {
+    origin: Vec3,
+    along: Vec3,
+    across: Vec3,
+    per_line: usize,
+    scale: Option<Vec3>,
+}
+
+impl CaptureRail {
+    /// Next to the board on the table, from an anchor placed in the scene: lines of
+    /// four stepping away from the board, then away from the middle.
+    fn from_anchor(anchor: Vec3, board: &BoardFrame) -> Self {
+        let away_x = (anchor.x - board.center.x).signum();
+        let away_z = if (anchor.z - board.center.z).abs() < 1e-5 {
+            1.0
+        } else {
+            (anchor.z - board.center.z).signum()
+        };
+        Self {
+            origin: anchor,
+            along: Vec3::X * away_x * board.square * 0.82,
+            across: Vec3::Z * away_z * board.square * 0.9,
+            per_line: 4,
+            scale: None,
+        }
+    }
+
+    /// The procedural board's rails: shrunken pieces in lines of twelve on a ledge.
+    fn legacy(white: bool, board: &BoardFrame) -> Self {
+        let side = if white { -1.0 } else { 1.0 };
+        let k = board.square / 1.2;
+        Self {
+            origin: board.center + Vec3::new(side * 6.2, -0.566, 4.65) * k,
+            along: Vec3::NEG_Z * 0.82 * k,
+            across: Vec3::X * side * 0.8 * k,
+            per_line: 12,
+            scale: Some(Vec3::splat(0.56)),
+        }
+    }
+
+    fn slot(&self, index: usize) -> Vec3 {
+        self.origin
+            + self.along * (index % self.per_line) as f32
+            + self.across * (index / self.per_line) as f32
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -61,8 +163,13 @@ struct Spectator {
     pieces: Vec<PieceVisual>,
     squares: [Option<Entity>; 64],
     meshes: HashMap<String, (MeshComponent, MeshBounds)>,
+    board: BoardFrame,
+    rails: [CaptureRail; 2],
     markers: Vec<Entity>,
+    marker_height: f32,
     camera: Option<Entity>,
+    camera_start: Option<Transform>,
+    pivot: Option<Vec3>,
     animation: Option<Animation>,
     pending_best: Option<String>,
     thinking: bool,
@@ -82,12 +189,15 @@ struct Spectator {
     captures: [usize; 2],
     last_move: Option<(usize, usize)>,
     close_requested: bool,
+    /// Frames seen; start-up graphics choices wait until the renderer has reported
+    /// what the GPU supports and the saved settings are loaded.
+    frames: u32,
 }
 
 impl Spectator {
     fn new(root: PathBuf, engine_path: PathBuf) -> Self {
         Self {
-            project: root.join("examples/projects/procedural-chess"),
+            project: root.join("games/chess/study"),
             game: Game::new(),
             engine: uci::Engine::new(engine_path),
             generation: 1,
@@ -95,8 +205,16 @@ impl Spectator {
             pieces: Vec::new(),
             squares: [None; 64],
             meshes: HashMap::new(),
+            board: BoardFrame::default(),
+            rails: [
+                CaptureRail::legacy(true, &BoardFrame::default()),
+                CaptureRail::legacy(false, &BoardFrame::default()),
+            ],
             markers: Vec::new(),
+            marker_height: 0.01,
             camera: None,
+            camera_start: None,
+            pivot: None,
             animation: None,
             pending_best: None,
             thinking: false,
@@ -116,61 +234,117 @@ impl Spectator {
             captures: [0; 2],
             last_move: None,
             close_requested: false,
+            frames: 0,
         }
     }
 
     fn map_scene(&mut self, scene: &Scene) -> Result<(), String> {
+        let mut found = Vec::new();
         for (entity, (name, transform, mesh, bounds)) in scene
             .world()
             .query::<(&Name, &TransformComponent, &MeshComponent, &MeshBounds)>()
             .iter()
         {
             if name.0.starts_with("Chess.White.") || name.0.starts_with("Chess.Black.") {
-                let white = name.0.starts_with("Chess.White.");
-                let file = ((transform.0.translation.x + 4.2) / 1.2).round() as usize;
-                let rank = ((4.2 - transform.0.translation.z) / 1.2).round() as usize;
-                if file >= 8 || rank >= 8 {
-                    return Err(format!("Invalid starting square: {}", name.0));
-                }
-                let square = rank * 8 + file;
-                let piece = self
-                    .game
-                    .board
-                    .get_piece_at_square(square as u16)
-                    .ok_or_else(|| format!("No rules piece at {}", name.0))?;
-                let kind = format!("{:?}", piece.piece_type()).to_lowercase();
-                if piece.is_white() != white
-                    || !name.0.split('.').any(|part| part == kind)
-                    || self.squares[square].is_some()
-                {
-                    return Err(format!("Piece mapping mismatch: {}", name.0));
-                }
-                self.squares[square] = Some(entity);
-                self.pieces.push(PieceVisual {
-                    entity,
-                    initial: transform.0,
-                    mesh: *mesh,
-                    bounds: *bounds,
-                    square,
-                    white,
-                });
-                self.meshes.insert(kind, (*mesh, *bounds));
+                let kind = name.0.split('.').nth(2).unwrap_or_default().to_owned();
+                found.push((entity, name.0.clone(), transform.0, *mesh, *bounds, kind));
             }
         }
-        if self.pieces.len() != 32 {
-            return Err(format!("Expected 32 pieces, found {}", self.pieces.len()));
+        if found.len() != 32 {
+            return Err(format!("Expected 32 pieces, found {}", found.len()));
+        }
+        let start: Vec<_> = found
+            .iter()
+            .map(|(_, name, t, _, _, kind)| {
+                (
+                    t.translation,
+                    name.starts_with("Chess.White."),
+                    kind.clone(),
+                )
+            })
+            .collect();
+        self.board = BoardFrame::from_start(&start).ok_or("Cannot find the two white rooks")?;
+        for (entity, name, transform, mesh, bounds, _) in found {
+            let white = name.starts_with("Chess.White.");
+            let square = self
+                .board
+                .square_at(transform.translation)
+                .ok_or_else(|| format!("Invalid starting square: {name}"))?;
+            let piece = self
+                .game
+                .board
+                .get_piece_at_square(square as u16)
+                .ok_or_else(|| format!("No rules piece at {name}"))?;
+            let kind = format!("{:?}", piece.piece_type()).to_lowercase();
+            if piece.is_white() != white
+                || !name.split('.').any(|part| part == kind)
+                || self.squares[square].is_some()
+            {
+                return Err(format!("Piece mapping mismatch: {name}"));
+            }
+            self.squares[square] = Some(entity);
+            self.pieces.push(PieceVisual {
+                entity,
+                initial: transform,
+                mesh,
+                bounds,
+                square,
+                white,
+            });
+            self.meshes.insert(kind, (mesh, bounds));
+        }
+        let anchor = |name: &str| {
+            scene
+                .world()
+                .query::<(&Name, &TransformComponent)>()
+                .iter()
+                .find(|(_, (n, _))| n.0 == name)
+                .map(|(_, (_, t))| t.0.translation)
+        };
+        for (index, (name, white)) in [
+            ("Chess.Captures.White", true),
+            ("Chess.Captures.Black", false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.rails[index] = anchor(name)
+                .map(|origin| CaptureRail::from_anchor(origin, &self.board))
+                .unwrap_or_else(|| CaptureRail::legacy(white, &self.board));
         }
         self.camera = scene.active_camera_entity();
+        self.camera_start = self.camera.and_then(|camera| {
+            scene
+                .world()
+                .get::<&TransformComponent>(camera)
+                .ok()
+                .map(|t| t.0)
+        });
         let mut markers: Vec<_> = scene
             .world()
-            .query::<&Name>()
+            .query::<(&Name, &TransformComponent)>()
             .iter()
-            .filter(|(_, name)| name.0.starts_with("Move.Inlay."))
-            .map(|(e, name)| (name.0.clone(), e))
+            .filter(|(_, (name, _))| name.0.starts_with("Move.Inlay."))
+            .map(|(e, (name, t))| (name.0.clone(), e, t.0.translation.y))
             .collect();
         markers.sort_by(|a, b| a.0.cmp(&b.0));
-        self.markers = markers.into_iter().map(|(_, entity)| entity).collect();
+        if let Some((_, _, y)) = markers.first() {
+            self.marker_height = y - self.board.center.y;
+        }
+        self.markers = markers.into_iter().map(|(_, entity, _)| entity).collect();
         Ok(())
+    }
+
+    /// The board centre in world space, for the camera drift.
+    fn board_pivot(&self, scene: &Scene) -> Option<Vec3> {
+        let piece = self.pieces.first()?.entity;
+        let world = scene.world();
+        let parent = world.get::<&Parent>(piece).ok().map(|p| p.0);
+        let frame = match parent {
+            Some(parent) => world.get::<&WorldTransform>(parent).ok()?.0,
+            None => Transform::IDENTITY,
+        };
+        Some(frame.matrix().transform_point3(self.board.center))
     }
 
     fn reset(&mut self, scene: &mut Scene) {
@@ -236,12 +410,13 @@ impl Spectator {
         let moving = self.squares[delta.from]
             .take()
             .ok_or("Missing moving piece")?;
+        let s = self.board.square;
         let mut motions = vec![Self::motion(
             scene,
             moving,
-            square_position(delta.to),
+            self.board.position(delta.to),
             None,
-            0.48,
+            0.4 * s,
         )?];
         if let Some(square) = delta.captured {
             let captured = self.squares[square]
@@ -256,36 +431,26 @@ impl Spectator {
             let side = usize::from(!white);
             let index = self.captures[side];
             self.captures[side] += 1;
-            let target = Vec3::new(
-                if white { -6.2 } else { 6.2 },
-                -0.34,
-                4.65 - (index % 12) as f32 * 0.82,
-            );
-            // The second rail holds exceptionally crowded capture lists.
-            let target = target
-                + Vec3::X
-                    * if index >= 12 {
-                        if white {
-                            -0.8
-                        } else {
-                            0.8
-                        }
-                    } else {
-                        0.0
-                    };
+            let rail = self.rails[side];
             motions.push(Self::motion(
                 scene,
                 captured,
-                target,
-                Some(Vec3::splat(0.56)),
-                1.0,
+                rail.slot(index),
+                rail.scale,
+                0.83 * s,
             )?);
         }
         self.squares[delta.to] = Some(moving);
         if let Some((from, to)) = delta.rook {
             let rook = self.squares[from].take().ok_or("Missing castling rook")?;
             self.squares[to] = Some(rook);
-            motions.push(Self::motion(scene, rook, square_position(to), None, 0.32)?);
+            motions.push(Self::motion(
+                scene,
+                rook,
+                self.board.position(to),
+                None,
+                0.27 * s,
+            )?);
         }
         if let Some(kind) = delta.promotion {
             let (mesh, bounds) = self
@@ -301,14 +466,16 @@ impl Spectator {
         for (index, marker) in self.markers.iter().enumerate() {
             let square = if index < 4 { delta.from } else { delta.to };
             let edge = index % 4;
+            let edge_offset = 0.4667 * s;
             let offset = match edge {
-                0 => Vec3::new(0.0, 0.0, -0.56),
-                1 => Vec3::new(0.0, 0.0, 0.56),
-                2 => Vec3::new(-0.56, 0.0, 0.0),
-                _ => Vec3::new(0.56, 0.0, 0.0),
+                0 => Vec3::new(0.0, 0.0, -edge_offset),
+                1 => Vec3::new(0.0, 0.0, edge_offset),
+                2 => Vec3::new(-edge_offset, 0.0, 0.0),
+                _ => Vec3::new(edge_offset, 0.0, 0.0),
             };
             if let Ok(mut t) = scene.world().get::<&mut TransformComponent>(*marker) {
-                t.0.translation = square_position(square) + offset + Vec3::Y * 0.01;
+                t.0.translation =
+                    self.board.position(square) + offset + Vec3::Y * self.marker_height;
             }
             let _ = scene.world_mut().insert_one(*marker, Visible(true));
         }
@@ -399,18 +566,19 @@ impl Spectator {
         }
         if self.orbit && !self.paused {
             self.orbit_time += dt;
-            let angle = 0.44 + (self.orbit_time * 0.022).sin() * 0.26;
-            let eye = Vec3::new(
-                angle.sin() * 19.8,
-                15.6 + (self.orbit_time * 0.019).sin() * 0.6,
-                angle.cos() * 19.8,
-            );
-            if let Some(camera) = self.camera {
+            if self.pivot.is_none() {
+                self.pivot = self.board_pivot(scene);
+            }
+            // Swing the authored camera slowly around the board and back.
+            if let (Some(camera), Some(start), Some(pivot)) =
+                (self.camera, self.camera_start, self.pivot)
+            {
+                let swing = Quat::from_rotation_y((self.orbit_time * 0.022).sin() * 0.26);
+                let offset = start.translation - pivot;
+                let bob = (self.orbit_time * 0.019).sin() * 0.03 * offset.length();
                 if let Ok(mut transform) = scene.world().get::<&mut TransformComponent>(camera) {
-                    transform.0.translation = eye;
-                    transform.0.rotation = Quat::from_mat4(
-                        &glam::Mat4::look_at_rh(eye, Vec3::new(0.0, 0.35, 0.0), Vec3::Y).inverse(),
-                    );
+                    transform.0.translation = pivot + swing * offset + Vec3::Y * bob;
+                    transform.0.rotation = swing * start.rotation;
                 }
             }
         }
@@ -505,6 +673,30 @@ impl Spectator {
         }
     }
 
+    /// The study is lit for path tracing: start with it where the GPU can (unless
+    /// `CHESS_PATH_TRACING=0`), size the window from `CHESS_WINDOW=<w>x<h>`, and let P
+    /// switch between path tracing and the raster lighting.
+    fn apply_graphics(&mut self, toggle: bool) {
+        self.frames = self.frames.saturating_add(1);
+        let mut graphics = graphics_settings();
+        let mut settings = graphics.settings.clone();
+        if self.frames == 3 {
+            let wanted = std::env::var("CHESS_PATH_TRACING").map_or(true, |v| v != "0");
+            settings.path_tracing = wanted && graphics.capabilities.path_tracing;
+            if let Some(size) = std::env::var("CHESS_WINDOW").ok().and_then(|v| {
+                let (w, h) = v.split_once('x')?;
+                Some([w.trim().parse().ok()?, h.trim().parse().ok()?])
+            }) {
+                settings.window_size = Some(size);
+            }
+        } else if toggle && self.frames > 3 && graphics.capabilities.path_tracing {
+            settings.path_tracing = !settings.path_tracing;
+        } else {
+            return;
+        }
+        graphics.set(settings);
+    }
+
     fn status(&self) -> serde_json::Value {
         serde_json::json!({"game": self.game_number, "generation": self.generation, "ply": self.game.history.len(), "history": self.game.history, "notation": self.game.notation, "white_to_move": self.game.board.is_white_active(), "thinking": self.thinking, "search_millis": self.search_millis, "animating": self.animation.is_some(), "paused": self.paused, "result": self.ended, "error": self.error, "mapped_pieces": self.pieces.len(), "on_board": self.squares.iter().flatten().count(), "captures": self.captures, "score": self.wins})
     }
@@ -524,12 +716,23 @@ impl RenderApplication for Spectator {
             let (mut workspace, changed) = manifest
                 .instantiate_workspace(ctx.renderer, &self.project, &mut SceneLibrary::new())
                 .map_err(|e| e.to_string())?;
+            let scene_id = manifest
+                .scenes
+                .iter()
+                .find(|entry| entry.name == SCENE_NAME)
+                .or_else(|| manifest.scenes.first())
+                .map(|entry| entry.id.clone())
+                .ok_or("The project has no scenes")?;
             workspace
-                .set_active_scene(&"Procedural_Chess.scene".to_owned())
+                .set_active_scene(&scene_id)
                 .map_err(|e| e.to_string())?;
             {
-                let scene = workspace.active_scene_mut().ok_or("No board scene")?;
+                let mut scene = workspace.active_scene_mut().ok_or("No board scene")?;
                 self.map_scene(&scene)?;
+                // Last-move markers appear with the first move.
+                for marker in &self.markers {
+                    let _ = scene.world_mut().insert_one(*marker, Visible(false));
+                }
             }
             ctx.request_workspace_swap(workspace, changed);
             Ok::<(), String>(())
@@ -556,6 +759,7 @@ impl RenderApplication for Spectator {
         if input.is_key_just_pressed("Escape") {
             self.close_requested = true;
         }
+        self.apply_graphics(input.is_key_just_pressed("P"));
         if !self.pieces.is_empty() {
             self.tick(&mut ctx.scene, ctx.dt as f32);
         }
@@ -841,6 +1045,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .into());
     }
+    // Graphics settings and save data are kept per game: the spectator has its own.
+    wgpu_cube::scripting::lua::api::set_save_namespace("chess-spectator");
     run_application(Spectator::new(root, engine))?;
     Ok(())
 }
@@ -873,9 +1079,9 @@ mod tests {
                             &format!("{:?}", piece.piece_type()).to_lowercase(),
                         ),
                     ),
-                    TransformComponent(Transform::from_translation(square_position(
-                        square as usize,
-                    ))),
+                    TransformComponent(Transform::from_translation(
+                        BoardFrame::default().position(square as usize),
+                    )),
                     MeshComponent(Handle::new(piece.piece_type() as usize)),
                     MeshBounds::new(Vec3::ZERO, Vec3::ONE),
                     Visible(true),
@@ -903,7 +1109,7 @@ mod tests {
                         .unwrap()
                         .0
                         .translation;
-                    assert!((position - square_position(square)).length() < 0.001);
+                    assert!((position - BoardFrame::default().position(square)).length() < 0.001);
                 }
             }
         }
@@ -936,6 +1142,41 @@ mod tests {
                 "d2d4", "d7d5", "b1c3", "b8c6", "c1f4", "c8f5", "d1d2", "d8d7", "e1c1", "e8c8",
             ],
         );
+    }
+
+    #[test]
+    fn board_frame_and_capture_rails_follow_a_real_scale_set() {
+        let truth = BoardFrame {
+            center: Vec3::new(0.3, 0.77, -0.2),
+            square: 0.055,
+        };
+        let back = [
+            "rook", "knight", "bishop", "queen", "king", "bishop", "knight", "rook",
+        ];
+        let mut start = Vec::new();
+        for (file, piece) in back.iter().enumerate() {
+            for (rank, white, kind) in [
+                (0, true, *piece),
+                (1, true, "pawn"),
+                (6, false, "pawn"),
+                (7, false, *piece),
+            ] {
+                start.push((truth.position(rank * 8 + file), white, kind.to_owned()));
+            }
+        }
+        let frame = BoardFrame::from_start(&start).unwrap();
+        assert!((frame.center - truth.center).length() < 1e-5);
+        assert!((frame.square - truth.square).abs() < 1e-5);
+        for square in 0..64 {
+            assert_eq!(frame.square_at(frame.position(square)), Some(square));
+        }
+        // An anchor off the h-file towards black: lines step away from the board, then
+        // towards black's end.
+        let rail = CaptureRail::from_anchor(frame.center + Vec3::new(0.3, -0.02, -0.05), &frame);
+        assert!(rail.slot(1).x > rail.slot(0).x);
+        assert!(rail.slot(4).z < rail.slot(0).z);
+        assert_eq!(rail.scale, None);
+        assert!((rail.slot(3).x - rail.slot(0).x - 3.0 * 0.82 * 0.055).abs() < 1e-5);
     }
 
     #[test]

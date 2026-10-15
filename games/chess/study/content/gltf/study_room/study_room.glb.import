@@ -1,0 +1,1033 @@
+{
+  "version": 2,
+  "source": null,
+  "scene": {
+    "json": "scene.asset.json",
+    "meshes": [
+      {
+        "index": 0,
+        "path": "meshes/mesh_0000.json"
+      },
+      {
+        "index": 1,
+        "path": "meshes/mesh_0001.json"
+      },
+      {
+        "index": 2,
+        "path": "meshes/mesh_0002.json"
+      },
+      {
+        "index": 3,
+        "path": "meshes/mesh_0003.json"
+      },
+      {
+        "index": 4,
+        "path": "meshes/mesh_0004.json"
+      },
+      {
+        "index": 5,
+        "path": "meshes/mesh_0005.json"
+      },
+      {
+        "index": 6,
+        "path": "meshes/mesh_0006.json"
+      },
+      {
+        "index": 7,
+        "path": "meshes/mesh_0007.json"
+      },
+      {
+        "index": 8,
+        "path": "meshes/mesh_0008.json"
+      },
+      {
+        "index": 9,
+        "path": "meshes/mesh_0009.json"
+      },
+      {
+        "index": 10,
+        "path": "meshes/mesh_0010.json"
+      },
+      {
+        "index": 11,
+        "path": "meshes/mesh_0011.json"
+      },
+      {
+        "index": 12,
+        "path": "meshes/mesh_0012.json"
+      },
+      {
+        "index": 13,
+        "path": "meshes/mesh_0013.json"
+      },
+      {
+        "index": 14,
+        "path": "meshes/mesh_0014.json"
+      },
+      {
+        "index": 15,
+        "path": "meshes/mesh_0015.json"
+      },
+      {
+        "index": 16,
+        "path": "meshes/mesh_0016.json"
+      },
+      {
+        "index": 17,
+        "path": "meshes/mesh_0017.json"
+      },
+      {
+        "index": 18,
+        "path": "meshes/mesh_0018.json"
+      },
+      {
+        "index": 19,
+        "path": "meshes/mesh_0019.json"
+      },
+      {
+        "index": 20,
+        "path": "meshes/mesh_0020.json"
+      },
+      {
+        "index": 21,
+        "path": "meshes/mesh_0021.json"
+      },
+      {
+        "index": 22,
+        "path": "meshes/mesh_0022.json"
+      },
+      {
+        "index": 23,
+        "path": "meshes/mesh_0023.json"
+      },
+      {
+        "index": 24,
+        "path": "meshes/mesh_0024.json"
+      },
+      {
+        "index": 25,
+        "path": "meshes/mesh_0025.json"
+      },
+      {
+        "index": 26,
+        "path": "meshes/mesh_0026.json"
+      },
+      {
+        "index": 27,
+        "path": "meshes/mesh_0027.json"
+      },
+      {
+        "index": 28,
+        "path": "meshes/mesh_0028.json"
+      },
+      {
+        "index": 29,
+        "path": "meshes/mesh_0029.json"
+      },
+      {
+        "index": 30,
+        "path": "meshes/mesh_0030.json"
+      },
+      {
+        "index": 31,
+        "path": "meshes/mesh_0031.json"
+      },
+      {
+        "index": 32,
+        "path": "meshes/mesh_0032.json"
+      },
+      {
+        "index": 33,
+        "path": "meshes/mesh_0033.json"
+      },
+      {
+        "index": 34,
+        "path": "meshes/mesh_0034.json"
+      },
+      {
+        "index": 35,
+        "path": "meshes/mesh_0035.json"
+      },
+      {
+        "index": 36,
+        "path": "meshes/mesh_0036.json"
+      },
+      {
+        "index": 37,
+        "path": "meshes/mesh_0037.json"
+      },
+      {
+        "index": 38,
+        "path": "meshes/mesh_0038.json"
+      },
+      {
+        "index": 39,
+        "path": "meshes/mesh_0039.json"
+      },
+      {
+        "index": 40,
+        "path": "meshes/mesh_0040.json"
+      },
+      {
+        "index": 41,
+        "path": "meshes/mesh_0041.json"
+      },
+      {
+        "index": 42,
+        "path": "meshes/mesh_0042.json"
+      },
+      {
+        "index": 43,
+        "path": "meshes/mesh_0043.json"
+      },
+      {
+        "index": 44,
+        "path": "meshes/mesh_0044.json"
+      },
+      {
+        "index": 45,
+        "path": "meshes/mesh_0045.json"
+      },
+      {
+        "index": 46,
+        "path": "meshes/mesh_0046.json"
+      },
+      {
+        "index": 47,
+        "path": "meshes/mesh_0047.json"
+      },
+      {
+        "index": 48,
+        "path": "meshes/mesh_0048.json"
+      },
+      {
+        "index": 49,
+        "path": "meshes/mesh_0049.json"
+      },
+      {
+        "index": 50,
+        "path": "meshes/mesh_0050.json"
+      },
+      {
+        "index": 51,
+        "path": "meshes/mesh_0051.json"
+      },
+      {
+        "index": 52,
+        "path": "meshes/mesh_0052.json"
+      },
+      {
+        "index": 53,
+        "path": "meshes/mesh_0053.json"
+      },
+      {
+        "index": 54,
+        "path": "meshes/mesh_0054.json"
+      },
+      {
+        "index": 55,
+        "path": "meshes/mesh_0055.json"
+      },
+      {
+        "index": 56,
+        "path": "meshes/mesh_0056.json"
+      },
+      {
+        "index": 57,
+        "path": "meshes/mesh_0057.json"
+      },
+      {
+        "index": 58,
+        "path": "meshes/mesh_0058.json"
+      },
+      {
+        "index": 59,
+        "path": "meshes/mesh_0059.json"
+      },
+      {
+        "index": 60,
+        "path": "meshes/mesh_0060.json"
+      },
+      {
+        "index": 61,
+        "path": "meshes/mesh_0061.json"
+      },
+      {
+        "index": 62,
+        "path": "meshes/mesh_0062.json"
+      },
+      {
+        "index": 63,
+        "path": "meshes/mesh_0063.json"
+      },
+      {
+        "index": 64,
+        "path": "meshes/mesh_0064.json"
+      },
+      {
+        "index": 65,
+        "path": "meshes/mesh_0065.json"
+      },
+      {
+        "index": 66,
+        "path": "meshes/mesh_0066.json"
+      },
+      {
+        "index": 67,
+        "path": "meshes/mesh_0067.json"
+      },
+      {
+        "index": 68,
+        "path": "meshes/mesh_0068.json"
+      },
+      {
+        "index": 69,
+        "path": "meshes/mesh_0069.json"
+      },
+      {
+        "index": 70,
+        "path": "meshes/mesh_0070.json"
+      },
+      {
+        "index": 71,
+        "path": "meshes/mesh_0071.json"
+      },
+      {
+        "index": 72,
+        "path": "meshes/mesh_0072.json"
+      },
+      {
+        "index": 73,
+        "path": "meshes/mesh_0073.json"
+      },
+      {
+        "index": 74,
+        "path": "meshes/mesh_0074.json"
+      },
+      {
+        "index": 75,
+        "path": "meshes/mesh_0075.json"
+      },
+      {
+        "index": 76,
+        "path": "meshes/mesh_0076.json"
+      },
+      {
+        "index": 77,
+        "path": "meshes/mesh_0077.json"
+      },
+      {
+        "index": 78,
+        "path": "meshes/mesh_0078.json"
+      },
+      {
+        "index": 79,
+        "path": "meshes/mesh_0079.json"
+      },
+      {
+        "index": 80,
+        "path": "meshes/mesh_0080.json"
+      },
+      {
+        "index": 81,
+        "path": "meshes/mesh_0081.json"
+      },
+      {
+        "index": 82,
+        "path": "meshes/mesh_0082.json"
+      },
+      {
+        "index": 83,
+        "path": "meshes/mesh_0083.json"
+      },
+      {
+        "index": 84,
+        "path": "meshes/mesh_0084.json"
+      },
+      {
+        "index": 85,
+        "path": "meshes/mesh_0085.json"
+      },
+      {
+        "index": 86,
+        "path": "meshes/mesh_0086.json"
+      },
+      {
+        "index": 87,
+        "path": "meshes/mesh_0087.json"
+      },
+      {
+        "index": 88,
+        "path": "meshes/mesh_0088.json"
+      },
+      {
+        "index": 89,
+        "path": "meshes/mesh_0089.json"
+      },
+      {
+        "index": 90,
+        "path": "meshes/mesh_0090.json"
+      },
+      {
+        "index": 91,
+        "path": "meshes/mesh_0091.json"
+      },
+      {
+        "index": 92,
+        "path": "meshes/mesh_0092.json"
+      },
+      {
+        "index": 93,
+        "path": "meshes/mesh_0093.json"
+      },
+      {
+        "index": 94,
+        "path": "meshes/mesh_0094.json"
+      },
+      {
+        "index": 95,
+        "path": "meshes/mesh_0095.json"
+      },
+      {
+        "index": 96,
+        "path": "meshes/mesh_0096.json"
+      },
+      {
+        "index": 97,
+        "path": "meshes/mesh_0097.json"
+      },
+      {
+        "index": 98,
+        "path": "meshes/mesh_0098.json"
+      },
+      {
+        "index": 99,
+        "path": "meshes/mesh_0099.json"
+      },
+      {
+        "index": 100,
+        "path": "meshes/mesh_0100.json"
+      },
+      {
+        "index": 101,
+        "path": "meshes/mesh_0101.json"
+      },
+      {
+        "index": 102,
+        "path": "meshes/mesh_0102.json"
+      },
+      {
+        "index": 103,
+        "path": "meshes/mesh_0103.json"
+      },
+      {
+        "index": 104,
+        "path": "meshes/mesh_0104.json"
+      },
+      {
+        "index": 105,
+        "path": "meshes/mesh_0105.json"
+      },
+      {
+        "index": 106,
+        "path": "meshes/mesh_0106.json"
+      },
+      {
+        "index": 107,
+        "path": "meshes/mesh_0107.json"
+      },
+      {
+        "index": 108,
+        "path": "meshes/mesh_0108.json"
+      },
+      {
+        "index": 109,
+        "path": "meshes/mesh_0109.json"
+      },
+      {
+        "index": 110,
+        "path": "meshes/mesh_0110.json"
+      },
+      {
+        "index": 111,
+        "path": "meshes/mesh_0111.json"
+      },
+      {
+        "index": 112,
+        "path": "meshes/mesh_0112.json"
+      },
+      {
+        "index": 113,
+        "path": "meshes/mesh_0113.json"
+      },
+      {
+        "index": 114,
+        "path": "meshes/mesh_0114.json"
+      },
+      {
+        "index": 115,
+        "path": "meshes/mesh_0115.json"
+      },
+      {
+        "index": 116,
+        "path": "meshes/mesh_0116.json"
+      },
+      {
+        "index": 117,
+        "path": "meshes/mesh_0117.json"
+      },
+      {
+        "index": 118,
+        "path": "meshes/mesh_0118.json"
+      },
+      {
+        "index": 119,
+        "path": "meshes/mesh_0119.json"
+      },
+      {
+        "index": 120,
+        "path": "meshes/mesh_0120.json"
+      },
+      {
+        "index": 121,
+        "path": "meshes/mesh_0121.json"
+      },
+      {
+        "index": 122,
+        "path": "meshes/mesh_0122.json"
+      },
+      {
+        "index": 123,
+        "path": "meshes/mesh_0123.json"
+      },
+      {
+        "index": 124,
+        "path": "meshes/mesh_0124.json"
+      },
+      {
+        "index": 125,
+        "path": "meshes/mesh_0125.json"
+      },
+      {
+        "index": 126,
+        "path": "meshes/mesh_0126.json"
+      },
+      {
+        "index": 127,
+        "path": "meshes/mesh_0127.json"
+      },
+      {
+        "index": 128,
+        "path": "meshes/mesh_0128.json"
+      },
+      {
+        "index": 129,
+        "path": "meshes/mesh_0129.json"
+      },
+      {
+        "index": 130,
+        "path": "meshes/mesh_0130.json"
+      },
+      {
+        "index": 131,
+        "path": "meshes/mesh_0131.json"
+      },
+      {
+        "index": 132,
+        "path": "meshes/mesh_0132.json"
+      },
+      {
+        "index": 133,
+        "path": "meshes/mesh_0133.json"
+      },
+      {
+        "index": 134,
+        "path": "meshes/mesh_0134.json"
+      },
+      {
+        "index": 135,
+        "path": "meshes/mesh_0135.json"
+      },
+      {
+        "index": 136,
+        "path": "meshes/mesh_0136.json"
+      },
+      {
+        "index": 137,
+        "path": "meshes/mesh_0137.json"
+      },
+      {
+        "index": 138,
+        "path": "meshes/mesh_0138.json"
+      },
+      {
+        "index": 139,
+        "path": "meshes/mesh_0139.json"
+      },
+      {
+        "index": 140,
+        "path": "meshes/mesh_0140.json"
+      },
+      {
+        "index": 141,
+        "path": "meshes/mesh_0141.json"
+      },
+      {
+        "index": 142,
+        "path": "meshes/mesh_0142.json"
+      },
+      {
+        "index": 143,
+        "path": "meshes/mesh_0143.json"
+      },
+      {
+        "index": 144,
+        "path": "meshes/mesh_0144.json"
+      },
+      {
+        "index": 145,
+        "path": "meshes/mesh_0145.json"
+      },
+      {
+        "index": 146,
+        "path": "meshes/mesh_0146.json"
+      },
+      {
+        "index": 147,
+        "path": "meshes/mesh_0147.json"
+      },
+      {
+        "index": 148,
+        "path": "meshes/mesh_0148.json"
+      },
+      {
+        "index": 149,
+        "path": "meshes/mesh_0149.json"
+      },
+      {
+        "index": 150,
+        "path": "meshes/mesh_0150.json"
+      },
+      {
+        "index": 151,
+        "path": "meshes/mesh_0151.json"
+      },
+      {
+        "index": 152,
+        "path": "meshes/mesh_0152.json"
+      },
+      {
+        "index": 153,
+        "path": "meshes/mesh_0153.json"
+      },
+      {
+        "index": 154,
+        "path": "meshes/mesh_0154.json"
+      },
+      {
+        "index": 155,
+        "path": "meshes/mesh_0155.json"
+      },
+      {
+        "index": 156,
+        "path": "meshes/mesh_0156.json"
+      },
+      {
+        "index": 157,
+        "path": "meshes/mesh_0157.json"
+      },
+      {
+        "index": 158,
+        "path": "meshes/mesh_0158.json"
+      },
+      {
+        "index": 159,
+        "path": "meshes/mesh_0159.json"
+      },
+      {
+        "index": 160,
+        "path": "meshes/mesh_0160.json"
+      },
+      {
+        "index": 161,
+        "path": "meshes/mesh_0161.json"
+      },
+      {
+        "index": 162,
+        "path": "meshes/mesh_0162.json"
+      },
+      {
+        "index": 163,
+        "path": "meshes/mesh_0163.json"
+      },
+      {
+        "index": 164,
+        "path": "meshes/mesh_0164.json"
+      },
+      {
+        "index": 165,
+        "path": "meshes/mesh_0165.json"
+      },
+      {
+        "index": 166,
+        "path": "meshes/mesh_0166.json"
+      },
+      {
+        "index": 167,
+        "path": "meshes/mesh_0167.json"
+      },
+      {
+        "index": 168,
+        "path": "meshes/mesh_0168.json"
+      },
+      {
+        "index": 169,
+        "path": "meshes/mesh_0169.json"
+      },
+      {
+        "index": 170,
+        "path": "meshes/mesh_0170.json"
+      },
+      {
+        "index": 171,
+        "path": "meshes/mesh_0171.json"
+      },
+      {
+        "index": 172,
+        "path": "meshes/mesh_0172.json"
+      },
+      {
+        "index": 173,
+        "path": "meshes/mesh_0173.json"
+      },
+      {
+        "index": 174,
+        "path": "meshes/mesh_0174.json"
+      },
+      {
+        "index": 175,
+        "path": "meshes/mesh_0175.json"
+      },
+      {
+        "index": 176,
+        "path": "meshes/mesh_0176.json"
+      },
+      {
+        "index": 177,
+        "path": "meshes/mesh_0177.json"
+      },
+      {
+        "index": 178,
+        "path": "meshes/mesh_0178.json"
+      },
+      {
+        "index": 179,
+        "path": "meshes/mesh_0179.json"
+      },
+      {
+        "index": 180,
+        "path": "meshes/mesh_0180.json"
+      },
+      {
+        "index": 181,
+        "path": "meshes/mesh_0181.json"
+      },
+      {
+        "index": 182,
+        "path": "meshes/mesh_0182.json"
+      },
+      {
+        "index": 183,
+        "path": "meshes/mesh_0183.json"
+      },
+      {
+        "index": 184,
+        "path": "meshes/mesh_0184.json"
+      },
+      {
+        "index": 185,
+        "path": "meshes/mesh_0185.json"
+      },
+      {
+        "index": 186,
+        "path": "meshes/mesh_0186.json"
+      },
+      {
+        "index": 187,
+        "path": "meshes/mesh_0187.json"
+      },
+      {
+        "index": 188,
+        "path": "meshes/mesh_0188.json"
+      },
+      {
+        "index": 189,
+        "path": "meshes/mesh_0189.json"
+      },
+      {
+        "index": 190,
+        "path": "meshes/mesh_0190.json"
+      },
+      {
+        "index": 191,
+        "path": "meshes/mesh_0191.json"
+      },
+      {
+        "index": 192,
+        "path": "meshes/mesh_0192.json"
+      },
+      {
+        "index": 193,
+        "path": "meshes/mesh_0193.json"
+      },
+      {
+        "index": 194,
+        "path": "meshes/mesh_0194.json"
+      },
+      {
+        "index": 195,
+        "path": "meshes/mesh_0195.json"
+      },
+      {
+        "index": 196,
+        "path": "meshes/mesh_0196.json"
+      },
+      {
+        "index": 197,
+        "path": "meshes/mesh_0197.json"
+      },
+      {
+        "index": 198,
+        "path": "meshes/mesh_0198.json"
+      },
+      {
+        "index": 199,
+        "path": "meshes/mesh_0199.json"
+      },
+      {
+        "index": 200,
+        "path": "meshes/mesh_0200.json"
+      },
+      {
+        "index": 201,
+        "path": "meshes/mesh_0201.json"
+      },
+      {
+        "index": 202,
+        "path": "meshes/mesh_0202.json"
+      },
+      {
+        "index": 203,
+        "path": "meshes/mesh_0203.json"
+      },
+      {
+        "index": 204,
+        "path": "meshes/mesh_0204.json"
+      },
+      {
+        "index": 205,
+        "path": "meshes/mesh_0205.json"
+      },
+      {
+        "index": 206,
+        "path": "meshes/mesh_0206.json"
+      },
+      {
+        "index": 207,
+        "path": "meshes/mesh_0207.json"
+      },
+      {
+        "index": 208,
+        "path": "meshes/mesh_0208.json"
+      },
+      {
+        "index": 209,
+        "path": "meshes/mesh_0209.json"
+      },
+      {
+        "index": 210,
+        "path": "meshes/mesh_0210.json"
+      },
+      {
+        "index": 211,
+        "path": "meshes/mesh_0211.json"
+      },
+      {
+        "index": 212,
+        "path": "meshes/mesh_0212.json"
+      },
+      {
+        "index": 213,
+        "path": "meshes/mesh_0213.json"
+      },
+      {
+        "index": 214,
+        "path": "meshes/mesh_0214.json"
+      },
+      {
+        "index": 215,
+        "path": "meshes/mesh_0215.json"
+      },
+      {
+        "index": 216,
+        "path": "meshes/mesh_0216.json"
+      },
+      {
+        "index": 217,
+        "path": "meshes/mesh_0217.json"
+      }
+    ],
+    "textures": [
+      {
+        "index": 0,
+        "path": "textures/painted_white_normal.png",
+        "name": "painted_white_normal"
+      },
+      {
+        "index": 1,
+        "path": "textures/painted_white_base_color.png",
+        "name": "painted_white_base_color"
+      },
+      {
+        "index": 2,
+        "path": "textures/painted_white_mr.png",
+        "name": "painted_white_mr"
+      },
+      {
+        "index": 3,
+        "path": "textures/books_normal.png",
+        "name": "books_normal"
+      },
+      {
+        "index": 4,
+        "path": "textures/books_base_color.png",
+        "name": "books_base_color"
+      },
+      {
+        "index": 5,
+        "path": "textures/books_mr.png",
+        "name": "books_mr"
+      },
+      {
+        "index": 6,
+        "path": "textures/mahogany_normal.png",
+        "name": "mahogany_normal"
+      },
+      {
+        "index": 7,
+        "path": "textures/mahogany_base_color.png",
+        "name": "mahogany_base_color"
+      },
+      {
+        "index": 8,
+        "path": "textures/mahogany_mr.png",
+        "name": "mahogany_mr"
+      },
+      {
+        "index": 9,
+        "path": "textures/painted_green_normal.png",
+        "name": "painted_green_normal"
+      },
+      {
+        "index": 10,
+        "path": "textures/painted_green_base_color.png",
+        "name": "painted_green_base_color"
+      },
+      {
+        "index": 11,
+        "path": "textures/painted_green_mr.png",
+        "name": "painted_green_mr"
+      },
+      {
+        "index": 12,
+        "path": "textures/plaster_normal.png",
+        "name": "plaster_normal"
+      },
+      {
+        "index": 13,
+        "path": "textures/plaster_base_color.png",
+        "name": "plaster_base_color"
+      },
+      {
+        "index": 14,
+        "path": "textures/plaster_mr.png",
+        "name": "plaster_mr"
+      },
+      {
+        "index": 15,
+        "path": "textures/velvet_normal.png",
+        "name": "velvet_normal"
+      },
+      {
+        "index": 16,
+        "path": "textures/velvet_base_color.png",
+        "name": "velvet_base_color"
+      },
+      {
+        "index": 17,
+        "path": "textures/velvet_mr.png",
+        "name": "velvet_mr"
+      },
+      {
+        "index": 18,
+        "path": "textures/oak_floor_normal.png",
+        "name": "oak_floor_normal"
+      },
+      {
+        "index": 19,
+        "path": "textures/oak_floor_base_color.png",
+        "name": "oak_floor_base_color"
+      },
+      {
+        "index": 20,
+        "path": "textures/oak_floor_mr.png",
+        "name": "oak_floor_mr"
+      },
+      {
+        "index": 21,
+        "path": "textures/marble_normal.png",
+        "name": "marble_normal"
+      },
+      {
+        "index": 22,
+        "path": "textures/marble_base_color.png",
+        "name": "marble_base_color"
+      },
+      {
+        "index": 23,
+        "path": "textures/marble_mr.png",
+        "name": "marble_mr"
+      },
+      {
+        "index": 24,
+        "path": "textures/painting_normal.png",
+        "name": "painting_normal"
+      },
+      {
+        "index": 25,
+        "path": "textures/painting_base_color.png",
+        "name": "painting_base_color"
+      },
+      {
+        "index": 26,
+        "path": "textures/painting_mr.png",
+        "name": "painting_mr"
+      },
+      {
+        "index": 27,
+        "path": "textures/rug_normal.png",
+        "name": "rug_normal"
+      },
+      {
+        "index": 28,
+        "path": "textures/rug_base_color.png",
+        "name": "rug_base_color"
+      },
+      {
+        "index": 29,
+        "path": "textures/rug_mr.png",
+        "name": "rug_mr"
+      }
+    ]
+  }
+}

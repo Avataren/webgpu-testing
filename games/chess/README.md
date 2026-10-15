@@ -1,7 +1,6 @@
 # Chess spectator game
 
-A native chess exhibition using the engine's procedural board and pieces. XavChess
-plays both sides with classical evaluation and a one-second UCI search budget per
+A native chess exhibition in a path-traced study. XavChess plays both sides with classical evaluation and a one-second UCI search budget per
 move. Finished games pause briefly, then restart automatically.
 
 Both colors share the same full-strength settings: sixteen search threads (capped
@@ -23,14 +22,50 @@ The rules crates and UCI source are reused through path dependencies. The local 
 selects only `classical-eval`; it does not change the sibling workspace's NNUE setup.
 `CHESS_UCI_PATH` can override the executable used by the app.
 
-The saved scene has warm ivory pieces, cooler smoked maple squares, ebony pieces,
-a slate display plinth, and a blurred attic HDRI. AgX tonemapping, TAA, contact
-shadows, reflections, bloom, and a subtle vignette shape the final image. The engine
-MCP generated the material maps and move, capture, check, and end sounds.
+## The study
 
-The HDRI reuses `web/assets/hdr/pine_attic_4k.hdr` from the engine repository. The
-launchers set the repository working directory, so the scene contains no
-machine-specific HDR path and stores no duplicate HDR file.
+The game plays in [`study/`](study), a real-scale room modelled in Blender:
+
+- Staunton pieces for 55 mm squares (king 95 mm) in boxwood and ebony. The turned
+  pieces are exact lathe profiles; the knight's head is a signed distance field with
+  carved mane locks, eyes and nostrils, meshed through OpenVDB.
+- A walnut and maple board with maple stringing and inlaid coordinates: a-h along
+  both rank edges and 1-8 along both file edges, each turned to the nearer player.
+- A mahogany games table with a tooled leather top, an analog chess clock (domed
+  crystals, brass plungers, red flags) facing the board, and two bentwood chairs.
+- The room: oak floor, Persian rug, green panelled wainscot, two curtained sash
+  windows, a marble fireplace with a painting, bookcases, a floor lamp, and a crystal
+  decanter on a side table in the sun.
+
+It is lit for path tracing: a low sun through the window bars falls across the
+board and the decanter, sky light comes in through the windows, and the fire and
+the lamp warm the back of the room. The spectator turns path tracing on at start
+where the GPU supports it; P switches to the raster lighting and back.
+
+The sky reuses `web/assets/hdr/kloppenheim_06_puresky_4k.hdr` from the engine
+repository. The launchers set the repository working directory, so the scene
+contains no machine-specific HDR path and stores no duplicate HDR file.
+
+The app reads the board from the scene rather than assuming its size: the square
+size comes from the white rooks and the centre from the 32 starting pieces
+(`Chess.<White|Black>.<kind>.<square>`, white at +Z in their parent's space).
+Captured pieces stand in lines of four from the `Chess.Captures.White` and
+`Chess.Captures.Black` anchors, and `Move.Inlay.0`-`7` mark the last move. Camera
+drift swings the scene's game camera around the board and back.
+
+### Rebuilding the assets
+
+Sources live in [`tools/study/`](tools/study): `textures.py` generates the wood,
+leather, rug, book, marble, painting and dial maps with numpy; the Blender scripts
+build and export the GLBs (`pieces.py`, `chess_set.py`, `furniture.py`, `room.py`).
+
+```sh
+python3 games/chess/tools/study/textures.py
+blender -b --python games/chess/tools/study/build_assets.py
+```
+
+Then import the GLBs from `games/chess/tools/study/build/glb` into the study with the
+engine MCP's `asset_import` and place them as in the saved scene.
 
 | Control | Action |
 | --- | --- |
@@ -38,6 +73,7 @@ machine-specific HDR path and stores no duplicate HDR file.
 | R | Start a new game |
 | C | Toggle camera drift |
 | M | Toggle sound |
+| P | Toggle path tracing |
 | Escape | Close the app |
 
 The side panel shows recent moves, the evaluation from Ivory's perspective, and
@@ -52,7 +88,10 @@ and common insufficient-material positions are handled. A 400-ply exhibition lim
 ensures a session always progresses to another game. Search generations prevent
 old replies from moving pieces after a restart.
 
-Opening the project in the generic editor or player displays the scene. Self-play
+`CHESS_PATH_TRACING=0` starts with raster lighting, and `CHESS_WINDOW=960x540` sets the
+window size. Settings are saved per user under the `chess-spectator` name.
+
+Opening `games/chess/study` in the generic editor or player displays the scene. Self-play
 runs in the dedicated spectator executable. Native UCI processes require desktop
 execution.
 
@@ -63,7 +102,8 @@ cargo test --locked --manifest-path games/chess/Cargo.toml --target-dir target
 cargo clippy --locked --manifest-path games/chess/Cargo.toml --target-dir target --all-targets --no-deps -- -D warnings
 ```
 
-To recreate the visual polish through a running editor's MCP:
+The original procedural board lives on in `examples/projects/procedural-chess`. To
+recreate its visual polish through a running editor's MCP:
 
 ```sh
 python3 games/chess/tools/polish_scene.py --port 47821

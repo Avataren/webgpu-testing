@@ -1,0 +1,26 @@
+{
+  "bentwood_chair.glb.import": {
+    "materials": {
+      "0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "1": "content/materials/bentwood_chair_glb_001_2.mat.json"
+    },
+    "materials_by_key": {
+      "material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "material:1": "content/materials/bentwood_chair_glb_001_2.mat.json",
+      "node:0/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:0/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:1/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:1/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:2/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:2/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:3/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:3/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:4/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:4/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:5/primitive:0": "content/materials/bentwood_chair_glb_001_2.mat.json",
+      "node:5/primitive:0/material:1": "content/materials/bentwood_chair_glb_001_2.mat.json",
+      "node:6/primitive:0": "content/materials/bentwood_chair_glb_000.mat.json",
+      "node:6/primitive:0/material:0": "content/materials/bentwood_chair_glb_000.mat.json"
+    }
+  }
+}

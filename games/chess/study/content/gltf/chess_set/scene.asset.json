@@ -1,0 +1,2571 @@
+{
+  "name": "chess_set (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "Board_Primitive_2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.26,
+          0.0,
+          -0.26
+        ],
+        "max": [
+          0.26,
+          0.0,
+          0.26
+        ]
+      },
+      "material": "content/materials/chess_set_glb_002_2.mat.json",
+      "parent": 42,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 2,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Board_Primitive_1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 1,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.26,
+          0.0,
+          -0.26
+        ],
+        "max": [
+          0.26,
+          0.0185,
+          0.26
+        ]
+      },
+      "material": "content/materials/chess_set_glb_001_2.mat.json",
+      "parent": 42,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 1,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.bishop.c8",
+      "transform": {
+        "translation": [
+          -0.0825,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.018000001
+        ],
+        "max": [
+          0.018000001,
+          0.069000006,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.bishop.f8",
+      "transform": {
+        "translation": [
+          0.0825,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.018000001
+        ],
+        "max": [
+          0.018000001,
+          0.069000006,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.king.e8",
+      "transform": {
+        "translation": [
+          0.0275,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.021000002,
+          0.0,
+          -0.021000002
+        ],
+        "max": [
+          0.021000002,
+          0.094500005,
+          0.021000002
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 3,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.knight.b8",
+      "transform": {
+        "translation": [
+          -0.1375,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.023166822
+        ],
+        "max": [
+          0.018000001,
+          0.060559485,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 4,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.knight.g8",
+      "transform": {
+        "translation": [
+          0.1375,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.023166822
+        ],
+        "max": [
+          0.018000001,
+          0.060559485,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 5,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.a7",
+      "transform": {
+        "translation": [
+          -0.1925,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 6,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.b7",
+      "transform": {
+        "translation": [
+          -0.1375,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 7,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.c7",
+      "transform": {
+        "translation": [
+          -0.0825,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 8,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.d7",
+      "transform": {
+        "translation": [
+          -0.0275,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 9,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.e7",
+      "transform": {
+        "translation": [
+          0.0275,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 10,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.f7",
+      "transform": {
+        "translation": [
+          0.0825,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 11,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.g7",
+      "transform": {
+        "translation": [
+          0.1375,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 12,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.pawn.h7",
+      "transform": {
+        "translation": [
+          0.1925,
+          0.02,
+          -0.1375
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 13,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.queen.d8",
+      "transform": {
+        "translation": [
+          -0.0275,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.020000001,
+          0.0,
+          -0.020000001
+        ],
+        "max": [
+          0.020000001,
+          0.0812,
+          0.020000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 14,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.rook.a8",
+      "transform": {
+        "translation": [
+          -0.1925,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0185,
+          0.0,
+          -0.0185
+        ],
+        "max": [
+          0.0185,
+          0.0516,
+          0.0185
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 15,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Black.rook.h8",
+      "transform": {
+        "translation": [
+          0.1925,
+          0.02,
+          -0.1925
+        ],
+        "rotation": [
+          0.0,
+          -1.0,
+          0.0,
+          4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0185,
+          0.0,
+          -0.0185
+        ],
+        "max": [
+          0.0185,
+          0.0516,
+          0.0185
+        ]
+      },
+      "material": "content/materials/chess_set_glb_003_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 16,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.bishop.c1",
+      "transform": {
+        "translation": [
+          -0.0825,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.018000001
+        ],
+        "max": [
+          0.018000001,
+          0.069000006,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 19,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.bishop.f1",
+      "transform": {
+        "translation": [
+          0.0825,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.018000001
+        ],
+        "max": [
+          0.018000001,
+          0.069000006,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 20,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.king.e1",
+      "transform": {
+        "translation": [
+          0.0275,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.021000002,
+          0.0,
+          -0.021000002
+        ],
+        "max": [
+          0.021000002,
+          0.094500005,
+          0.021000002
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 21,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.knight.b1",
+      "transform": {
+        "translation": [
+          -0.1375,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.023166822
+        ],
+        "max": [
+          0.018000001,
+          0.060559485,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 22,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.knight.g1",
+      "transform": {
+        "translation": [
+          0.1375,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.018000001,
+          0.0,
+          -0.023166822
+        ],
+        "max": [
+          0.018000001,
+          0.060559485,
+          0.018000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 23,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.a2",
+      "transform": {
+        "translation": [
+          -0.1925,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 24,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.b2",
+      "transform": {
+        "translation": [
+          -0.1375,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 25,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.c2",
+      "transform": {
+        "translation": [
+          -0.0825,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 26,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.d2",
+      "transform": {
+        "translation": [
+          -0.0275,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 27,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.e2",
+      "transform": {
+        "translation": [
+          0.0275,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 28,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.f2",
+      "transform": {
+        "translation": [
+          0.0825,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 29,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.g2",
+      "transform": {
+        "translation": [
+          0.1375,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 30,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.pawn.h2",
+      "transform": {
+        "translation": [
+          0.1925,
+          0.02,
+          0.1375
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.015500001,
+          0.0,
+          -0.015500001
+        ],
+        "max": [
+          0.015500001,
+          0.0436,
+          0.015500001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 31,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.queen.d1",
+      "transform": {
+        "translation": [
+          -0.0275,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.020000001,
+          0.0,
+          -0.020000001
+        ],
+        "max": [
+          0.020000001,
+          0.0812,
+          0.020000001
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 32,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.rook.a1",
+      "transform": {
+        "translation": [
+          -0.1925,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0185,
+          0.0,
+          -0.0185
+        ],
+        "max": [
+          0.0185,
+          0.0516,
+          0.0185
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 33,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.White.rook.h1",
+      "transform": {
+        "translation": [
+          0.1925,
+          0.02,
+          0.1925
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0185,
+          0.0,
+          -0.0185
+        ],
+        "max": [
+          0.0185,
+          0.0516,
+          0.0185
+        ]
+      },
+      "material": "content/materials/chess_set_glb_004_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 34,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0253,
+          -0.00025,
+          -0.00065
+        ],
+        "max": [
+          0.0253,
+          0.00025,
+          0.00065
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 35,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0253,
+          -0.00025,
+          -0.00065
+        ],
+        "max": [
+          0.0253,
+          0.00025,
+          0.00065
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 36,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.00065,
+          -0.00025,
+          -0.0253
+        ],
+        "max": [
+          0.00065,
+          0.00025,
+          0.0253
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 37,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.00065,
+          -0.00025,
+          -0.0253
+        ],
+        "max": [
+          0.00065,
+          0.00025,
+          0.0253
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 38,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.4",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0253,
+          -0.00025,
+          -0.00065
+        ],
+        "max": [
+          0.0253,
+          0.00025,
+          0.00065
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 39,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.5",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0253,
+          -0.00025,
+          -0.00065
+        ],
+        "max": [
+          0.0253,
+          0.00025,
+          0.00065
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 40,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.6",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.00065,
+          -0.00025,
+          -0.0253
+        ],
+        "max": [
+          0.00065,
+          0.00025,
+          0.0253
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 41,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Move.Inlay.7",
+      "transform": {
+        "translation": [
+          0.0,
+          0.02025,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.00065,
+          -0.00025,
+          -0.0253
+        ],
+        "max": [
+          0.00065,
+          0.00025,
+          0.0253
+        ]
+      },
+      "material": "content/materials/chess_set_glb_005_2.mat.json",
+      "parent": 45,
+      "children": [],
+      "gltf_node": 42,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Board",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 10,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.26,
+          0.0185,
+          -0.26
+        ],
+        "max": [
+          0.26,
+          0.02,
+          0.26
+        ]
+      },
+      "material": "content/materials/chess_set_glb_000.mat.json",
+      "parent": 45,
+      "children": [
+        1,
+        0
+      ],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Captures.Black",
+      "transform": {
+        "translation": [
+          0.3,
+          0.0,
+          0.05
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 45,
+      "children": [],
+      "gltf_node": 17,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Chess.Captures.White",
+      "transform": {
+        "translation": [
+          0.3,
+          0.0,
+          -0.05
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 45,
+      "children": [],
+      "gltf_node": 18,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "ChessSet",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        42,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        43,
+        44,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41
+      ],
+      "gltf_node": 43,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/chess_set/chess_set.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

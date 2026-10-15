@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/gltf/chess_set/textures/boxwood_base_color.png",
+    "name": "EmbeddedTexture_7"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/gltf/chess_set/textures/boxwood_mr.png",
+    "name": "EmbeddedTexture_8"
+  },
+  "normal_texture": {
+    "path": "content/gltf/chess_set/textures/boxwood_normal.png",
+    "name": "EmbeddedTexture_6"
+  },
+  "emissive_texture": 199,
+  "occlusion_texture": 199,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}
