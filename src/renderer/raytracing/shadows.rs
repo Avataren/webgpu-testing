@@ -2,6 +2,7 @@
 //! pass (`shader/rt_shadows.wgsl`), one bit per shadowed light, which the main pass reads
 //! instead of the shadow maps for those lights.
 
+use crate::renderer::shader_source::wgsl;
 use bytemuck::{Pod, Zeroable};
 
 use crate::renderer::lights::LightsData;
@@ -316,10 +317,7 @@ fn traced_lights(lights: &LightsData) -> (RtShadowUniform, u32) {
 }
 
 pub(crate) fn rt_shadows_shader_source() -> String {
-    format!(
-        "enable wgpu_ray_query;\n\n{}",
-        include_str!("../../shader/rt_shadows.wgsl")
-    )
+    format!("enable wgpu_ray_query;\n\n{}", wgsl!("rt_shadows.wgsl"))
 }
 
 #[cfg(test)]

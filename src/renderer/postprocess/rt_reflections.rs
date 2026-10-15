@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 
 use super::pipelines::{sampler_entry, texture_entry};
@@ -38,23 +39,21 @@ pub struct RtReflectionInputs<'a> {
 /// textures from the bindless texture array bound as group 4.
 pub(crate) fn rt_reflections_shader_source(textures: bool) -> String {
     let textures_module = if textures {
-        include_str!("../../shader/postprocess/rt_textures_bindless.wgsl")
+        wgsl!("postprocess/rt_textures_bindless.wgsl")
     } else {
-        include_str!("../../shader/postprocess/rt_textures_none.wgsl")
+        wgsl!("postprocess/rt_textures_none.wgsl")
     };
     let modules = ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/common.wgsl"))
-        .with_module(include_str!(
-            "../../shader/postprocess/reflection_common.wgsl"
-        ))
+        .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+        .with_module(wgsl!("postprocess/common.wgsl"))
+        .with_module(wgsl!("postprocess/reflection_common.wgsl"))
         .with_constants()
         .with_material_system()
         .with_lighting()
         .with_environment()
         .with_module(textures_module)
-        .with_module(include_str!("../../shader/postprocess/rt_common.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/rt_reflections.wgsl"))
+        .with_module(wgsl!("postprocess/rt_common.wgsl"))
+        .with_module(wgsl!("postprocess/rt_reflections.wgsl"))
         .build_modules_only();
     format!("enable wgpu_ray_query;\n\n{modules}")
 }

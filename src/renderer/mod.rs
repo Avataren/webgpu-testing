@@ -20,6 +20,7 @@ pub mod render_context;
 pub mod render_region;
 mod renderer_core;
 pub mod shader_builder;
+pub mod shader_source;
 pub mod skinning;
 pub mod texture;
 pub mod uniforms;
@@ -52,7 +53,9 @@ pub use render_context::{
     ShadowPassStage,
 };
 pub use render_region::RenderRegion;
-pub use renderer_core::{RenderFrame, Renderer, RendererStats, SurfaceError, TAA_JITTER_FRAMES};
+pub use renderer_core::{
+    RenderFrame, Renderer, RendererStats, ShaderReload, SurfaceError, TAA_JITTER_FRAMES,
+};
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;

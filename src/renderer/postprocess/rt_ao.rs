@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, ShaderBuilder};
 
 use super::{begin_color_pass, fullscreen_vertex, ColorAttachment};
@@ -15,9 +16,9 @@ pub struct RtAoStage {
 /// ray queries enabled.
 pub(crate) fn rt_ao_shader_source() -> String {
     let modules = ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/common.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/rt_ao.wgsl"))
+        .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+        .with_module(wgsl!("postprocess/common.wgsl"))
+        .with_module(wgsl!("postprocess/rt_ao.wgsl"))
         .build_modules_only();
     format!("enable wgpu_ray_query;\n\n{modules}")
 }

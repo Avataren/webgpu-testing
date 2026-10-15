@@ -175,6 +175,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Read a render target back (G-buffer, depth, HDR scene, shadow maps, path tracing buffers): per-channel statistics, values at points and an image; no texture lists them",
     ),
     (
+        "shader.reload",
+        "Read the WGSL shaders from src/shader again and rebuild the passes using them; a shader that fails to compile changes nothing and returns the error",
+    ),
+    (
         "visual.capture",
         "Capture consecutive frames of one frozen view under several render-only post-process variants",
     ),
@@ -286,6 +290,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "environment.set" => rendering::environment_set(params, ctx),
         "postprocess.get" => rendering::postprocess_get(ctx),
         "texture.fetch" => crate::remote::texture_fetch::fetch(params, ctx.gpu.renderer),
+        "shader.reload" => shader_reload(ctx),
         "graphics.get" => graphics::get(),
         "graphics.set" => graphics::set(params),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
@@ -388,6 +393,22 @@ pub(crate) fn summarize_sounds(history: &Value) -> Value {
         }
     }
     json!(groups)
+}
+
+/// Reload shaders from disk now, rather than waiting for the file watcher.
+fn shader_reload(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let result = ctx.gpu.renderer.reload_shaders();
+    crate::renderer::shader_source::log_reload(&result);
+    let reload = result?;
+    Ok(json!({
+        "changed": reload.changed,
+        "not_reloaded": reload.not_reloaded,
+        "note": if reload.changed.is_empty() {
+            "no shader text differed from what was already in use"
+        } else {
+            "rebuilt; temporal effects (TAA, the path tracer's history) start over"
+        },
+    }))
 }
 
 fn audio_play(params: &Value) -> RemoteResult {

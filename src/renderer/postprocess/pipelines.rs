@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, ShaderBuilder};
 
 use super::fullscreen_vertex;
@@ -65,8 +66,8 @@ pub fn build_depth_resolve(
     });
 
     let depth_resolve_source = ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-        .build(include_str!("../../shader/depth_resolve.wgsl"));
+        .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+        .build(wgsl!("depth_resolve.wgsl"));
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("DepthResolveShader"),

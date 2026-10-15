@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, ShaderBuilder};
 
 use super::resources::TextureBundle;
@@ -8,9 +9,9 @@ use super::{fullscreen_vertex, RenderRegion, GBUFFER_PICK_FORMAT};
 /// writes pick ids at that resolution. Each output pixel takes its nearest scene pixel.
 fn shader_source() -> String {
     ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/common.wgsl"))
-        .build(include_str!("../../shader/postprocess/upscale_depth.wgsl"))
+        .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+        .with_module(wgsl!("postprocess/common.wgsl"))
+        .build(wgsl!("postprocess/upscale_depth.wgsl"))
 }
 
 pub struct UpscaledTargets {

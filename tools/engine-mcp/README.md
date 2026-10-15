@@ -68,6 +68,7 @@ Options and environment:
 | Animation | `entity_update {animator}`, `animation_inspect`, `debug_skeleton` (skinned characters; `entity_get` shows `skinned_mesh` and `animator`) |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot`, `visual_capture`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
+| Render debugging | `texture_fetch`, `shader_reload` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 | Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
 | Prefabs | `prefab_create`, `prefab_inspect`, `prefab_update` (instances use `scene_instance`) |
@@ -89,9 +90,13 @@ uses at most four lights of each type, in scene/world iteration order, shared ac
 scene instances. It does not rank lights by distance or influence.
 
 `project_save` returns project/scene paths and `written_count`; `verbose: true` adds
-the full `written` list. `compact: true` writes scene JSON without whitespace, including
-embedded meshes, with the same data as a normal save. Ordinary editor saves still use
-pretty JSON. Inline editor materials use stable entity identities across saves, so
+the full `written` list. Files whose content would not change are not rewritten, and
+each scene file keeps the layout it has on disk (compact or indented; new files are
+indented), so saving a project with compact scenes does not reformat them. `compact:
+true` writes every scene file without whitespace, `compact: false` indents every one.
+An imported model's `meta.json` (which material file new instances of it get) keeps
+entries that still name an existing file, so scenes that give the model different
+materials do not rewrite it on each save. Inline editor materials use stable entity identities across saves, so
 repeated captures update the same material files. Existing orphan files are retained.
 
 ## Procedural geometry
@@ -100,6 +105,13 @@ repeated captures update the same material files. Existing orphan files are reta
 top; equal heights form ledges and radius zero makes a pole. `segments` controls radial
 resolution (64 default), `caps` closes nonzero end radii, and `crease_angle` (45 degrees
 default) preserves sharp profile corners while smoothing the rest. For example:
+
+`thickness` makes a hollow shell: the profile is the outer wall, the inner wall is it
+offset that far inward, and open ends get flat rims. A profile starting at radius 0 gets
+a floor (cups, glasses, bowls, vases); one ending at radius 0 is a dome open below
+(bells, lampshades). `caps` is ignored for shells, and the thickness must stay below
+the smallest radius and feature size. A tumbler:
+`{profile: [[0, 0], [0.35, 0], [0.4, 1]], thickness: 0.02}`.
 
 Use `bevel` to trim and soften profile corners. `bevel_segments: 1` gives a chamfer;
 2–8 subdivisions round each corner. Trim distances clamp to fit short profile edges,

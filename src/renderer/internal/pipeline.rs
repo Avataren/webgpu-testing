@@ -1,9 +1,7 @@
+use crate::renderer::shader_source::wgsl;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::ptr;
-
-use naga::front::wgsl;
-use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 use crate::asset::{material::ShaderMaterialMetadata, Assets, Handle, MaterialAsset, MaterialKind};
 use crate::renderer::batch::CullMode;
@@ -20,6 +18,14 @@ pub(crate) struct RenderPipeline {
     pipeline_layout: wgpu::PipelineLayout,
     uses_bindless: bool,
     depth_format: wgpu::TextureFormat,
+    depth_prepass: wgpu::RenderPipeline,
+    background: wgpu::RenderPipeline,
+    background_pick: wgpu::RenderPipeline,
+}
+
+/// What [`RenderPipeline::rebuild_shaders`] builds.
+pub(crate) struct RebuiltShaders {
+    shader_modules: HashMap<(MaterialPipelineKey, SamplerFilterMode), wgpu::ShaderModule>,
     depth_prepass: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
     background_pick: wgpu::RenderPipeline,
@@ -231,6 +237,71 @@ impl RenderPipeline {
                     immediate_size: 0,
                 });
 
+        let shaders = Self::build_shaders(
+            context,
+            camera,
+            objects,
+            lights,
+            uses_bindless,
+            sample_count,
+        )
+        .expect("built-in renderer shaders should compile through naga");
+
+        (
+            Self {
+                pipelines: HashMap::new(),
+                shader_modules: shaders.shader_modules,
+                pipeline_layout,
+                uses_bindless,
+                depth_format: context.depth.format,
+                depth_prepass: shaders.depth_prepass,
+                background: shaders.background,
+                background_pick: shaders.background_pick,
+            },
+            texture_binder,
+        )
+    }
+
+    /// Build the shader modules again from the current sources (see
+    /// [`shader_source`](crate::renderer::shader_source)), for a shader reload. Pipelines
+    /// and shader materials are rebuilt from them as frames ask for them.
+    pub(crate) fn rebuild_shaders(
+        &self,
+        context: &RenderContext,
+        camera: &CameraBuffer,
+        objects: &DynamicObjectsBuffer,
+        lights: &LightsBuffer,
+        sample_count: u32,
+    ) -> Result<RebuiltShaders, String> {
+        Self::build_shaders(
+            context,
+            camera,
+            objects,
+            lights,
+            self.uses_bindless,
+            sample_count,
+        )
+    }
+
+    /// Switch to rebuilt shaders, dropping every pipeline built from the old ones.
+    pub(crate) fn install_shaders(&mut self, shaders: RebuiltShaders) {
+        self.pipelines.clear();
+        self.shader_modules = shaders.shader_modules;
+        self.depth_prepass = shaders.depth_prepass;
+        self.background = shaders.background;
+        self.background_pick = shaders.background_pick;
+    }
+
+    /// The modules and fixed pipelines that depend on shader source. Each source is
+    /// checked with naga first, so a broken shader is an error rather than a device error.
+    fn build_shaders(
+        context: &RenderContext,
+        camera: &CameraBuffer,
+        objects: &DynamicObjectsBuffer,
+        lights: &LightsBuffer,
+        uses_bindless: bool,
+        sample_count: u32,
+    ) -> Result<RebuiltShaders, String> {
         let depth_pipeline_layout =
             context
                 .device
@@ -242,8 +313,10 @@ impl RenderPipeline {
 
         let depth_shader_source = ShaderBuilder::new()
             .with_material_system()
-            .build(include_str!("../../shader/depth_prepass.wgsl"));
+            .build(wgsl!("depth_prepass.wgsl"));
 
+        Self::validate_shader(&depth_shader_source)
+            .map_err(|error| format!("depth prepass: {error}"))?;
         let depth_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -260,9 +333,11 @@ impl RenderPipeline {
                     immediate_size: 0,
                 });
 
-        let background_shader_source = ShaderBuilder::background()
-            .build(include_str!("../../shader/environment_background.wgsl"));
+        let background_shader_source =
+            ShaderBuilder::background().build(wgsl!("environment_background.wgsl"));
 
+        Self::validate_shader(&background_shader_source)
+            .map_err(|error| format!("environment background: {error}"))?;
         let background_shader = context
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -314,8 +389,7 @@ impl RenderPipeline {
                 SamplerFilterMode::Nearest => "RendererShaderNearest",
             };
             let source = Self::shader_source(uses_bindless, filtering);
-            Self::validate_shader(&source)
-                .expect("Default renderer shader should compile through naga");
+            Self::validate_shader(&source).map_err(|error| format!("{label}: {error}"))?;
             let module = context
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -330,7 +404,7 @@ impl RenderPipeline {
             };
             let error_source = Self::error_shader_source(uses_bindless, filtering);
             Self::validate_shader(&error_source)
-                .expect("Fallback renderer shader should compile through naga");
+                .map_err(|error| format!("{error_label}: {error}"))?;
             let error_module = context
                 .device
                 .create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -340,8 +414,6 @@ impl RenderPipeline {
             shader_modules.insert((MaterialPipelineKey::Error, filtering), error_module);
         }
 
-        let pipelines = HashMap::new();
-
         let depth_prepass = Self::create_depth_prepass_pipeline(
             context,
             &depth_pipeline_layout,
@@ -349,25 +421,17 @@ impl RenderPipeline {
             sample_count,
         );
 
-        (
-            Self {
-                pipelines,
-                shader_modules,
-                pipeline_layout,
-                uses_bindless,
-                depth_format: context.depth.format,
-                depth_prepass,
-                background: background_pipeline,
-                background_pick: background_pick_pipeline,
-            },
-            texture_binder,
-        )
+        Ok(RebuiltShaders {
+            shader_modules,
+            depth_prepass,
+            background: background_pipeline,
+            background_pick: background_pick_pipeline,
+        })
     }
 
     fn shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
         // Use the preset configuration for full PBR with all features
-        ShaderBuilder::full_pbr_filtered(bindless, filtering)
-            .build(include_str!("../../shader/common.wgsl"))
+        ShaderBuilder::full_pbr_filtered(bindless, filtering).build(wgsl!("common.wgsl"))
     }
 
     fn error_shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
@@ -379,12 +443,7 @@ impl RenderPipeline {
     }
 
     fn validate_shader(source: &str) -> Result<(), String> {
-        let module = wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
-        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
-        validator
-            .validate(&module)
-            .map(|_| ())
-            .map_err(|error| error.emit_to_string(source))
+        crate::renderer::shader_source::validate(source)
     }
 
     fn build_shader_material_source(

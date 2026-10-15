@@ -3,23 +3,11 @@
 
 use std::convert::TryFrom;
 
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{
     lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     MAX_TEXTURES,
 };
-
-const MATERIAL_COMMON: &str = include_str!("../shader/material_common.wgsl");
-const CONSTANTS: &str = include_str!("../shader/constants.wgsl");
-const BINDINGS_BINDLESS_LINEAR: &str = include_str!("../shader/bindings_bindless_linear.wgsl");
-const BINDINGS_BINDLESS_NEAREST: &str = include_str!("../shader/bindings_bindless_nearest.wgsl");
-const BINDINGS_TRADITIONAL_LINEAR: &str =
-    include_str!("../shader/bindings_traditional_linear.wgsl");
-const BINDINGS_TRADITIONAL_NEAREST: &str =
-    include_str!("../shader/bindings_traditional_nearest.wgsl");
-const LIGHTING_COMMON: &str = include_str!("../shader/lighting_common.wgsl");
-const SHADOWS: &str = include_str!("../shader/shadows.wgsl");
-const ENVIRONMENT: &str = include_str!("../shader/environment.wgsl");
-const LIGHTING_WITH_SHADOWS: &str = include_str!("../shader/lighting_with_shadows.wgsl");
 
 const ENABLE_BINDING_ARRAY: &str = "enable wgpu_binding_array;";
 
@@ -67,7 +55,7 @@ impl ShaderBuilder {
 
     /// Add constants (PI, TWO_PI, etc.)
     pub fn with_constants(mut self) -> Self {
-        self.ensure_module(CONSTANTS);
+        self.ensure_module(wgsl!("constants.wgsl"));
         self.set_constant("MAX_DIRECTIONAL_LIGHTS", MAX_DIRECTIONAL_LIGHTS as u32);
         self.set_constant("MAX_POINT_LIGHTS", MAX_POINT_LIGHTS as u32);
         self.set_constant("MAX_SPOT_LIGHTS", MAX_SPOT_LIGHTS as u32);
@@ -86,13 +74,21 @@ impl ShaderBuilder {
     ) -> Self {
         if bindless {
             match filtering {
-                SamplerFilterMode::Linear => self.ensure_module(BINDINGS_BINDLESS_LINEAR),
-                SamplerFilterMode::Nearest => self.ensure_module(BINDINGS_BINDLESS_NEAREST),
+                SamplerFilterMode::Linear => {
+                    self.ensure_module(wgsl!("bindings_bindless_linear.wgsl"))
+                }
+                SamplerFilterMode::Nearest => {
+                    self.ensure_module(wgsl!("bindings_bindless_nearest.wgsl"))
+                }
             }
         } else {
             match filtering {
-                SamplerFilterMode::Linear => self.ensure_module(BINDINGS_TRADITIONAL_LINEAR),
-                SamplerFilterMode::Nearest => self.ensure_module(BINDINGS_TRADITIONAL_NEAREST),
+                SamplerFilterMode::Linear => {
+                    self.ensure_module(wgsl!("bindings_traditional_linear.wgsl"))
+                }
+                SamplerFilterMode::Nearest => {
+                    self.ensure_module(wgsl!("bindings_traditional_nearest.wgsl"))
+                }
             }
         }
         self
@@ -122,15 +118,14 @@ impl ShaderBuilder {
 
     /// Add complete scene lighting with shadows
     pub fn with_lighting_and_shadows(mut self) -> Self {
-        self.ensure_module(LIGHTING_WITH_SHADOWS);
+        self.ensure_module(wgsl!("lighting_with_shadows.wgsl"));
         self
     }
 
     /// Add legacy PBR lighting (for backward compatibility)
     #[deprecated(note = "Use with_lighting() + with_shadows() instead")]
     pub fn with_pbr_lighting(mut self) -> Self {
-        self.modules
-            .push(include_str!("../shader/pbr_lighting.wgsl"));
+        self.modules.push(wgsl!("pbr_lighting.wgsl"));
         self
     }
 
@@ -232,21 +227,21 @@ impl ShaderBuilder {
     }
 
     fn ensure_with_material_system(&mut self) {
-        self.ensure_module(MATERIAL_COMMON);
+        self.ensure_module(wgsl!("material_common.wgsl"));
     }
 
     fn ensure_with_lighting(&mut self) {
-        self.ensure_module(LIGHTING_COMMON);
+        self.ensure_module(wgsl!("lighting_common.wgsl"));
     }
 
     fn ensure_with_shadows(&mut self) {
-        self.ensure_module(LIGHTING_COMMON);
-        self.ensure_module(SHADOWS);
-        self.ensure_module(LIGHTING_WITH_SHADOWS);
+        self.ensure_module(wgsl!("lighting_common.wgsl"));
+        self.ensure_module(wgsl!("shadows.wgsl"));
+        self.ensure_module(wgsl!("lighting_with_shadows.wgsl"));
     }
 
     fn ensure_with_environment(&mut self) {
-        self.ensure_module(ENVIRONMENT);
+        self.ensure_module(wgsl!("environment.wgsl"));
     }
 
     fn apply_markers(mut self, shader_source: &str) -> Self {
@@ -353,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_builder_full_pbr() {
-        let shader = ShaderBuilder::full_pbr(true).build(include_str!("../shader/common.wgsl"));
+        let shader = ShaderBuilder::full_pbr(true).build(wgsl!("common.wgsl"));
 
         // Verify all components are present
         assert!(shader.contains("const PI:"));
@@ -367,8 +362,7 @@ mod tests {
 
     #[test]
     fn test_builder_particles() {
-        let shader =
-            ShaderBuilder::particles(true).build(include_str!("../shader/particle_render.wgsl"));
+        let shader = ShaderBuilder::particles(true).build(wgsl!("particle_render.wgsl"));
 
         // Should have lighting and shadow sampling support
         assert!(shader.contains("calculate_light_contribution"));

@@ -43,6 +43,7 @@ pub use settings::{
     TRACKBALL_NEUTRAL,
 };
 
+use crate::renderer::shader_source::wgsl;
 use bloom::{BloomBindGroupInputs, BloomStage};
 use dof::DofStage;
 use exposure::ExposureStage;
@@ -240,6 +241,8 @@ pub struct PostProcess {
     /// The scene renders smaller than the display region and the TAA pass upscales it.
     upscaling: bool,
     sample_count: u32,
+    /// The format the final pass writes (the surface's, or the HDR composition's).
+    output_format: wgpu::TextureFormat,
     /// The surface has no sRGB format, so the final pass encodes itself.
     encode_srgb: bool,
     /// Brightest value the display shows, relative to paper white (1 for SDR).
@@ -426,31 +429,119 @@ pub(crate) fn fullscreen_vertex(shader: &wgpu::ShaderModule) -> wgpu::VertexStat
 /// The post-processing shader source: every pass's entry points in one module.
 pub(crate) fn postprocess_shader_source() -> String {
     ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/common.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
-        .with_module(include_str!(
-            "../../shader/postprocess/reflection_common.wgsl"
-        ))
-        .with_module(include_str!("../../shader/postprocess/ssr.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
-        .with_module(include_str!(
-            "../../shader/postprocess/bloom_prefilter.wgsl"
-        ))
-        .with_module(include_str!(
-            "../../shader/postprocess/bloom_downsample.wgsl"
-        ))
-        .with_module(include_str!("../../shader/postprocess/bloom_upsample.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/auto_exposure.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/dof.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/temporal.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/composite.wgsl"))
-        .with_module(include_str!("../../shader/postprocess/final.wgsl"))
+        .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+        .with_module(wgsl!("postprocess/common.wgsl"))
+        .with_module(wgsl!("postprocess/ssao.wgsl"))
+        .with_module(wgsl!("postprocess/ssao_blur.wgsl"))
+        .with_module(wgsl!("postprocess/reflection_common.wgsl"))
+        .with_module(wgsl!("postprocess/ssr.wgsl"))
+        .with_module(wgsl!("postprocess/bloom_common.wgsl"))
+        .with_module(wgsl!("postprocess/bloom_prefilter.wgsl"))
+        .with_module(wgsl!("postprocess/bloom_downsample.wgsl"))
+        .with_module(wgsl!("postprocess/bloom_upsample.wgsl"))
+        .with_module(wgsl!("postprocess/auto_exposure.wgsl"))
+        .with_module(wgsl!("postprocess/dof.wgsl"))
+        .with_module(wgsl!("postprocess/temporal.wgsl"))
+        .with_module(wgsl!("postprocess/composite.wgsl"))
+        .with_module(wgsl!("postprocess/final.wgsl"))
         .build_modules_only()
 }
 
+/// Pipelines [`PostProcess::rebuild_pipelines`] built from the current shader sources.
+pub(crate) struct RebuiltPostProcess {
+    depth_resolve_pipeline: Option<DepthResolvePipeline>,
+    composite_pipeline: CompositePipeline,
+    final_pipeline: FinalPipeline,
+    ssao_stage: SsaoStage,
+    ssr_stage: SsrStage,
+    bloom_stage: BloomStage,
+    exposure_stage: ExposureStage,
+    dof_stage: DofStage,
+    temporal_stage: TemporalStage,
+    rt_reflection_stage: Option<RtReflectionStage>,
+    rt_ao_stage: Option<RtAoStage>,
+    path_tracing_stage: Option<PathTracingStage>,
+}
+
+/// Layouts the ray-traced stages are built against (as for
+/// [`PostProcess::enable_ray_traced_reflections`]).
+pub(crate) struct RayTracedLayouts<'a> {
+    pub lights: &'a wgpu::BindGroupLayout,
+    pub scene: &'a wgpu::BindGroupLayout,
+    pub textures: Option<&'a wgpu::BindGroupLayout>,
+}
+
 impl PostProcess {
+    /// Build every pass's pipelines again from the current shader sources, for a shader
+    /// reload. Ray-traced stages are rebuilt only where they exist now. Nothing changes
+    /// until [`Self::install_pipelines`].
+    pub(crate) fn rebuild_pipelines(
+        &self,
+        device: &wgpu::Device,
+        ray_traced: Option<&RayTracedLayouts<'_>>,
+    ) -> Result<RebuiltPostProcess, String> {
+        let source = postprocess_shader_source();
+        crate::renderer::shader_source::validate(&source)
+            .map_err(|error| format!("post-processing: {error}"))?;
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("PostProcessShader"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let layout = &self.uniform_layout;
+        let rebuild = |exists: bool| ray_traced.filter(|_| exists);
+        Ok(RebuiltPostProcess {
+            depth_resolve_pipeline: build_depth_resolve(device, layout, self.sample_count),
+            composite_pipeline: build_composite(device, layout, &shader, DISPLAY_FORMAT),
+            final_pipeline: build_final(device, layout, &shader, self.output_format),
+            ssao_stage: SsaoStage::new(device, layout, &shader),
+            ssr_stage: SsrStage::new(device, layout, &shader),
+            bloom_stage: BloomStage::new(device, layout, &shader),
+            exposure_stage: ExposureStage::new(device, layout, &shader),
+            dof_stage: DofStage::new(device, layout, &shader),
+            temporal_stage: TemporalStage::new(device, layout, &shader),
+            rt_reflection_stage: rebuild(self.rt_reflection_stage.is_some())
+                .map(|rt| RtReflectionStage::new(device, layout, rt.lights, rt.scene, rt.textures))
+                .transpose()
+                .map_err(|error| format!("ray-traced reflections: {error}"))?,
+            rt_ao_stage: rebuild(self.rt_ao_stage.is_some())
+                .map(|rt| RtAoStage::new(device, layout, rt.scene))
+                .transpose()
+                .map_err(|error| format!("ray-traced ambient occlusion: {error}"))?,
+            path_tracing_stage: rebuild(self.path_tracing_stage.is_some())
+                .map(|rt| PathTracingStage::new(device, layout, rt.lights, rt.scene, rt.textures))
+                .transpose()
+                .map_err(|error| format!("path tracing: {error}"))?,
+        })
+    }
+
+    /// Switch to rebuilt pipelines. Temporal histories start over, as after a camera cut.
+    pub(crate) fn install_pipelines(&mut self, rebuilt: RebuiltPostProcess) {
+        self.depth_resolve_pipeline = rebuilt.depth_resolve_pipeline;
+        self.composite_pipeline = rebuilt.composite_pipeline;
+        self.final_pipeline = rebuilt.final_pipeline;
+        self.ssao_stage = rebuilt.ssao_stage;
+        self.ssr_stage = rebuilt.ssr_stage;
+        self.bloom_stage = rebuilt.bloom_stage;
+        self.exposure_stage = rebuilt.exposure_stage;
+        self.dof_stage = rebuilt.dof_stage;
+        self.temporal_stage = rebuilt.temporal_stage;
+        if rebuilt.rt_reflection_stage.is_some() {
+            self.rt_reflection_stage = rebuilt.rt_reflection_stage;
+        }
+        if rebuilt.rt_ao_stage.is_some() {
+            self.rt_ao_stage = rebuilt.rt_ao_stage;
+        }
+        if rebuilt.path_tracing_stage.is_some() {
+            self.path_tracing_stage = rebuilt.path_tracing_stage;
+        }
+        // FSR builds its pipelines the next time it runs.
+        self.fsr = None;
+        self.taa_history_valid = false;
+        self.reflection_history = None;
+        self.mark_bind_groups_dirty();
+        self.refresh_temporal_routing();
+    }
+
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -621,6 +712,7 @@ impl PostProcess {
             scene_scale: Vec2::ONE,
             upscaling: false,
             sample_count,
+            output_format: config.format,
             // Float targets (the HDR composition texture) take linear values.
             encode_srgb: !config.format.is_srgb() && !is_float_format(config.format),
             display_peak: 1.0,
@@ -2377,8 +2469,8 @@ mod tests {
     #[test]
     fn depth_resolve_shader_validates() {
         let source = ShaderBuilder::new()
-            .with_module(include_str!("../../shader/postprocess/fullscreen.wgsl"))
-            .build(include_str!("../../shader/depth_resolve.wgsl"));
+            .with_module(wgsl!("postprocess/fullscreen.wgsl"))
+            .build(wgsl!("depth_resolve.wgsl"));
         let module = naga::front::wgsl::parse_str(&source)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
         naga::valid::Validator::new(

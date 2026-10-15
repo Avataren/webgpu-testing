@@ -197,6 +197,46 @@ pub(crate) fn load_binary(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
+/// How a saved JSON file is laid out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum JsonLayout {
+    /// As the file on disk already is (compact or indented); indented for new files.
+    #[default]
+    Preserve,
+    Pretty,
+    Compact,
+}
+
+/// Serialize `value` to `path` in `layout`, leaving the file untouched when it already
+/// holds exactly that. Returns whether the file was written.
+pub fn write_json<T: serde::Serialize + ?Sized>(
+    path: &Path,
+    value: &T,
+    layout: JsonLayout,
+) -> std::io::Result<bool> {
+    let existing = std::fs::read(path).ok();
+    let compact = match layout {
+        JsonLayout::Compact => true,
+        JsonLayout::Pretty => false,
+        // serde_json only writes newlines between values when indenting.
+        JsonLayout::Preserve => existing
+            .as_deref()
+            .map(<[u8]>::trim_ascii_end)
+            .is_some_and(|bytes| !bytes.is_empty() && !bytes.contains(&b'\n')),
+    };
+    let json = if compact {
+        serde_json::to_vec(value)
+    } else {
+        serde_json::to_vec_pretty(value)
+    }
+    .map_err(std::io::Error::other)?;
+    if existing.as_deref() == Some(json.as_slice()) {
+        return Ok(false);
+    }
+    std::fs::write(path, json)?;
+    Ok(true)
+}
+
 /// Reads a UTF-8 text file: from disk natively, and on the web with a request
 /// relative to the page (so a served project works like a project directory).
 pub fn read_to_string(path: &Path) -> std::io::Result<String> {

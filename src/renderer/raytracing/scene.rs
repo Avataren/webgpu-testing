@@ -17,6 +17,7 @@
 //! instanced like any surface; blended ones under their own mask, for reflection rays to
 //! gather as they pass through them instead of stopping.
 
+use crate::renderer::shader_source::wgsl;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -188,7 +189,7 @@ impl ExpandPipeline {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RtParticleExpandShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/rt_particles.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl!("rt_particles.wgsl").into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RtParticleExpandPipelineLayout"),
@@ -1182,7 +1183,7 @@ mod tests {
 
     #[test]
     fn particle_expansion_shader_validates() {
-        let source = include_str!("../../shader/rt_particles.wgsl");
+        let source = wgsl!("rt_particles.wgsl");
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
         naga::valid::Validator::new(

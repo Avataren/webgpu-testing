@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, Renderer, SamplerFilterMode, ShaderBuilder, Vertex};
 
 #[allow(clippy::too_many_arguments)]
@@ -13,7 +14,7 @@ pub(crate) fn create_render_pipeline(
     depth_write_enabled: bool,
 ) -> wgpu::RenderPipeline {
     let shader_source = ShaderBuilder::particles_filtered(uses_bindless, filtering)
-        .build(include_str!("../../shader/particle_render.wgsl"));
+        .build(wgsl!("particle_render.wgsl"));
 
     let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ParticleRenderShader"),

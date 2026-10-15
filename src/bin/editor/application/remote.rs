@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode};
+use wgpu_cube::io::JsonLayout;
 use wgpu_cube::remote::{entity_from_json, entity_id, RemoteContext, RemoteResult};
 use wgpu_cube::SceneCreationAction;
 
@@ -313,7 +314,11 @@ impl EditorApplication {
                     .controller_mut()
                     .request_save_project_with_options(
                         dir.clone(),
-                        params["compact"].as_bool().unwrap_or(false),
+                        match params["compact"].as_bool() {
+                            Some(true) => JsonLayout::Compact,
+                            Some(false) => JsonLayout::Pretty,
+                            None => JsonLayout::Preserve,
+                        },
                     );
                 Ok(json!({
                     "queued": "project.save",

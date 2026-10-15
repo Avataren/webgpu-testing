@@ -615,6 +615,30 @@ mod tests {
             Some(&material_handle.path().to_path_buf()),
             "keyed meta should point at generated material path"
         );
+
+        // Another scene using its own copy of the material keeps the shared default (B24).
+        let read_meta = || {
+            let contents = std::fs::read_to_string(gltf_dir.join("meta.json")).unwrap();
+            let mut parsed: BTreeMap<String, ImportedGltfMeta> =
+                serde_json::from_str(&contents).unwrap();
+            parsed.remove("scene.gltf").unwrap()
+        };
+        let default_path = material_handle.path().to_path_buf();
+        let copy_path = PathBuf::from("content/materials/scene_000_1.mat.json");
+        let mut other = asset.clone();
+        other.entities[0].material = Some(SceneMaterialHandle::new(copy_path.clone()));
+        other.persist_material_assets(project_root).unwrap();
+        assert!(project_root.join(&copy_path).is_file());
+        let meta = read_meta();
+        assert_eq!(meta.materials.get(&0), Some(&default_path));
+        assert_eq!(meta.materials_by_key.get("material:0"), Some(&default_path));
+        // Saving again changes nothing; a default whose file is gone is replaced.
+        let before = std::fs::read(gltf_dir.join("meta.json")).unwrap();
+        asset.persist_material_assets(project_root).unwrap();
+        assert_eq!(std::fs::read(gltf_dir.join("meta.json")).unwrap(), before);
+        std::fs::remove_file(project_root.join(&default_path)).unwrap();
+        other.persist_material_assets(project_root).unwrap();
+        assert_eq!(read_meta().materials.get(&0), Some(&copy_path));
     }
 
     #[test]

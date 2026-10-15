@@ -12,6 +12,7 @@
 //!   storage buffers (WebGL2/GLES). `WGPU_CUBE_FORCE_CPU_SKINNING=1` forces it, to test
 //!   that path natively.
 
+use crate::renderer::shader_source::wgsl;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::num::NonZeroU64;
@@ -348,7 +349,7 @@ impl ComputeResources {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skinning"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shader/skinning.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl!("skinning.wgsl").into()),
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("SkinningLayout"),
@@ -508,7 +509,7 @@ mod tests {
 
     #[test]
     fn shader_validates() {
-        let source = include_str!("../shader/skinning.wgsl");
+        let source = wgsl!("skinning.wgsl");
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
         naga::valid::Validator::new(

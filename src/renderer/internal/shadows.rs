@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use std::mem;
 use std::num::NonZeroU64;
 
@@ -241,7 +242,7 @@ impl ShadowResources {
 
         let shader_source = ShaderBuilder::new()
             .with_material_system()
-            .build(include_str!("../../shader/shadow.wgsl"));
+            .build(wgsl!("shadow.wgsl"));
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ShadowShader"),

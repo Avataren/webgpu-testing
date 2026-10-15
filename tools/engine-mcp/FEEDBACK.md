@@ -129,6 +129,13 @@ B24, the pain points from "Judging temporal effects needs a still view" onward, 
 items after the visual comparison tool. Not verified: whether `visual_capture` alone would have
 covered the still-view comparisons (it was not tried; see that pain point).
 
+Path tracing follow-up (2026-10-15): the rest of that round's wishes. Shader hot reload, held-view
+screenshots with displayed-pixel numbers, format-preserving saves (which also fixed B24) and lathe
+shells are done; every item from that round is now done. Checked with Rust tests (3 new, 2 extended), strict
+Clippy, a wasm32 library check, the MCP server's tests, and the release editor on a scratch copy of
+RT Lab driven through the MCP (`engine_call` for the new parameters, since the running MCP server
+predated them); see each wish for what was measured.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -476,6 +483,15 @@ How to read the sections:
   files it meets first. Harmless while the two files match, but it is churn in every commit,
   and the scene silently stops using the file a person may be editing.
 - Workaround: `git checkout content/gltf/gem/meta.json` after saving.
+- **Resolution (fixed, engine):** the cause was two scenes giving the same glTF material different
+  files: RT Lab's main scene uses `gem_glb_000_1.mat.json` (the gem with dispersion), the imported
+  `gem.scene.json` uses `gem_glb_000.mat.json`. `meta.json` holds one default for the model, each
+  scene's save wrote its own choice into it, and the scenes were saved in `HashMap` order, so
+  whichever came last won. Saves now keep a `meta.json` entry that still names an existing file
+  (replacing only missing or dangling ones), go through scenes in document order, and skip
+  writing files whose content would not change. Test: `persist_material_assets_writes_meta_mapping`.
+  On a copy of RT Lab, adding a cube and saving changed only the main scene (a 1-line diff in its
+  compact file) plus the cube's new material; `meta.json` was not touched.
 
 ## Pain points
 
@@ -791,32 +807,33 @@ How to read the sections:
   denoiser: false}}}` would override the player's graphics settings). It was not tried here
   because it reads as a post-processing comparison tool. Suggestion: say in the skill and the
   `screenshot` description that `screenshot {camera}` is a camera cut, and point at
-  `visual_capture` for anything temporal.
+  `visual_capture` for anything temporal. **Done:** the description and the skill say so, and
+  `screenshot {camera, settle_frames}` holds the pose first (see the held view wish).
 - **Looking at intermediate render buffers means adding debug code.** Finding why denoised
   reflections faded (the virtual-motion reprojection was off by the TAA jitter) and why a steel ring
   stayed grainy (residual variance, not a failed history test) needed visualizations of history
   length, reprojection distance and which validity test failed. Each one was a temporary
   `PT_DEBUG` environment-variable switch in WGSL plus a rebuild and relaunch, seven times in all.
-  **Open:** see the offscreen texture fetch wish.
+  **Done:** see the offscreen texture fetch wish.
 - **Every shader edit is a rebuild, and a restart loses unsaved scene edits.** The WGSL is built
   into the binary with `include_str!`, so even a one-constant change is `engine_launch
   {restart: true}`: 30 to 40 s of build plus reopening the project. Edits made through the MCP
   since the last save are lost, so building the caustics table needed saves partway through, each
-  with the camera put back first. **Open:** see the shader reload wish.
+  with the camera put back first. **Done:** see the shader reload wish.
 - **`project_save` pretty-prints files that were compact.** On RT Lab, whose scene files were
   committed compact, a plain `project_save` produced a diff of 1,288,356 lines (the imported
   model scenes rewritten indented). `project_save {compact: true}` brought it back to the real
-  change. **Open:** keep each file's existing formatting, or default to compact when the file on
-  disk is compact.
+  change. **Done:** each file keeps the layout it has on disk, and unchanged files are not
+  rewritten (see the format-preserving saves wish).
 - **`mesh_lathe` cannot make a hollow vessel.** A tumbler (outer wall up, inner wall down) is
   rejected with `profile must rise bottom to top, with distinct points and no axis-only edge`, so
   the caustics table got a solid glass rod instead of a glass. A two-point profile with
-  `caps: false` and a double-sided material did make a thin ring. **Open:** see the lathe wish.
+  `caps: false` and a double-sided material did make a thin ring. **Done:** see the lathe wish.
 - **Comparing brightness meant leaving the MCP.** Whether two captures differed (fixed grain or
   temporal noise) was checked by capturing the engine window with `xdotool` + `import` and comparing
   crops with ImageMagick (`compare -metric AE`). `visual_capture`'s comparison covers this
   between variants, but there is no way to read a pixel's or a region's HDR value from one frame.
-  **Open:** see the offscreen texture fetch and pixel probe wishes.
+  **Done:** see the offscreen texture fetch and pixel probe wishes.
 
 ## Wish list
 
@@ -1021,23 +1038,60 @@ How to read the sections:
   panicked the editor with a wgpu validation error; depth is now copied whole and cropped), and a
   rejected copy must not end the process (the readback now runs in a validation error scope and
   returns the error). Not covered: multisampled targets (listed by their resolved copies) and the
-  web (the readback waits on the GPU).- ⬜ **Shader hot reload in development builds:** load WGSL from `src/shader` on disk when it
+  web (the readback waits on the GPU).
+- ✅ **Shader hot reload in development builds:** load WGSL from `src/shader` on disk when it
   exists and rebuild the affected pipelines on change (falling back to the built-in source, and
   keeping the old pipeline when the new one fails validation, with the error in `logs`). Most
   renderer iteration is shader-only and would no longer need a restart.
-- ⬜ **Format-preserving saves:** `project_save` keeps each file compact or indented as it found
+  **Done** (2026-10-15): shaders are read through `wgsl!` (`src/renderer/shader_source.rs`):
+  built-in text until a reload, then the disk text. A native engine whose source tree is on disk
+  polls `src/shader` (every 0.4 s, by modification time; `ENGINE_SHADER_DIR` points elsewhere,
+  `ENGINE_SHADER_RELOAD=0` turns it off) and calls `Renderer::reload_shaders`, which rebuilds,
+  inside a validation error scope, the main pass (PBR and error modules, depth prepass,
+  background; pipelines and shader materials rebuild lazily), every post-processing stage
+  including RT reflections, RT AO, the path tracer and FSR, and RT shadows. Composed sources are
+  checked with naga first. Any failure puts the previous text back and keeps every old pipeline;
+  the error goes to `logs` (target `shader`). The `shader_reload` tool (engine `shader.reload`)
+  does it on demand and returns `changed` and `not_reloaded` (changed files used only by passes
+  that are not rebuilt: shadow maps, skinning, particles, environment, HDR output). Verified in the
+  release editor: zeroing red in `final.wgsl` took effect on its own within a second
+  (displayed red 0, green and blue unchanged); a call to an undefined function was refused with
+  naga's message and the red-free pipeline kept running; restoring the file brought red back; with
+  path tracing on, zeroing blue in `pt_composite.wgsl` through `shader.reload` took effect (mean
+  blue 0.56 over a region, red and green unchanged); a change to `shadow.wgsl` came back in
+  `not_reloaded`. No wgpu errors. Limits: error line numbers count lines in the composed source
+  (naga shows the offending line, so it is findable); changes to Rust (layouts, uniforms) still
+  need a rebuild.
+- ✅ **Format-preserving saves:** `project_save` keeps each file compact or indented as it found
   it, and leaves files whose content did not change (including import `meta.json` mappings, see
-  B24) untouched.
-- ⬜ **Lathe shells:** `mesh_lathe {thickness}` (or allowing a profile that comes back down) for
-  cups, glasses, bowls and vases with an inner wall.
-- ⬜ **Pixel probe:** linear HDR values at viewport pixels from the last frame, for checking
-  brightness and noise with numbers instead of by eye. **Partly done:** `texture_fetch {texture:
-  "scene", points}` (and `display` for the tonemapped image) gives them; still open: the final
-  8-bit values as displayed (after anti-aliasing, grain and dither).
-- ⬜ **A held view for `screenshot`:** `screenshot {camera, settle_frames}` that keeps the pose
+  B24) untouched. **Done** (2026-10-15): `io::write_json` with `JsonLayout::Preserve` for scene
+  files, materials, `meta.json` and `project.json`; `project_save {compact}` still forces one
+  layout (true compact, false indented) and omitted keeps each file's. The editor's own saves
+  preserve too. Test: `repeated_captures_reuse_inline_material_files_and_compact_saves_roundtrip`
+  (a compact file stays compact and is not rewritten). On RT Lab: 2 files written instead of the
+  whole project, scene diff 1 line.
+- ✅ **Lathe shells:** `mesh_lathe {thickness}` (or allowing a profile that comes back down) for
+  cups, glasses, bowls and vases with an inner wall. **Done** (2026-10-15): `thickness` offsets
+  the (beveled) outer profile inward with mitred corners and closes the outline: flat rims at open
+  ends, a floor when the profile starts on the axis, a dome open below when it ends there. Profiles
+  whose inner wall would fold over are rejected. `mesh_compose` lathe parts take it too. Test:
+  `lathe_thickness_makes_closed_outward_facing_shells` (tube and tumbler volumes within 1 %,
+  outward winding everywhere, the floor at the thickness). A glass tumbler rendered with path
+  tracing shows its rim and inner floor.
+- ✅ **Pixel probe:** linear HDR values at viewport pixels from the last frame, for checking
+  brightness and noise with numbers instead of by eye. **Done:** `texture_fetch {texture:
+  "scene", points}` (and `display` for the tonemapped image) gives them, and (2026-10-15)
+  `screenshot {points, rect}` returns the final 8-bit values as displayed (after anti-aliasing,
+  grain and dither) at points, with per-channel min, max, mean and standard deviation over `rect`,
+  in the captured image's pixels. The shader reload checks above were measured with it.
+- ✅ **A held view for `screenshot`:** `screenshot {camera, settle_frames}` that keeps the pose
   for that many frames before capturing, without touching the scene's camera entity, for quick
   looks at temporal effects (`visual_capture` does this for comparisons; a single look should not
-  need a variant list).
+  need a variant list). **Done** (2026-10-15): the capture renders `settle_frames` frames
+  (up to 600) through its camera or aspect before capturing; other screenshots wait meanwhile so
+  none sees that camera. With path tracing on, the same pose without settling shows unconverged
+  grain and with 64 settle frames the denoised image. Test:
+  `held_screenshots_settle_before_capturing_and_report_displayed_pixels`.
 
 ## Tide Observatory: what worked well
 

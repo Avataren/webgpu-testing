@@ -198,6 +198,9 @@ pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
     driver: D,
     /// The graphics settings revision the window and surface last applied.
     applied_graphics: Option<u64>,
+    /// Reloads shaders when their files change, in builds run from the source tree.
+    #[cfg(not(target_arch = "wasm32"))]
+    shader_watcher: Option<crate::renderer::shader_source::ShaderWatcher>,
 }
 
 impl<D> WinitApp<D>
@@ -206,6 +209,12 @@ where
 {
     fn on_renderer_ready(&mut self, renderer: &mut Renderer) {
         self.core.on_renderer_ready(renderer);
+        // Created here rather than with the app, so its log line is not lost before
+        // logging starts.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.shader_watcher = crate::renderer::shader_source::ShaderWatcher::new();
+        }
 
         #[cfg(feature = "egui")]
         {
@@ -403,6 +412,8 @@ where
             platform: PlatformState::default(),
             driver,
             applied_graphics: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            shader_watcher: None,
         }
     }
 
@@ -604,6 +615,15 @@ where
                 let mut active_handle = self.core.run_update_stage(&frame);
 
                 if let Some(mut renderer) = self.platform.take_renderer() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if self
+                        .shader_watcher
+                        .as_mut()
+                        .is_some_and(|watcher| watcher.poll())
+                    {
+                        crate::renderer::shader_source::log_reload(&renderer.reload_shaders());
+                    }
+
                     #[cfg(feature = "egui")]
                     if let Some(window_handle) = self.platform.window().cloned() {
                         frame_timings::time("ui_build", || {

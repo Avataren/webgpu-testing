@@ -79,6 +79,120 @@ pub(super) struct CaptureRequest {
     /// Receives the captured pixels, as they were cropped and scaled for the reply, just
     /// before the reply is sent. For in-process users that compare frames.
     pub(super) pixels: Option<Sender<image::RgbaImage>>,
+    /// Frames still to render through `view` / `aspect` before capturing, so temporal
+    /// effects (TAA, the path tracer's denoiser) converge on the held view.
+    pub(super) settle_frames: u32,
+    /// Displayed 8-bit values to report from the captured image.
+    pub(super) probe: PixelProbe,
+}
+
+/// Pixels of a screenshot to report as numbers: the final 8-bit values as displayed, after
+/// anti-aliasing, grain and dither. Coordinates are in the captured image before it is
+/// shrunk to `max_size` (the window, or the viewport for viewport captures).
+#[derive(Debug, Default)]
+pub(super) struct PixelProbe {
+    points: Vec<[u32; 2]>,
+    /// [x, y, width, height] to summarize per channel.
+    rect: Option<[u32; 4]>,
+}
+
+impl PixelProbe {
+    fn parse(params: &Value) -> Result<Self, String> {
+        let pixels = |value: &Value, len: usize, what: &str| -> Result<Vec<u32>, String> {
+            value
+                .as_array()
+                .filter(|items| items.len() == len)
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .map(|item| item.as_u64().and_then(|n| u32::try_from(n).ok()))
+                        .collect()
+                })
+                .ok_or_else(|| format!("{what} must be {len} whole pixels"))
+        };
+        let mut probe = Self::default();
+        if let Some(points) = params.get("points").filter(|value| !value.is_null()) {
+            let points = points
+                .as_array()
+                .ok_or("points must be a list of [x, y] pixels")?;
+            if points.len() > 1024 {
+                return Err("at most 1024 points".into());
+            }
+            for point in points {
+                let xy = pixels(point, 2, "each point")?;
+                probe.points.push([xy[0], xy[1]]);
+            }
+        }
+        if let Some(rect) = params.get("rect").filter(|value| !value.is_null()) {
+            let rect = pixels(rect, 4, "rect [x, y, width, height]")?;
+            if rect[2] == 0 || rect[3] == 0 {
+                return Err("rect needs a positive width and height".into());
+            }
+            probe.rect = Some([rect[0], rect[1], rect[2], rect[3]]);
+        }
+        Ok(probe)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.points.is_empty() && self.rect.is_none()
+    }
+
+    /// The values at the points and the rectangle's per-channel statistics.
+    fn read(&self, image: &image::RgbaImage, result: &mut Value) -> Result<(), String> {
+        let (width, height) = image.dimensions();
+        let outside = |what: String| {
+            format!("{what} is outside the {width}x{height} captured image (source_width x source_height)")
+        };
+        if !self.points.is_empty() {
+            let mut values = Vec::with_capacity(self.points.len());
+            for &[x, y] in &self.points {
+                if x >= width || y >= height {
+                    return Err(outside(format!("point [{x}, {y}]")));
+                }
+                values.push(json!({ "x": x, "y": y, "rgba": image.get_pixel(x, y).0 }));
+            }
+            result["points"] = Value::Array(values);
+        }
+        if let Some([x, y, w, h]) = self.rect {
+            if x.saturating_add(w) > width || y.saturating_add(h) > height {
+                return Err(outside(format!("rect [{x}, {y}, {w}, {h}]")));
+            }
+            let mut min = [u8::MAX; 4];
+            let mut max = [0u8; 4];
+            let mut sum = [0f64; 4];
+            let mut sum_sq = [0f64; 4];
+            for py in y..y + h {
+                for px in x..x + w {
+                    for (channel, &value) in image.get_pixel(px, py).0.iter().enumerate() {
+                        min[channel] = min[channel].min(value);
+                        max[channel] = max[channel].max(value);
+                        sum[channel] += value as f64;
+                        sum_sq[channel] += (value as f64).powi(2);
+                    }
+                }
+            }
+            let count = (w as f64) * (h as f64);
+            let mean = sum.map(|total| total / count);
+            let round = |value: f64| (value * 1000.0).round() / 1000.0;
+            let stddev: Vec<f64> = (0..4)
+                .map(|channel| {
+                    round(
+                        (sum_sq[channel] / count - mean[channel].powi(2))
+                            .max(0.0)
+                            .sqrt(),
+                    )
+                })
+                .collect();
+            result["rect"] = json!({
+                "rect": [x, y, w, h],
+                "min": min,
+                "max": max,
+                "mean": mean.map(round),
+                "stddev": stddev,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl CaptureRequest {
@@ -128,6 +242,9 @@ pub struct RemoteHub {
     pub(super) captures: Vec<CaptureRequest>,
     /// Whether the frame being rendered is the first capture's own frame.
     capturing_own_frame: bool,
+    /// Whether the frame being rendered only settles the first capture's view, so no
+    /// capture is due.
+    settling: bool,
     waiters: Vec<Waiter>,
     scene_baseline: Option<SceneBaseline>,
     profile: Option<ProfileCapture>,
@@ -164,6 +281,7 @@ impl RemoteHub {
             simulation_input: Vec::new(),
             captures: Vec::new(),
             capturing_own_frame: false,
+            settling: false,
             waiters: Vec::new(),
             scene_baseline: None,
             profile: None,
@@ -268,7 +386,7 @@ impl RemoteHub {
 
     /// Whether a screenshot is waiting for the current frame.
     pub fn has_pending_captures(&self) -> bool {
-        !self.captures.is_empty()
+        !self.captures.is_empty() && !self.settling
     }
 
     /// Resolve the `camera` parameter of new screenshot requests against the scene,
@@ -296,6 +414,24 @@ impl RemoteHub {
     /// Call once per frame before rendering. A screenshot with its own camera or aspect
     /// ratio gets a frame to itself; [`Self::complete_captures`] then answers only that one.
     pub fn capture_frame_override(&mut self) -> Option<CaptureOverride> {
+        // A held view renders through the capture's camera for its settle frames first,
+        // capturing nothing (later screenshots wait so they never see that camera).
+        self.settling = false;
+        if let Some(request) = self
+            .captures
+            .first_mut()
+            .filter(|request| request.settle_frames > 0)
+        {
+            request.settle_frames -= 1;
+            self.settling = true;
+            self.capturing_own_frame = false;
+            if request.needs_own_frame() {
+                return Some(CaptureOverride {
+                    camera: request.view,
+                    aspect: request.aspect,
+                });
+            }
+        }
         let request = self
             .captures
             .first()
@@ -433,6 +569,13 @@ impl RemoteHub {
                     },
                     None => None,
                 };
+                let probe = match PixelProbe::parse(params) {
+                    Ok(probe) => probe,
+                    Err(message) => {
+                        request.reply.send(Err(message));
+                        return None;
+                    }
+                };
                 let max_size = opt_u64(params, "max_size")
                     .map_or(DEFAULT_SCREENSHOT_MAX_SIZE, |size| {
                         size.clamp(16, 8192) as u32
@@ -450,6 +593,8 @@ impl RemoteHub {
                     view: None,
                     aspect,
                     pixels: None,
+                    settle_frames: opt_u64(params, "settle_frames").unwrap_or(0).min(600) as u32,
+                    probe,
                     reply: request.reply,
                 });
                 None
@@ -637,6 +782,10 @@ fn encode_capture(
     }
 
     let (source_width, source_height) = image.dimensions();
+    let mut probed = json!({});
+    if !request.probe.is_empty() {
+        request.probe.read(&image, &mut probed)?;
+    }
     let longest = source_width.max(source_height);
     if longest > request.max_size {
         let scale = request.max_size as f32 / longest as f32;
@@ -652,6 +801,9 @@ fn encode_capture(
         "source_width": source_width,
         "source_height": source_height,
     });
+    if let (Value::Object(result), Value::Object(probed)) = (&mut result, probed) {
+        result.extend(probed);
+    }
 
     // Frames only wanted as pixels (a comparison's settle frames) skip the encoding.
     if request.save_path.is_some() || request.inline {
@@ -742,5 +894,57 @@ mod tests {
         hub.end_frame(0.016);
         let reply = receiver.try_recv().expect("wait answered").unwrap();
         assert_eq!(reply["frames_waited"], 2);
+    }
+
+    #[test]
+    fn held_screenshots_settle_before_capturing_and_report_displayed_pixels() {
+        let mut hub = RemoteHub::detached();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let request = RemoteRequest {
+            method: "screenshot".into(),
+            params: json!({
+                "aspect": 2.0,
+                "settle_frames": 2,
+                "points": [[0, 0], [3, 1]],
+                "rect": [1, 0, 2, 2],
+                "inline": false,
+            }),
+            reply: Reply::new(sender),
+        };
+        assert!(hub.try_defer(request).is_none());
+        // Two frames render through the held view without capturing anything.
+        for _ in 0..2 {
+            assert_eq!(hub.capture_frame_override().unwrap().aspect, Some(2.0));
+            assert!(!hub.has_pending_captures());
+            hub.end_frame(0.016);
+        }
+        assert_eq!(hub.capture_frame_override().unwrap().aspect, Some(2.0));
+        assert!(hub.has_pending_captures());
+        let rgba: Vec<u8> = (0..8u8).flat_map(|i| [i * 10, 100, 200 - i, 255]).collect();
+        hub.complete_captures(
+            Ok(FrameCapture {
+                width: 4,
+                height: 2,
+                rgba,
+            }),
+            None,
+        );
+        let reply = receiver.try_recv().expect("screenshot answered").unwrap();
+        assert_eq!(reply["points"][0]["rgba"], json!([0, 100, 200, 255]));
+        assert_eq!(reply["points"][1]["rgba"], json!([70, 100, 193, 255]));
+        // Pixels 1, 2, 5 and 6.
+        assert_eq!(reply["rect"]["min"], json!([10, 100, 194, 255]));
+        assert_eq!(reply["rect"]["max"], json!([60, 100, 199, 255]));
+        assert_eq!(reply["rect"]["mean"][0], 35.0);
+        assert_eq!(reply["rect"]["stddev"][1], 0.0);
+        assert!(hub.capture_frame_override().is_none());
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        hub.try_defer(RemoteRequest {
+            method: "screenshot".into(),
+            params: json!({ "points": [[1]] }),
+            reply: Reply::new(sender),
+        });
+        assert!(receiver.try_recv().unwrap().is_err());
     }
 }

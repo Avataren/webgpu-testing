@@ -7,6 +7,7 @@
 //! or HDR10 (BT.2020 primaries, PQ). The simulated mode runs the same path on an SDR
 //! surface, compressing highlights to fit.
 
+use crate::renderer::shader_source::wgsl;
 use crate::settings::{HdrOutputSetting, RenderSettings};
 use bytemuck::{Pod, Zeroable};
 use half::f16;
@@ -184,7 +185,7 @@ impl PresentStage {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PresentHdrShader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shader/present_hdr.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl!("present_hdr.wgsl").into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("PresentPipelineLayout"),
@@ -511,7 +512,7 @@ mod tests {
 
     #[test]
     fn present_shader_validates() {
-        let source = include_str!("../shader/present_hdr.wgsl");
+        let source = wgsl!("present_hdr.wgsl");
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
         naga::valid::Validator::new(

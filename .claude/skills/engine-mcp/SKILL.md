@@ -75,7 +75,13 @@ engine you launched; save first).
   around, and `aspect: "16:9"` (or `"4:3"`, `1.5`, or `viewport_size: [w, h]`) lays the
   game out at another window shape for the capture: scripts see it through
   `get_viewport_size()` and HUDs anchor to it, so check the game camera and HUD at both.
-  `viewport_preview` keeps a shape on across several calls; `playtest` takes `aspect` too. `camera_set` edits the game camera entity
+  `viewport_preview` keeps a shape on across several calls; `playtest` takes `aspect` too.
+  A screenshot camera other than the current view is a camera cut: TAA and the path tracer's
+  denoiser restart, so one frame looks noisy or soft. Add `settle_frames: 32` (more for path
+  tracing) to hold the pose that long before capturing; nothing in the scene moves. Use
+  `visual_capture` to compare settings. `screenshot {points: [[x, y]], rect: [x, y, w, h]}`
+  also returns the final displayed 8-bit values there (after tonemapping, AA, grain and
+  dither), with mean and standard deviation over `rect`, in the captured image's pixels. `camera_set` edits the game camera entity
   while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
 - `environment_set` controls background, ambient light and HDR sky. The scene renders
   in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO,
@@ -113,6 +119,14 @@ engine you launched; save first).
   (`mode: "tonemap"` for HDR colour, `"false_color"` for one channel such as depth or a history
   length). It reads what the last frame left and changes nothing on screen; prefer it to adding
   debug code. Native builds only.
+- Shader edits need no rebuild: an engine built from this repository watches `src/shader` and
+  rebuilds the main pass, post-processing (including the path tracer and RT passes) and RT
+  shadows when a `.wgsl` file is saved (`shader_reload` does it on demand and returns what
+  changed). A shader that fails to compile changes nothing: the error is in `logs` (target
+  `shader`) and the old pipelines keep running. `not_reloaded` lists changed files used only by
+  passes that are not rebuilt (shadow maps, skinning, particles, environment, HDR output);
+  those, and any Rust change, need `engine_launch {restart: true}`. Save the project first:
+  a restart loses unsaved edits.
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`
@@ -124,7 +138,8 @@ engine you launched; save first).
   with notes on problems and a waveform/spectrogram image.
 - Procedural geometry: `mesh_lathe {profile = [[radius, height], ...]}` turns a profile
   around Y (bottom to top, equal heights for ledges, zero radius for poles); `bevel` and
-  `bevel_segments` soften profile corners. `mesh_extrude
+  `bevel_segments` soften profile corners; `thickness` makes a hollow vessel with an inner
+  wall (a cup, glass, bowl, vase, or a bell when the profile ends at radius 0). `mesh_extrude
   {polygon, depth, bevel}` extrudes a concave XY outline along centered Z, with rounded
   rim bevels (`bevel_segments`), taper and twist (`steps` controls subdivision).
   `mesh_compose {parts}` joins locally transformed `shape: "lathe"`, `"extrude"` or
@@ -322,7 +337,8 @@ printed.
 ## Persisting work
 
 - `project_save` writes the project and returns once the files are on disk, listing them.
-  It refuses while playing; stop first.
+  It refuses while playing; stop first. Unchanged files are left alone and each scene file
+  keeps its compact or indented layout, so a save's diff is the real change.
 - `environment_set` creates an Environment entity when the scene has none, because only
   that entity round-trips (the project-level environment is not restored on load).
 - Script and texture paths inside the project are saved relative to it, so projects

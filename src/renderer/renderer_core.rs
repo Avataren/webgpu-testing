@@ -199,6 +199,15 @@ struct FrameState {
     shadow_invocations: Vec<ShadowInvocation>,
 }
 
+/// What [`Renderer::reload_shaders`] did.
+#[derive(Debug, Clone, Default)]
+pub struct ShaderReload {
+    /// Shader files (relative to `src/shader`) whose text changed.
+    pub changed: Vec<String>,
+    /// Changed files no rebuilt pass uses: they apply after a restart.
+    pub not_reloaded: Vec<String>,
+}
+
 pub struct Renderer {
     // CRITICAL: context must be first so it drops LAST (after all GPU resources)
     // The Device in context must outlive all buffers, textures, pipelines, etc.
@@ -445,6 +454,102 @@ impl Renderer {
     /// Whether hardware ray tracing is available for ray-traced effects, or why not.
     pub fn ray_tracing_support(&self) -> &crate::renderer::raytracing::RayTracingSupport {
         &self.ray_tracing_support
+    }
+
+    /// Read the WGSL sources from disk again (see [`crate::renderer::shader_source`]) and
+    /// rebuild the passes that use them: the main pass (PBR, shader materials, depth
+    /// prepass, background), every post-processing pass including the ray-traced ones and
+    /// the path tracer, and ray-traced shadows. A shader that fails to compile leaves every
+    /// pipeline as it was and returns the compiler's message; the previous sources stay in
+    /// effect. Temporal histories start over.
+    ///
+    /// Shadow maps, skinning, particles, the environment and HDR presentation keep their
+    /// pipelines until a restart; the result lists changed files that only they use.
+    pub fn reload_shaders(&mut self) -> Result<ShaderReload, String> {
+        use crate::renderer::shader_source;
+
+        let staged = shader_source::stage_from_disk()?;
+        let device = self.context.device.clone();
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let rebuilt = self.rebuild_shader_pipelines();
+        let device_error = pollster::block_on(validation.pop());
+        let rebuilt = match (rebuilt, device_error) {
+            (Ok(rebuilt), None) => rebuilt,
+            (Err(error), _) => {
+                shader_source::restore(staged);
+                return Err(error);
+            }
+            (Ok(_), Some(error)) => {
+                shader_source::restore(staged);
+                return Err(error.to_string());
+            }
+        };
+        let used = shader_source::finish();
+        let (main, post, rt_shadows) = rebuilt;
+        self.pipeline.install_shaders(main);
+        self.postprocess.install_pipelines(post);
+        if let Some(stage) = rt_shadows {
+            self.rt_shadows = Some(stage);
+        }
+        self.prev_view_proj = None;
+        let not_reloaded = staged
+            .changed
+            .iter()
+            .filter(|file| !used.contains(*file))
+            .cloned()
+            .collect();
+        Ok(ShaderReload {
+            changed: staged.changed,
+            not_reloaded,
+        })
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn rebuild_shader_pipelines(
+        &self,
+    ) -> Result<
+        (
+            crate::renderer::internal::pipeline::RebuiltShaders,
+            crate::renderer::postprocess::RebuiltPostProcess,
+            Option<crate::renderer::raytracing::RtShadowStage>,
+        ),
+        String,
+    > {
+        let context = &self.context;
+        let main = self
+            .pipeline
+            .rebuild_shaders(
+                context,
+                &self.camera_buffer,
+                &self.objects_buffer,
+                &self.lights_buffer,
+                context.sample_count,
+            )
+            .map_err(|error| format!("main pass: {error}"))?;
+        let scene_layout = self.ray_tracing.as_ref().map(|scene| scene.layout());
+        let textures = (self.texture_binder.global_bind_group().is_some()
+            && context.device.limits().max_bind_groups >= 5)
+            .then(|| self.texture_binder.bind_layout());
+        let ray_traced = scene_layout.map(|scene| crate::renderer::postprocess::RayTracedLayouts {
+            lights: &self.lights_buffer.bind_layout,
+            scene,
+            textures,
+        });
+        let post = self
+            .postprocess
+            .rebuild_pipelines(&context.device, ray_traced.as_ref())?;
+        let rt_shadows = match (&self.rt_shadows, scene_layout) {
+            (Some(_), Some(scene)) => Some(
+                crate::renderer::raytracing::RtShadowStage::new(
+                    &context.device,
+                    &self.camera_buffer.bind_layout,
+                    scene,
+                )
+                .map_err(|error| format!("ray-traced shadows: {error}"))?,
+            ),
+            _ => None,
+        };
+        Ok((main, post, rt_shadows))
     }
 
     /// Every render target that can be read back by name, with what its channels hold

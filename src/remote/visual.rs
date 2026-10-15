@@ -637,6 +637,8 @@ impl VisualCapture {
             view: self.view,
             aspect: None,
             pixels: pixel_sender,
+            settle_frames: 0,
+            probe: Default::default(),
         });
         self.pending = Some(PendingImage {
             receiver,

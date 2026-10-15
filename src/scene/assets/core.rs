@@ -9,6 +9,7 @@ use super::serialization::{
     ImportedGltfMeta, SerializedAnimationClip, SerializedLuaScriptSource, SerializedTransform,
 };
 use crate::asset::{Assets, Handle, MaterialAsset, MeshData};
+use crate::io::{write_json, JsonLayout};
 use crate::project::{normalize_absolute_path, relativize_path_to_project, CONTENT_DIR};
 use crate::renderer::postprocess::{LegacyColorGrading, PostProcessEffects, PostProcessSettings};
 use crate::scene::animation::{AnimationClip, AnimationState};
@@ -244,10 +245,8 @@ impl SceneAsset {
                 .get_or_insert_with(|| SceneMaterialHandle::new(rel_path.clone()));
             handle.set_path(rel_path.clone());
 
-            let first_write = written.insert(rel_path.clone());
-            if first_write || !abs_path.exists() {
-                let json = serde_json::to_string_pretty(&material_data)?;
-                fs::write(&abs_path, json)?;
+            if written.insert(rel_path.clone()) {
+                write_json(&abs_path, &material_data, JsonLayout::Preserve)?;
             }
 
             entity.material_data = Some(material_data);
@@ -327,12 +326,26 @@ impl SceneAsset {
                 BTreeMap::new()
             };
 
+            // The mapping is the import's default for new instances, shared by every scene
+            // that uses the model. Scenes may point the same glTF material at different
+            // files, so an entry that still names an existing file is kept; otherwise
+            // whichever scene saved last would win, changing the file on every save.
             for (source_name, meta) in sources {
-                existing.insert(source_name, meta);
+                let entry = existing.entry(source_name).or_default();
+                let keep = |path: &PathBuf| project_root.join(path).is_file();
+                for (index, path) in meta.materials {
+                    if !entry.materials.get(&index).is_some_and(keep) {
+                        entry.materials.insert(index, path);
+                    }
+                }
+                for (key, path) in meta.materials_by_key {
+                    if !entry.materials_by_key.get(&key).is_some_and(keep) {
+                        entry.materials_by_key.insert(key, path);
+                    }
+                }
             }
 
-            let json = serde_json::to_string_pretty(&existing).map_err(std::io::Error::other)?;
-            fs::write(meta_path, json)?;
+            write_json(&meta_path, &existing, JsonLayout::Preserve)?;
         }
 
         Ok(())

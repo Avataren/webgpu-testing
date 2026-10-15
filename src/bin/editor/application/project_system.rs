@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use egui::Ui;
 use log::{error, info, warn};
 use wgpu_cube::app::RuntimeMode;
+use wgpu_cube::io::JsonLayout;
 use wgpu_cube::project::{ProjectManifest, SceneDocument};
 use wgpu_cube::scene::{
     InstantiatedSceneAsset, Name, SceneLibrary, Transform, TransformComponent, Visible,
@@ -381,7 +382,7 @@ impl ProjectSystem {
         &mut self,
         ctx: &mut EditorContext<'_, '_, '_>,
         dir: PathBuf,
-        compact: bool,
+        layout: JsonLayout,
     ) {
         let Some(gpu_ctx) = ctx.gpu_context_mut() else {
             self.controller
@@ -430,7 +431,7 @@ impl ProjectSystem {
                     }
                 }
 
-                if let Err(err) = manifest.save_to_dir_with_options(&dir, compact) {
+                if let Err(err) = manifest.save_to_dir_with_options(&dir, layout) {
                     error!("Failed to save project to {:?}: {err}", dir);
                     save_error = Some(err.to_string());
                     notification =
@@ -639,8 +640,8 @@ impl EditorSystem for ProjectSystem {
             self.handle_project_load(ctx, dir);
         }
 
-        if let Some((dir, compact)) = self.controller_mut().take_pending_save() {
-            self.handle_project_save(ctx, dir, compact);
+        if let Some((dir, layout)) = self.controller_mut().take_pending_save() {
+            self.handle_project_save(ctx, dir, layout);
         }
 
         if let Some(request) = self.controller_mut().take_pending_build() {

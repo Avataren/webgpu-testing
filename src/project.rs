@@ -1,4 +1,5 @@
 use crate::environment::{Environment, HdrBackground};
+use crate::io::{write_json, JsonLayout};
 use crate::renderer::postprocess::{LegacyColorGrading, PostProcessEffects};
 use crate::scene::loader::SceneImportDevice;
 use crate::scene::{
@@ -505,39 +506,53 @@ impl ProjectManifest {
         })
     }
 
+    /// Save, keeping each scene file compact or indented as it is on disk.
     pub fn save_to_dir(&self, dir: &Path) -> Result<(), ProjectError> {
-        self.save_to_dir_with_options(dir, false)
+        self.save_to_dir_with_options(dir, JsonLayout::Preserve)
     }
 
-    /// Save with optional compact scene JSON. The serialized scene data is identical.
-    pub fn save_to_dir_with_options(&self, dir: &Path, compact: bool) -> Result<(), ProjectError> {
+    /// Save with scene JSON in `layout`. The serialized scene data is the same either way.
+    /// Files whose content would not change are left untouched.
+    pub fn save_to_dir_with_options(
+        &self,
+        dir: &Path,
+        layout: JsonLayout,
+    ) -> Result<(), ProjectError> {
         fs::create_dir_all(dir)?;
 
         let mut manifest = self.clone();
         manifest.environment.prepare_for_save(dir)?;
-        for (document_id, asset) in &mut manifest.scene_assets {
-            asset.persist_material_assets_for_document(dir, document_id)?;
+        // In document order, so files shared between scenes (an imported model's material
+        // mapping) come out the same on every save.
+        let mut document_ids: Vec<String> = manifest.scene_assets.keys().cloned().collect();
+        document_ids.sort_by_key(|id| {
+            manifest
+                .scenes
+                .iter()
+                .position(|document| &document.id == id)
+                .unwrap_or(usize::MAX)
+        });
+        for document_id in document_ids {
+            let asset = manifest.scene_assets.get_mut(&document_id).unwrap();
+            asset.persist_material_assets_for_document(dir, &document_id)?;
             asset.relativize_script_paths(dir);
         }
 
-        let json = serde_json::to_string_pretty(&manifest)?;
-        fs::write(dir.join(PROJECT_FILE_NAME), json)?;
+        write_json(
+            &dir.join(PROJECT_FILE_NAME),
+            &manifest,
+            JsonLayout::Preserve,
+        )?;
 
         for document in &manifest.scenes {
             let Some(asset) = manifest.scene_assets.get(&document.id) else {
                 return Err(ProjectError::MissingSceneAsset(document.id.clone()));
             };
-            let scene_json = if compact {
-                serde_json::to_string(asset)
-            } else {
-                asset.to_json()
-            }
-            .map_err(ProjectError::Serialization)?;
             let scene_path = dir.join(&document.relative_path);
             if let Some(parent) = scene_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(scene_path, scene_json)?;
+            write_json(&scene_path, asset, layout)?;
         }
         let legacy_scene = dir.join(SCENE_FILE_NAME);
         if legacy_scene.exists() {
@@ -959,10 +974,19 @@ mod tests {
         // A new capture has inline data again, with no file handles from the last save.
         manifest.add_scene_asset(doc.id.clone(), make_asset([255, 0, 0, 255]));
         manifest
-            .save_to_dir_with_options(directory.path(), true)
+            .save_to_dir_with_options(directory.path(), JsonLayout::Compact)
             .unwrap();
         let compact = fs::read_to_string(&scene_path).unwrap();
         assert!(compact.len() < pretty.len() / 2);
+        // A plain save keeps the file compact, and leaves it alone when nothing changed.
+        let modified = fs::metadata(&scene_path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        manifest.save_to_dir(directory.path()).unwrap();
+        assert_eq!(fs::read_to_string(&scene_path).unwrap(), compact);
+        assert_eq!(
+            fs::metadata(&scene_path).unwrap().modified().unwrap(),
+            modified
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&compact).unwrap(),
             first

@@ -29,6 +29,10 @@ pub struct LatheOptions {
     pub bevel: f32,
     /// One subdivision gives a chamfer; more subdivisions round the profile corner.
     pub bevel_segments: u32,
+    /// Wall thickness for a hollow shell (cups, glasses, bowls, bells). The profile is the
+    /// outer wall; the inner wall is it offset this far inward, joined by flat rims at open
+    /// ends. Zero makes a solid of revolution. Caps are not used with a shell.
+    pub thickness: f32,
 }
 
 impl Default for LatheOptions {
@@ -40,6 +44,7 @@ impl Default for LatheOptions {
             crease_angle: 45.0,
             bevel: 0.0,
             bevel_segments: 3,
+            thickness: 0.0,
         }
     }
 }
@@ -444,6 +449,10 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
     if !options.crease_angle.is_finite() || !(0.0..=180.0).contains(&options.crease_angle) {
         return Err("crease_angle must be 0..=180 degrees".into());
     }
+    if !finite(&[options.thickness]) || options.thickness < 0.0 {
+        return Err("thickness must be finite and nonnegative".into());
+    }
+    let shell = options.thickness > 0.0;
     if options
         .profile
         .iter()
@@ -461,13 +470,19 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
             );
         }
     }
-    let profile = rounded_profile(options);
+    let mut profile = rounded_profile(options);
+    if shell {
+        profile = shell_profile(&profile, options.thickness)?;
+    }
     let p = &profile;
+    // A shell's outline comes back down its inner wall, and joins a pole on the outer wall
+    // to the inner one along the axis; that edge has no surface and is skipped.
+    let axis_edge = |edge: usize| p[edge][0] == 0.0 && p[edge + 1][0] == 0.0;
     let mut edge_normals = Vec::new();
     let mut distance = vec![0.0];
-    for pair in p.windows(2) {
+    for (edge, pair) in p.windows(2).enumerate() {
         let delta = Vec2::from(pair[1]) - Vec2::from(pair[0]);
-        if delta.length() <= EPS || delta.y < 0.0 || (pair[0][0] == 0.0 && pair[1][0] == 0.0) {
+        if delta.length() <= EPS || (!shell && (delta.y < 0.0 || axis_edge(edge))) {
             return Err(
                 "profile must rise bottom to top, with distinct points and no axis-only edge"
                     .into(),
@@ -476,7 +491,7 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
         edge_normals.push(Vec2::new(delta.y, -delta.x).normalize());
         distance.push(distance.last().unwrap() + delta.length());
     }
-    if p.last().unwrap()[1] - p[0][1] <= EPS {
+    if options.profile.last().unwrap()[1] - options.profile[0][1] <= EPS {
         return Err("lathe profile must have positive height".into());
     }
     let n = options.segments as usize;
@@ -489,6 +504,7 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
             (edge + 1 < edge_normals.len()).then_some(edge + 1)
         };
         neighbour
+            .filter(|&other| !axis_edge(other))
             .map(|other| {
                 let normal = edge_normals[other];
                 if own.dot(normal) >= cos_crease {
@@ -502,6 +518,10 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
     let mut data = empty();
     let mut previous_upper: Option<(Vec2, u32)> = None;
     for edge in 0..p.len() - 1 {
+        if axis_edge(edge) {
+            previous_upper = None;
+            continue;
+        }
         let mut rows = [0; 2];
         for (row, point) in [edge, edge + 1].into_iter().enumerate() {
             let normal = smooth(edge, point);
@@ -544,7 +564,7 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
             triangle(&mut data, a + 1, b, b + 1);
         }
     }
-    if options.caps {
+    if options.caps && !shell {
         for (point, sign) in [(p[0], -1.0), (*p.last().unwrap(), 1.0)] {
             if point[0] <= EPS {
                 continue;
@@ -577,6 +597,77 @@ pub fn lathe(options: &LatheOptions) -> Result<MeshData, String> {
     }
     check_budget(&data)?;
     Ok(data)
+}
+
+/// The closed outline of a hollow vessel: the outer profile up, a flat rim inward at an open
+/// top, the profile offset `thickness` inward back down, and a flat rim outward at an open
+/// bottom. Ends on the axis stay closed: a pole at the bottom becomes the vessel's floor, and
+/// one at the top a dome (the outer and inner poles are joined along the axis).
+fn shell_profile(outer: &[[f32; 2]], thickness: f32) -> Result<Vec<[f32; 2]>, String> {
+    let too_thick = || {
+        format!(
+            "thickness {thickness} is too large for this profile: the inner wall would fold over \
+             (keep it below the smallest radius and feature size)"
+        )
+    };
+    let points: Vec<Vec2> = outer.iter().map(|point| Vec2::from(*point)).collect();
+    let last = points.len() - 1;
+    let directions: Vec<Vec2> = points
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).normalize())
+        .collect();
+    let normals: Vec<Vec2> = directions.iter().map(|d| Vec2::new(d.y, -d.x)).collect();
+    let mut inner = Vec::with_capacity(points.len());
+    for (i, &point) in points.iter().enumerate() {
+        let offset = if i == 0 {
+            normals[0]
+        } else if i == last {
+            normals[last - 1]
+        } else {
+            // Mitre: both neighbouring inner edges stay `thickness` from their outer edges.
+            let mid = (normals[i - 1] + normals[i]).normalize_or_zero();
+            let cos = mid.dot(normals[i]);
+            if cos < 0.1 {
+                return Err(too_thick());
+            }
+            mid / cos
+        };
+        let mut inner_point = point - offset * thickness;
+        let end_direction = match i {
+            0 => Some(directions[0]),
+            _ if i == last => Some(directions[last - 1]),
+            _ => None,
+        };
+        // Open ends get flat rims: slide the end along its edge back to the outer height.
+        // Ends on the axis slide back onto it.
+        if let Some(direction) = end_direction {
+            if point.x <= EPS {
+                if direction.x.abs() > EPS {
+                    inner_point -= direction * (inner_point.x / direction.x);
+                }
+                inner_point.x = 0.0;
+            } else if direction.y > EPS {
+                inner_point += direction * ((point.y - inner_point.y) / direction.y);
+            }
+        }
+        if inner_point.x < -EPS {
+            return Err(too_thick());
+        }
+        inner_point.x = inner_point.x.max(0.0);
+        inner.push(inner_point);
+    }
+    // Every inner edge must run the same way as its outer edge, or the wall folds over.
+    for (edge, pair) in inner.windows(2).enumerate() {
+        if (pair[1] - pair[0]).dot(directions[edge]) <= EPS {
+            return Err(too_thick());
+        }
+    }
+    let mut outline: Vec<[f32; 2]> = outer.to_vec();
+    outline.extend(inner.iter().rev().map(|point| point.to_array()));
+    if points[0].x > EPS {
+        outline.push(outer[0]);
+    }
+    Ok(outline)
 }
 
 fn rounded_profile(options: &LatheOptions) -> Vec<[f32; 2]> {
@@ -1070,6 +1161,65 @@ mod tests {
             })
             .sum();
         assert!(volume > 0.5);
+    }
+
+    fn signed_volume(mesh: &MeshData) -> f32 {
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| {
+                Vec3::from(mesh.vertices[t[0] as usize].pos).dot(
+                    Vec3::from(mesh.vertices[t[1] as usize].pos)
+                        .cross(Vec3::from(mesh.vertices[t[2] as usize].pos)),
+                ) / 6.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn lathe_thickness_makes_closed_outward_facing_shells() {
+        let shell = |profile: Vec<[f32; 2]>, thickness: f32| {
+            lathe(&LatheOptions {
+                profile,
+                segments: 256,
+                thickness,
+                ..Default::default()
+            })
+        };
+        // An open tube: the volume between two cylinders, with flat rims at both ends.
+        let tube = shell(vec![[0.5, 0.0], [0.5, 1.0]], 0.1).unwrap();
+        assert_frames_and_winding(&tube);
+        let expected = std::f32::consts::PI * (0.25 - 0.16);
+        assert!((signed_volume(&tube) - expected).abs() < expected * 0.01);
+        // A tumbler with a floor: the outer solid less the hollow above the floor.
+        let tumbler = shell(vec![[0.0, 0.0], [0.4, 0.0], [0.4, 1.0]], 0.05).unwrap();
+        assert_frames_and_winding(&tumbler);
+        let pi = std::f32::consts::PI;
+        let expected = pi * 0.16 - pi * 0.35 * 0.35 * 0.95;
+        assert!((signed_volume(&tumbler) - expected).abs() < expected * 0.01);
+        let floor = tumbler
+            .vertices
+            .iter()
+            .filter(|v| v.normal == [0.0, 1.0, 0.0])
+            .map(|v| v.pos[1])
+            .fold(f32::MAX, f32::min);
+        assert!((floor - 0.05).abs() < 1e-5, "inner floor at {floor}");
+        // Slanted walls, a dome open at the bottom (a bell) and a sealed hollow ball.
+        for profile in [
+            vec![[0.0, 0.0], [0.2, 0.0], [0.5, 1.0]],
+            vec![[0.5, 0.0], [0.45, 0.5], [0.0, 1.0]],
+            vec![[0.0, 0.0], [0.5, 0.5], [0.0, 1.0]],
+        ] {
+            let mesh = shell(profile.clone(), 0.04).unwrap();
+            assert_frames_and_winding(&mesh);
+            let solid = shell(profile, 0.0).unwrap();
+            assert!(signed_volume(&mesh) > 0.0);
+            assert!(signed_volume(&mesh) < signed_volume(&solid) * 0.5);
+        }
+        // Walls thicker than the radius fold over.
+        assert!(shell(vec![[0.2, 0.0], [0.2, 1.0]], 0.3).is_err());
+        assert!(shell(vec![[0.5, 0.0], [0.5, 1.0]], -0.1).is_err());
     }
 
     #[test]

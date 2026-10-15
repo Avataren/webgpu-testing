@@ -5,6 +5,7 @@
 //! upscaled image in the output region of the TAA target, after a tenth that marks what
 //! was blended over the opaque scene (particles, transparent surfaces) as reactive.
 
+use crate::renderer::shader_source::wgsl;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2};
 
@@ -290,7 +291,7 @@ fn buffer(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 
 pub(super) fn shader_source() -> String {
     ShaderBuilder::new()
-        .with_module(include_str!("../../shader/postprocess/fsr3_upscaler.wgsl"))
+        .with_module(wgsl!("postprocess/fsr3_upscaler.wgsl"))
         .build_modules_only()
 }
 

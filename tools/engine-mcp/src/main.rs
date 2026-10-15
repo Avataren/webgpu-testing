@@ -1260,7 +1260,11 @@ impl Server {
             "project": directory.join("project.json").display().to_string(),
             "scenes": written.iter().filter(|path| Path::new(path).starts_with(Path::new("content").join("scenes"))).collect::<Vec<_>>(),
             "written_count": written.len(),
-            "compact": args["compact"].as_bool().unwrap_or(false),
+            "layout": match args["compact"].as_bool() {
+                Some(true) => "compact",
+                Some(false) => "indented",
+                None => "as found on disk",
+            },
         });
         if args["verbose"].as_bool().unwrap_or(false) {
             report["written"] = json!(written);

@@ -641,7 +641,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Viewing ----
         Tool {
             name: "screenshot",
-            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame (a few with aspect or viewport_size). In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos or the editor grid and without moving the view. camera can also be a one-off pose {position, target, fov_deg} that looks around without editing anything. aspect previews the framing at another window shape (e.g. \"16:9\", \"4:3\").",
+            description: "Capture what the engine window shows (including the editor UI), or only the scene viewport, as an image. Takes one frame (a few with aspect or viewport_size). In editor mode the viewport shows the editor's view camera; pass camera: \"game\" (or a camera entity) to render that frame through the game camera instead, without gizmos or the editor grid and without moving the view. camera can also be a one-off pose {position, target, fov_deg} that looks around without editing anything. A camera other than the current view is a camera cut: temporal effects (TAA, the path tracer's denoiser) restart, so a single frame shows them unconverged; pass settle_frames to hold the view that many frames first (nothing moves, the game keeps running), or use visual_capture to compare settings. aspect previews the framing at another window shape (e.g. \"16:9\", \"4:3\").",
             schema: object(json!({
                 "camera": { "anyOf": [
                     { "type": "integer" },
@@ -657,6 +657,9 @@ pub fn tools() -> Vec<Tool> {
                 "aspect": { "anyOf": [{ "type": "number" }, { "type": "string" }], "description": "Lay the game out at this width/height, as a number (1.78) or \"16:9\", in the largest region of that shape inside the viewport, and capture it. The layout is real for the capture: scripts see the shape through get_viewport_size() (cameras fitted to the view adapt) and HUDs anchor to it. Use it to check framing at 16:9 and 4:3. Implies target viewport." },
                 "viewport_size": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2, "description": "Like aspect, but an exact [width, height] in pixels (shrunk to fit if the viewport is smaller), e.g. [1280, 720] or a phone's [390, 844]" },
                 "target": { "type": "string", "enum": ["window", "viewport"], "description": "window (the default) is the whole engine window; viewport is just the scene view. With camera or aspect the default is viewport." },
+                "settle_frames": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Render this many frames through camera / aspect before capturing, so TAA and the path tracer's denoiser converge on the held view (32 or more for path tracing). The scene's cameras are not touched; in play mode the game keeps running (runtime_set {time_scale: 0} freezes it). Without camera or aspect it only waits" },
+                "points": { "type": "array", "maxItems": 1024, "items": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 }, "description": "[[x, y], ...] pixels whose final displayed 8-bit RGBA to return (after tonemapping, anti-aliasing, grain and dither), in the captured image before max_size shrinks it (source_width x source_height: the window, or the viewport). For HDR values before tonemapping use texture_fetch {texture: \"scene\"}" },
+                "rect": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 4, "maxItems": 4, "description": "[x, y, width, height] in the same pixels: returns per-channel min, max, mean and standard deviation of the displayed 8-bit values, for brightness and noise checks" },
                 "max_size": { "type": "integer", "description": "Longest side in pixels (default 1280)" },
                 "save_path": { "type": "string", "description": "Also write the PNG here" }
             }), &[]),
@@ -894,6 +897,12 @@ pub fn tools() -> Vec<Tool> {
             action: Action::Local,
         },
         Tool {
+            name: "shader_reload",
+            description: "Read the renderer's WGSL from src/shader on disk again and rebuild the passes that use it, without a rebuild or restart: the main pass (PBR, shader materials, depth prepass, background), every post-processing pass including ray-traced reflections, RT AO and the path tracer with its denoiser, and ray-traced shadows. A running engine built from this repository also does this by itself when a .wgsl file is saved (log target \"shader\"). A shader that fails to compile changes nothing: the old pipelines keep running and the error comes back with naga's message. Returns the changed files, and not_reloaded: changed files only used by passes that are not rebuilt (shadow maps, skinning, particles, environment, HDR output), which need engine_launch {restart: true}. Rust-side changes (bind group layouts, uniforms, new passes) still need a rebuild. Native builds only.",
+            schema: empty(),
+            action: Action::Engine("shader.reload"),
+        },
+        Tool {
             name: "logs",
             description: "Recent engine log lines (scripts log with target \"script\"; script errors appear here too). Pass after = latest_seq from a previous call to get only new lines.",
             schema: object(json!({
@@ -931,11 +940,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_save",
-            description: "Editor only: save scenes, environment and editor camera to the project directory or path. Stop play first. Returns after writing, with project/scene paths and a written-file count. verbose includes all changed paths; compact removes scene JSON whitespace.",
+            description: "Editor only: save scenes, environment and editor camera to the project directory or path. Stop play first. Returns after writing, with project/scene paths and a written-file count. Files whose content did not change are not rewritten, and each scene file keeps the layout it has on disk (compact or indented; new files are indented) unless compact is given. verbose includes all changed paths.",
             schema: object(json!({
                 "path": { "type": "string" },
                 "verbose": { "type": "boolean", "default": false },
-                "compact": { "type": "boolean", "default": false, "description": "Write compact scene JSON, preserving the same data and embedded meshes" }
+                "compact": { "type": "boolean", "description": "true writes every scene file compact, false indents every one; omit to keep each file's layout. Same data and embedded meshes either way" }
             }), &[]),
             action: Action::Local,
         },
@@ -1089,7 +1098,8 @@ fn geometry_tools() -> Vec<Tool> {
         "caps": {"type": "boolean", "default": true},
         "crease_angle": {"type": "number", "minimum": 0, "maximum": 180, "default": 45, "description": "Profile edges meeting above this angle stay sharp; others share smooth normals"},
         "bevel": {"type": "number", "minimum": 0, "default": 0, "description": "Trim distance along edges at each profile corner; clamped to fit short edges. Softens turned bases, collars and crowns"},
-        "bevel_segments": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3, "description": "1 chamfers profile corners; 2..8 rounds them"}
+        "bevel_segments": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3, "description": "1 chamfers profile corners; 2..8 rounds them"},
+        "thickness": {"type": "number", "minimum": 0, "default": 0, "description": "Wall thickness for a hollow shell: the profile is the outer wall and the inner wall is offset this far inward, joined by flat rims at open ends. A profile starting at radius 0 gets a floor (cups, glasses, bowls, vases); one ending at radius 0 is a dome open below (bells, lampshades). caps is ignored. Must stay below the smallest radius and feature size"}
     });
     let extrude = json!({
         "polygon": {"type": "array", "items": point, "minItems": 3, "maxItems": 256, "description": "Simple XY polygon in either winding; concave outlines supported, holes/self-intersections rejected. Optional repeated closing point"},
@@ -1145,7 +1155,7 @@ fn geometry_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "mesh_lathe",
-            description: "Turn a radius/height profile around Y into a procedural mesh with UVs, normals, tangents, end caps, configurable sharp creases and optional rounded profile bevels. Ideal for chess bases, stems, finials, vases and balusters. Creates one entity, or replaces entity's mesh while preserving its material. Accepts transforms/material/parent. Identical geometry shares a GPU mesh; project_save persists it. Returns bounds, counts and a reproducible recipe.",
+            description: "Turn a radius/height profile around Y into a procedural mesh with UVs, normals, tangents, end caps, configurable sharp creases and optional rounded profile bevels. Ideal for chess bases, stems, finials, vases and balusters; thickness makes hollow vessels (cups, glasses, bowls, bells). Creates one entity, or replaces entity's mesh while preserving its material. Accepts transforms/material/parent. Identical geometry shares a GPU mesh; project_save persists it. Returns bounds, counts and a reproducible recipe.",
             schema: object(Value::Object(lathe_props), &["profile"]),
             action: Action::Engine("mesh.lathe"),
         },

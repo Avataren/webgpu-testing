@@ -1,3 +1,4 @@
+use crate::renderer::shader_source::wgsl;
 use bytemuck::{bytes_of, Pod, Zeroable};
 use glam::Mat4;
 
@@ -21,7 +22,7 @@ impl ParticleShadowResources {
     pub(crate) fn new(device: &wgpu::Device, particle_layout: &wgpu::BindGroupLayout) -> Self {
         let shader_source = ShaderBuilder::new()
             .with_module(GPU_PARTICLE_COMMON)
-            .build(include_str!("../../shader/particle_shadow.wgsl"));
+            .build(wgsl!("particle_shadow.wgsl"));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ParticleShadowShader"),
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
