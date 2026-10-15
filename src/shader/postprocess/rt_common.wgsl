@@ -231,15 +231,22 @@ struct RtMaterial {
     unlit : bool,
 };
 
+// A hit surface's material data, from the particle materials for a particle system.
+// Particles are never transmissive (particle_render.wgsl draws no transmission), so rays
+// stop at them instead of refracting through.
+fn rt_surface_material(surface : RtSurface) -> MaterialData {
+    if (surface.instance_flags & RT_INSTANCE_PARTICLES) != 0u {
+        var material = rt_particle_materials[surface.material_index];
+        material.transmission = 0.0;
+        return material;
+    }
+    return rt_materials[surface.material_index];
+}
+
 fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -> RtMaterial {
     let surface = rt_surface(hit, direction);
     let particle = (surface.instance_flags & RT_INSTANCE_PARTICLES) != 0u;
-    var material : MaterialData;
-    if particle {
-        material = rt_particle_materials[surface.material_index];
-    } else {
-        material = rt_materials[surface.material_index];
-    }
+    let material = rt_surface_material(surface);
     let flags = material.material_flags;
     let facing = max(abs(dot(surface.normal, direction)), 0.05);
     let lod_base = surface.uv_density + log2(max(cone_width, 1e-6) / facing);
@@ -275,9 +282,8 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
         out.occlusion = rt_sample_texture(material.occlusion_texture, surface.uv, lod_base, nearest).r;
     }
     if particle {
-        // As particle_render.wgsl, which draws neither emission nor transmission.
+        // As particle_render.wgsl, which draws no emission (nor transmission, above).
         out.emissive = vec3<f32>(0.0);
-        out.transmission = 0.0;
     }
     return out;
 }

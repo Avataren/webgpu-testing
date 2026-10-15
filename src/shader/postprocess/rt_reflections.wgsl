@@ -169,7 +169,7 @@ fn rt_seen_through(
     cone_width : f32,
 ) -> vec3<f32> {
     let surface = rt_surface(hit, direction);
-    let data = rt_materials[surface.material_index];
+    let data = rt_surface_material(surface);
     let ior = max(data.ior, 1.0);
     let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(direction, material.normal), 0.0, 1.0), 5.0);
@@ -402,7 +402,7 @@ fn rt_refraction_path(
         travelled = travelled + hit.t;
         // Normal facing the ray: back into the medium the ray travels in.
         let surface = rt_surface(hit, direction);
-        let material = rt_materials[surface.material_index];
+        let material = rt_surface_material(surface);
         if inside {
             throughput *= pow(max(tint, vec3<f32>(1e-4)), vec3<f32>(hit.t / RT_REFRACTION_ABSORPTION_DISTANCE));
             let out = refract(direction, surface.normal, ior);
@@ -445,13 +445,17 @@ fn rt_refraction_path(
 // wavelengths, each refracting with its own index: `sample` (this ray's sub-pixel sample)
 // and `spectrum_shift` (0-1, per pixel and frame) pick which.
 fn rt_refracted(v : vec3<f32>, pixel_angle : f32, sample : u32, spectrum_shift : f32) -> vec3<f32> {
-    let camera = post_uniform.camera_position.xyz;
-    let primary = rt_closest_hit(camera, v, 1.0e3);
+    // From the near plane, as the main pass draws: anything closer (a spark drifting past
+    // the lens) is clipped on screen and must not block the glass behind it.
+    let forward = -normalize(post_uniform.view_inv[2].xyz);
+    let near = post_uniform.near_far.x / max(dot(v, forward), 1e-3);
+    let start = post_uniform.camera_position.xyz + v * near;
+    let primary = rt_closest_hit(start, v, 1.0e3);
     if primary.kind == RAY_QUERY_INTERSECTION_NONE {
         return vec3<f32>(0.0);
     }
     let entry_surface = rt_surface(primary, v);
-    let entry_material = rt_materials[entry_surface.material_index];
+    let entry_material = rt_surface_material(entry_surface);
     if entry_material.transmission <= 0.0 {
         return vec3<f32>(0.0);
     }
@@ -462,11 +466,12 @@ fn rt_refracted(v : vec3<f32>, pixel_angle : f32, sample : u32, spectrum_shift :
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(v, n), 0.0, 1.0), 5.0);
     let weight = entry_material.transmission * (1.0 - fresnel);
 
-    let entry = camera + v * primary.t;
-    let bias = 0.002 + 0.0005 * primary.t;
+    let entry = start + v * primary.t;
+    let travelled = near + primary.t;
+    let bias = 0.002 + 0.0005 * travelled;
     var color = vec3<f32>(0.0);
     if entry_material.dispersion <= 0.0 {
-        color = rt_refraction_path(entry, n, v, primary.t, ior, tint, 0.0, bias, pixel_angle);
+        color = rt_refraction_path(entry, n, v, travelled, ior, tint, 0.0, bias, pixel_angle);
     } else {
         // Stratified over the spectrum: the pixel's samples interleave, so each covers
         // red to violet and together they cover it evenly.
@@ -477,7 +482,7 @@ fn rt_refracted(v : vec3<f32>, pixel_angle : f32, sample : u32, spectrum_shift :
             let position = rt_dispersion_position(wavelength);
             let path_ior = rt_dispersed_ior(ior, entry_material.dispersion, position);
             color += rt_spectral_rgb(wavelength)
-                * rt_refraction_path(entry, n, v, primary.t, path_ior, tint, position, bias, pixel_angle);
+                * rt_refraction_path(entry, n, v, travelled, path_ior, tint, position, bias, pixel_angle);
         }
         color /= f32(RT_DISPERSION_WAVELENGTHS);
     }
