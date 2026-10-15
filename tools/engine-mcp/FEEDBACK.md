@@ -111,6 +111,15 @@ variants and records what each image was rendered with. Still open: comparing th
 wasm32 library check, and a native editor driven through the MCP in edit and play mode (see the
 wish list for what was measured).
 
+Comparison round (2026-10-15): the comparison half of the visual tool, so it is done. `visual_capture`
+now compares the frames it takes (engine-side, from the frames in memory): per-region differences to
+the baseline, the noise between a variant's own frames, amplified difference images and a settle
+check, in the reply and `manifest.json`. A first version built on the plain mean difference was
+useless on real captures (output dither makes every pair of frames differ by about 0.8 levels per
+pixel, with TAA on or off), which led to the block-averaged "smooth" difference; see the wish list
+for the numbers. Checked with Rust tests (34 new), strict Clippy, a wasm32 library check and a native
+editor driven through the MCP, TAA on against off with an orbiting block frozen in play mode.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -719,9 +728,10 @@ How to read the sections:
   the sculpture did not disable camera input; live dragging invalidated some early
   comparisons. **Open:** capture an isolated scene snapshot with fixed camera and
   simulation, and record the effective settings and frame/jitter indices with each image.
-  **Partly done** (2026-10-15): `visual_capture` locks the camera, freezes play, applies each
-  variant as a render-only override and records settings, jitter index, frame and scene time with
-  every image. It does not compare them yet; see the visual comparison tool in the wish list.
+  **Done** (2026-10-15): `visual_capture` locks the camera, freezes play, applies each
+  variant as a render-only override, records settings, jitter index, frame and scene time with
+  every image, and compares the images (difference images, per-region statistics, jitter noise,
+  settle check); see the visual comparison tool in the wish list.
 - **Approval failures can look like engine failures.** This session initially accepted
   launch and project creation, then blocked scene edits with `MCP tool call requires
   approval, but approval policy is never`. Changing the client approval configuration
@@ -829,11 +839,11 @@ How to read the sections:
   rewrite of the propagation loop was tried and gained only about 10% in a debug build, so it was
   not kept.)
 
-- ◐ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
+- ✅ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
   rendered frames for several effect configurations, and report difference images,
   per-region variation and settings. Preserve and restore the user's running scene.
   Cover the actual render/TAA frames, not only deterministic Lua simulation steps.
-  **Capture half done** (2026-10-15): `visual_capture {variants: [{name, postprocess, base}],
+  **Capture done** (2026-10-15): `visual_capture {variants: [{name, postprocess, base}],
   frames, settle_frames, camera, dir}` (engine method `visual.capture`). A variant is a
   render-only `PostProcessOverride` applied after the scene's volumes are blended, so no scene
   edit has to be undone and `project_save` is unaffected; `base: "defaults"` starts from the
@@ -851,11 +861,60 @@ How to read the sections:
   frames differed by at most 11 levels (dither noise) against 87 between TAA on and off, 2 s of
   waiting after the capture advanced game time by 4.1 s (scale restored), and `render_override`
   was gone. Edit mode cannot pause tool scripts, so the result carries a warning and `scene_time`.
-  **Open:** the comparison. Per-region differences, difference images and a settle check (does
-  TAA history actually converge in `settle_frames`?). The earlier sketch said the MCP crate would
-  need a PNG decoder; it is better done engine-side, where `image` is already a dependency and
-  the raw frames are in memory, which would also avoid decoding what was just encoded. Not
-  started.
+  **Comparison done** (2026-10-15), engine-side as suggested (`src/remote/visual_compare.rs`; the
+  MCP crate needs no PNG decoder). Each frame is read back into memory as it is captured and
+  compared at once, so at most a few frames are held. Per variant (`compare: true` by default):
+  - the last image against the baseline's (the first variant's): per pixel the largest R/G/B
+    difference in levels, then mean, max, share over `threshold` (default 4) and `smooth`, for the
+    whole image and a `grid` (default 4x4; `N` or `[cols, rows]`) of regions, plus a `<name>_diff.png`
+    (per channel, amplified by `diff_gain`, default 16);
+  - the same statistics between the variant's own consecutive saved frames (its noise), plus a
+    `<name>_noise.png`; `differs` and each region's `above_noise` say whether a difference clearly
+    exceeds the larger noise of the variant and the baseline (`score` is how many times over the
+    limit; it needs `frames` >= 2, and a warning says so for 1);
+  - a settle check: the last 16 settle frames are read back too (`settle_check`, default on; one
+    GPU readback per frame, no PNG), and `settle` gives the means of the last 8 and the 8 earlier
+    frame-to-frame differences (smooth and share over the threshold) with `converged`, plus
+    `first_to_last` and `drifting` when `frames` >= 3. It needs 16 differences (`settle_frames` 16
+    with `frames` 1 or more does); a warning names the variant when history had not settled;
+  - TAA variants are lined up on the reference's jitter phase (see below), reported as
+    `sequence.jitter_phase`.
+  The reply keeps the whole-image numbers, the three most-above-noise regions, the settle verdict
+  and the image paths; `manifest.json` adds every region (with its noise), both settle series and a
+  `meaning` string for each. `compare: false` gives the old reply with no extra readbacks.
+  Measured in a native editor (floor, a static block and a block orbiting at time scale 2, TAA
+  baseline, frozen in play mode: one scene time for all images, time scale back at 2 afterwards,
+  no `render_override` left): every pair of frames differed by 0.8 levels on average per pixel,
+  TAA on or off (TAA off at most 3 levels, so it is the output dither; TAA on up to 11 to 36 at
+  edges), which hid everything in the mean. `smooth` (the mean difference of 8x8 block averages)
+  averages that out: noise 0.11 against 0.14 to 0.24 in regions where TAA moves edges. TAA off:
+  6 to 8 of 16 regions above noise, the strongest on the blocks' edges (max 94 to 129 levels,
+  0.3 to 1.4% of pixels over 4, region scores 4 to 6; the whole-image score was only 1.4 to 1.8,
+  which is why regions matter). SSAO off: a broad faint darkening of the floor, smooth 0.72 to 0.90
+  against 0.11, 10 to 13 of 16 regions (the plain mean, 1.1 to 1.4 against 0.8, would not have
+  convinced anyone). Three things only real captures showed, all fixed: (1) a settle check on the
+  plain mean called TAA converged after 4 frames because the series was lost in dither, so it now
+  needs both the smooth difference and the share over the threshold to have levelled off; (2) the
+  frame-to-frame series repeats every 8 frames (the TAA jitter sequence, now
+  `TAA_JITTER_FRAMES`), and a rule comparing the last third of the series with the third before it
+  called an identical variant unsettled (share over the threshold 0.0402% against 0.0552%), so it
+  now compares the last 8 frames with the 8 before and needs 16 differences; (3) frames at
+  different jitter phases differ by more than consecutive frames do, so with the first saved image
+  at an arbitrary phase two of three identical variants came out `differs: true` (scores 1.1 to
+  1.5 in a few regions). Each variant's first saved image now waits, as extra settle frames that
+  are read back like the others, up to 7 frames until its jitter phase equals the reference's;
+  after that four identical variants gave `differs: false`, score 0.32 each, 0 of 16 regions, max
+  difference 9 to 10 (14 before) and 0.014 to 0.017% of pixels over 4 (0.04 to 0.11% before). On
+  this static scene TAA converges in one or two frames (the series is flat from the first frame;
+  the engine resets the history when TAA is turned on), so every verdict was `converged: true`. No
+  slowly converging effect could be made to test the negative case (auto exposure jumps at once
+  as well), so that path is covered by unit tests with synthetic decays only, plus the three real
+  series as fixtures for the false alarm. `threshold: 0` makes every pixel count (75% over, from
+  dither) and blinds the share signal; keep it above 3. Edit mode with an open project works
+  (warning about scripts); with the startup dialog still up the viewport crop shows the dialog, so
+  all frames are identical and every number is 0. With the MCP server not restarted, the client
+  sent `compare: false` as the string "false" and `camera: "game"` with quotes (the old schema does
+  not know them); `engine_call visual.capture` takes the real JSON.
 - ✅ **Browser capability preflight:** report unsupported effects and asset URL issues
   before treating a saved project's native validation or WASM build as browser readiness.
   (`project_validate`'s `browser` block and `web_build`'s early stop; see the pain point above.

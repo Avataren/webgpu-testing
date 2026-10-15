@@ -1271,11 +1271,15 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) ->
     draws
 }
 
+/// Frames after which the TAA jitter pattern repeats. 8 points cover the pixel evenly;
+/// longer sequences only add noise at the 0.1 blend. Frame-to-frame differences of an
+/// unchanged view repeat with this period, so comparisons of them use whole periods.
+pub const TAA_JITTER_FRAMES: u32 = 8;
+
 /// Clip-space offset for TAA frame `index`: a Halton(2, 3) point inside the pixel,
 /// converted to NDC for a `width` x `height` view.
 fn taa_jitter(index: u32, width: u32, height: u32) -> Vec2 {
-    // 8 points cover the pixel evenly; longer sequences only add noise at 0.1 blend.
-    let sample = index % 8 + 1;
+    let sample = index % TAA_JITTER_FRAMES + 1;
     let offset = Vec2::new(halton(sample, 2), halton(sample, 3)) - Vec2::splat(0.5);
     Vec2::new(
         offset.x * 2.0 / width as f32,

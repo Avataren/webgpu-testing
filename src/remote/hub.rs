@@ -76,6 +76,9 @@ pub(super) struct CaptureRequest {
     pub(super) view: Option<Camera>,
     /// Aspect ratio (width / height) to render at instead of the viewport's.
     pub(super) aspect: Option<f32>,
+    /// Receives the captured pixels, as they were cropped and scaled for the reply, just
+    /// before the reply is sent. For in-process users that compare frames.
+    pub(super) pixels: Option<Sender<image::RgbaImage>>,
 }
 
 impl CaptureRequest {
@@ -446,6 +449,7 @@ impl RemoteHub {
                         .cloned(),
                     view: None,
                     aspect,
+                    pixels: None,
                     reply: request.reply,
                 });
                 None
@@ -642,11 +646,6 @@ fn encode_capture(
             image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
     }
 
-    let mut png = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|err| format!("failed to encode PNG: {err}"))?;
-
     let mut result = json!({
         "width": image.width(),
         "height": image.height(),
@@ -654,20 +653,31 @@ fn encode_capture(
         "source_height": source_height,
     });
 
-    if let Some(path) = &request.save_path {
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            std::fs::create_dir_all(parent)
-                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    // Frames only wanted as pixels (a comparison's settle frames) skip the encoding.
+    if request.save_path.is_some() || request.inline {
+        let mut png = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|err| format!("failed to encode PNG: {err}"))?;
+        if let Some(path) = &request.save_path {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+            }
+            std::fs::write(path, &png)
+                .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+            result["path"] = json!(path.display().to_string());
         }
-        std::fs::write(path, &png)
-            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
-        result["path"] = json!(path.display().to_string());
+        if request.inline {
+            result["png_base64"] = json!(base64::encode(&png));
+        }
     }
-    if request.inline {
-        result["png_base64"] = json!(base64::encode(&png));
+    if let Some(pixels) = &request.pixels {
+        // The receiver may be gone if its capture was abandoned; nothing to do then.
+        let _ = pixels.send(image);
     }
     Ok(result)
 }

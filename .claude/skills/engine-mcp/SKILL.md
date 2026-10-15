@@ -226,10 +226,17 @@ Facts that change how you write scripts:
   explicit/image heights. Both persist embedded geometry with `project_save`.
 - `visual_capture {variants: [{name, postprocess}], frames, settle_frames}` renders one
   frozen view under several post-processing variants (render-only, the scene is never
-  edited) and saves the frames as PNGs plus `manifest.json` (engine frame, TAA jitter index,
-  scene time, settings changed from the baseline). Use it to answer "does X cause the
-  ghosting/halo" with images instead of toggling settings by hand; it does not diff the
-  images itself.
+  edited), saves the frames as PNGs plus `manifest.json` (engine frame, TAA jitter index,
+  scene time, settings changed from the baseline) and compares them. Use it to answer "does X
+  cause the ghosting/halo" with numbers and images instead of toggling settings by hand. Read
+  each variant's `compare`: `differs` (clearly more than the noise between its own frames,
+  needs `frames` >= 2), `smooth` (broad or faint change; the per-pixel `mean` is mostly output
+  dither, about 0.8 levels, so do not read it), `over_pct`/`max` (small strong changes),
+  `top_regions` (where, with pixel rects) and `diff_image` (look at it: black is identical,
+  amplified 16x). `settle.converged` false or a warning means TAA history had not settled:
+  raise `settle_frames` (a verdict needs 16 frames of it; null means too few). TAA variants are
+  lined up on the baseline's jitter phase, so identical settings come out `differs: false`. `compare: false` only saves the images. After a new build, restart the
+  MCP server (/mcp) or the client sends typed parameters such as `compare` as strings.
 - `profile_capture {frames}` captures CPU latency percentiles, stage/script cost and asset
   growth. `baseline` compares a previous report. It does not measure GPU execution.
 - After `project_save`, call `project_validate` for paths, structure and Lua syntax. Its

@@ -361,7 +361,7 @@ Both generators include UVs, normals and tangents, accept the ordinary geometry 
 fields, share the existing mesh budget, and persist through `project_save`.
 
 `visual_capture {variants: [{name, postprocess}], frames, settle_frames}` renders one frozen
-view under several post-processing variants and saves the frames. The variants are
+view under several post-processing variants, saves the frames and compares them. The variants are
 render-only overrides (the same settings as `postprocess_set`, over the scene's own
 post-processing or, with `base: "defaults"`, over the engine defaults), so no scene edit has
 to be undone; the camera is locked to the current view (or `camera`) and play mode is frozen
@@ -371,9 +371,46 @@ of the scene viewport to `dir` (default: a new folder under the system temp dire
 reply and `manifest.json` list per image the engine frame, TAA jitter index and scene time,
 and per variant the settings that differ from the baseline; `manifest.json` also holds the
 full effective settings. `warnings` say when the scene was not frozen (edit mode runs tool
-scripts) or the settings changed mid-capture. The tool does not compare the images; diffing
-them is left to the caller. `postprocess_get` shows an override while one is active
-(`render_override`).
+scripts) or the settings changed mid-capture. `postprocess_get` shows an override while one is
+active (`render_override`).
+
+The frames are compared as they are captured (`compare: false` skips it and the extra readbacks).
+The first variant, `baseline` unless `include_baseline: false`, is the reference. A pixel's
+difference is its largest R/G/B difference in 8-bit levels. Per variant, for the whole image and for
+a `grid` of regions (default 4x4, `N` or `[columns, rows]`):
+
+- `mean`, `max` and `over_pct` (the share of pixels over `threshold`, default 4) between its last
+  image and the reference's, plus `smooth`: the mean difference of 8x8 block averages. The output is
+  dithered, so any two frames of an unchanged view differ by about 0.8 levels per pixel with TAA on
+  or off, which hides faint or broad changes in `mean`; averaging within blocks removes it, so
+  `smooth` is the number for "did this effect shift the picture" and `over_pct` / `max` for small
+  strong changes such as moved edges. Keep `threshold` above the dither (about 3 levels).
+- `noise`: the same numbers between the variant's own consecutive saved frames (dither and TAA
+  jitter; `frames` of 2 or more). `differs` is true when the whole image or any region has a
+  `score` above 1: the larger of `smooth` and `over_pct` as a multiple of its limit (twice the
+  larger noise of the variant and the reference, plus a margin). `top_regions` lists up to three
+  regions above the noise, worst first, with their pixel `rect`.
+- `diff_image` (`<name>_diff.png`): the per-channel difference to the reference, multiplied by
+  `diff_gain` (default 16, so 3 levels show as 48; black is identical), and `noise_image`
+  (`<name>_noise.png`), the same for the last two saved frames, to see what jitter looks like.
+- `settle`: the last 16 settle frames of each variant are read back too (`settle_check`, default on;
+  one GPU readback per frame) and the frame-to-frame difference over them and the saved images is
+  judged by `smooth` and by `over_pct`: the last 8 frames (one TAA jitter period) against the 8
+  before, and `converged` is true when neither is still falling (a plateau at the noise level
+  counts). With 3 or more `frames`, `first_to_last` and `drifting` say whether the first saved image
+  is still far from the last. A warning names a variant whose history had not settled; raise
+  `settle_frames`. `converged` is null when there are fewer than 16 frame-to-frame differences to
+  judge, e.g. with `settle_frames` under 16 (see the `note`).
+
+Frames at different TAA jitter phases differ by more than consecutive frames do, so each TAA
+variant's first saved image waits, as extra settle frames, up to 7 frames until its jitter phase
+matches the one of the reference's first image (`sequence.jitter_phase`; the `jitter_index` of every
+image is in the reply). Variants without TAA are not jittered and do not wait.
+
+The reply keeps the whole-image numbers, `top_regions` and the settle verdict; `manifest.json` has
+every region with its noise and score, the full settle series and a `meaning` string for each.
+On a static scene TAA converged within one or two frames, so expect `converged: true` unless a
+variant switches on something slow.
 
 `profile_capture {frames: 300}` samples consecutive frames, returning median/p95/p99/max
 frame and stage times, cumulative script-hook cost over the capture, and entity/asset

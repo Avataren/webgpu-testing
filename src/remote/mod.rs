@@ -46,6 +46,7 @@ mod server;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod validation;
 mod visual;
+mod visual_compare;
 
 pub use capture::{capture_surface, FrameCapture};
 pub use handlers::{RemoteContext, RemoteResult, CORE_METHODS};
