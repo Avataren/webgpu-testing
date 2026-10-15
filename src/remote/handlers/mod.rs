@@ -26,7 +26,7 @@ pub(crate) use diff::SceneBaseline;
 pub(crate) use entity::{
     patch_material, set_active_camera, set_camera, set_generated_mesh, set_light, set_mesh,
 };
-pub(crate) use rendering::adjust_camera;
+pub(crate) use rendering::{adjust_camera, patch_post_process, post_process_patch};
 
 /// Outcome of a remote method: a JSON result or an error message.
 pub type RemoteResult = Result<Value, String>;
@@ -152,6 +152,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Recent log lines, filterable by level, target and text",
     ),
     ("screenshot", "PNG of the window or the scene viewport"),
+    (
+        "visual.capture",
+        "Capture consecutive frames of one frozen view under several render-only post-process variants",
+    ),
     ("wait", "Answer after a number of frames and/or seconds"),
 ];
 

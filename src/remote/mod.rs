@@ -45,11 +45,13 @@ mod profile;
 mod server;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod validation;
+mod visual;
 
 pub use capture::{capture_surface, FrameCapture};
 pub use handlers::{RemoteContext, RemoteResult, CORE_METHODS};
 pub use hub::{fit_region, process_requests, CaptureOverride, RemoteHub, RemoteHubHandle};
 pub use json::{entity_from_json, entity_id, transform_to_json};
+pub use visual::PostProcessOverride;
 
 /// Port the editor listens on when `ENGINE_REMOTE_PORT` is not set.
 pub const DEFAULT_EDITOR_PORT: u16 = 47811;

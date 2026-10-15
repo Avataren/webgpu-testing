@@ -17,6 +17,7 @@ mod logging;
 mod material;
 pub(crate) mod modules;
 mod particles;
+mod postprocess;
 mod query;
 mod save_data;
 mod script_access;
@@ -59,6 +60,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     component::register_component_api(lua)?;
     material::register_material_api(lua)?;
     light_camera::register_light_camera_api(lua)?;
+    postprocess::register_postprocess_api(lua)?;
     audio::register_audio_api(lua)?;
     save_data::register_save_data_api(lua)?;
     particles::register_particles_api(lua)?;

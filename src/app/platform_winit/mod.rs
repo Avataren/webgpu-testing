@@ -600,9 +600,13 @@ where
                         render_region =
                             base.and_then(|base| crate::remote::fit_region(base, aspect));
                     }
+                    let post_process_override = remote
+                        .as_ref()
+                        .and_then(|hub| hub.borrow().post_process_override().cloned());
                     let params = RenderParams {
                         render_region,
                         camera_override,
+                        post_process_override,
                     };
 
                     let result =

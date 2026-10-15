@@ -66,7 +66,7 @@ Options and environment:
 | Audio | `sound_play`, `sound_stop`, `audio_status` |
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
 | Input | `input_send`, `input_state`, `input_clear` |
-| View | `screenshot`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
+| View | `screenshot`, `visual_capture`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 | Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
 | Prefabs | `prefab_create`, `prefab_inspect`, `prefab_update` (instances use `scene_instance`) |
@@ -359,6 +359,21 @@ terrain. Alternatively provide row-major `heights` (x fastest), or a `source` im
 to resolution and sampled as luminance. Explicit/image values multiply `height_scale`.
 Both generators include UVs, normals and tangents, accept the ordinary geometry editing
 fields, share the existing mesh budget, and persist through `project_save`.
+
+`visual_capture {variants: [{name, postprocess}], frames, settle_frames}` renders one frozen
+view under several post-processing variants and saves the frames. The variants are
+render-only overrides (the same settings as `postprocess_set`, over the scene's own
+post-processing or, with `base: "defaults"`, over the engine defaults), so no scene edit has
+to be undone; the camera is locked to the current view (or `camera`) and play mode is frozen
+(time scale 0) for the duration. Each variant is applied, left to settle for `settle_frames`
+(temporal anti-aliasing needs about 16), then `frames` consecutive frames are written as PNGs
+of the scene viewport to `dir` (default: a new folder under the system temp directory). The
+reply and `manifest.json` list per image the engine frame, TAA jitter index and scene time,
+and per variant the settings that differ from the baseline; `manifest.json` also holds the
+full effective settings. `warnings` say when the scene was not frozen (edit mode runs tool
+scripts) or the settings changed mid-capture. The tool does not compare the images; diffing
+them is left to the caller. `postprocess_get` shows an override while one is active
+(`render_override`).
 
 `profile_capture {frames: 300}` samples consecutive frames, returning median/p95/p99/max
 frame and stage times, cumulative script-hook cost over the capture, and entity/asset

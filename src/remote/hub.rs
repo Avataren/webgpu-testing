@@ -17,6 +17,7 @@ use crate::scene::{Camera, CameraComponent, InputState, Scene};
 use super::capture::FrameCapture;
 use super::handlers::{self, RemoteContext, SceneBaseline};
 use super::json::{entity_from_json, entity_id, opt_bool, opt_f64, opt_str, opt_u64};
+use super::visual::{PostProcessOverride, VisualCapture};
 use super::RemoteApp;
 
 /// Shared handle to a [`RemoteHub`]; the frame loop and the dispatch system both hold one.
@@ -63,18 +64,18 @@ struct ScheduledInput {
     event: InputEvent,
 }
 
-struct CaptureRequest {
-    reply: Reply,
-    viewport_only: bool,
-    max_size: u32,
-    save_path: Option<PathBuf>,
-    inline: bool,
+pub(super) struct CaptureRequest {
+    pub(super) reply: Reply,
+    pub(super) viewport_only: bool,
+    pub(super) max_size: u32,
+    pub(super) save_path: Option<PathBuf>,
+    pub(super) inline: bool,
     /// The `camera` parameter: render through this camera entity (or `"game"`).
-    camera: Option<Value>,
+    pub(super) camera: Option<Value>,
     /// `camera` resolved to a view, once the scene has been consulted.
-    view: Option<Camera>,
+    pub(super) view: Option<Camera>,
     /// Aspect ratio (width / height) to render at instead of the viewport's.
-    aspect: Option<f32>,
+    pub(super) aspect: Option<f32>,
 }
 
 impl CaptureRequest {
@@ -121,12 +122,17 @@ pub struct RemoteHub {
     last_dt: f64,
     input: Vec<ScheduledInput>,
     simulation_input: Vec<(u64, InputEvent)>,
-    captures: Vec<CaptureRequest>,
+    pub(super) captures: Vec<CaptureRequest>,
     /// Whether the frame being rendered is the first capture's own frame.
     capturing_own_frame: bool,
     waiters: Vec<Waiter>,
     scene_baseline: Option<SceneBaseline>,
     profile: Option<ProfileCapture>,
+    /// A `visual.capture` in progress.
+    pub(super) visual: Option<Box<VisualCapture>>,
+    /// Post-processing every frame is rendered with, over what the scene's volumes blend
+    /// to. Render-only: it never touches the scene.
+    pub(super) post_process_override: Option<PostProcessOverride>,
 }
 
 impl RemoteHub {
@@ -158,6 +164,8 @@ impl RemoteHub {
             waiters: Vec::new(),
             scene_baseline: None,
             profile: None,
+            visual: None,
+            post_process_override: None,
         }
     }
 
@@ -290,10 +298,27 @@ impl RemoteHub {
             .first()
             .filter(|request| request.needs_own_frame());
         self.capturing_own_frame = request.is_some();
-        request.map(|request| CaptureOverride {
-            camera: request.view,
-            aspect: request.aspect,
-        })
+        match request {
+            Some(request) => Some(CaptureOverride {
+                camera: request.view,
+                aspect: request.aspect,
+            }),
+            // A visual capture renders every frame through its locked view, so the
+            // temporal anti-aliasing history never sees another camera.
+            None => self
+                .visual
+                .as_ref()
+                .and_then(|capture| capture.view())
+                .map(|view| CaptureOverride {
+                    camera: Some(view),
+                    aspect: None,
+                }),
+        }
+    }
+
+    /// The render-only post-processing override in effect, if any.
+    pub fn post_process_override(&self) -> Option<&PostProcessOverride> {
+        self.post_process_override.as_ref()
     }
 
     /// Answer pending screenshot requests with the frame that is about to be presented.
@@ -425,6 +450,10 @@ impl RemoteHub {
                 });
                 None
             }
+            "visual.capture" => {
+                self.begin_visual_capture(&request.params, request.reply);
+                None
+            }
             "wait" => {
                 let params = &request.params;
                 let frames = opt_u64(params, "frames").unwrap_or(0).min(100_000);
@@ -454,6 +483,7 @@ pub fn process_requests(
 ) {
     let mut hub = hub.borrow_mut();
     let requests = hub.drain_requests();
+    hub.step_visual_capture(ctx);
     if let Some(mut capture) = hub.profile.take() {
         let mut remote = RemoteContext::new(ctx, &mut hub, app.remote_methods());
         if let Ok(sample) = handlers::profile_sample(&mut remote) {
@@ -557,7 +587,7 @@ pub fn fit_region(base: RenderRegion, aspect: f32) -> Option<RenderRegion> {
     )
 }
 
-fn resolve_view(scene: &Scene, spec: &Value) -> Result<Camera, String> {
+pub(super) fn resolve_view(scene: &Scene, spec: &Value) -> Result<Camera, String> {
     let world = scene.main_world();
     if spec.is_object() {
         // A one-off pose: the view camera moved as `camera_set` would, without moving it.

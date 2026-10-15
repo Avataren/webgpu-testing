@@ -7,6 +7,9 @@ pub struct RenderParams {
     pub render_region: Option<RenderRegion>,
     /// Render through this camera instead of the scene's, without gizmos.
     pub camera_override: Option<Camera>,
+    /// Post-processing to render with on top of what the scene's volumes blend to. Never
+    /// stored in the scene.
+    pub post_process_override: Option<crate::remote::PostProcessOverride>,
 }
 
 pub enum RenderResult {

@@ -103,6 +103,14 @@ failures. Not done: the visual comparison tool (see the wish list). Checked with
 Clippy, native smoke runs (with and without bindless textures), `verify_additions.py --web`, and a
 WebGPU browser through `web_playtest`.
 
+Follow-up round (2026-10-15): the two items the cleanup round left open. Lua gained
+`set_postprocess` (done), and the visual comparison tool is half done: a render-only
+post-process override and a `visual_capture` tool that renders one frozen view under several
+variants and records what each image was rendered with. Still open: comparing the images
+(difference images, per-region variation). Checked with Rust tests (10 new), strict Clippy, a
+wasm32 library check, and a native editor driven through the MCP in edit and play mode (see the
+wish list for what was measured).
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -703,7 +711,7 @@ How to read the sections:
   creates an infinite one when the scene has none) and that save with the scene; the old
   `project.json` `postprocess` block and the environment's colour grading are migrated into a
   volume on load. The test `post_process_volume_survives_save_and_load` covers the scene round trip
-  (settings, overrides, priority). Lua still cannot change post-processing; see the wish list.
+  (settings, overrides, priority). Scripts can now change it too: `set_postprocess` (see the wish list).
 
 - **Visual comparisons require manual state management.** Diagnosing B19 meant pausing
   animation, recording the camera and effect settings, toggling one effect at a time,
@@ -711,7 +719,9 @@ How to read the sections:
   the sculpture did not disable camera input; live dragging invalidated some early
   comparisons. **Open:** capture an isolated scene snapshot with fixed camera and
   simulation, and record the effective settings and frame/jitter indices with each image.
-  Not started; see the visual comparison tool in the wish list.
+  **Partly done** (2026-10-15): `visual_capture` locks the camera, freezes play, applies each
+  variant as a render-only override and records settings, jitter index, frame and scene time with
+  every image. It does not compare them yet; see the visual comparison tool in the wish list.
 - **Approval failures can look like engine failures.** This session initially accepted
   launch and project creation, then blocked scene edits with `MCP tool call requires
   approval, but approval policy is never`. Changing the client approval configuration
@@ -819,25 +829,51 @@ How to read the sections:
   rewrite of the propagation loop was tried and gained only about 10% in a debug build, so it was
   not kept.)
 
-- ⬜ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
+- ◐ **Visual comparison tool:** lock a camera and scene snapshot, capture consecutive
   rendered frames for several effect configurations, and report difference images,
   per-region variation and settings. Preserve and restore the user's running scene.
   Cover the actual render/TAA frames, not only deterministic Lua simulation steps.
-  Not started (2026-10-15): it is a new feature with open design choices rather than a fix. Sketch:
-  an engine-side render-only post-process override (so no scene edit has to be undone), a
-  `visual_compare` MCP tool that freezes the simulation, sets one variant at a time, waits for TAA
-  history to settle and captures N frames per variant with the effective settings, jitter index and
-  camera recorded, then reports per-region differences and writes difference images (the MCP crate
-  would need a PNG decoder; today it depends only on `serde_json`).
+  **Capture half done** (2026-10-15): `visual_capture {variants: [{name, postprocess, base}],
+  frames, settle_frames, camera, dir}` (engine method `visual.capture`). A variant is a
+  render-only `PostProcessOverride` applied after the scene's volumes are blended, so no scene
+  edit has to be undone and `project_save` is unaffected; `base: "defaults"` starts from the
+  engine defaults to isolate one effect. The view is locked for every frame (rendered through
+  the camera override, so the editor grid and gizmos are out of the images and TAA history never
+  sees another camera), play mode is frozen with time scale 0 and the time scale and override are
+  restored afterwards. Per variant: apply, `settle_frames` (default 16), then `frames` consecutive
+  PNGs of the scene viewport. The reply and `manifest.json` list per image the engine frame, TAA
+  jitter index and scene time, and per variant the settings that differ from the baseline (the
+  manifest holds the full effective settings); `postprocess_get` shows an active override as
+  `render_override`. Unknown setting names and wrong types are rejected before anything runs.
+  Verified in a native editor: in edit mode four variants (baseline, TAA off, SSAO off, bare)
+  gave consecutive jitter indices 253/254 with TAA on and a stuck index with it off; in play mode
+  at time scale 2 with a block orbiting, all six images had one scene time (9.2497), consecutive
+  frames differed by at most 11 levels (dither noise) against 87 between TAA on and off, 2 s of
+  waiting after the capture advanced game time by 4.1 s (scale restored), and `render_override`
+  was gone. Edit mode cannot pause tool scripts, so the result carries a warning and `scene_time`.
+  **Open:** the comparison. Per-region differences, difference images and a settle check (does
+  TAA history actually converge in `settle_frames`?). The earlier sketch said the MCP crate would
+  need a PNG decoder; it is better done engine-side, where `image` is already a dependency and
+  the raw frames are in memory, which would also avoid decoding what was just encoded. Not
+  started.
 - ✅ **Browser capability preflight:** report unsupported effects and asset URL issues
   before treating a saved project's native validation or WASM build as browser readiness.
   (`project_validate`'s `browser` block and `web_build`'s early stop; see the pain point above.
   The "unsupported effects" half is mostly moot now: the bindless-texture case is handled (B21)
   rather than reported, and no other effect is gated on a browser-only capability that is known
   statically.)
-- ⬜ Lua `set_postprocess(settings)` (or `set_component` support for `PostProcessVolume`), so a game
-  can change bloom, vignette or colour grading at run time. Persistence is solved (volumes); scripts
-  still cannot touch them.
+- ✅ Lua `set_postprocess(settings)` (or `set_component` support for `PostProcessVolume`), so a game
+  can change bloom, vignette or colour grading at run time. (`set_postprocess(settings)` edits the
+  scene's infinite volume, created if missing; `set_postprocess(volume_entity, settings)` edits a
+  given volume; settings are those of `postprocess_set`, plus `volume = {priority, weight, ...}`.
+  It shares one function with `postprocess_set`, so selective volumes tick their overrides the
+  same way, and it is stricter: an unknown setting name (`bloom.intensty`) or a wrong type is a Lua
+  error naming the setting instead of being dropped silently. That check now also applies to
+  `postprocess_set`. Changes queue like other script commands and apply before the frame is drawn.
+  Verified in a native editor: an edit-mode call changed bloom and vignette and a typo changed
+  nothing; a play-mode call to `tonemapping = "agx"` took effect and was undone on stop, with
+  `discarded_on_stop` reported. Scripts cannot read the blended result back; they keep their
+  own values.)
 
 ## Tide Observatory: what worked well
 

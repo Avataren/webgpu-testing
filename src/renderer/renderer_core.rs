@@ -788,6 +788,11 @@ impl Renderer {
             .set_settings(&self.context.device, &self.context.queue, settings);
     }
 
+    /// Position in the TAA jitter sequence of the last frame's camera set-up.
+    pub fn jitter_index(&self) -> u32 {
+        self.jitter_index
+    }
+
     /// The post-processing settings in effect (after clamping).
     pub fn postprocess_settings(&self) -> &PostProcessSettings {
         self.postprocess.settings()

@@ -987,6 +987,8 @@ impl Scene {
         };
         self.runtime.scripting_mut().set_view_rect(Some(rect));
 
+        self.apply_script_post_process();
+
         let commands = self.runtime.scripting_mut().take_pending_asset_commands();
         // Asset commands may still attach materials created earlier in the frame, so
         // unused ones are only released once they have run.
@@ -1047,6 +1049,27 @@ impl Scene {
         }
         if collect || meshes_replaced {
             self.collect_unused_generated_meshes();
+        }
+    }
+
+    /// Apply the `set_postprocess` changes scripts made since the last call.
+    fn apply_script_post_process(&mut self) {
+        let changes = self.runtime.scripting_mut().take_pending_post_process();
+        let mut created = false;
+        for change in changes {
+            let world = self.main_world_mut();
+            if let Some(entity) = change.target.filter(|entity| !world.contains(*entity)) {
+                warn!(target: "script", "set_postprocess: {entity:?} no longer exists");
+                continue;
+            }
+            match crate::remote::handlers::patch_post_process(world, change.target, &change.patch)
+            {
+                Ok((_, spawned)) => created |= spawned,
+                Err(err) => warn!(target: "script", "set_postprocess failed: {err}"),
+            }
+        }
+        if created {
+            self.propagate_transforms();
         }
     }
 
@@ -1574,6 +1597,128 @@ mod tests {
     use crate::scene::SceneSnapshot;
     use crate::scripting::LuaScriptSource;
     use glam::{Quat, Vec3};
+
+    fn volumes(scene: &Scene) -> Vec<(Entity, crate::scene::PostProcessVolume)> {
+        scene
+            .main_world()
+            .query::<&crate::scene::PostProcessVolume>()
+            .iter()
+            .map(|(entity, volume)| (entity, volume.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn set_postprocess_edits_the_infinite_volume_and_creates_it_when_missing() {
+        let mut scene = Scene::new();
+        assert!(volumes(&scene).is_empty());
+
+        scene
+            .eval_lua(
+                "set_postprocess({ bloom = { intensity = 2.5 }, tonemapping = 'agx' })",
+                None,
+            )
+            .unwrap();
+        // Nothing changes until the scene applies the queued change.
+        scene.apply_script_post_process();
+        let found = volumes(&scene);
+        assert_eq!(found.len(), 1, "one volume is created");
+        assert!(found[0].1.shape.is_infinite());
+        assert_eq!(found[0].1.settings.bloom.intensity, 2.5);
+        assert_eq!(
+            found[0].1.settings.tonemapping,
+            crate::renderer::postprocess::Tonemapper::AgX
+        );
+
+        // A second call edits the same volume and leaves what it did not name alone.
+        scene
+            .eval_lua("set_postprocess({ bloom = { threshold = 0.5 } })", None)
+            .unwrap();
+        scene.apply_script_post_process();
+        let found = volumes(&scene);
+        assert_eq!(found.len(), 1, "the volume is reused");
+        assert_eq!(found[0].1.settings.bloom.threshold, 0.5);
+        assert_eq!(found[0].1.settings.bloom.intensity, 2.5);
+    }
+
+    #[test]
+    fn set_postprocess_targets_a_volume_entity_and_ticks_its_overrides() {
+        let mut scene = Scene::new();
+        let volume = {
+            let mut volume = crate::scene::PostProcessVolume::additional(Default::default());
+            volume.priority = 5;
+            scene.main_world_mut().spawn((
+                Name::new("Cave"),
+                TransformComponent(Transform::IDENTITY),
+                Visible(true),
+                volume,
+            ))
+        };
+        let other = scene.main_world_mut().spawn((
+            Name::new("Global"),
+            TransformComponent(Transform::IDENTITY),
+            Visible(true),
+            crate::scene::PostProcessVolume::default(),
+        ));
+
+        let code = format!(
+            "set_postprocess({}, {{ vignette = {{ enabled = true, intensity = 0.7 }}, \
+             volume = {{ weight = 0.5 }} }})",
+            volume.to_bits().get()
+        );
+        scene.eval_lua(&code, None).unwrap();
+        scene.apply_script_post_process();
+
+        let world = scene.main_world();
+        let edited = world.get::<&crate::scene::PostProcessVolume>(volume).unwrap();
+        assert!(edited.settings.vignette.enabled);
+        assert_eq!(edited.settings.vignette.intensity, 0.7);
+        assert_eq!(edited.weight, 0.5);
+        assert!(edited.overrides_setting("vignette.intensity"));
+        assert!(!edited.overrides_setting("bloom.intensity"));
+        let untouched = world.get::<&crate::scene::PostProcessVolume>(other).unwrap();
+        assert!(!untouched.settings.vignette.enabled);
+    }
+
+    #[test]
+    fn set_postprocess_rejects_unknown_names_and_non_volumes() {
+        let mut scene = Scene::new();
+        let error = scene
+            .eval_lua("set_postprocess({ bloom = { intensty = 2 } })", None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("bloom.intensty"), "{error}");
+        let error = scene
+            .eval_lua("set_postprocess({ blom = {} })", None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("blom") && error.contains("bloom"), "{error}");
+        assert!(scene.eval_lua("set_postprocess(42)", None).is_err());
+
+        let plain = scene
+            .main_world_mut()
+            .spawn((Name::new("Plain"), TransformComponent(Transform::IDENTITY)));
+        let code = format!("set_postprocess({}, {{}})", plain.to_bits().get());
+        scene.eval_lua(&code, None).unwrap();
+        scene.apply_script_post_process();
+        assert!(volumes(&scene).is_empty(), "a non-volume is left alone");
+    }
+
+    #[test]
+    fn set_postprocess_ignores_a_volume_despawned_before_it_applies() {
+        let mut scene = Scene::new();
+        let volume = scene.main_world_mut().spawn((
+            Name::new("Gone"),
+            TransformComponent(Transform::IDENTITY),
+            crate::scene::PostProcessVolume::default(),
+        ));
+        let code = format!(
+            "set_postprocess({0}, {{ bloom = {{ intensity = 3 }} }}) despawn_entity({0})",
+            volume.to_bits().get()
+        );
+        scene.eval_lua(&code, None).unwrap();
+        scene.apply_script_post_process();
+        assert!(volumes(&scene).is_empty());
+    }
 
     #[test]
     fn serialized_transform_roundtrip() {

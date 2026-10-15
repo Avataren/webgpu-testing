@@ -325,6 +325,35 @@ set_translation(cam, 0, 4, 8)
 look_at(cam, 0, 0, 0)
 ```
 
+### Post-processing
+- `set_postprocess(settings)` - Change the scene's infinite post-process volume (created if
+  the scene has none). Only the settings you name change.
+- `set_postprocess(volume_entity, settings)` - Change a specific post-process volume entity
+  (a dark cave, underwater), e.g. one found with `find_entity_by_name`.
+
+`settings` takes the groups of the `postprocess_set` tool: `exposure`, `tonemapping`,
+`color`, `bloom`, `ssao`, `ssr`, `depth_of_field`, `motion_blur`, `vignette`,
+`chromatic_aberration`, `film_grain`, `sharpen` and `anti_aliasing`; `postprocess_get`
+lists every field. A `volume = { priority = .., weight = .., enabled = .. }` field edits
+the volume itself. An unknown setting name is an error. Like other changes, it applies
+before the frame is drawn and is undone when play mode stops, along with a volume a script
+created. Scripts cannot read the blended result; keep the values you set in a local.
+
+```lua
+-- A damage flash that fades out over half a second.
+local hurt = 0
+function on_hit() hurt = 1 end
+function update(self, dt)
+    if hurt > 0 then
+        hurt = math.max(0, hurt - dt * 2)
+        set_postprocess({
+            vignette = { enabled = hurt > 0, intensity = 0.6 * hurt },
+            color = { saturation = 1 - 0.5 * hurt },
+        })
+    end
+end
+```
+
 ### Particle effects
 - `emit_particles(x, y, z[, options])` - A one-off burst of GPU particles at a world point:
   sparks, explosions, warp-in rings, debris. Thousands of particles cost almost nothing on

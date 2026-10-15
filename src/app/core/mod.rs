@@ -390,6 +390,10 @@ impl AppCore {
             renderer.camera_position(),
         )
         .unwrap_or_default();
+        let post_settings = match &params.post_process_override {
+            Some(over) => over.apply(post_settings),
+            None => post_settings,
+        };
         renderer.set_postprocess_settings(&post_settings);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.

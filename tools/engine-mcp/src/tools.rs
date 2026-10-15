@@ -768,6 +768,24 @@ pub fn tools() -> Vec<Tool> {
             action: Action::Engine("postprocess.set"),
         },
         Tool {
+            name: "visual_capture",
+            description: "Render one frozen view under several post-processing variants and save the frames, for visual comparisons (does TAA ghost? does SSAO cause the halo?) without editing the scene. The variants are render-only overrides: the scene is never touched, the camera is locked, play mode is frozen (time scale 0) while it runs, and the override and time scale are put back afterwards. Per variant: the override is applied, temporal anti-aliasing settles for settle_frames, then `frames` consecutive frames are saved as full-resolution PNGs of the scene viewport (the editor UI and grid are left out). The result and dir/manifest.json record per image the engine frame, TAA jitter index and scene time, and per variant the settings that differ from the baseline (manifest.json has the full effective settings). It does not compare the images; open them or diff them yourself. A few seconds of rendering per variant.",
+            schema: object(json!({
+                "variants": { "type": "array", "maxItems": 16, "description": "What to compare against the baseline", "items": { "type": "object", "properties": {
+                    "name": { "type": "string", "description": "Letters, digits, - and _; names the image files" },
+                    "postprocess": { "type": "object", "description": "Settings to change, as for postprocess_set (e.g. {anti_aliasing: \"none\"}, {ssao: {enabled: false}}); names are checked" },
+                    "base": { "type": "string", "enum": ["scene", "defaults"], "default": "scene", "description": "scene changes the scene's own settings; defaults changes the engine defaults, to isolate one effect" }
+                }, "required": ["name"] }},
+                "include_baseline": { "type": "boolean", "default": true, "description": "Capture the scene's own post-processing first, as \"baseline\"" },
+                "frames": { "type": "integer", "minimum": 1, "maximum": 32, "default": 2, "description": "Consecutive frames to capture per variant (each has a different TAA jitter)" },
+                "settle_frames": { "type": "integer", "minimum": 0, "maximum": 600, "default": 16, "description": "Frames rendered after applying a variant before capturing, for TAA history to converge" },
+                "camera": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "object" }], "description": "The view to lock: \"game\", a camera entity, or a pose {position, target, fov_deg} (as for screenshot). Default: the current view camera." },
+                "dir": { "type": "string", "description": "Directory for the PNGs and manifest.json (default: a new folder under the system temp directory)" },
+                "max_size": { "type": "integer", "minimum": 16, "maximum": 8192, "default": 8192, "description": "Longest side in pixels; larger frames are scaled down" }
+            }), &[]),
+            action: Action::Engine("visual.capture"),
+        },
+        Tool {
             name: "logs",
             description: "Recent engine log lines (scripts log with target \"script\"; script errors appear here too). Pass after = latest_seq from a previous call to get only new lines.",
             schema: object(json!({

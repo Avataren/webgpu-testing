@@ -229,6 +229,12 @@ pub(super) fn postprocess_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             .map_err(|err| err.to_string())?,
         "volumes": volumes,
     });
+    if let Some(over) = ctx.hub.post_process_override() {
+        // Only a visual capture sets one, and only while it runs.
+        result["render_override"] = over.describe();
+        result["rendered"] = serde_json::to_value(over.apply(effective.clone().unwrap_or_default()))
+            .map_err(|err| err.to_string())?;
+    }
     if effective.is_none() {
         result["note"] = json!(
             "No enabled post_process_volume in the scene, so the defaults apply. \
@@ -266,13 +272,61 @@ fn settings_patch(params: &Value) -> Value {
     patch
 }
 
-/// Change post-processing on a volume: the given `entity`, else the lowest-priority
-/// infinite volume, which is created when the scene has none.
-pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
-    let world = ctx.gpu.scene.main_world_mut();
-    let target = match params.get("entity") {
-        Some(value) => {
-            let entity = entity_from_json(world, value)?;
+/// Setting names in `patch` that `current` has no field for, as dotted paths. Settings
+/// deserialize leniently, so without this a misspelt name would be dropped silently.
+fn unknown_setting_paths(current: &Value, patch: &Value, prefix: &str, out: &mut Vec<String>) {
+    let (Value::Object(current), Value::Object(patch)) = (current, patch) else {
+        return;
+    };
+    for (key, value) in patch {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match current.get(key) {
+            Some(existing) => unknown_setting_paths(existing, value, &path, out),
+            None => out.push(path),
+        }
+    }
+}
+
+/// The settings patch in `params` (see [`patch_post_process`]), with the pre-volume
+/// parameter names translated. Rejects setting names that do not exist and values of the
+/// wrong type, so scripts and tools hear about a typo instead of nothing happening.
+pub(crate) fn post_process_patch(params: &Value) -> Result<Value, String> {
+    let patch = settings_patch(params);
+    let defaults = serde_json::to_value(PostProcessVolume::default().settings)
+        .map_err(|err| err.to_string())?;
+    let mut unknown = Vec::new();
+    unknown_setting_paths(&defaults, &patch, "", &mut unknown);
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown post-process setting(s): {}; use {}",
+            unknown.join(", "),
+            defaults
+                .as_object()
+                .map(|groups| groups.keys().cloned().collect::<Vec<_>>().join(", "))
+                .unwrap_or_default()
+        ));
+    }
+    // A wrong type (a string for a number) is only found by reading the values.
+    patch_serde(&PostProcessVolume::default().settings, &patch)?;
+    Ok(patch)
+}
+
+/// Patch a post-process volume: `target`, else the lowest-priority infinite volume, which
+/// is created when the scene has none. `params` holds settings groups (`{"bloom":
+/// {"intensity": 2}}`) and may carry a `volume` object with the volume's own fields
+/// (`priority`, `weight`, `shape`, ...). Returns the edited volume and whether it was
+/// created; a created volume has no world transform until the caller propagates them.
+pub(crate) fn patch_post_process(
+    world: &mut hecs::World,
+    target: Option<hecs::Entity>,
+    params: &Value,
+) -> Result<(hecs::Entity, bool), String> {
+    let target = match target {
+        Some(entity) => {
             if world.get::<&PostProcessVolume>(entity).is_err() {
                 return Err(format!(
                     "entity {} has no post_process_volume",
@@ -288,6 +342,9 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
             .min_by_key(|(_, volume)| volume.priority)
             .map(|(entity, _)| entity),
     };
+
+    let patch = post_process_patch(params)?;
+
     let created = target.is_none();
     let entity = target.unwrap_or_else(|| {
         world.spawn((
@@ -302,7 +359,6 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
         .get::<&PostProcessVolume>(entity)
         .map(|volume| (*volume).clone())
         .map_err(|err| err.to_string())?;
-    let patch = settings_patch(params);
     volume.settings = patch_serde(&volume.settings, &patch)?;
     volume.tick_overrides_for_patch(&patch);
     if let Some(volume_patch) = params.get("volume") {
@@ -313,6 +369,18 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
     world
         .insert_one(entity, volume)
         .map_err(|err| err.to_string())?;
+    Ok((entity, created))
+}
+
+/// Change post-processing on a volume: the given `entity`, else the lowest-priority
+/// infinite volume, which is created when the scene has none.
+pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let world = ctx.gpu.scene.main_world_mut();
+    let target = params
+        .get("entity")
+        .map(|value| entity_from_json(world, value))
+        .transpose()?;
+    let (entity, created) = patch_post_process(world, target, params)?;
     ctx.gpu.scene.propagate_transforms();
     ctx.mark_modified();
 

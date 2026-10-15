@@ -154,7 +154,8 @@ Facts that change how you write scripts:
 - Lua can spawn entities with primitive meshes (`spawn_primitive`), change meshes and
   materials (`set_mesh`, `set_material_color`, `set_material`), play sounds
   (`play_sound`), create and change lights and cameras (`spawn_light`, `set_light`,
-  `spawn_camera`, `set_camera`, `set_active_camera`) and draw text at world positions
+  `spawn_camera`, `set_camera`, `set_active_camera`), change post-processing
+  (`set_postprocess({ vignette = { enabled = true } })`, undone when play stops) and draw text at world positions
   (`ui:world_label`, `ui:screen_label` in `on_ui`). `despawn_entity` removes entities, so
   bullets and sparks can be spawned and removed; a script that spawns its own pool should
   remove it in `on_destroyed(self, reason)`, which also runs before a hot reload (otherwise
@@ -223,6 +224,12 @@ Facts that change how you write scripts:
 - `mesh_sweep {path, radius}` builds tubes/rails; `profile` supplies a polygonal section.
   `mesh_heightfield {resolution, size, seed}` creates terrain; `heights` or `source` provides
   explicit/image heights. Both persist embedded geometry with `project_save`.
+- `visual_capture {variants: [{name, postprocess}], frames, settle_frames}` renders one
+  frozen view under several post-processing variants (render-only, the scene is never
+  edited) and saves the frames as PNGs plus `manifest.json` (engine frame, TAA jitter index,
+  scene time, settings changed from the baseline). Use it to answer "does X cause the
+  ghosting/halo" with images instead of toggling settings by hand; it does not diff the
+  images itself.
 - `profile_capture {frames}` captures CPU latency percentiles, stage/script cost and asset
   growth. `baseline` compares a previous report. It does not measure GPU execution.
 - After `project_save`, call `project_validate` for paths, structure and Lua syntax. Its

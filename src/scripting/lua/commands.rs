@@ -29,6 +29,9 @@ pub(crate) struct ScriptCommands {
     pub assets: Vec<(i64, AssetCommand)>,
     /// `emit_particles` requests, handed to the scene's particle runtime.
     pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
+    /// `set_postprocess` patches: the volume's script handle (`None` for the scene's
+    /// infinite volume) and the settings to change.
+    pub post_process: Vec<(Option<i64>, serde_json::Value)>,
 }
 
 impl ScriptCommands {
@@ -39,7 +42,22 @@ impl ScriptCommands {
             existing: Vec::new(),
             assets: Vec::new(),
             particle_bursts: Vec::new(),
+            post_process: Vec::new(),
         }
+    }
+
+    /// Queue a post-processing change on the volume `handle` names, or on the scene's
+    /// infinite volume when `handle` is `None`.
+    pub fn post_process(
+        &mut self,
+        handle: Option<i64>,
+        patch: serde_json::Value,
+    ) -> Result<(), mlua::Error> {
+        if let Some(handle) = handle {
+            self.resolve_or_pending(handle)?;
+        }
+        self.post_process.push((handle, patch));
+        Ok(())
     }
 
     /// Queue a mesh, material, light or camera change. Works for entities spawned this
@@ -346,6 +364,8 @@ impl ScriptCommands {
     pub fn despawn(&mut self, handle: i64) -> Result<(), mlua::Error> {
         if self.pending.remove(&handle).is_some() {
             self.assets.retain(|(target, _)| *target != handle);
+            self.post_process
+                .retain(|(target, _)| *target != Some(handle));
             return Ok(());
         }
 
@@ -386,7 +406,10 @@ impl ScriptCommands {
 
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.pending.is_empty() && self.existing.is_empty() && self.assets.is_empty()
+        self.pending.is_empty()
+            && self.existing.is_empty()
+            && self.assets.is_empty()
+            && self.post_process.is_empty()
     }
 
     pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
@@ -510,6 +533,29 @@ impl ScriptCommands {
                     warn!(target: "script", "Skipping mesh/material/light/camera change for invalid entity {handle}")
                 }
             }
+        }
+
+        for (handle, patch) in self.post_process.drain(..) {
+            let target = match handle {
+                Some(handle) => {
+                    let bits = self
+                        .registry
+                        .borrow()
+                        .resolved_bits(handle)
+                        .unwrap_or(handle as u64);
+                    match Entity::from_bits(bits) {
+                        Some(entity) => Some(entity),
+                        None => {
+                            warn!(target: "script", "Skipping set_postprocess for invalid entity {handle}");
+                            continue;
+                        }
+                    }
+                }
+                None => None,
+            };
+            result
+                .post_process
+                .push(PendingPostProcess { target, patch });
         }
 
         Ok(result)
@@ -1578,6 +1624,14 @@ pub struct PendingAssetCommand {
     pub command: AssetCommand,
 }
 
+/// A `set_postprocess` change resolved to its volume entity (`None`: the scene's
+/// infinite volume), waiting for the scene.
+#[derive(Debug, Clone)]
+pub struct PendingPostProcess {
+    pub target: Option<Entity>,
+    pub patch: serde_json::Value,
+}
+
 #[derive(Default)]
 pub(crate) struct ScriptApplyResult {
     pub scripts_added: Vec<Entity>,
@@ -1586,6 +1640,7 @@ pub(crate) struct ScriptApplyResult {
     pub gltf_imports: Vec<PendingGltfImport>,
     pub asset_commands: Vec<PendingAssetCommand>,
     pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
+    pub post_process: Vec<PendingPostProcess>,
     pub event_subscriptions: Vec<PendingEventSubscription>,
     pub event_unsubscriptions: Vec<PendingEventUnsubscription>,
 }

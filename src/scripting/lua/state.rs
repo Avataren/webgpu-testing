@@ -23,7 +23,9 @@ use mlua::LuaSerdeExt;
 
 use super::api::ui::{UiCommand, UiContext, UiResponse};
 use super::api::CoroutineGuard;
-use super::commands::{entity_bits, PendingAssetCommand, PendingGltfImport, ScriptCommands};
+use super::commands::{
+    entity_bits, PendingAssetCommand, PendingGltfImport, PendingPostProcess, ScriptCommands,
+};
 use super::component::{FunctionCallOutcome, LuaScriptComponent, LuaScriptInstance};
 use super::entity_registry::EntityHandleRegistry;
 use super::error::LuaScriptingError;
@@ -134,6 +136,8 @@ struct ScriptOutputs {
     entities_despawned: bool,
     /// `emit_particles` requests waiting for the particle runtime.
     particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
+    /// `set_postprocess` changes waiting for the scene.
+    pending_post_process: Vec<PendingPostProcess>,
 }
 
 impl ScriptOutputs {
@@ -151,6 +155,7 @@ impl ScriptOutputs {
         self.pending_gltf_imports.extend(result.gltf_imports);
         self.pending_asset_commands.extend(result.asset_commands);
         self.particle_bursts.extend(result.particle_bursts);
+        self.pending_post_process.extend(result.post_process);
 
         self.entities_despawned |= !result.despawned.is_empty();
         for entity in result.despawned {
@@ -943,6 +948,11 @@ impl ScriptingState {
     /// be unused now).
     pub fn take_entities_despawned(&mut self) -> bool {
         std::mem::take(&mut self.outputs.entities_despawned)
+    }
+
+    /// Post-processing changes scripts asked for since the last call.
+    pub fn take_pending_post_process(&mut self) -> Vec<PendingPostProcess> {
+        std::mem::take(&mut self.outputs.pending_post_process)
     }
 
     /// Mesh and material changes scripts asked for since the last call.
