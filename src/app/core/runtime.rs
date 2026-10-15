@@ -230,6 +230,7 @@ impl RuntimeController {
         }
 
         crate::audio::stop_all();
+        crate::process::kill_all();
         // A sped-up playtest should not carry over into the next play session.
         self.state.set_time_scale(1.0);
         self.state.configure_simulation(false, None);

@@ -200,7 +200,8 @@ pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
         .and_then(Value::as_str)
     {
         let resolved = resolve_existing_path(path)?;
-        patch["hdr"]["path"] = json!(resolved.display().to_string());
+        let stored = crate::project::portable_path(&resolved);
+        patch["hdr"]["path"] = json!(stored.display().to_string());
         if params["hdr"].get("enabled").is_none() {
             patch["hdr"]["enabled"] = json!(true);
         }

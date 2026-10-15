@@ -785,6 +785,38 @@ impl Scene {
             .map_err(|err| err.to_string())
     }
 
+    fn share_mesh(&mut self, entity: hecs::Entity, source: i64) -> Result<(), String> {
+        use crate::scene::components::{MeshBounds, MeshComponent, PrimitiveMeshComponent};
+        let world = self.main_world_mut();
+        let source = hecs::Entity::from_bits(source as u64)
+            .filter(|source| world.contains(*source))
+            .ok_or("the mesh source entity no longer exists")?;
+        let mesh = world
+            .get::<&MeshComponent>(source)
+            .map(|mesh| *mesh)
+            .map_err(|_| "the mesh source entity has no mesh")?;
+        let bounds = world.get::<&MeshBounds>(source).ok().map(|b| *b);
+        let primitive = world
+            .get::<&PrimitiveMeshComponent>(source)
+            .ok()
+            .map(|p| *p);
+        world
+            .insert_one(entity, mesh)
+            .map_err(|err| err.to_string())?;
+        if let Some(bounds) = bounds {
+            let _ = world.insert_one(entity, bounds);
+        }
+        match primitive {
+            Some(primitive) => {
+                let _ = world.insert_one(entity, primitive);
+            }
+            None => {
+                let _ = world.remove_one::<PrimitiveMeshComponent>(entity);
+            }
+        }
+        Ok(())
+    }
+
     /// Release inline materials no entity in any of this scene's worlds uses any more
     /// (left behind by despawned entities and replaced scenes). Returns how many.
     pub fn collect_unused_materials(&mut self) -> usize {
@@ -1047,6 +1079,7 @@ impl Scene {
                     crate::remote::handlers::set_active_camera(self, pending.entity)
                 }
                 AssetCommand::ShareMaterial(source) => self.share_material(pending.entity, *source),
+                AssetCommand::ShareMesh(source) => self.share_mesh(pending.entity, *source),
             };
             if let Err(err) = outcome {
                 warn!(target: "script", "Mesh/material/light/camera change for {:?} failed: {err}", pending.entity);

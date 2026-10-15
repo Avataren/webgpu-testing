@@ -7,6 +7,7 @@ pub mod environment;
 pub mod gpu_particles;
 pub mod graphics_settings;
 pub mod io;
+pub mod process;
 pub mod procgen;
 pub mod profiler;
 pub mod project;

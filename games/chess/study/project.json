@@ -15,7 +15,7 @@
     },
     {
       "id": "chess_set.scene",
-      "name": "chess_set",
+      "name": "chess_set (Imported)",
       "relative_path": "content/scenes/chess_set.scene.json",
       "dependencies": {
         "prefab_instances": []
@@ -23,7 +23,7 @@
     },
     {
       "id": "study_room.scene",
-      "name": "study_room",
+      "name": "study_room (Imported)",
       "relative_path": "content/scenes/study_room.scene.json",
       "dependencies": {
         "prefab_instances": []
@@ -31,7 +31,7 @@
     },
     {
       "id": "games_table.scene",
-      "name": "games_table",
+      "name": "games_table (Imported)",
       "relative_path": "content/scenes/games_table.scene.json",
       "dependencies": {
         "prefab_instances": []
@@ -39,7 +39,7 @@
     },
     {
       "id": "chess_clock.scene",
-      "name": "chess_clock",
+      "name": "chess_clock (Imported)",
       "relative_path": "content/scenes/chess_clock.scene.json",
       "dependencies": {
         "prefab_instances": []
@@ -47,7 +47,7 @@
     },
     {
       "id": "bentwood_chair.scene",
-      "name": "bentwood_chair",
+      "name": "bentwood_chair (Imported)",
       "relative_path": "content/scenes/bentwood_chair.scene.json",
       "dependencies": {
         "prefab_instances": []
@@ -64,7 +64,7 @@
     "ambient_intensity": 0.02,
     "hdr": {
       "enabled": true,
-      "image_path": "../../../web/assets/hdr/kloppenheim_06_puresky_4k.hdr",
+      "image_path": "content/environment/kloppenheim_06_puresky_4k.hdr",
       "intensity": 1.6,
       "background": true
     }

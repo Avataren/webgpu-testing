@@ -100,6 +100,37 @@ pub fn resolve_project_path(path: impl AsRef<Path>) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Finds a file a scene refers to: the path as given (absolute, or relative to the
+/// working directory) if it exists, otherwise relative to the active project. Scenes
+/// may then name project files (`content/environment/sky.hdr`) however the engine was
+/// started. Returns the path unchanged when neither exists.
+pub fn find_project_file(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() || path.exists() {
+        return path.to_path_buf();
+    }
+    match active_project_root() {
+        Some(root) if root.join(path).exists() => root.join(path),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// The path to store for `path` in a scene: relative to the active project when it is
+/// inside it, else relative to the working directory when inside that, else unchanged.
+/// Keeps machine-specific absolute paths out of saved scenes.
+pub fn portable_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let roots = [active_project_root(), std::env::current_dir().ok()];
+    for root in roots.into_iter().flatten() {
+        let root = root.canonicalize().unwrap_or(root);
+        if let Ok(relative) = canonical.strip_prefix(&root) {
+            return relative.to_path_buf();
+        }
+    }
+    path.to_path_buf()
+}
+
 /// Normalizes an absolute path for cross-platform comparisons.
 ///
 /// On Windows this strips the verbatim `\\\\?\\` prefix returned by some
@@ -941,6 +972,25 @@ mod tests {
         Backends, DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, MemoryHints,
         PowerPreference, RequestAdapterOptions, Trace,
     };
+
+    #[test]
+    fn scene_file_paths_stay_portable() {
+        // Inside the working directory (the repository in tests): stored relative to it,
+        // and found again as given.
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            portable_path(cwd.join("Cargo.toml")),
+            PathBuf::from("Cargo.toml")
+        );
+        assert_eq!(find_project_file("Cargo.toml"), PathBuf::from("Cargo.toml"));
+        // Elsewhere: left alone.
+        let outside = std::env::temp_dir().join("wgpu-cube-portable-path-test.hdr");
+        assert_eq!(portable_path(&outside), outside);
+        assert_eq!(
+            find_project_file("no/such/sky.hdr"),
+            PathBuf::from("no/such/sky.hdr")
+        );
+    }
 
     use crate::asset::Mesh;
     use crate::renderer::Vertex;

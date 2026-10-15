@@ -106,10 +106,21 @@ pub(crate) fn register_material_api(lua: &Lua) -> LuaResult<()> {
                 LuaValue::UserData(data) => {
                     AssetCommand::GeneratedMesh(data.borrow::<LuaGeneratedMesh>()?.0.clone())
                 }
+                LuaValue::Integer(_) | LuaValue::Number(_) => {
+                    let source = match mesh {
+                        LuaValue::Integer(source) => source,
+                        LuaValue::Number(source) => source as i64,
+                        _ => unreachable!(),
+                    };
+                    return with_active_commands(|commands| {
+                        commands.resolve_or_pending(source)?;
+                        commands.asset_command(entity, AssetCommand::ShareMesh(source))
+                    });
+                }
                 other => {
                     return Err(mlua::Error::RuntimeError(format!(
                         "set_mesh expects a primitive name, a generated mesh (a voxel model \
-                         part's mesh) or nil, not a {}",
+                         part's mesh), an entity whose mesh to draw, or nil, not a {}",
                         other.type_name()
                     )))
                 }

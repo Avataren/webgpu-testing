@@ -1011,7 +1011,7 @@ fn voxel_model_errors_name_the_problem() {
             r#"voxel_model{ size = {2, 2, 2} }"#,
             "needs rows, layers, voxels or fill",
         ),
-        (r#"set_mesh(spawn_entity("E"), 5)"#, "set_mesh expects"),
+        (r#"set_mesh(spawn_entity("E"), true)"#, "set_mesh expects"),
     ] {
         let err = state
             .eval(&mut world, source, None)

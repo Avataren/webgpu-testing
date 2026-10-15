@@ -278,7 +278,9 @@ fn open_hdr_image(path: &Path) -> Result<image::DynamicImage, String> {
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        image::open(path).map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))
+        // Scenes name their sky relative to the project or the working directory.
+        let path = crate::project::find_project_file(path);
+        image::open(&path).map_err(|err| format!("failed to open HDR image {:?}: {}", path, err))
     }
 }
 

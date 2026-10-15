@@ -194,7 +194,8 @@ end
   of one color (sparks, bullets, bricks) then use one material instead of one each.
   `set_material` on one of them gives it its own copy again.
 - `set_mesh(entity, mesh)` - Replace the geometry with a primitive (by name), a generated
-  mesh (`model.parts[i].mesh` of a `voxel_model`), or `nil` to remove it
+  mesh (`model.parts[i].mesh` of a `voxel_model`), another entity (draw that entity's mesh,
+  e.g. a promoted pawn taking the queen's model), or `nil` to remove it
 - `set_material_color(entity, r, g, b[, a])` - Base color in 0..1
 - `set_material(entity, fields)` - Change material fields: `color` (`{r, g, b[, a]}` or
   `"#rrggbb"`), `emissive` (strength; the surface glows in its own color, and values above 1
@@ -528,6 +529,39 @@ In web builds, files are fetched relative to the page and decoded by the browser
 first play of a file starts once it has loaded, and a missing file is logged instead of
 raising an error. Browsers hold audio back until the player first clicks or presses a
 key; sounds played before that start then.
+
+### Processes
+Talk to another program over its stdin and stdout a line at a time, without blocking the
+frame: a UCI chess engine, a solver, a simulation. Native builds only (on the web
+`process_spawn` returns `nil` and a message). The program must be inside the working
+directory or the open project; it runs directly, with no shell. Every process is killed
+when play mode stops; kill your own in `on_destroyed` so hot reloads do not leave one
+behind.
+
+- `process_spawn(path[, args])` → `id`, or `nil, message` when it cannot start. Relative
+  paths are tried against the working directory, then the project and its `content/`.
+- `process_write(id, line)` → `boolean` - send a line (the newline is added)
+- `process_read_lines(id)` → `{line, ...}` - the lines it printed since the last call
+- `process_running(id)` → `boolean`
+- `process_kill(id)` → `boolean`
+
+```lua
+local engine
+function on_created(self)
+    engine = process_spawn("target/chess-uci/release/xavchess-hce")
+    process_write(engine, "uci")
+end
+function update(self, dt)
+    for _, line in ipairs(process_read_lines(engine)) do
+        if line == "uciok" then process_write(engine, "isready") end
+    end
+end
+function on_destroyed(self)
+    process_kill(engine)
+end
+```
+
+See `games/chess/study/content/scripts/chess_uci.lua` for a complete UCI session.
 
 ### Script Access
 - `get_entity_scripts(entity)` - List script descriptors for an entity

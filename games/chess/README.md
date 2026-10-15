@@ -42,9 +42,8 @@ board and the decanter, sky light comes in through the windows, and the fire and
 the lamp warm the back of the room. The spectator turns path tracing on at start
 where the GPU supports it; P switches to the raster lighting and back.
 
-The sky reuses `web/assets/hdr/kloppenheim_06_puresky_4k.hdr` from the engine
-repository. The launchers set the repository working directory, so the scene
-contains no machine-specific HDR path and stores no duplicate HDR file.
+The sky is a copy of `web/assets/hdr/kloppenheim_06_puresky_4k.hdr` in
+`content/environment`, so the project is self-contained.
 
 The app reads the board from the scene rather than assuming its size: the square
 size comes from the white rooks and the centre from the 32 starting pieces
@@ -73,7 +72,7 @@ engine MCP's `asset_import` and place them as in the saved scene.
 | R | Start a new game |
 | C | Toggle camera drift |
 | M | Toggle sound |
-| P | Toggle path tracing |
+| P | Toggle path tracing (spectator) |
 | Escape | Close the app |
 
 The side panel shows recent moves, the evaluation from Ivory's perspective, and
@@ -91,9 +90,27 @@ old replies from moving pieces after a restart.
 `CHESS_PATH_TRACING=0` starts with raster lighting, and `CHESS_WINDOW=960x540` sets the
 window size. Settings are saved per user under the `chess-spectator` name.
 
-Opening `games/chess/study` in the generic editor or player displays the scene. Self-play
-runs in the dedicated spectator executable. Native UCI processes require desktop
-execution.
+## Playing from the editor
+
+Press Play on `games/chess/study` in the editor (or run it in the player) and the same
+exhibition runs from Lua: `content/scripts/chess_game.lua` on the `Chess Director`
+entity starts the XavChess HCE build over UCI with the engine's process API
+(`process_spawn`, `process_write`, `process_read_lines`) and the same strength settings.
+Build the engine first with `./runchess.sh` (or its first `cargo build` line). The
+engine still chooses every move; `chess_rules.lua` only keeps the position for
+castling, en passant, promotion, check, mate and draws. A camera director glides
+between slow shots around the board. Keys: Space pause, R new game, C camera, M
+sound. The native spectator strips the scene's scripts and plays the game itself.
+
+UCI needs a desktop build: the process API does not exist on the web.
+
+## Sounds
+
+`tools/study/sounds.py` synthesises the sounds from simple physical models: a felted
+piece set down on wood (wood modes, contact click, the table's body), a capture (clack,
+landing, the taken piece set aside), a soft low tone for check, a two-note mantel-clock
+chime at the end, and the clock plunger pressed after each move. Several takes of each
+keep repeated moves from sounding identical.
 
 To validate the game after building the HCE target:
 

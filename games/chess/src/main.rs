@@ -17,6 +17,7 @@ use wgpu_cube::{
         MeshBounds, MeshComponent, Name, Parent, Scene, SceneLibrary, Transform,
         TransformComponent, Visible, WorldTransform,
     },
+    scripting::lua::component::LuaScriptComponent,
 };
 
 const GOLD: Color32 = Color32::from_rgb(205, 175, 116);
@@ -732,6 +733,17 @@ impl RenderApplication for Spectator {
                 // Last-move markers appear with the first move.
                 for marker in &self.markers {
                     let _ = scene.world_mut().insert_one(*marker, Visible(false));
+                }
+                // The scene's own Lua game (for the editor's Play) would move the same
+                // pieces: this app is the game here.
+                let scripted: Vec<Entity> = scene
+                    .world()
+                    .query::<&LuaScriptComponent>()
+                    .iter()
+                    .map(|(entity, _)| entity)
+                    .collect();
+                for entity in scripted {
+                    let _ = scene.world_mut().remove_one::<LuaScriptComponent>(entity);
                 }
             }
             ctx.request_workspace_swap(workspace, changed);

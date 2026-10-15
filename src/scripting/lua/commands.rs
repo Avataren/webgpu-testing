@@ -545,7 +545,9 @@ impl ScriptCommands {
                     .unwrap_or(handle as u64)
             };
             let bits = resolve(handle);
-            if let AssetCommand::ShareMaterial(source) = &mut command {
+            if let AssetCommand::ShareMaterial(source) | AssetCommand::ShareMesh(source) =
+                &mut command
+            {
                 *source = resolve(*source) as i64;
             }
             match Entity::from_bits(bits) {
@@ -1668,6 +1670,9 @@ pub enum AssetCommand {
     /// Use the material of this entity (a script handle while queued, entity bits once
     /// applied), so both draw with one material.
     ShareMaterial(i64),
+    /// Draw the mesh of this entity (a script handle while queued, entity bits once
+    /// applied): a pawn promoting to the queen's model, say.
+    ShareMesh(i64),
 }
 
 /// An [`AssetCommand`] resolved to its entity, waiting for the renderer.
