@@ -5,21 +5,7 @@
 // Camera and Global Bindings
 // ============================================================================
 
-struct Globals {
-    view_proj: mat4x4<f32>,
-    inverse_view_proj: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    // Texture LOD bias: log2 of the render scale while upscaling, else 0.
-    mip_bias: f32,
-    camera_forward: vec3<f32>,
-    _padding1: f32,
-    camera_up: vec3<f32>,
-    _padding2: f32,
-    // view_proj without the TAA jitter, and last frame's: motion vectors compare them.
-    unjittered_view_proj: mat4x4<f32>,
-    prev_view_proj: mat4x4<f32>,
-};
-@group(0) @binding(0) var<uniform> globals: Globals;
+// The camera (`globals`, group 0) is camera.wgsl.
 
 fn material_mip_bias() -> f32 {
     return globals.mip_bias;
@@ -29,16 +15,7 @@ fn material_mip_bias() -> f32 {
 // Material System
 // ============================================================================
 
-struct Object {
-    model: mat4x4<f32>,
-    material_index: u32,
-    pick_id: array<u32, 2u>, // 64-bit pick identifier split across two u32 values (std430 stride matches ObjectData)
-    _padding: u32,
-    _padding2: array<u32, 4>, // keeps std430 stride aligned with CPU ObjectData (96 bytes total)
-};
-@group(1) @binding(0) var<storage, read> objects: array<Object>;
-
-@group(1) @binding(1) var<storage, read> materials: array<MaterialData>;
+// `objects` and `materials` (group 1) are objects.wgsl.
 // Last frame's model matrices, indexed like `objects` (motion vectors).
 @group(1) @binding(2) var<storage, read> prev_models: array<mat4x4<f32>>;
 
@@ -117,6 +94,8 @@ struct VsIn {
     @location(2) uv: vec2<f32>,
     @location(3) tangent: vec4<f32>,  // xyz = tangent, w = handedness
     @location(4) color: vec4<f32>,    // linear, multiplies the material colour
+    // Last frame's position (a skinned instance's previous pose; `pos` otherwise).
+    @location(5) prev_pos: vec3<f32>,
     @builtin(instance_index) instance: u32,
 };
 
@@ -157,38 +136,11 @@ fn gbuffer_color(shaded: ShadedFragment) -> vec4<f32> {
     );
 }
 
-struct FragmentOutNoPick {
+struct GBufferOut {
     @location(0) color: vec4<f32>,
     @location(1) normal: vec4<f32>,
     @location(2) world_pos: vec4<f32>,
 };
-
-struct FragmentOut {
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec4<f32>,
-    @location(2) world_pos: vec4<f32>,
-    @location(3) pick: vec2<u32>,
-};
-
-struct FragmentOutPick {
-    @location(0) color: vec4<f32>,
-    @location(1) pick: vec2<u32>,
-};
-
-fn object_pick_output(
-    instance_index: u32,
-    alpha: f32,
-    material_flags: u32,
-) -> vec2<u32> {
-    let obj = objects[instance_index];
-    let pick_value = vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]);
-
-    if (material_flags & FLAG_ALPHA_BLEND) != 0u && alpha <= 0.0 {
-        return vec2<u32>(0u, 0u);
-    }
-
-    return pick_value;
-}
 
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
@@ -198,7 +150,7 @@ fn vs_main(in: VsIn) -> VsOut {
     let material = materials[obj.material_index];
 
     // Transform normal and tangent to world space
-    let n = normalize((M * vec4(in.normal, 0.0)).xyz);
+    let n = normalize(normal_matrix(M) * in.normal);
     let t = normalize((M * vec4(in.tangent.xyz, 0.0)).xyz);
     
     // Calculate bitangent using the handedness from the tangent w component
@@ -208,7 +160,7 @@ fn vs_main(in: VsIn) -> VsOut {
     out.pos = globals.view_proj * world_pos;
     out.curr_clip = globals.unjittered_view_proj * world_pos;
     out.prev_clip = globals.prev_view_proj
-        * (previous_model(in.instance, M) * vec4(in.pos, 1.0));
+        * (previous_model(in.instance, M) * vec4(in.prev_pos, 1.0));
     out.world_pos = world_pos.xyz;
     out.normal = n;
     out.uv = in.uv;
@@ -236,6 +188,19 @@ fn vs_main(in: VsIn) -> VsOut {
 // ============================================================================
 // Fragment Shader
 // ============================================================================
+
+// A cut-out surface (glTF MASK) is discarded where `alpha` is below its cutoff and opaque
+// elsewhere; other surfaces keep their alpha.
+fn alpha_tested(alpha: f32, material_flags: u32) -> f32 {
+    let cutoff = material_alpha_cutoff(material_flags);
+    if cutoff <= 0.0 || (material_flags & FLAG_ALPHA_BLEND) != 0u {
+        return alpha;
+    }
+    if alpha < cutoff {
+        discard;
+    }
+    return 1.0;
+}
 
 fn shade_fragment(in: VsOut) -> ShadedFragment {
     // ALWAYS sample all textures (uniform control flow)
@@ -335,11 +300,13 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     let lit = (material_flags & FLAG_UNLIT) == 0u;
     let smoothness = select(0.0, clamp(1.0 - roughness, 0.0, 1.0), lit);
     let specular_color = mix(vec3<f32>(0.04), base_color.rgb, metallic);
+    // Cut-out surfaces end here, after every texture is sampled (uniform control flow).
+    let alpha = alpha_tested(base_color.a, material_flags);
     // Drawn see-through (the transparent pass, without ray-traced refraction), a
     // transmissive surface shows what is behind it in proportion, keeping a little opacity
     // so its highlights and edges still show.
     return ShadedFragment(
-        vec4<f32>(color, base_color.a * (1.0 - 0.85 * transmission)),
+        vec4<f32>(color, alpha * (1.0 - 0.85 * transmission)),
         vec4<f32>(normalize(N), 1.0),
         vec4<f32>(in.world_pos, encode_surface_w(smoothness, specular_color)),
         transmission,
@@ -367,30 +334,28 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_main_gbuffer(in: VsOut) -> FragmentOutNoPick {
+fn fs_main_gbuffer(in: VsOut) -> GBufferOut {
     let shaded = shade_fragment(in);
-    return FragmentOutNoPick(
+    return GBufferOut(
         gbuffer_color(shaded),
         pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
         shaded.world_pos,
     );
 }
 
+// The pick pass: the entity's pick id where the surface is visible to a click. Fully
+// transparent parts of blended surfaces let clicks through to what is behind.
 @fragment
-fn fs_main_pick(in: VsOut) -> FragmentOutPick {
-    let shaded = shade_fragment(in);
-    let pick_value = object_pick_output(in.instance_id, shaded.color.a, in.material_flags);
-    return FragmentOutPick(shaded.color, pick_value);
-}
-
-@fragment
-fn fs_main_gbuffer_pick(in: VsOut) -> FragmentOut {
-    let shaded = shade_fragment(in);
-    let pick_value = object_pick_output(in.instance_id, shaded.color.a, in.material_flags);
-    return FragmentOut(
-        gbuffer_color(shaded),
-        pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
-        shaded.world_pos,
-        pick_value,
-    );
+fn fs_pick(in: VsOut) -> @location(0) vec2<u32> {
+    let base_color_sample = sample_base_color_texture(in.material_texture_indices0.x, in.uv);
+    var alpha = in.material_color.a;
+    if (in.material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u {
+        alpha = alpha * base_color_sample.a;
+    }
+    if (in.material_flags & FLAG_ALPHA_BLEND) != 0u && alpha <= 0.0 {
+        discard;
+    }
+    alpha_tested(alpha, in.material_flags);
+    let obj = objects[in.instance_id];
+    return vec2<u32>(obj.pick_id[0u], obj.pick_id[1u]);
 }

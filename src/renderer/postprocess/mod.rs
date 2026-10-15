@@ -14,8 +14,8 @@
 //! scene region, at the display region's origin). The passes up to the TAA read it through
 //! a second uniform describing that rectangle; the TAA upscales into the display region,
 //! and everything after it runs at output resolution, mapping into the scene region where
-//! it reads the G-buffer or occlusion. Depth and pick ids are upscaled too, for what is
-//! drawn after post-processing.
+//! it reads the G-buffer or occlusion. Depth is upscaled too, for what is drawn after
+//! post-processing.
 
 mod bloom;
 mod dof;
@@ -55,7 +55,7 @@ use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
     FinalPipeline,
 };
-use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
+use resources::{BloomMip, MsaaTarget, TextureBundle};
 use rt_ao::RtAoStage;
 use rt_reflections::{RtReflectionInputs, RtReflectionStage};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
@@ -160,8 +160,7 @@ pub struct PostProcess {
     normal_msaa: Option<MsaaTarget>,
     position_source: TextureBundle,
     position_msaa: Option<MsaaTarget>,
-    pick_target: LazyPickTarget,
-    /// Output-resolution copies of depth and pick ids while upscaling.
+    /// Output-resolution depth while upscaling.
     upscaled: UpscaledTargets,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
@@ -197,8 +196,6 @@ pub struct PostProcess {
     rt_ao_stage: Option<RtAoStage>,
     /// Path tracing with its denoiser, likewise.
     path_tracing_stage: Option<PathTracingStage>,
-    /// This frame's lighting was path traced (reflection and occlusion passes stand down).
-    path_traced: bool,
     /// Kept to build stages added after construction (ray-traced reflections).
     uniform_layout: wgpu::BindGroupLayout,
     bloom_stage: BloomStage,
@@ -230,6 +227,10 @@ pub struct PostProcess {
     resolved_depth: Option<TextureBundle>,
     cached_depth_view: Option<wgpu::TextureView>,
     bind_groups_dirty: bool,
+    /// The views and routing the cached bind groups were built from (see
+    /// [`Self::bound_inputs`]): a target recreated anywhere rebuilds them, even where
+    /// nothing called `mark_bind_groups_dirty`.
+    bound_inputs: Option<BoundInputs>,
     camera: PostProcessCamera,
     viewport_resolution: Vec2,
     viewport_offset: Vec2,
@@ -331,19 +332,6 @@ impl FrameClock {
 pub struct GBufferViews<'a> {
     pub normal: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
     pub position: (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>),
-    pub id: Option<PickAttachmentViews<'a>>,
-}
-
-#[derive(Clone, Copy)]
-pub struct PickAttachmentViews<'a> {
-    pub multisample: &'a wgpu::TextureView,
-    pub resolve: Option<&'a wgpu::TextureView>,
-}
-
-impl<'a> PickAttachmentViews<'a> {
-    pub fn single_sample(self) -> &'a wgpu::TextureView {
-        self.resolve.unwrap_or(self.multisample)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -468,7 +456,11 @@ pub(crate) struct RebuiltPostProcess {
 pub(crate) struct RayTracedLayouts<'a> {
     pub lights: &'a wgpu::BindGroupLayout,
     pub scene: &'a wgpu::BindGroupLayout,
+    /// The bindless texture array for passes that shade hits (a fifth group).
     pub textures: Option<&'a wgpu::BindGroupLayout>,
+    /// The bindless texture array for passes that only alpha-test cut-out surfaces (a
+    /// fourth group, so it needs no more than four bind groups).
+    pub cutout_textures: Option<&'a wgpu::BindGroupLayout>,
 }
 
 impl PostProcess {
@@ -504,7 +496,7 @@ impl PostProcess {
                 .transpose()
                 .map_err(|error| format!("ray-traced reflections: {error}"))?,
             rt_ao_stage: rebuild(self.rt_ao_stage.is_some())
-                .map(|rt| RtAoStage::new(device, layout, rt.scene))
+                .map(|rt| RtAoStage::new(device, layout, rt.scene, rt.cutout_textures))
                 .transpose()
                 .map_err(|error| format!("ray-traced ambient occlusion: {error}"))?,
             path_tracing_stage: rebuild(self.path_tracing_stage.is_some())
@@ -653,7 +645,6 @@ impl PostProcess {
             normal_msaa: targets.normal_msaa,
             position_source: targets.position_source,
             position_msaa: targets.position_msaa,
-            pick_target: LazyPickTarget::new(),
             upscaled: UpscaledTargets::new(device, &uniform_layout),
             ssao: targets.ssao,
             ssao_ping: targets.ssao_ping,
@@ -682,7 +673,6 @@ impl PostProcess {
             rt_reflection_stage: None,
             rt_ao_stage: None,
             path_tracing_stage: None,
-            path_traced: false,
             uniform_layout,
             bloom_stage,
             exposure_stage,
@@ -704,6 +694,7 @@ impl PostProcess {
             resolved_depth: targets.resolved_depth,
             cached_depth_view: None,
             bind_groups_dirty: true,
+            bound_inputs: None,
             camera: PostProcessCamera::default(),
             viewport_resolution: Vec2::new(size.width as f32, size.height as f32),
             viewport_offset: Vec2::ZERO,
@@ -759,7 +750,6 @@ impl PostProcess {
         self.reflection_history = None;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
-        self.pick_target.invalidate();
         self.upscaled.invalidate();
         self.viewport_resolution = Vec2::new(width as f32, height as f32);
         self.viewport_offset = Vec2::ZERO;
@@ -779,6 +769,8 @@ impl PostProcess {
         region: Option<RenderRegion>,
         scene_region: Option<RenderRegion>,
     ) {
+        // Once per frame, before any pass: rebuild bind groups whose views changed.
+        self.sync_bind_groups();
         let full = Vec2::new(
             self.size.width.max(1) as f32,
             self.size.height.max(1) as f32,
@@ -864,12 +856,7 @@ impl PostProcess {
             Some(msaa) => (&msaa.view, Some(&self.position_source.view)),
             None => (&self.position_source.view, None),
         };
-        let id = self.pick_target.views();
-        GBufferViews {
-            normal,
-            position,
-            id,
-        }
+        GBufferViews { normal, position }
     }
 
     pub fn set_depth_view(&mut self, depth_view: &wgpu::TextureView) {
@@ -909,6 +896,9 @@ impl PostProcess {
         queue: &wgpu::Queue,
         settings: &PostProcessSettings,
     ) {
+        // Work with what would be stored: input that needs clamping would otherwise
+        // count as new every frame.
+        let settings = settings.clone().sanitized();
         let lut_path = if settings.lut.active() {
             settings.lut.path.as_str()
         } else {
@@ -927,11 +917,11 @@ impl PostProcess {
             // The uniform's reflection texel scale changes with it.
             self.upload_uniform(queue);
         }
-        if self.settings != *settings {
+        if self.settings != settings {
             let was_auto = self.settings.auto_exposure_active();
             let was_taa = self.settings.taa_active();
             let previous_upscaler = self.settings.upscaling.method;
-            self.settings = settings.clone().sanitized();
+            self.settings = settings;
             if self.settings.auto_exposure_active() && !was_auto {
                 // Start from a fresh measurement instead of whatever was adapted to
                 // when auto exposure was last on.
@@ -979,13 +969,20 @@ impl PostProcess {
     }
 
     /// Build the ray-traced ambient occlusion pass (`scene_layout` is the ray tracing
-    /// scene's). On error occlusion stays screen-space.
+    /// scene's, `textures_layout` the bindless texture array's for cut-out surfaces). On
+    /// error occlusion stays screen-space.
     pub(crate) fn enable_ray_traced_ao(
         &mut self,
         device: &wgpu::Device,
         scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Result<(), String> {
-        self.rt_ao_stage = Some(RtAoStage::new(device, &self.uniform_layout, scene_layout)?);
+        self.rt_ao_stage = Some(RtAoStage::new(
+            device,
+            &self.uniform_layout,
+            scene_layout,
+            textures_layout,
+        )?);
         self.mark_bind_groups_dirty();
         Ok(())
     }
@@ -1064,8 +1061,7 @@ impl PostProcess {
             scene: &self.scene_source.view,
             scene_texture: self.scene_source.texture(),
         };
-        self.path_traced = stage.run(device, queue, encoder, frame, timer);
-        self.path_traced
+        stage.run(device, queue, encoder, frame, timer)
     }
 
     /// Whether transmissive surfaces are refracted with ray tracing (otherwise they are
@@ -1118,13 +1114,6 @@ impl PostProcess {
              otherwise a code for smoothness and specular colour (encode_surface_w in common.wgsl)",
             self.position_source.texture(),
         ));
-        if let Some(pick) = self.pick_target.texture() {
-            out.push(FetchableTexture::new(
-                "gbuffer.pick",
-                "Pick ids (the two halves of each pixel's entity pick id; 0 where nothing pickable)",
-                pick,
-            ));
-        }
         out.push(FetchableTexture::new(
             "ssao",
             "Ambient occlusion (r: 1 open, 0 occluded), screen-space or ray-traced, after the blur",
@@ -1195,40 +1184,8 @@ impl PostProcess {
         self.exposure_stage.reset(queue);
     }
 
-    pub fn ensure_pick_attachment(&mut self, device: &wgpu::Device) {
-        self.pick_target
-            .ensure(device, &self.size, self.sample_count);
-    }
-
-    /// The pick target the scene passes write ids into (at the scene's resolution).
-    pub fn scene_pick_views(&self) -> Option<PickAttachmentViews<'_>> {
-        self.pick_target.views()
-    }
-
-    /// The pick target at output resolution, for passes after post-processing (overlays,
-    /// gizmos): the upscaled copy of the scene's ids while upscaling.
-    pub fn pick_attachment_views(&self) -> Option<PickAttachmentViews<'_>> {
-        match self.upscaled.pick.as_ref().filter(|_| self.upscaling) {
-            Some(pick) => Some(PickAttachmentViews {
-                multisample: &pick.view,
-                resolve: None,
-            }),
-            None => self.pick_target.views(),
-        }
-    }
-
-    /// The pick ids clicks are read from, at output resolution.
-    pub fn pick_texture(&self) -> Option<&wgpu::Texture> {
-        match self.upscaled.pick.as_ref().filter(|_| self.upscaling) {
-            Some(pick) => Some(pick.texture()),
-            None => self.pick_target.texture(),
-        }
-    }
-
-    pub fn pick_texture_extent(&self) -> Option<wgpu::Extent3d> {
-        self.pick_target.extent()
-    }
-
+    /// Post-process the scene into `target`. `path_traced`: this frame's opaque lighting
+    /// was path traced (it has reflections and occlusion, so those passes stand down).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute(
         &mut self,
@@ -1239,6 +1196,7 @@ impl PostProcess {
         region: Option<RenderRegion>,
         scene_region: Option<RenderRegion>,
         ray_tracing: Option<RayTracingFrame<'_>>,
+        path_traced: bool,
         timer: &mut crate::renderer::gpu_timer::GpuTimer,
     ) {
         self.ensure_cached_bind_groups(device);
@@ -1283,7 +1241,6 @@ impl PostProcess {
         }
 
         // Path traced lighting has its reflections and occlusion already.
-        let path_traced = std::mem::take(&mut self.path_traced);
         if !path_traced {
             if let Some(stage) = self.path_tracing_stage.as_mut() {
                 stage.reset_history();
@@ -1356,9 +1313,13 @@ impl PostProcess {
         };
         if self.settings.ssao_active() && !path_traced {
             let traced = match (self.rt_ao_stage.as_ref(), ray_tracing.as_ref()) {
-                (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => {
-                    stage.trace(encoder, scene_uniform, frame.scene, ssao_targets.output)
-                }
+                (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => stage.trace(
+                    encoder,
+                    scene_uniform,
+                    frame.scene,
+                    frame.textures,
+                    ssao_targets.output,
+                ),
                 _ => false,
             };
             if traced {
@@ -1443,7 +1404,6 @@ impl PostProcess {
                     &self.uniform_bind_group,
                     &self.size,
                     depth,
-                    self.pick_target.views().map(|views| views.single_sample()),
                     region,
                 );
             }
@@ -1631,6 +1591,54 @@ impl PostProcess {
                 [self.size.width, self.size.height],
                 frame,
             );
+    }
+
+    /// Everything the cached bind groups capture: each target view (compared by identity)
+    /// and the routing that picks between them.
+    fn bound_inputs(&self) -> BoundInputs {
+        let optional = |bundle: &Option<TextureBundle>| bundle.as_ref().map(|b| b.view.clone());
+        let mut views = vec![
+            self.scene_source.view.clone(),
+            self.scene_copy.view.clone(),
+            self.normal_source.view.clone(),
+            self.position_source.view.clone(),
+            self.ssao.view.clone(),
+            self.ssao_ping.view.clone(),
+            self.reflection.trace.view.clone(),
+            self.reflection.ping.view.clone(),
+            self.reflection.accumulated.view.clone(),
+            self.reflection.history.view.clone(),
+            self.dof_half.view.clone(),
+            self.dof_blur.view.clone(),
+            self.taa_output.view.clone(),
+            self.taa_history.view.clone(),
+            self.motion_output.view.clone(),
+            self.display.view.clone(),
+            self.lut.view().clone(),
+        ];
+        views.extend(self.bloom_chain.iter().map(|mip| mip.view.clone()));
+        BoundInputs {
+            views,
+            optional_views: vec![
+                self.cached_depth_view.clone(),
+                optional(&self.resolved_depth),
+                optional(&self.opaque_copy),
+                optional(&self.particle_copy),
+                self.upscaled.depth_view().cloned(),
+            ],
+            temporal_routing: self.temporal_routing,
+            particles_traced: self.particles_traced,
+        }
+    }
+
+    /// Mark the bind groups for rebuilding when a view they capture was replaced since
+    /// they were built. Called at the start of every frame, before any pass binds them.
+    fn sync_bind_groups(&mut self) {
+        let inputs = self.bound_inputs();
+        if self.bound_inputs.as_ref() != Some(&inputs) {
+            self.mark_bind_groups_dirty();
+            self.bound_inputs = Some(inputs);
+        }
     }
 
     fn mark_bind_groups_dirty(&mut self) {
@@ -1872,6 +1880,15 @@ impl PostProcess {
             bytemuck::bytes_of(&scene_uniform),
         );
     }
+}
+
+/// What [`PostProcess`]'s cached bind groups were built from.
+#[derive(PartialEq)]
+struct BoundInputs {
+    views: Vec<wgpu::TextureView>,
+    optional_views: Vec<Option<wgpu::TextureView>>,
+    temporal_routing: (bool, bool),
+    particles_traced: bool,
 }
 
 /// Whether the camera jumped between two frames (a cut, a teleport, or a turn too fast
@@ -2438,15 +2455,17 @@ mod tests {
 
     #[test]
     fn rt_ao_shader_validates() {
-        let source = rt_ao::rt_ao_shader_source();
-        let module = naga::front::wgsl::parse_str(&source)
+        for textures in [false, true] {
+            let source = rt_ao::rt_ao_shader_source(textures);
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::RAY_QUERY,
-        )
-        .validate(&module)
-        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        }
     }
 
     #[test]

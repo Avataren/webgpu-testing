@@ -9,21 +9,10 @@
 // shadows: each pixel and frame aims its ray at a different point of the light (a disc
 // across the sun, a sphere around a point or spot light), and TAA averages the results.
 //
-// Needs `enable wgpu_ray_query;` (prepended by the Rust side).
+// Needs `enable wgpu_ray_query;`, the material module and the scene modules
+// (raytracing::scene_shader_modules), composed by raytracing/shadows.rs.
 
-struct Globals {
-    view_proj : mat4x4<f32>,
-    inverse_view_proj : mat4x4<f32>,
-    camera_pos : vec3<f32>,
-    _padding0 : f32,
-    camera_forward : vec3<f32>,
-    _padding1 : f32,
-    camera_up : vec3<f32>,
-    _padding2 : f32,
-    unjittered_view_proj : mat4x4<f32>,
-    prev_view_proj : mat4x4<f32>,
-};
-@group(0) @binding(0) var<uniform> globals : Globals;
+// The camera (`globals`, group 0) comes from camera.wgsl.
 
 // Mirrors `RtShadowUniform` in src/renderer/raytracing/shadows.rs. w = 1 marks a light
 // that is traced.
@@ -43,7 +32,7 @@ struct RtShadowParams {
 @group(1) @binding(0) var<uniform> rt_shadow : RtShadowParams;
 @group(1) @binding(1) var rt_depth : texture_depth_2d;
 
-@group(2) @binding(0) var rt_tlas : acceleration_structure;
+// The ray tracing scene is group 2 (rt_scene.wgsl), the material textures group 3.
 
 struct VertexOutput {
     @builtin(position) position : vec4<f32>,
@@ -91,7 +80,7 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
         &query,
         rt_tlas,
         RayDesc(
-            RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+            RAY_FLAG_TERMINATE_ON_FIRST_HIT,
             // Opaque geometry only (MASK_OPAQUE in raytracing/scene.rs): light passes glass.
             0x01u,
             0.0,
@@ -103,6 +92,10 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query).kind == RAY_QUERY_INTERSECTION_NONE;

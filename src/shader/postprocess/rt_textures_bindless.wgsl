@@ -8,6 +8,11 @@
 // `lod_base` is the hit's mip level for a 1x1 texture (see rt_shade); the
 // texture's size moves it to the right level.
 fn rt_sample_texture(index : u32, uv : vec2<f32>, lod_base : f32, nearest : bool) -> vec4<f32> {
+    // A slot past the array (more textures loaded than it holds): leave the factors as
+    // they are.
+    if index >= 256u {
+        return vec4<f32>(1.0);
+    }
     let size = vec2<f32>(textureDimensions(rt_textures[index]));
     let lod = max(lod_base + 0.5 * log2(size.x * size.y), 0.0);
     if nearest {

@@ -316,14 +316,31 @@ fn sample_point_shadow(
     light_pos: vec3<f32>,
     light_range: f32
 ) -> f32 {
+    return sample_point_shadow_offset(index, world_pos, vec3<f32>(0.0), light_pos, light_range);
+}
+
+// The same, looked up a little above the surface (normal `N`): about a texel's footprint
+// at the fragment's distance, more where the light grazes, against acne on curved and
+// low-poly surfaces (as sample_directional_shadow does).
+fn sample_point_shadow_offset(
+    index: u32,
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    light_pos: vec3<f32>,
+    light_range: f32
+) -> f32 {
     let info = shadow_info.points[index];
     let to_fragment = world_pos - light_pos;
     let distance = length(to_fragment);
-    
+
     let dir = normalize(to_fragment);
     let face = select_point_face(dir);
     let matrix = info.view_proj[face];
-    let proj = project_shadow(matrix, world_pos);
+    // Each face spans 90 degrees: a texel is 2 * distance / size wide at the fragment.
+    let texel_world = 2.0 * distance * shadow_texel_size(point_shadow_maps).x;
+    let n_dot_l = clamp(dot(N, -dir), 0.0, 1.0);
+    let offset = texel_world * (1.0 + 2.0 * (1.0 - n_dot_l));
+    let proj = project_shadow_with_normal_offset(matrix, world_pos, N, offset);
     let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
     let depth = clamp(proj.z, 0.0, 1.0);
     let texel = shadow_texel_size(point_shadow_maps);

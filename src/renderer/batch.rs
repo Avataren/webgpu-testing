@@ -122,6 +122,8 @@ pub struct Batch<'a> {
     pub instances: &'a [InstanceData],
     pub use_nearest_filtering: bool,
     pub cull_mode: CullMode,
+    /// Its materials cut the surface away by alpha (`Material::is_alpha_masked`).
+    pub alpha_masked: bool,
 }
 
 /// Batching key - only splits by what ACTUALLY requires different draw calls
@@ -136,6 +138,9 @@ struct BatchKey {
     use_nearest_filtering: bool,
     cull_mode: CullMode,
     material_pipeline_key: MaterialPipelineKey,
+    /// Cut-out surfaces draw apart: they cannot share the depth prepass, and their shadows
+    /// need the alpha test.
+    alpha_masked: bool,
 }
 
 /// Collects objects and batches by pipeline requirements
@@ -237,6 +242,7 @@ impl RenderBatcher {
             use_nearest_filtering: material.uses_nearest_filtering(),
             cull_mode: obj.cull_mode,
             material_pipeline_key,
+            alpha_masked: material.is_alpha_masked(),
         };
 
         let lookup_key = match material_pipeline_key {
@@ -269,9 +275,14 @@ impl RenderBatcher {
 
     /// Clear all batches
     pub fn clear(&mut self) {
-        for batch in self.batches.values_mut() {
+        // Keep the instance vectors of batches drawn last frame (their allocations are
+        // reused); drop keys that went a whole frame unused, so despawned entities and
+        // skinned instances do not accumulate.
+        self.batches.retain(|_, batch| {
+            let used = !batch.is_empty();
             batch.clear();
-        }
+            used
+        });
         self.materials.clear();
         self.resolved_materials.clear();
         self.material_pipeline_keys.clear();
@@ -293,6 +304,7 @@ impl RenderBatcher {
             instances: instances.as_slice(),
             use_nearest_filtering: key.use_nearest_filtering,
             cull_mode: key.cull_mode,
+            alpha_masked: key.alpha_masked,
         })
     }
 
@@ -307,6 +319,7 @@ impl RenderBatcher {
                     instances: instances.as_slice(),
                     use_nearest_filtering: key.use_nearest_filtering,
                     cull_mode: key.cull_mode,
+                    alpha_masked: key.alpha_masked,
                 })
             } else {
                 None

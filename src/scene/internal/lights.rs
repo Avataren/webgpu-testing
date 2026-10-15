@@ -175,7 +175,7 @@ pub(crate) fn build_directional_shadow(
     if up.length_squared() > 0.0 {
         up = up.normalize();
     }
-    if up.length_squared() <= 0.0 || up.abs().dot(direction).abs() > 0.999 {
+    if up.length_squared() <= 0.0 || up.dot(direction).abs() > 0.999 {
         up = shadow_up(direction);
     }
 

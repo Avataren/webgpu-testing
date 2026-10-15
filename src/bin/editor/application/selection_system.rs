@@ -478,7 +478,6 @@ impl EditorSystem for SelectionSystem {
             let runtime_state = app.runtime_state();
             if !matches!(runtime_state.active_mode(), RuntimeMode::Editor) {
                 self.clear_pending_pick();
-                gpu_ctx.renderer.set_pick_active(false);
                 return;
             }
 
@@ -497,15 +496,12 @@ impl EditorSystem for SelectionSystem {
                 }
             }
 
-            let mut issue_pick_pass = false;
-
+            // A queued pick draws its pick pass with the next frame.
             if !self.gpu_pick.in_flight() {
                 if let Some(request) = self.take_pending_pick() {
-                    issue_pick_pass = self.try_enqueue_pick(app, gpu_ctx, request);
+                    self.try_enqueue_pick(app, gpu_ctx, request);
                 }
             }
-
-            gpu_ctx.renderer.set_pick_active(issue_pick_pass);
         }) else {
             return;
         };

@@ -90,8 +90,10 @@ impl RenderContext {
         size: PhysicalSize<u32>,
         settings: &RenderSettings,
     ) -> Self {
+        // The renderer needs storage buffers in vertex shaders, which WebGL2 lacks (and the
+        // `webgl` feature of wgpu is off), so the browser path is WebGPU only.
         let backends = if cfg!(target_arch = "wasm32") {
-            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+            wgpu::Backends::BROWSER_WEBGPU
         } else {
             wgpu::Backends::all()
         };
@@ -177,6 +179,20 @@ impl RenderContext {
         };
 
         limits.max_bind_groups = limits.max_bind_groups.max(4);
+        // Name what the adapter lacks instead of failing later in `request_device`.
+        let mut missing = Vec::new();
+        limits.check_limits_with_fail_fn(&adapter.limits(), false, |name, wanted, allowed| {
+            missing.push(format!("{name} (needs {wanted}, adapter has {allowed})"));
+        });
+        if !missing.is_empty() {
+            let info = adapter.get_info();
+            panic!(
+                "GPU adapter '{}' ({:?}) is below the renderer's minimum limits: {}",
+                info.name,
+                info.backend,
+                missing.join(", ")
+            );
+        }
 
         let mut ray_tracing = crate::renderer::raytracing::RayTracingSupport::probe(&adapter);
         let (device, queue) = if ray_tracing.is_available() {

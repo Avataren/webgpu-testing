@@ -78,9 +78,32 @@ to `Editor`. The editor starts and stops play mode through `RuntimeStateHandle`.
 ## Rendering
 
 `Renderer::render` (`src/renderer/renderer_core.rs`) runs these passes in order:
-shadow maps → depth prepass → main colour pass → custom stage (`BeforePostprocess`) →
-transparent pass → post-processing → custom stage (`AfterPostprocess`) →
-surface passes (overlay, gizmos) → UI hook.
+skinning → acceleration structures (when ray tracing runs) → shadow maps → depth prepass
+→ ray-traced shadow mask → main colour pass → path tracing → shader-material colour →
+custom stage (`BeforePostprocess`) → transparent pass → post-processing → custom stage
+(`AfterPostprocess`) → surface passes (overlay, gizmos) → pick pass (only with a pending
+pick) → UI hook. What runs is decided once per frame in a `FramePlan` (`plan_frame`)
+before any pass is recorded; passes read it rather than flags left by earlier passes.
+The camera is set after the frame's render region and post-processing settings, since
+its TAA jitter and texture LOD bias depend on both.
+
+- **Depth prepass**: opaque PBR batches, cut-out surfaces through an alpha-tested
+  pipeline (`depth_prepass_masked.wgsl`), so the ray-traced shadow mask traced from this
+  depth sees them. Shader materials (their own vertex stage may move vertices) write their
+  depth in the main pass.
+- **Shader materials** fill the G-buffer from their own shader: a generated
+  `fs_main_gbuffer` wraps the user's `fs_main` (`renderer/internal/shader_material.rs`)
+  when it takes a struct with `world_pos` and `normal`; motion vectors come from the
+  camera when the module's `globals` has `unjittered_view_proj`/`prev_view_proj`. Other
+  shapes fall back to the PBR shader for their G-buffer and draw their colour in the
+  shader-material pass. That pass also redraws every shader material when path tracing
+  replaced the opaque lighting.
+- **Cut-out surfaces** (`Material::alpha_cutoff`, glTF `MASK`) are opaque surfaces that
+  discard below the cutoff: in the depth prepass, the main pass, the pick pass, shadow
+  maps (an alpha-tested shadow pipeline) and ray queries (non-opaque BLAS; every query loop confirms candidates
+  through `rt_candidate_blocks` in `postprocess/rt_alpha.wgsl`).
+- **Transparent sorting** is per instance across all transparent batches; consecutive
+  instances of one batch share a draw.
 
 The scene renders in HDR (`Rgba16Float`, `postprocess::HDR_FORMAT`), transparent
 surfaces included, so light above 1.0 survives to bloom and tonemapping; scene shaders
@@ -150,8 +173,11 @@ to flicker, especially at a distant horizon.
   editor's Scene/Game panes).
 - **Custom rendering**: apps hook in through `RenderApplication::custom_render` and
   `custom_render_stage`.
-- **Picking**: GPU picking renders entity ids and reads back one pixel asynchronously
-  (`request_pick` / `poll_pick_result`).
+- **Picking**: on a frame with a pick request (`request_pick`), a pick pass draws every
+  pickable batch's entity id (opaque, transparent, overlays, then gizmos) into a
+  single-sample `Rg32Uint` target at output resolution through the unjittered camera,
+  whatever the MSAA sample count or upscaling, and one texel is read back asynchronously
+  (`poll_pick_result`; `renderer/internal/pick.rs`). Scene passes do not write ids.
 - **Post-processing settings** (`PostProcessSettings`) come from `PostProcessVolume`
   components: each frame `AppCore::render_scene` blends the scene's enabled volumes at
   the camera (`scene::blend_post_process_volumes`, lowest priority first; infinite
@@ -198,9 +224,11 @@ to flicker, especially at a distant horizon.
     instance into a vertex buffer of its own (compute shader `shader/skinning.wgsl`, or
     the identical CPU `skin_vertices` on devices without compute/storage buffers;
     `WGPU_CUBE_FORCE_CPU_SKINNING=1` forces it). Each instance is its own batch, and all
-    passes draw it like a rigid mesh, so no vertex shader knows about skinning. The same
-    buffers can feed ray-tracing BLAS refits later. Motion vectors use the model matrix
-    only (limb motion is not in them yet).
+    passes draw it like a rigid mesh, so no vertex shader knows about skinning. Each
+    instance has two output buffers that take turns, so last frame's pose stays
+    available: the main pass reads it as a second vertex stream (`@location(5)`,
+    `Vertex::previous_position_layout`; the mesh itself for rigid batches), and motion
+    vectors include limb motion. Ray tracing copies the deformed vertices into its pool.
   - Skinned imports get an `Animator` on their root. It plays `SkeletalClip`s read from
     glTF/GLB files (`ClipLibrary`, cached in `Assets::clip_library`), bound to bones by
     normalized name, so animation-only files drive any rig with matching names.

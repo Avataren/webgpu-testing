@@ -319,7 +319,7 @@ fn pt_visible(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> bool
         &query,
         rt_tlas,
         RayDesc(
-            RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+            RAY_FLAG_TERMINATE_ON_FIRST_HIT,
             0x03u,
             0.0,
             distance,
@@ -330,6 +330,10 @@ fn pt_visible(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> bool
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query).kind == RAY_QUERY_INTERSECTION_NONE;
@@ -576,11 +580,15 @@ fn pt_closest_hit_between(
     rayQueryInitialize(
         &query,
         rt_tlas,
-        RayDesc(RAY_FLAG_FORCE_OPAQUE, RT_MASK_SURFACES, t_min, t_max, origin, direction),
+        RayDesc(RAY_FLAG_NONE, RT_MASK_SURFACES, t_min, t_max, origin, direction),
     );
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query);

@@ -58,10 +58,11 @@ fn calculate_scene_lighting_at(
         let distance = length(to_light);
         
         // ALWAYS sample shadow in uniform control flow
-        let map_shadow = sample_point_shadow(
-            i, 
-            world_pos, 
-            light.position_range.xyz, 
+        let map_shadow = sample_point_shadow_offset(
+            i,
+            world_pos,
+            N,
+            light.position_range.xyz,
             light.position_range.w
         );
         let traced = rt_shadow_bit(4u + i, pixel);

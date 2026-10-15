@@ -34,6 +34,21 @@ impl Vertex {
         }
     }
 
+    /// Last frame's positions as a second vertex stream (`@location(5)`), read from a
+    /// buffer of whole [`Vertex`]es: a skinned instance's previous pose, or the mesh's
+    /// own vertices for anything that does not deform. Motion vectors compare it with
+    /// the current position.
+    pub const PREVIOUS_POSITION_ATTRS: [wgpu::VertexAttribute; 1] =
+        wgpu::vertex_attr_array![5 => Float32x3];
+
+    pub fn previous_position_layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::PREVIOUS_POSITION_ATTRS,
+        }
+    }
+
     fn white() -> [f32; 4] {
         Self::WHITE
     }

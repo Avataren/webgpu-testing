@@ -12,19 +12,28 @@
 // Remove the markers you do not need, or add additional ones to opt into more
 // functionality. This template keeps the lighting marker enabled so the
 // material starts with a basic Phong lighting model.
+//
+// Keep `fs_main` taking a struct with `world_pos` and `normal` (as VertexOutput below):
+// the renderer then fills depth and the G-buffer (reflections, ambient occlusion, TAA)
+// from this shader's own vertex stage, so vertices it moves are drawn where they end up.
+// Other shapes work too, but use the undisplaced mesh for those.
 
 // @include_material_system
 // @include_lighting
 
+// The camera (renderer/uniforms.rs, CameraUniform). With the last two matrices the
+// renderer derives motion vectors for this material (TAA, upscaling).
 struct Globals {
     view_proj: mat4x4<f32>,
     inverse_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
-    _padding0: f32,
+    mip_bias: f32,
     camera_forward: vec3<f32>,
     _padding1: f32,
     camera_up: vec3<f32>,
     _padding2: f32,
+    unjittered_view_proj: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
 };
 @group(0) @binding(0) var<uniform> globals: Globals;
 
@@ -66,7 +75,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let model = object.model;
 
     let world_pos = model * vec4<f32>(input.position, 1.0);
-    let world_normal = normalize((model * vec4<f32>(input.normal, 0.0)).xyz);
+    let world_normal = normalize(normal_matrix(model) * input.normal);
     let world_tangent = normalize((model * vec4<f32>(input.tangent.xyz, 0.0)).xyz);
     let world_bitangent = compute_bitangent(world_normal, world_tangent, input.tangent.w);
 

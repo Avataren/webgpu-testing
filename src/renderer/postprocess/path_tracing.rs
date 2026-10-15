@@ -230,6 +230,8 @@ pub(crate) fn pt_trace_shader_source(textures: bool) -> String {
         .with_lighting()
         .with_environment()
         .with_module(textures_module)
+        .with_module(wgsl!("postprocess/rt_scene.wgsl"))
+        .with_module(wgsl!("postprocess/rt_alpha.wgsl"))
         .with_module(wgsl!("postprocess/rt_common.wgsl"))
         .with_module(wgsl!("postprocess/pt_common.wgsl"))
         .with_module(wgsl!("postprocess/pt_trace.wgsl"))

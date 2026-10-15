@@ -165,6 +165,7 @@ pub(super) fn material_json(asset: &MaterialAsset) -> Value {
         "dispersion": round(material.dispersion_f32()),
         "unlit": flags.contains(MaterialFlags::UNLIT),
         "transparent": flags.contains(MaterialFlags::ALPHA_BLEND),
+        "alpha_cutoff": round(material.alpha_cutoff_f32()),
         "double_sided": flags.contains(MaterialFlags::DOUBLE_SIDED),
         "nearest_filtering": flags.contains(MaterialFlags::USE_NEAREST_FILTERING),
         "billboarded": flags.contains(MaterialFlags::BILLBOARDED),
@@ -1414,6 +1415,9 @@ pub(crate) fn patch_material(
     }
     if let Some(dispersion) = opt_f64(patch, "dispersion") {
         material.dispersion = Material::encode_dispersion(dispersion as f32);
+    }
+    if let Some(cutoff) = opt_f64(patch, "alpha_cutoff") {
+        material.alpha_cutoff = Material::encode_alpha_cutoff(cutoff as f32);
     }
     for (key, flag) in [
         ("unlit", MaterialFlags::UNLIT),

@@ -379,17 +379,14 @@ impl AppCore {
         std::mem::swap(&mut batcher, &mut self.batcher);
 
         let mut custom_render_request = render_hooks.prepare_request();
-        renderer.set_camera(
-            params.camera_override.as_ref().unwrap_or(scene.camera()),
-            aspect,
-        );
+        let camera = *params.camera_override.as_ref().unwrap_or(scene.camera());
+        // The region and post-processing first: the camera's TAA jitter and texture LOD
+        // bias depend on the region's size and on the upscaling settings of this frame.
         renderer.set_render_region(params.render_region);
         // Post-processing comes from the scene's volumes, blended where the camera is.
-        let post_settings = crate::scene::blend_post_process_volumes(
-            scene.main_world(),
-            renderer.camera_position(),
-        )
-        .unwrap_or_default();
+        let post_settings =
+            crate::scene::blend_post_process_volumes(scene.main_world(), camera.position())
+                .unwrap_or_default();
         // The player's graphics settings win over the volumes.
         let post_settings = {
             let mut graphics = crate::graphics_settings::graphics_settings();
@@ -407,6 +404,7 @@ impl AppCore {
             None => post_settings,
         };
         renderer.set_postprocess_settings(&post_settings);
+        renderer.set_camera(&camera, aspect);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.
         renderer.set_editor_overlays(params.camera_override.is_none());

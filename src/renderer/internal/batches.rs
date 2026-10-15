@@ -21,6 +21,10 @@ pub(crate) struct OrderedBatch {
     pub first_instance: u32,
     pub sampler_filtering: SamplerFilterMode,
     pub cull_mode: CullMode,
+    /// The depth prepass drew it this frame, so the main pass keeps that depth.
+    pub prepassed: bool,
+    /// Its materials cut the surface away by alpha (`Material::is_alpha_masked`).
+    pub alpha_masked: bool,
 }
 
 pub(crate) struct PreparedBatches {
@@ -42,6 +46,10 @@ impl PreparedBatches {
         let mut overlay = Vec::new();
         let mut gizmos = Vec::new();
         let mut gizmo_solids = Vec::new();
+        // Transparent instances from every batch, with their batch (now without
+        // instances) as `transparent_templates[template]`.
+        let mut transparent_instances: Vec<(f32, usize, InstanceData)> = Vec::new();
+        let mut transparent_templates: Vec<OrderedBatch> = Vec::new();
         let materials = batcher.materials();
         let material_handles = batcher.material_handles();
         let material_pipeline_keys = batcher.material_pipeline_keys();
@@ -86,6 +94,8 @@ impl PreparedBatches {
                     SamplerFilterMode::Linear
                 },
                 cull_mode: batch.cull_mode,
+                prepassed: false,
+                alpha_masked: batch.alpha_masked,
             };
 
             if ordered
@@ -100,6 +110,22 @@ impl PreparedBatches {
 
             match ordered.pass {
                 RenderPass::Opaque => opaque.push(ordered),
+                // Sorted with every other transparent instance below; GPU-written
+                // instances keep their batch (their slots are fixed and contiguous).
+                RenderPass::Transparent
+                    if ordered
+                        .instances
+                        .iter()
+                        .all(|inst| inst.source == InstanceSource::Cpu) =>
+                {
+                    let template = transparent_templates.len();
+                    for instance in ordered.instances.drain(..) {
+                        let distance =
+                            (instance.transform.translation - camera_pos).length_squared();
+                        transparent_instances.push((distance, template, instance));
+                    }
+                    transparent_templates.push(ordered);
+                }
                 RenderPass::Transparent => transparent.push(ordered),
                 RenderPass::Overlay => overlay.push(ordered),
                 RenderPass::Gizmo => gizmos.push(ordered),
@@ -107,6 +133,10 @@ impl PreparedBatches {
             }
         }
 
+        transparent.extend(sort_transparent_back_to_front(
+            transparent_instances,
+            &transparent_templates,
+        ));
         sort_batches_back_to_front(&mut transparent, camera_pos);
         sort_batches_back_to_front(&mut overlay, camera_pos);
         sort_batches_back_to_front(&mut gizmos, camera_pos);
@@ -210,8 +240,32 @@ fn sort_instances_back_to_front(instances: &mut [InstanceData], camera_pos: Vec3
     });
 }
 
+/// Blending needs the farthest surface drawn first across all transparent objects, not
+/// only within a mesh's batch: a batch whose instances straddle another object would
+/// otherwise draw its near instances behind it. Instances are ordered by distance, and
+/// consecutive ones from the same batch share a draw (`templates[i]` with its instances).
+fn sort_transparent_back_to_front(
+    mut instances: Vec<(f32, usize, InstanceData)>,
+    templates: &[OrderedBatch],
+) -> Vec<OrderedBatch> {
+    instances.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+    let mut runs: Vec<(usize, OrderedBatch)> = Vec::new();
+    for (_, template, instance) in instances {
+        match runs.last_mut() {
+            Some((last, batch)) if *last == template => batch.instances.push(instance),
+            _ => {
+                let mut batch = templates[template].clone();
+                batch.instances.push(instance);
+                runs.push((template, batch));
+            }
+        }
+    }
+    runs.into_iter().map(|(_, batch)| batch).collect()
+}
+
 fn sort_batches_back_to_front(batches: &mut [OrderedBatch], camera_pos: Vec3) {
-    batches.sort_unstable_by(|a, b| {
+    // Stable: runs from `sort_transparent_back_to_front` at equal distances keep order.
+    batches.sort_by(|a, b| {
         farthest_distance_sq(b, camera_pos)
             .partial_cmp(&farthest_distance_sq(a, camera_pos))
             .unwrap_or(Ordering::Equal)
@@ -397,6 +451,58 @@ mod tests {
             prepared.all().is_empty(),
             "empty batch entries should not produce draw calls"
         );
+    }
+
+    #[test]
+    fn transparent_instances_interleave_back_to_front_across_batches() {
+        let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
+        let material = Material::white().with_alpha();
+        let handle = assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
+        // Mesh 1 has instances behind and in front of mesh 2's.
+        for (mesh, z, pick_id) in [(1, -10.0, 1), (1, -1.0, 2), (2, -5.0, 3)] {
+            batcher
+                .add(
+                    RenderObject {
+                        mesh: Handle::new(mesh),
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::from_translation(Vec3::new(0.0, 0.0, z)),
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: None,
+                        instance_source: InstanceSource::Cpu,
+                        gpu_index: None,
+                        cull_mode: CullMode::Back,
+                        pick_id,
+                        skin: None,
+                    },
+                    &assets,
+                )
+                .unwrap();
+        }
+
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+        let order: Vec<(usize, Vec<u64>)> = prepared
+            .transparent()
+            .iter()
+            .map(|batch| {
+                (
+                    batch.mesh.index(),
+                    batch.instances.iter().map(|inst| inst.pick_id).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(order, vec![(1, vec![1]), (2, vec![3]), (1, vec![2])]);
+        // Each draw has its own slots in the objects buffer.
+        let starts: BTreeSet<u32> = prepared
+            .transparent()
+            .iter()
+            .map(|batch| batch.first_instance)
+            .collect();
+        assert_eq!(starts.len(), 3);
     }
 
     #[test]

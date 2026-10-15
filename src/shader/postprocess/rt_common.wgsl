@@ -5,64 +5,10 @@
 //
 // Needs `enable wgpu_ray_query;` (prepended by the Rust side), the main pass's constants,
 // material, lighting and environment modules (the lights bind group is group 2, as in the
-// main pass), and one of rt_textures_bindless.wgsl / rt_textures_none.wgsl for
-// `rt_sample_texture`.
+// main pass), rt_scene.wgsl and rt_alpha.wgsl, and one of rt_textures_bindless.wgsl /
+// rt_textures_none.wgsl for `rt_sample_texture`.
 
-// The engine's `Vertex` (src/renderer/vertex.rs), as the ray tracing pool stores it;
-// scalars keep the vec3s at their packed offsets. `RtInstance` mirrors
-// src/renderer/raytracing/scene.rs.
-struct RtVertex {
-    px : f32,
-    py : f32,
-    pz : f32,
-    nx : f32,
-    ny : f32,
-    nz : f32,
-    u : f32,
-    v : f32,
-    tangent : vec4<f32>,
-    color : vec4<f32>,
-};
-
-fn rt_vertex_position(vertex : RtVertex) -> vec3<f32> {
-    return vec3<f32>(vertex.px, vertex.py, vertex.pz);
-}
-
-fn rt_vertex_normal(vertex : RtVertex) -> vec3<f32> {
-    return vec3<f32>(vertex.nx, vertex.ny, vertex.nz);
-}
-
-// `material_index` is into `rt_particle_materials` for a particle system
-// (RT_INSTANCE_PARTICLES), else into `rt_materials`.
-struct RtInstance {
-    vertex_base : u32,
-    index_base : u32,
-    material_index : u32,
-    flags : u32,
-};
-
-// RtInstance flags (INSTANCE_* in raytracing/scene.rs).
-const RT_INSTANCE_PARTICLES : u32 = 1u;
-const RT_INSTANCE_ADDITIVE : u32 = 2u;
-
-// TLAS instance masks (MASK_* in raytracing/scene.rs): what stops reflection and
-// refraction rays (opaque and transmissive surfaces, opaque particles), and the blended
-// particles they gather on the way.
-const RT_MASK_SURFACES : u32 = 0x07u;
-const RT_MASK_BLENDED_PARTICLES : u32 = 0x08u;
-
-@group(3) @binding(0)
-var rt_tlas : acceleration_structure;
-@group(3) @binding(1)
-var<storage, read> rt_vertices : array<RtVertex>;
-@group(3) @binding(2)
-var<storage, read> rt_indices : array<u32>;
-@group(3) @binding(3)
-var<storage, read> rt_instances : array<RtInstance>;
-@group(3) @binding(4)
-var<storage, read> rt_materials : array<MaterialData>;
-@group(3) @binding(5)
-var<storage, read> rt_particle_materials : array<MaterialData>;
+// The scene's geometry, instances and materials (group 3) are in rt_scene.wgsl.
 
 // Shadow rays start this far off the hit surface.
 const RT_SHADOW_BIAS : f32 = 0.02;
@@ -82,11 +28,15 @@ fn rt_closest_hit_masked(
     rayQueryInitialize(
         &query,
         rt_tlas,
-        RayDesc(RAY_FLAG_FORCE_OPAQUE, mask, 0.0, max_t, origin, direction),
+        RayDesc(RAY_FLAG_NONE, mask, 0.0, max_t, origin, direction),
     );
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query);
@@ -99,7 +49,7 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
         &query,
         rt_tlas,
         RayDesc(
-            RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+            RAY_FLAG_TERMINATE_ON_FIRST_HIT,
             // Opaque geometry only (MASK_OPAQUE in raytracing/scene.rs): light passes glass.
             0x01u,
             0.0,
@@ -111,6 +61,10 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query).kind == RAY_QUERY_INTERSECTION_NONE;

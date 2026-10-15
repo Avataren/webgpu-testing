@@ -99,12 +99,23 @@ pub(crate) const MASK_PARTICLES_OPAQUE: u8 = 0x04;
 pub(crate) const MASK_PARTICLES_BLENDED: u8 = 0x08;
 
 /// What a BLAS is built from: a rigid mesh, one skinned instance's deformed copy, or a
-/// particle system (by [`RayTracedParticles::id`]).
+/// particle system (by [`RayTracedParticles::id`]). Meshes drawn with cut-out materials
+/// get a BLAS of their own (`masked`), built non-opaque so ray queries alpha-test their
+/// hits (rt_alpha.wgsl).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum GeometryKey {
-    Mesh(Handle<Mesh>),
-    Skin(SkinKey),
+    Mesh { mesh: Handle<Mesh>, masked: bool },
+    Skin { skin: SkinKey, masked: bool },
     Particles(u64),
+}
+
+impl GeometryKey {
+    fn masked(self) -> bool {
+        matches!(
+            self,
+            Self::Mesh { masked: true, .. } | Self::Skin { masked: true, .. }
+        )
+    }
 }
 
 /// A particle system's geometry in the pool: its mesh once (the template), then room for
@@ -922,9 +933,13 @@ impl RayTracingScene {
     }
 
     fn geometry_key(batch: &crate::renderer::internal::OrderedBatch) -> GeometryKey {
+        let masked = batch.alpha_masked;
         match batch.skin {
-            Some(skin) => GeometryKey::Skin(skin),
-            None => GeometryKey::Mesh(batch.mesh),
+            Some(skin) => GeometryKey::Skin { skin, masked },
+            None => GeometryKey::Mesh {
+                mesh: batch.mesh,
+                masked,
+            },
         }
     }
 
@@ -998,7 +1013,12 @@ impl RayTracingScene {
             vertex_count,
             index_format: Some(wgpu::IndexFormat::Uint32),
             index_count: Some(indices.len() as u32),
-            flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+            // Cut-out surfaces come up as candidates, which the shaders alpha-test.
+            flags: if key.masked() {
+                wgpu::AccelerationStructureGeometryFlags::NO_DUPLICATE_ANY_HIT_INVOCATION
+            } else {
+                wgpu::AccelerationStructureGeometryFlags::OPAQUE
+            },
         };
         let blas = device.create_blas(
             &wgpu::CreateBlasDescriptor {

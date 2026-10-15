@@ -614,6 +614,23 @@ impl EditorApplication {
     }
 
     fn remote_select(&mut self, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+        // A click in the Scene view: the GPU pick a mouse click makes.
+        if let Some(uv) = params.get("uv").and_then(Value::as_array) {
+            let coordinate = |index: usize| {
+                uv.get(index)
+                    .and_then(Value::as_f64)
+                    .filter(|value| (0.0..=1.0).contains(value))
+                    .ok_or_else(|| "uv must be [u, v] in 0..1".to_string())
+            };
+            let uv = glam::Vec2::new(coordinate(0)? as f32, coordinate(1)? as f32);
+            self.selection_system_mut()
+                .set_pending_pick(super::core::ViewportPick { uv });
+            return Ok(json!({
+                "queued": "pick",
+                "uv": [uv.x, uv.y],
+                "note": "The selection follows in a few frames (editor_state.selected)",
+            }));
+        }
         let entity = match params.get("entity") {
             None | Some(Value::Null) => None,
             Some(value) => Some(entity_from_json(ctx.gpu.scene.main_world(), value)?),

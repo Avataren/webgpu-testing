@@ -207,6 +207,9 @@ pub struct SerializedMaterial {
     pub ior: u8,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub dispersion: u8,
+    /// See [`Material::alpha_cutoff`]; 0 (none) is left out.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub alpha_cutoff: u8,
     #[serde(default)]
     pub kind: SerializedMaterialKind,
 }
@@ -295,6 +298,7 @@ impl SerializedMaterial {
             transmission_factor: material.transmission_factor,
             ior: material.ior,
             dispersion: material.dispersion,
+            alpha_cutoff: material.alpha_cutoff,
             kind: SerializedMaterialKind::default(),
         }
     }
@@ -476,6 +480,7 @@ impl From<SerializedMaterial> for Material {
             transmission_factor: serialized.transmission_factor,
             ior: serialized.ior,
             dispersion: serialized.dispersion,
+            alpha_cutoff: serialized.alpha_cutoff,
         }
     }
 }

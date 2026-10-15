@@ -5,18 +5,7 @@
 // Camera Uniform
 // ============================================================================
 
-struct CameraUniform {
-    view_proj: mat4x4<f32>,
-    inv_view_proj: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _padding0: f32,
-    camera_forward: vec3<f32>,
-    _padding1: f32,
-    camera_up: vec3<f32>,
-    _padding2: f32,
-}
-
-@group(0) @binding(0) var<uniform> camera: CameraUniform;
+// The camera (`globals`, group 0) comes from camera.wgsl.
 
 // ============================================================================
 // Particle Data
@@ -137,7 +126,7 @@ fn vs_main(
     let angle = particle.rotation.w;
     var rot_mat: mat3x3<f32>;
     if (is_billboarded) {
-        rot_mat = billboard_matrix(camera.camera_forward, camera.camera_up);
+        rot_mat = billboard_matrix(globals.camera_forward, globals.camera_up);
     } else {
         rot_mat = axis_angle_to_matrix(axis, angle);
     }
@@ -153,7 +142,7 @@ fn vs_main(
     let world_bitangent = cross(world_normal, world_tangent) * vertex.tangent.w;
     
     var output: VertexOutput;
-    output.clip_position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    output.clip_position = globals.view_proj * vec4<f32>(world_pos, 1.0);
     output.world_position = world_pos;
     output.world_normal = world_normal;
     output.uv = vertex.uv;
@@ -195,7 +184,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         N = normalize(TBN * tangent_normal);
     }
     
-    let V = normalize(camera.camera_pos - in.world_position);
+    let V = normalize(globals.camera_pos - in.world_position);
     
     // Use shared lighting functions with full shadow support
     let Lo = calculate_scene_lighting(

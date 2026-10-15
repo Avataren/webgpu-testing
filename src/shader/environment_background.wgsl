@@ -1,16 +1,4 @@
-struct Globals {
-    view_proj: mat4x4<f32>,
-    inverse_view_proj: mat4x4<f32>,
-    camera_pos: vec3<f32>,
-    _padding0: f32,
-    camera_forward: vec3<f32>,
-    _padding1: f32,
-    camera_up: vec3<f32>,
-    _padding2: f32,
-    unjittered_view_proj: mat4x4<f32>,
-    prev_view_proj: mat4x4<f32>,
-};
-@group(0) @binding(0) var<uniform> globals: Globals;
+// The camera (`globals`) comes from camera.wgsl.
 
 struct EnvironmentSettings {
     flags_intensity: vec4<f32>,
@@ -77,13 +65,6 @@ struct BackgroundOut {
     @location(2) world_pos: vec4<f32>,
 };
 
-struct BackgroundOutPick {
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec4<f32>,
-    @location(2) world_pos: vec4<f32>,
-    @location(3) pick: vec2<u32>,
-};
-
 fn sample_background(in: VsOut) -> BackgroundOut {
     if (!environment_enabled()) {
         return BackgroundOut(
@@ -127,10 +108,4 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_main_gbuffer(in: VsOut) -> BackgroundOut {
     return sample_background(in);
-}
-
-@fragment
-fn fs_main_gbuffer_pick(in: VsOut) -> BackgroundOutPick {
-    let base = sample_background(in);
-    return BackgroundOutPick(base.color, base.normal, base.world_pos, vec2<u32>(0u, 0u));
 }

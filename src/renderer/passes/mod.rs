@@ -3,7 +3,7 @@ use crate::environment::Environment;
 use crate::renderer::frame_graph::{
     FrameGraph, FrameGraphColorAttachment, FrameGraphDepthAttachment, PassPlan,
 };
-use crate::renderer::internal::shadows::ShadowInvocation;
+use crate::renderer::internal::shadows::{MaskTextures, ShadowInvocation};
 use crate::renderer::internal::{MaterialPipelineKey, OrderedBatch, PipelineKey, PreparedBatches};
 use crate::renderer::{
     CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderPass,
@@ -21,7 +21,10 @@ pub(crate) struct BatchPassOptions {
     pub(crate) color_format: wgpu::TextureFormat,
     pub(crate) color_sample_count: u32,
     pub(crate) use_gbuffer: bool,
-    pub(crate) write_pick: bool,
+    /// The pick pass: entity ids only (see `pick_pass`).
+    pub(crate) pick_only: bool,
+    /// Batches the depth prepass drew keep its depth instead of writing their own.
+    pub(crate) after_prepass: bool,
 }
 
 pub(crate) struct BatchRecorder<'a> {
@@ -49,12 +52,8 @@ impl<'a> BatchRecorder<'a> {
         }
     }
 
-    pub(crate) fn draw_environment_background(
-        &mut self,
-        pass: &mut wgpu::RenderPass<'_>,
-        write_pick: bool,
-    ) {
-        self.renderer.draw_environment_background(pass, write_pick);
+    pub(crate) fn draw_environment_background(&mut self, pass: &mut wgpu::RenderPass<'_>) {
+        self.renderer.draw_environment_background(pass);
     }
 
     pub(crate) fn record(
@@ -73,16 +72,18 @@ impl<'a> BatchRecorder<'a> {
 
             let wants_wireframe = matches!(batch.pass, RenderPass::Gizmo);
             let wireframe = wants_wireframe && self.renderer.context.supports_wireframe;
+            let depth_write =
+                batch.depth_state.depth_write && !(options.after_prepass && batch.prepassed);
             let pipeline_key = PipelineKey::new(
                 batch.depth_state.depth_test,
-                batch.depth_state.depth_write,
+                depth_write,
                 batch.alpha_blend,
                 options.color_format,
                 options.color_sample_count,
                 batch.sampler_filtering,
                 batch.cull_mode,
                 options.use_gbuffer,
-                options.write_pick,
+                options.pick_only,
                 wireframe,
             );
             let camera = if options.stable_camera {
@@ -94,6 +95,14 @@ impl<'a> BatchRecorder<'a> {
             pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
             pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+            // Last frame's positions, for motion vectors: a skinned instance's previous
+            // pose, else the mesh itself (only the model matrix moved it).
+            let previous = batch
+                .skin
+                .and_then(|key| self.renderer.skinning.previous_vertex_buffer(key))
+                .unwrap_or(mesh.vertex_buffer())
+                .clone();
+            pass.set_vertex_buffer(1, previous.slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
 
             if let Some(group) = bindless_group {
@@ -149,15 +158,24 @@ impl<'a> BatchRecorder<'a> {
 }
 
 fn batch_uses_shader(batch: &OrderedBatch, material_pipeline_keys: &[MaterialPipelineKey]) -> bool {
-    batch
-        .instances
-        .first()
-        .and_then(|instance| {
-            material_pipeline_keys
-                .get(instance.material_index as usize)
-                .copied()
-        })
-        .is_some_and(|key| matches!(key, MaterialPipelineKey::Shader(_)))
+    batch_shader(batch, material_pipeline_keys).is_some()
+}
+
+/// The shader material a batch draws with (batches never mix materials kinds) and its
+/// texture filtering.
+fn batch_shader(
+    batch: &OrderedBatch,
+    material_pipeline_keys: &[MaterialPipelineKey],
+) -> Option<(Handle<MaterialAsset>, crate::renderer::SamplerFilterMode)> {
+    let key = batch.instances.first().and_then(|instance| {
+        material_pipeline_keys
+            .get(instance.material_index as usize)
+            .copied()
+    })?;
+    match key {
+        MaterialPipelineKey::Shader(handle) => Some((handle, batch.sampler_filtering)),
+        _ => None,
+    }
 }
 
 pub(crate) struct SurfacePassConfig<'a, 'b> {
@@ -165,8 +183,6 @@ pub(crate) struct SurfacePassConfig<'a, 'b> {
     color: &'a wgpu::TextureView,
     resolve: Option<&'a wgpu::TextureView>,
     depth: Option<&'a wgpu::TextureView>,
-    pick: Option<&'a wgpu::TextureView>,
-    pick_resolve: Option<&'a wgpu::TextureView>,
     render_region: Option<RenderRegion>,
     batches: &'a [OrderedBatch],
     recorder: &'b mut BatchRecorder<'a>,
@@ -187,8 +203,6 @@ impl<'a, 'b> SurfacePassConfig<'a, 'b> {
             color,
             resolve: None,
             depth: None,
-            pick: None,
-            pick_resolve: None,
             render_region: None,
             batches,
             recorder,
@@ -204,23 +218,6 @@ impl<'a, 'b> SurfacePassConfig<'a, 'b> {
 
     pub(crate) fn depth(mut self, depth: Option<&'a wgpu::TextureView>) -> Self {
         self.depth = depth;
-        self
-    }
-
-    pub(crate) fn write_pick(mut self, pick: Option<&'a wgpu::TextureView>) -> Self {
-        self.options.write_pick = pick.is_some();
-        self.pick = pick;
-        self
-    }
-
-    /// Write the pick id through a multisampled attachment resolved into `resolve`.
-    pub(crate) fn write_pick_resolved(
-        mut self,
-        pick: Option<(&'a wgpu::TextureView, Option<&'a wgpu::TextureView>)>,
-    ) -> Self {
-        self.options.write_pick = pick.is_some();
-        self.pick = pick.map(|(view, _)| view);
-        self.pick_resolve = pick.and_then(|(_, resolve)| resolve);
         self
     }
 
@@ -243,18 +240,11 @@ pub(crate) fn run_surface_pass(
         return 0;
     }
 
-    debug_assert!(
-        !config.options.write_pick || config.pick.is_some(),
-        "Pick writes require a pick attachment"
-    );
-
     let SurfacePassConfig {
         label,
         color,
         resolve,
         depth,
-        pick,
-        pick_resolve,
         render_region,
         batches,
         recorder,
@@ -263,10 +253,6 @@ pub(crate) fn run_surface_pass(
     } = config;
 
     let mut plan = PassPlan::new(label).add_color(FrameGraphColorAttachment::load(color, resolve));
-
-    if let Some(pick) = pick {
-        plan = plan.add_color(FrameGraphColorAttachment::load(pick, pick_resolve));
-    }
 
     if let Some(depth) = depth {
         plan = plan.set_depth(FrameGraphDepthAttachment::load(depth));
@@ -296,6 +282,7 @@ pub(crate) fn shadow_pass(
     skip: u32,
 ) {
     shadow_invocations.clear();
+    let mask_textures = cutout_textures(renderer, assets, prepared_batches);
     let geometry = BatchGeometry {
         assets,
         skinning: &renderer.skinning,
@@ -311,6 +298,7 @@ pub(crate) fn shadow_pass(
         custom_shadow_enabled,
         shadow_invocations,
         skip,
+        mask_textures.as_ref(),
     );
 
     if custom_shadow_enabled {
@@ -332,6 +320,45 @@ pub(crate) fn shadow_pass(
     }
 }
 
+/// Textures for the alpha test of this frame's opaque cut-out surfaces.
+fn cutout_textures(
+    renderer: &mut Renderer,
+    assets: &Assets,
+    prepared_batches: &PreparedBatches,
+) -> Option<MaskTextures> {
+    let masked = prepared_batches
+        .opaque()
+        .iter()
+        .filter(|batch| batch.alpha_masked);
+    if let Some(group) = renderer.texture_binder.global_bind_group() {
+        return masked
+            .clone()
+            .next()
+            .map(|_| MaskTextures::Bindless(group.clone()));
+    }
+    let mut groups = std::collections::HashMap::new();
+    for instance in masked.flat_map(|batch| batch.instances.iter()) {
+        if groups.contains_key(&instance.material_index) {
+            continue;
+        }
+        let Some(material) = prepared_batches
+            .materials()
+            .get(instance.material_index as usize)
+            .copied()
+        else {
+            continue;
+        };
+        if let Some(group) = renderer.material_bind_group(assets, material) {
+            groups.insert(instance.material_index, group.clone());
+        }
+    }
+    (!groups.is_empty()).then_some(MaskTextures::PerMaterial(groups))
+}
+
+/// Depth for the opaque batches the main pass draws with the PBR shader, so its lighting
+/// runs once per pixel, and which the ray-traced shadow mask is traced from. Cut-out
+/// surfaces draw with the alpha test. Shader materials are left out: their own vertex
+/// stage (which may move vertices) writes their depth in the main pass.
 pub(crate) fn depth_prepass(
     renderer: &mut Renderer,
     assets: &Assets,
@@ -340,39 +367,75 @@ pub(crate) fn depth_prepass(
     depth_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
 ) -> u32 {
+    let cutouts = cutout_textures(renderer, assets, prepared_batches);
     let mut frame_graph = FrameGraph::new(encoder);
     let plan =
         PassPlan::new("DepthPrepass").set_depth(FrameGraphDepthAttachment::clear(depth_view, 1.0));
     let pipeline = renderer.pipeline.depth_prepass();
+    let masked_pipeline = renderer.pipeline.depth_prepass_masked();
     let camera_bind_group = &renderer.camera_buffer.bind_group;
     let object_bind_group = &renderer.objects_buffer.bind_group;
+    let lights_bind_group = &renderer.lights_buffer.bind_group;
+    let material_pipeline_keys = prepared_batches.material_pipeline_keys.clone();
     let batches = prepared_batches.opaque_mut();
     let mut draw_calls = 0u32;
 
     frame_graph.execute_pass(plan, render_region, |pass| {
-        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera_bind_group, &[]);
         pass.set_bind_group(1, object_bind_group, &[]);
+        pass.set_bind_group(2, lights_bind_group, &[]);
 
-        for batch in batches.iter_mut() {
-            if batch.alpha_blend || !batch.depth_state.depth_write || !batch.depth_state.depth_test
-            {
-                continue;
+        for masked in [false, true] {
+            pass.set_pipeline(if masked { masked_pipeline } else { pipeline });
+            for batch in batches.iter_mut() {
+                if batch.alpha_masked != masked
+                    || batch.alpha_blend
+                    || !batch.depth_state.depth_write
+                    || !batch.depth_state.depth_test
+                    || batch_uses_shader(batch, &material_pipeline_keys)
+                {
+                    continue;
+                }
+                let Some(mesh) = mesh_for_batch(assets, &renderer.skinning, batch) else {
+                    continue;
+                };
+                if !masked {
+                    renderer.draw_full_batch(pass, &mesh, batch);
+                    draw_calls += 1;
+                    batch.prepassed = true;
+                    continue;
+                }
+                // Cut-outs: one draw per material, with its textures for the alpha test.
+                let Some(textures) = cutouts.as_ref() else {
+                    continue;
+                };
+                renderer.set_geometry_buffers(pass, &mesh);
+                let mut drawn = true;
+                let mut start = 0usize;
+                while start < batch.instances.len() {
+                    let run = material_run_length(&batch.instances, start);
+                    match textures.group(batch.instances[start].material_index) {
+                        Some(group) => {
+                            pass.set_bind_group(3, group, &[]);
+                            let first = batch.first_instance + start as u32;
+                            pass.draw_indexed(0..mesh.index_count(), 0, first..first + run as u32);
+                            draw_calls += 1;
+                        }
+                        None => drawn = false,
+                    }
+                    start += run;
+                }
+                // Only a batch drawn whole keeps the prepass depth in the main pass.
+                batch.prepassed = drawn;
             }
-
-            let Some(mesh) = mesh_for_batch(assets, &renderer.skinning, batch) else {
-                continue;
-            };
-
-            renderer.draw_full_batch(pass, &mesh, batch);
-            draw_calls += 1;
-            batch.depth_state.depth_write = false;
         }
     });
 
     draw_calls
 }
 
+/// The opaque scene: lit colour and the G-buffer (normal and motion, position), over the
+/// environment background.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn main_color_pass(
     renderer: &mut Renderer,
@@ -385,26 +448,18 @@ pub(crate) fn main_color_pass(
     depth_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
     scene_format: wgpu::TextureFormat,
-    pick_active: bool,
 ) -> u32 {
-    let (normal_view, normal_resolve, position_view, position_resolve, pick_targets) = {
+    let (normal_view, normal_resolve, position_view, position_resolve) = {
         let gbuffer_views = renderer.postprocess.gbuffer_views();
         (
             gbuffer_views.normal.0.clone(),
             gbuffer_views.normal.1.cloned(),
             gbuffer_views.position.0.clone(),
             gbuffer_views.position.1.cloned(),
-            if pick_active {
-                gbuffer_views
-                    .id
-                    .map(|views| (views.multisample.clone(), views.resolve.cloned()))
-            } else {
-                None
-            },
         )
     };
 
-    let mut plan = PassPlan::new("MainPass")
+    let plan = PassPlan::new("MainPass")
         .add_color(FrameGraphColorAttachment::clear(
             scene_view,
             scene_resolve_view,
@@ -422,14 +477,6 @@ pub(crate) fn main_color_pass(
         ))
         .set_depth(FrameGraphDepthAttachment::load(depth_view));
 
-    if let Some((pick_view, pick_resolve)) = pick_targets.as_ref() {
-        plan = plan.add_color(FrameGraphColorAttachment::clear(
-            pick_view,
-            pick_resolve.as_ref(),
-            wgpu::Color::TRANSPARENT,
-        ));
-    }
-
     let hdr_enabled = environment.is_hdr_enabled();
     let sample_count = renderer.context.sample_count;
     let batches = prepared_batches.opaque();
@@ -446,15 +493,10 @@ pub(crate) fn main_color_pass(
         material_pipeline_keys,
     );
     let mut draw_calls = 0u32;
-    let shader_batches: Vec<OrderedBatch> = batches
-        .iter()
-        .filter(|batch| batch_uses_shader(batch, material_pipeline_keys))
-        .cloned()
-        .collect();
 
     frame_graph.execute_pass(plan, render_region, |pass| {
         if hdr_enabled {
-            recorder.draw_environment_background(pass, pick_active);
+            recorder.draw_environment_background(pass);
         }
 
         if !batches.is_empty() {
@@ -463,37 +505,88 @@ pub(crate) fn main_color_pass(
                 color_format: scene_format,
                 color_sample_count: sample_count,
                 use_gbuffer: true,
-                write_pick: pick_active,
+                pick_only: false,
+                after_prepass: true,
             };
 
             draw_calls += recorder.record(pass, batches, options, bindless_group.as_ref());
         }
     });
 
-    if !shader_batches.is_empty() {
-        let shader_options = BatchPassOptions {
-            stable_camera: false,
-            color_format: scene_format,
-            color_sample_count: sample_count,
-            use_gbuffer: false,
-            write_pick: false,
-        };
-        let config = SurfacePassConfig::new(
-            "ShaderMaterialPass",
-            scene_view,
-            shader_batches.as_slice(),
-            &mut recorder,
-            shader_options,
-        )
-        .resolve(scene_resolve_view)
-        .depth(Some(depth_view))
-        .render_region(render_region)
-        .bindless_group(bindless_group.as_ref());
+    draw_calls
+}
 
-        draw_calls += run_surface_pass(encoder, config);
+/// Shader materials' own colour over what the main pass left for them, where it is not
+/// already theirs: shaders whose G-buffer the PBR shader stood in for (see
+/// `RenderPipeline::shader_writes_gbuffer`), and every shader material when path tracing
+/// replaced the opaque lighting (`path_traced`). Their depth is in place, so they draw
+/// at equal depth without writing it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn shader_material_pass(
+    renderer: &mut Renderer,
+    assets: &Assets,
+    prepared_batches: &PreparedBatches,
+    encoder: &mut wgpu::CommandEncoder,
+    scene_view: &wgpu::TextureView,
+    scene_resolve_view: Option<&wgpu::TextureView>,
+    depth_view: &wgpu::TextureView,
+    render_region: Option<RenderRegion>,
+    path_traced: bool,
+) -> u32 {
+    let material_pipeline_keys = prepared_batches.material_pipeline_keys();
+    let device = renderer.context.device.clone();
+    let shader_batches: Vec<OrderedBatch> = prepared_batches
+        .opaque()
+        .iter()
+        .filter(|batch| match batch_shader(batch, material_pipeline_keys) {
+            Some((handle, filtering)) => {
+                path_traced
+                    || !renderer
+                        .pipeline
+                        .shader_writes_gbuffer(&device, assets, handle, filtering)
+            }
+            None => false,
+        })
+        .cloned()
+        .map(|mut batch| {
+            // The main pass wrote their depth.
+            batch.depth_state.depth_write = false;
+            batch
+        })
+        .collect();
+    if shader_batches.is_empty() {
+        return 0;
     }
 
-    draw_calls
+    let options = BatchPassOptions {
+        stable_camera: false,
+        color_format: renderer.context.scene_texture_format(),
+        color_sample_count: renderer.context.sample_count,
+        use_gbuffer: false,
+        pick_only: false,
+        after_prepass: false,
+    };
+    let bindless_group = renderer.texture_binder.global_bind_group().cloned();
+    let mut recorder = BatchRecorder::new(
+        renderer,
+        assets,
+        prepared_batches.materials(),
+        prepared_batches.material_handles(),
+        material_pipeline_keys,
+    );
+    let config = SurfacePassConfig::new(
+        "ShaderMaterialPass",
+        scene_view,
+        shader_batches.as_slice(),
+        &mut recorder,
+        options,
+    )
+    .resolve(scene_resolve_view)
+    .depth(Some(depth_view))
+    .render_region(render_region)
+    .bindless_group(bindless_group.as_ref());
+
+    run_surface_pass(encoder, config)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -534,22 +627,12 @@ pub(crate) fn transparent_pass(
     scene_resolve_view: Option<&wgpu::TextureView>,
     depth_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
-    write_pick: bool,
     scene_format: wgpu::TextureFormat,
 ) -> u32 {
     let batches = prepared_batches.transparent();
     let materials = prepared_batches.materials();
     let material_handles = prepared_batches.material_handles();
     let material_pipeline_keys = prepared_batches.material_pipeline_keys();
-    // Same sample count as the scene colour: the MSAA pick target when there is one.
-    let pick_views = if write_pick {
-        renderer
-            .postprocess
-            .scene_pick_views()
-            .map(|views| (views.multisample.clone(), views.resolve.cloned()))
-    } else {
-        None
-    };
 
     let sample_count = renderer.context.sample_count;
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
@@ -565,7 +648,8 @@ pub(crate) fn transparent_pass(
         color_format: scene_format,
         color_sample_count: sample_count,
         use_gbuffer: false,
-        write_pick,
+        pick_only: false,
+        after_prepass: false,
     };
     let config = SurfacePassConfig::new(
         "TransparentPass",
@@ -576,11 +660,6 @@ pub(crate) fn transparent_pass(
     )
     .resolve(scene_resolve_view)
     .depth(Some(depth_view))
-    .write_pick_resolved(
-        pick_views
-            .as_ref()
-            .map(|(view, resolve)| (view, resolve.as_ref())),
-    )
     .render_region(render_region)
     .bindless_group(bindless_group.as_ref());
 
@@ -596,7 +675,6 @@ pub(crate) fn overlay_pass(
     surface_view: &wgpu::TextureView,
     depth_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
-    write_pick: bool,
     surface_format: wgpu::TextureFormat,
 ) -> u32 {
     let batches = prepared_batches.overlay();
@@ -610,14 +688,6 @@ pub(crate) fn overlay_pass(
     let overlay_needs_depth = batches
         .iter()
         .any(|batch| batch.depth_state.depth_test || batch.depth_state.depth_write);
-    let pick_view = if write_pick {
-        renderer
-            .postprocess
-            .pick_attachment_views()
-            .map(|views| views.single_sample().clone())
-    } else {
-        None
-    };
 
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
@@ -632,12 +702,12 @@ pub(crate) fn overlay_pass(
         color_format: surface_format,
         color_sample_count: 1,
         use_gbuffer: false,
-        write_pick,
+        pick_only: false,
+        after_prepass: false,
     };
     let config =
         SurfacePassConfig::new("OverlayPass", surface_view, batches, &mut recorder, options)
             .depth(overlay_needs_depth.then_some(depth_view))
-            .write_pick(pick_view.as_ref())
             .render_region(render_region)
             .bindless_group(bindless_group.as_ref());
 
@@ -655,22 +725,12 @@ pub(crate) fn gizmo_pass(
     encoder: &mut wgpu::CommandEncoder,
     surface_view: &wgpu::TextureView,
     render_region: Option<RenderRegion>,
-    write_pick: bool,
     surface_format: wgpu::TextureFormat,
     label: &'static str,
 ) -> u32 {
     if batches.is_empty() {
         return 0;
     }
-
-    let pick_view = if write_pick {
-        renderer
-            .postprocess
-            .pick_attachment_views()
-            .map(|views| views.single_sample().clone())
-    } else {
-        None
-    };
 
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
@@ -685,18 +745,87 @@ pub(crate) fn gizmo_pass(
         color_format: surface_format,
         color_sample_count: 1,
         use_gbuffer: false,
-        write_pick,
+        pick_only: false,
+        after_prepass: false,
     };
     let config = SurfacePassConfig::new(label, surface_view, batches, &mut recorder, options)
-        .write_pick(pick_view.as_ref())
         .render_region(render_region)
         .bindless_group(bindless_group.as_ref());
 
     run_surface_pass(encoder, config)
 }
 
-pub(crate) fn process_pick(renderer: &mut Renderer, encoder: &mut wgpu::CommandEncoder) {
-    renderer.process_pick_request(encoder);
+/// Entity ids for a pending pick: every pickable batch, in the order and with the depth
+/// tests it is drawn with (opaque, transparent, overlays, then gizmos on top), into the
+/// single-sample pick target at output resolution through the unjittered camera. Then
+/// the requested texel is copied for reading back. Nothing happens without a request.
+pub(crate) fn pick_pass(
+    renderer: &mut Renderer,
+    assets: &Assets,
+    prepared_batches: &PreparedBatches,
+    encoder: &mut wgpu::CommandEncoder,
+    render_region: Option<RenderRegion>,
+) -> u32 {
+    if !renderer.pick_state.has_request() {
+        return 0;
+    }
+    let device = renderer.context.device.clone();
+    let (width, height) = (
+        renderer.context.config.width,
+        renderer.context.config.height,
+    );
+    let (view, depth_view) = {
+        let target = renderer.pick_state.target(&device, width, height);
+        (target.view.clone(), target.depth_view.clone())
+    };
+
+    let plan = PassPlan::new("PickPass")
+        .add_color(FrameGraphColorAttachment::clear(
+            &view,
+            None,
+            wgpu::Color::TRANSPARENT,
+        ))
+        .set_depth(FrameGraphDepthAttachment::clear(&depth_view, 1.0));
+    let options = BatchPassOptions {
+        stable_camera: true,
+        color_format: crate::renderer::postprocess::GBUFFER_PICK_FORMAT,
+        color_sample_count: 1,
+        use_gbuffer: false,
+        pick_only: true,
+        after_prepass: false,
+    };
+    let bindless_group = renderer.texture_binder.global_bind_group().cloned();
+    let mut draw_calls = 0;
+    {
+        let mut recorder = BatchRecorder::new(
+            renderer,
+            assets,
+            prepared_batches.materials(),
+            prepared_batches.material_handles(),
+            prepared_batches.material_pipeline_keys(),
+        );
+        let mut frame_graph = FrameGraph::new(encoder);
+        frame_graph.execute_pass(plan, render_region, |pass| {
+            for batches in [
+                prepared_batches.opaque(),
+                prepared_batches.transparent(),
+                prepared_batches.overlay(),
+                prepared_batches.gizmos(),
+                prepared_batches.gizmo_solids(),
+            ] {
+                // Batches without a pickable instance (pick id 0, such as the selection
+                // outline) must not hide what is under them.
+                let pickable: Vec<OrderedBatch> = batches
+                    .iter()
+                    .filter(|batch| batch.instances.iter().any(|instance| instance.pick_id != 0))
+                    .cloned()
+                    .collect();
+                draw_calls += recorder.record(pass, &pickable, options, bindless_group.as_ref());
+            }
+        });
+    }
+    renderer.pick_state.copy_request(&device, encoder);
+    draw_calls
 }
 
 pub(crate) fn finish_frame(
@@ -706,10 +835,7 @@ pub(crate) fn finish_frame(
 ) -> RenderFrame {
     renderer.context.queue.submit(Some(encoder.finish()));
     renderer.gpu_timer.after_submit();
-
-    if let Some(readback) = renderer.pick_state.pending_readback.as_mut() {
-        readback.ensure_mapping_requested();
-    }
+    renderer.pick_state.after_submit();
 
     RenderFrame {
         frame,

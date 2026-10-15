@@ -264,7 +264,8 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
             instance_source: InstanceSource::Cpu,
             gpu_index: None,
             cull_mode: CullMode::Front,
-            pick_id: entity.pick_id,
+            // A visual aid: clicks go to what it surrounds (or shows through holes).
+            pick_id: 0,
             skin: entity.skin.clone(),
         });
     }

@@ -66,7 +66,7 @@ attachments.
 
 | Blocker | Where |
 |---|---|
-| Storage buffers read in vertex/fragment shaders (objects, materials, prev_models, lights, exposure state) | `src/shader/common.wgsl` (`objects`, `materials`, `prev_models`), `lighting_common.wgsl` (`lights`), `postprocess/composite.wgsl` (`composite_exposure`), `depth_prepass.wgsl`, `shadow.wgsl`, `templates/shader_material.wgsl`, `renderer/shader/error_fallback.wgsl`, `particle_render.wgsl`, `gpu_particle_render.wgsl`, `particle_shadow.wgsl` |
+| Storage buffers read in vertex/fragment shaders (objects, materials, prev_models, lights, exposure state) | `src/shader/objects.wgsl` (`objects`, `materials`), `common.wgsl` (`prev_models`), `lighting_common.wgsl` (`lights`), `postprocess/composite.wgsl` (`composite_exposure`), `depth_prepass.wgsl`, `shadow.wgsl`, `templates/shader_material.wgsl`, `renderer/shader/error_fallback.wgsl`, `particle_render.wgsl`, `particle_shadow.wgsl` |
 | Compute shaders: auto-exposure, all GPU particles (physics, starfield, boids, spatial grid, radix sort, prefix sums) | `postprocess/auto_exposure.wgsl`, `src/gpu_particles/shaders/`, `src/shader/gpu_particles.wgsl` |
 | `textureLoad` on multisampled depth (MSAA depth resolve) | `src/shader/postprocess_msaa.wgsl`, `depth_resolve.wgsl`, `bin/editor/postprocess/grid_overlay_msaa.wgsl` |
 | sRGB surface with a linear `view_formats` view for egui | `Renderer::ui_view`, `renderer_core.rs` |

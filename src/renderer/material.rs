@@ -30,6 +30,9 @@ pub struct Material {
     /// cut gem), in hundredths: as glTF KHR_materials_dispersion, 20 / Abbe number (36 for
     /// diamond, about 34 for crown glass); 0 for none.
     pub dispersion: u8,
+    /// Alpha below which the surface is cut away (glTF `MASK`: foliage, fences), 1-255
+    /// for 0.0-1.0; 0 for none. A masked surface is otherwise opaque.
+    pub alpha_cutoff: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,6 +53,7 @@ impl MaterialFlags {
     /// Leave the object out of shadow maps. Set per object at render time from
     /// `CanCastShadow(false)`; not stored in material assets.
     pub const NO_SHADOW: Self = Self(1 << 10);
+    // Bits 24-31 are taken on the GPU by the alpha cutoff (`MaterialData`).
 
     pub const fn bits(&self) -> u32 {
         self.0
@@ -106,6 +110,7 @@ impl Material {
             transmission_factor: 0,
             ior: Self::DEFAULT_IOR,
             dispersion: 0,
+            alpha_cutoff: 0,
         }
     }
 
@@ -197,6 +202,30 @@ impl Material {
     pub fn with_alpha(mut self) -> Self {
         self.flags |= MaterialFlags::ALPHA_BLEND;
         self
+    }
+
+    /// Cut the surface away where its alpha is below `cutoff` (0-1); 0 turns it off.
+    /// The rest stays opaque (depth, shadows, no sorting), unlike [`Self::with_alpha`].
+    pub fn with_alpha_cutoff(mut self, cutoff: f32) -> Self {
+        self.alpha_cutoff = Self::encode_alpha_cutoff(cutoff);
+        self
+    }
+
+    /// `cutoff` (0-1) as stored; a cutoff above 0 never rounds to 0 (which means none).
+    pub fn encode_alpha_cutoff(cutoff: f32) -> u8 {
+        if cutoff.is_nan() || cutoff <= 0.0 {
+            return 0;
+        }
+        ((cutoff.min(1.0) * 255.0).round() as u8).max(1)
+    }
+
+    pub fn alpha_cutoff_f32(&self) -> f32 {
+        self.alpha_cutoff as f32 / 255.0
+    }
+
+    /// Whether parts of the surface are cut away by alpha (see `alpha_cutoff`).
+    pub fn is_alpha_masked(&self) -> bool {
+        self.alpha_cutoff > 0 && !self.requires_separate_pass()
     }
 
     pub fn with_unlit(mut self) -> Self {

@@ -25,7 +25,23 @@ struct ShadowArray {
     // CRITICAL: views must drop before texture
     array_view: wgpu::TextureView,
     layer_views: Vec<wgpu::TextureView>,
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
+}
+
+/// Material textures for the alpha test of cut-out surfaces (shadow maps, depth
+/// prepass): the one bindless group, or a group per material index (classic binding).
+pub(crate) enum MaskTextures {
+    Bindless(wgpu::BindGroup),
+    PerMaterial(std::collections::HashMap<u32, wgpu::BindGroup>),
+}
+
+impl MaskTextures {
+    pub(crate) fn group(&self, material_index: u32) -> Option<&wgpu::BindGroup> {
+        match self {
+            Self::Bindless(group) => Some(group),
+            Self::PerMaterial(groups) => groups.get(&material_index),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -82,7 +98,7 @@ impl ShadowArray {
         }
 
         Self {
-            _texture: texture,
+            texture,
             array_view,
             layer_views,
         }
@@ -113,8 +129,11 @@ pub(crate) struct ShadowResources {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    _uniform_layout: wgpu::BindGroupLayout,
+    uniform_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    /// Cut-out surfaces' pipeline (with the alpha test); `None` until
+    /// [`Self::enable_alpha_masking`], and they then cast solid shadows.
+    masked_pipeline: Option<wgpu::RenderPipeline>,
     staging_buffer: wgpu::Buffer,
 }
 
@@ -129,17 +148,17 @@ impl ShadowResources {
             "shadows.directional",
             "Directional shadow maps (light-space depth, 0 near to 1 far): one array layer per \
              directional light; layers are unused while ray-traced shadows replace them",
-            &self.directional._texture,
+            &self.directional.texture,
         ));
         out.push(FetchableTexture::new(
             "shadows.spot",
             "Spot light shadow maps (light-space depth): one array layer per spot light",
-            &self.spot._texture,
+            &self.spot.texture,
         ));
         out.push(FetchableTexture::new(
             "shadows.point",
             "Point light shadow maps (light-space depth): six array layers (cube faces) per point light",
-            &self.point._texture,
+            &self.point.texture,
         ));
     }
 
@@ -240,9 +259,7 @@ impl ShadowResources {
             }],
         });
 
-        let shader_source = ShaderBuilder::new()
-            .with_material_system()
-            .build(wgsl!("shadow.wgsl"));
+        let shader_source = shadow_shader_source(None);
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ShadowShader"),
@@ -276,10 +293,57 @@ impl ShadowResources {
             sampler,
             uniform_buffer,
             uniform_bind_group,
-            _uniform_layout: uniform_layout,
+            uniform_layout,
             pipeline,
+            masked_pipeline: None,
             staging_buffer,
         }
+    }
+
+    /// Build the pipeline that alpha-tests cut-out surfaces, for material textures bound
+    /// as group 3 with `textures_layout` (bindless or classic, as `bindless` says).
+    pub(crate) fn enable_alpha_masking(
+        &mut self,
+        device: &wgpu::Device,
+        objects: &DynamicObjectsBuffer,
+        textures_layout: &wgpu::BindGroupLayout,
+        bindless: bool,
+    ) {
+        let source = shadow_shader_source(Some(bindless));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ShadowMaskedShader"),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ShadowMaskedPipelineLayout"),
+            bind_group_layouts: &[
+                Some(&self.uniform_layout),
+                Some(&objects.bind_layout),
+                None,
+                Some(textures_layout),
+            ],
+            immediate_size: 0,
+        });
+        self.masked_pipeline = Some(
+            PipelineBuilder::new(device, &layout, &shader)
+                .with_label("ShadowMaskedPipeline")
+                .with_vertex_entry("vs_masked")
+                .with_fragment_entry("fs_masked")
+                .with_vertex_buffer(Vertex::layout())
+                .with_depth_stencil_biased(
+                    wgpu::TextureFormat::Depth32Float,
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                    2,
+                    2.0,
+                )
+                .build(),
+        );
+    }
+
+    /// Width (and height) in texels of the directional shadow maps.
+    pub(crate) fn directional_map_size(&self) -> u32 {
+        self.directional.texture.width()
     }
 
     pub(crate) fn directional_array_view(&self) -> &wgpu::TextureView {
@@ -311,6 +375,7 @@ impl ShadowResources {
         record_custom_passes: bool,
         custom_invocations: &mut Vec<ShadowInvocation>,
         skip: u32,
+        mask_textures: Option<&MaskTextures>,
     ) {
         if batches.is_empty() && !record_custom_passes {
             return;
@@ -410,6 +475,7 @@ impl ShadowResources {
                 batches,
                 objects,
                 materials,
+                mask_textures,
             );
 
             if record_custom_passes {
@@ -455,6 +521,7 @@ impl ShadowResources {
                 batches,
                 objects,
                 materials,
+                mask_textures,
             );
 
             if record_custom_passes {
@@ -504,6 +571,7 @@ impl ShadowResources {
                     batches,
                     objects,
                     materials,
+                    mask_textures,
                 );
 
                 if record_custom_passes {
@@ -522,6 +590,7 @@ impl ShadowResources {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -530,6 +599,7 @@ impl ShadowResources {
         batches: &[OrderedBatch],
         objects: &DynamicObjectsBuffer,
         materials: &[Material],
+        mask_textures: Option<&MaskTextures>,
     ) {
         if batches.is_empty() {
             return;
@@ -550,7 +620,6 @@ impl ShadowResources {
             multiview_mask: None,
         });
 
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.uniform_bind_group, &[]);
         pass.set_bind_group(1, &objects.bind_group, &[]);
 
@@ -567,11 +636,20 @@ impl ShadowResources {
             let Some(mesh) = geometry.mesh(batch) else {
                 continue;
             };
+            // Cut-out surfaces alpha-test with their own pipeline, one draw per material.
+            let masked = match (&self.masked_pipeline, mask_textures) {
+                (Some(pipeline), Some(textures)) if batch.alpha_masked => {
+                    Some((pipeline, textures))
+                }
+                _ => None,
+            };
+            pass.set_pipeline(masked.map_or(&self.pipeline, |(pipeline, _)| pipeline));
 
             let instance_count = batch.instances.len() as u32;
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
             let mut current_range_start: Option<u32> = None;
+            let mut current_material: Option<u32> = None;
 
             for (local_index, instance) in batch.instances.iter().enumerate() {
                 let global_index = batch.first_instance + local_index as u32;
@@ -587,11 +665,26 @@ impl ShadowResources {
                     }
                     continue;
                 };
+                // A masked batch draws each material with its own textures.
+                let new_material = masked.is_some()
+                    && current_material.replace(instance.material_index)
+                        != Some(instance.material_index);
+                if new_material {
+                    if let Some(start) = current_range_start.take() {
+                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                    }
+                }
                 if !material.casts_shadow() {
                     if let Some(start) = current_range_start.take() {
                         pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
                     }
                 } else if current_range_start.is_none() {
+                    if let Some((_, textures)) = masked {
+                        let Some(group) = textures.group(instance.material_index) else {
+                            continue;
+                        };
+                        pass.set_bind_group(3, group, &[]);
+                    }
                     current_range_start = Some(global_index);
                 }
             }
@@ -602,6 +695,33 @@ impl ShadowResources {
                     0,
                     start..(batch.first_instance + instance_count),
                 );
+            }
+        }
+    }
+}
+
+/// The shadow map shader; with `textures` (bindless or not) the cut-out entry points too
+/// (shadow_masked.wgsl), with the material texture bindings (group 3).
+fn shadow_shader_source(textures: Option<bool>) -> String {
+    let builder = ShaderBuilder::new().with_objects();
+    match textures {
+        Some(bindless) => builder
+            .with_constants()
+            .with_bindings_for_filter(bindless, crate::renderer::SamplerFilterMode::Linear)
+            .with_module(wgsl!("shadow.wgsl"))
+            .build(wgsl!("shadow_masked.wgsl")),
+        None => builder.build(wgsl!("shadow.wgsl")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shadow_shaders_validate() {
+        for textures in [None, Some(true), Some(false)] {
+            let source = super::shadow_shader_source(textures);
+            if let Err(error) = crate::renderer::shader_source::validate(&source) {
+                panic!("{textures:?}: {error}");
             }
         }
     }

@@ -62,13 +62,29 @@ impl SkinningBackend {
     }
 }
 
+/// One skinned instance's deformed vertices, in two buffers that take turns: this
+/// frame's pose is written to one while the other keeps last frame's, which motion
+/// vectors compare it with.
 struct SkinnedInstance {
     source: Handle<Mesh>,
-    /// The source geometry drawn from the instance's buffer; shares the source mesh's
-    /// data, so a replaced mesh is noticed and the instance rebuilt.
+    /// The source geometry drawn from this frame's buffer; shares the source mesh's data,
+    /// so a replaced mesh is noticed and the instance rebuilt.
     mesh: Mesh,
-    bind_group: Option<wgpu::BindGroup>,
+    outputs: [wgpu::Buffer; 2],
+    /// The compute pass's bind group writing each output.
+    bind_groups: [Option<wgpu::BindGroup>; 2],
+    /// The output `mesh` draws from (this frame's).
+    current: usize,
+    /// The other output holds the pose of the frame before (not right after creation or
+    /// a frame without skinning).
+    has_previous: bool,
     last_used: u64,
+}
+
+impl SkinnedInstance {
+    fn bind_group(&self) -> Option<&wgpu::BindGroup> {
+        self.bind_groups[self.current].as_ref()
+    }
 }
 
 pub(crate) struct SkinningStage {
@@ -160,6 +176,19 @@ impl SkinningStage {
         self.instances.get(&key).map(|instance| &instance.mesh)
     }
 
+    /// An instance's vertices as last frame deformed them (this frame's when there is no
+    /// earlier pose), for motion vectors.
+    pub(crate) fn previous_vertex_buffer(&self, key: SkinKey) -> Option<&wgpu::Buffer> {
+        self.instances.get(&key).map(|instance| {
+            let previous = if instance.has_previous {
+                1 - instance.current
+            } else {
+                instance.current
+            };
+            &instance.outputs[previous]
+        })
+    }
+
     fn ensure_instance(
         &mut self,
         device: &wgpu::Device,
@@ -177,13 +206,17 @@ impl SkinningStage {
                 SkinningBackend::Compute => wgpu::BufferUsages::STORAGE,
                 SkinningBackend::Cpu => wgpu::BufferUsages::COPY_DST,
             };
-            let output = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("SkinnedVertexBuffer"),
-                size: (source.data().vertices.len() * size_of::<Vertex>()).max(16) as u64,
-                usage,
-                mapped_at_creation: false,
+            let size = (source.data().vertices.len() * size_of::<Vertex>()).max(16) as u64;
+            let outputs = [0, 1].map(|_| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("SkinnedVertexBuffer"),
+                    size,
+                    usage,
+                    mapped_at_creation: false,
+                })
             });
-            let bind_group = self.compute.as_ref().and_then(|compute| {
+            let bind_groups = [0, 1].map(|index| {
+                let compute = self.compute.as_ref()?;
                 Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("SkinningInstance"),
                     layout: &compute.instance_layout,
@@ -198,7 +231,7 @@ impl SkinningStage {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: output.as_entire_binding(),
+                            resource: outputs[index].as_entire_binding(),
                         },
                     ],
                 }))
@@ -207,15 +240,30 @@ impl SkinningStage {
                 key,
                 SkinnedInstance {
                     source: handle,
-                    mesh: source.with_vertex_buffer(output),
-                    bind_group,
+                    mesh: source.with_vertex_buffer(outputs[0].clone()),
+                    outputs,
+                    bind_groups,
+                    current: 0,
+                    has_previous: false,
                     last_used: self.frame,
                 },
             );
+            return;
         }
-        if let Some(instance) = self.instances.get_mut(&key) {
-            instance.last_used = self.frame;
+        let Some(instance) = self.instances.get_mut(&key) else {
+            return;
+        };
+        if instance.last_used == self.frame {
+            return;
         }
+        // Write this frame's pose into the other buffer; the one just drawn becomes the
+        // previous pose, if it was skinned in the frame right before.
+        instance.has_previous = instance.last_used + 1 == self.frame;
+        instance.current = 1 - instance.current;
+        instance.mesh = instance
+            .mesh
+            .with_vertex_buffer(instance.outputs[instance.current].clone());
+        instance.last_used = self.frame;
     }
 
     fn run_compute(
@@ -239,7 +287,7 @@ impl SkinningStage {
             if self
                 .instances
                 .get(key)
-                .is_none_or(|i| i.bind_group.is_none())
+                .is_none_or(|i| i.bind_group().is_none())
             {
                 continue;
             }
@@ -279,8 +327,7 @@ impl SkinningStage {
         });
         pass.set_pipeline(&compute.pipeline);
         for (index, (key, vertex_count)) in dispatches.iter().enumerate() {
-            let Some(bind_group) = self.instances.get(key).and_then(|i| i.bind_group.as_ref())
-            else {
+            let Some(bind_group) = self.instances.get(key).and_then(|i| i.bind_group()) else {
                 continue;
             };
             pass.set_bind_group(0, bind_group, &[]);

@@ -120,9 +120,11 @@ pub(super) fn load_materials<D: SceneImportDevice>(
 
         material = match gltf_mat.alpha_mode() {
             gltf::material::AlphaMode::Opaque => material,
-            gltf::material::AlphaMode::Mask | gltf::material::AlphaMode::Blend => {
-                material.with_alpha()
+            // Cut out, otherwise opaque (glTF's default cutoff is 0.5).
+            gltf::material::AlphaMode::Mask => {
+                material.with_alpha_cutoff(gltf_mat.alpha_cutoff().unwrap_or(0.5))
             }
+            gltf::material::AlphaMode::Blend => material.with_alpha(),
         };
 
         log::debug!(

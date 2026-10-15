@@ -55,7 +55,10 @@ impl MaterialData {
             normal_texture: material.normal_texture,
             emissive_texture: material.emissive_texture,
             occlusion_texture: material.occlusion_texture,
-            material_flags: material.flags_bits(),
+            // The alpha cutoff rides in the top byte (material_alpha_cutoff in
+            // material_common.wgsl); material flags stay below it.
+            material_flags: (material.flags_bits() & 0x00ff_ffff)
+                | (u32::from(material.alpha_cutoff) << 24),
             metallic_factor: material.metallic_f32(),
             roughness_factor: material.roughness_f32(),
             emissive_strength: material.emissive_f32(),

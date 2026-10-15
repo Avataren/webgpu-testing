@@ -1,5 +1,5 @@
 use crate::renderer::shader_source::wgsl;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::ptr;
 
@@ -15,20 +15,24 @@ use crate::renderer::{
 pub(crate) struct RenderPipeline {
     pipelines: HashMap<(MaterialPipelineKey, PipelineKey), wgpu::RenderPipeline>,
     shader_modules: HashMap<(MaterialPipelineKey, SamplerFilterMode), wgpu::ShaderModule>,
+    /// Shader material modules with a generated `fs_main_gbuffer` (see
+    /// [`super::shader_material`]): their own geometry fills the G-buffer.
+    gbuffer_shader_modules: HashSet<(Handle<MaterialAsset>, SamplerFilterMode)>,
     pipeline_layout: wgpu::PipelineLayout,
     uses_bindless: bool,
     depth_format: wgpu::TextureFormat,
     depth_prepass: wgpu::RenderPipeline,
+    /// The prepass for cut-out surfaces, with the alpha test (main pipeline layout).
+    depth_prepass_masked: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
-    background_pick: wgpu::RenderPipeline,
 }
 
 /// What [`RenderPipeline::rebuild_shaders`] builds.
 pub(crate) struct RebuiltShaders {
     shader_modules: HashMap<(MaterialPipelineKey, SamplerFilterMode), wgpu::ShaderModule>,
     depth_prepass: wgpu::RenderPipeline,
+    depth_prepass_masked: wgpu::RenderPipeline,
     background: wgpu::RenderPipeline,
-    background_pick: wgpu::RenderPipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +52,9 @@ pub(crate) struct PipelineKey {
     sampler_filtering: SamplerFilterMode,
     cull_mode: CullMode,
     gbuffer: bool,
-    write_pick: bool,
+    /// The pick pass: only entity ids, single-sample, with a depth attachment whatever
+    /// the batch's depth state.
+    pick_only: bool,
     wireframe: bool,
 }
 
@@ -63,7 +69,7 @@ impl PipelineKey {
         sampler_filtering: SamplerFilterMode,
         cull_mode: CullMode,
         gbuffer: bool,
-        write_pick: bool,
+        pick_only: bool,
         wireframe: bool,
     ) -> Self {
         Self {
@@ -75,7 +81,7 @@ impl PipelineKey {
             sampler_filtering,
             cull_mode,
             gbuffer,
-            write_pick,
+            pick_only,
             wireframe,
         }
     }
@@ -242,6 +248,7 @@ impl RenderPipeline {
             camera,
             objects,
             lights,
+            &pipeline_layout,
             uses_bindless,
             sample_count,
         )
@@ -251,12 +258,13 @@ impl RenderPipeline {
             Self {
                 pipelines: HashMap::new(),
                 shader_modules: shaders.shader_modules,
+                gbuffer_shader_modules: HashSet::new(),
                 pipeline_layout,
                 uses_bindless,
                 depth_format: context.depth.format,
                 depth_prepass: shaders.depth_prepass,
+                depth_prepass_masked: shaders.depth_prepass_masked,
                 background: shaders.background,
-                background_pick: shaders.background_pick,
             },
             texture_binder,
         )
@@ -278,6 +286,7 @@ impl RenderPipeline {
             camera,
             objects,
             lights,
+            &self.pipeline_layout,
             self.uses_bindless,
             sample_count,
         )
@@ -287,9 +296,10 @@ impl RenderPipeline {
     pub(crate) fn install_shaders(&mut self, shaders: RebuiltShaders) {
         self.pipelines.clear();
         self.shader_modules = shaders.shader_modules;
+        self.gbuffer_shader_modules.clear();
         self.depth_prepass = shaders.depth_prepass;
+        self.depth_prepass_masked = shaders.depth_prepass_masked;
         self.background = shaders.background;
-        self.background_pick = shaders.background_pick;
     }
 
     /// The modules and fixed pipelines that depend on shader source. Each source is
@@ -299,9 +309,29 @@ impl RenderPipeline {
         camera: &CameraBuffer,
         objects: &DynamicObjectsBuffer,
         lights: &LightsBuffer,
+        main_layout: &wgpu::PipelineLayout,
         uses_bindless: bool,
         sample_count: u32,
     ) -> Result<RebuiltShaders, String> {
+        let masked_source = Self::depth_prepass_masked_source(uses_bindless);
+        Self::validate_shader(&masked_source)
+            .map_err(|error| format!("cut-out depth prepass: {error}"))?;
+        let masked_shader = context
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("DepthMaskedShader"),
+                source: wgpu::ShaderSource::Wgsl(masked_source.into()),
+            });
+        let depth_prepass_masked =
+            PipelineBuilder::new(&context.device, main_layout, &masked_shader)
+                .with_label("DepthPrepassMaskedPipeline")
+                .with_vertex_entry("vs_masked")
+                .with_fragment_entry("fs_masked")
+                .with_vertex_buffer(Vertex::layout())
+                .with_depth_stencil(context.depth.format, true, wgpu::CompareFunction::LessEqual)
+                .with_multisample(sample_count)
+                .build();
+
         let depth_pipeline_layout =
             context
                 .device
@@ -311,9 +341,7 @@ impl RenderPipeline {
                     immediate_size: 0,
                 });
 
-        let depth_shader_source = ShaderBuilder::new()
-            .with_material_system()
-            .build(wgsl!("depth_prepass.wgsl"));
+        let depth_shader_source = Self::depth_prepass_source();
 
         Self::validate_shader(&depth_shader_source)
             .map_err(|error| format!("depth prepass: {error}"))?;
@@ -333,8 +361,7 @@ impl RenderPipeline {
                     immediate_size: 0,
                 });
 
-        let background_shader_source =
-            ShaderBuilder::background().build(wgsl!("environment_background.wgsl"));
+        let background_shader_source = Self::background_source();
 
         Self::validate_shader(&background_shader_source)
             .map_err(|error| format!("environment background: {error}"))?;
@@ -355,24 +382,6 @@ impl RenderPipeline {
                 .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
                 .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
                 .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE))
-                .with_depth_stencil(
-                    context.depth.format,
-                    false, // depth_write
-                    wgpu::CompareFunction::Always,
-                )
-                .with_no_culling()
-                .with_multisample(sample_count)
-                .build();
-
-        let background_pick_pipeline =
-            PipelineBuilder::new(&context.device, &background_layout, &background_shader)
-                .with_label("EnvironmentBackgroundPipelinePick")
-                .with_vertex_entry("vs_main")
-                .with_fragment_entry("fs_main_gbuffer_pick")
-                .with_color_target(scene_format, Some(wgpu::BlendState::REPLACE))
-                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
-                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE))
-                .with_color_target(GBUFFER_PICK_FORMAT, None)
                 .with_depth_stencil(
                     context.depth.format,
                     false, // depth_write
@@ -424,9 +433,30 @@ impl RenderPipeline {
         Ok(RebuiltShaders {
             shader_modules,
             depth_prepass,
+            depth_prepass_masked,
             background: background_pipeline,
-            background_pick: background_pick_pipeline,
         })
+    }
+
+    fn depth_prepass_source() -> String {
+        ShaderBuilder::new()
+            .with_camera()
+            .with_objects()
+            .build(wgsl!("depth_prepass.wgsl"))
+    }
+
+    fn depth_prepass_masked_source(bindless: bool) -> String {
+        ShaderBuilder::new()
+            .with_camera()
+            .with_objects()
+            .with_constants()
+            .with_bindings_for_filter(bindless, SamplerFilterMode::Linear)
+            .with_module(wgsl!("depth_prepass.wgsl"))
+            .build(wgsl!("depth_prepass_masked.wgsl"))
+    }
+
+    fn background_source() -> String {
+        ShaderBuilder::background().build(wgsl!("environment_background.wgsl"))
     }
 
     fn shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
@@ -436,7 +466,8 @@ impl RenderPipeline {
 
     fn error_shader_source(bindless: bool, filtering: SamplerFilterMode) -> String {
         ShaderBuilder::new()
-            .with_material_system()
+            .with_camera()
+            .with_objects()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
             .build(include_str!("../shader/error_fallback.wgsl"))
@@ -466,6 +497,24 @@ impl RenderPipeline {
 
         let processed = Self::preprocess_shader_source(metadata.wgsl_source());
         builder.build(&processed)
+    }
+
+    /// Whether shader material `handle` fills the G-buffer from its own shader (else the
+    /// PBR shader stands in for it in the main pass, and it draws its colour after).
+    pub(crate) fn shader_writes_gbuffer(
+        &mut self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        handle: Handle<MaterialAsset>,
+        filtering: SamplerFilterMode,
+    ) -> bool {
+        self.shader_module_for_material(
+            device,
+            assets,
+            MaterialPipelineKey::Shader(handle),
+            filtering,
+        );
+        self.gbuffer_shader_modules.contains(&(handle, filtering))
     }
 
     fn preprocess_shader_source(source: &str) -> String {
@@ -501,29 +550,24 @@ impl RenderPipeline {
         let mut builder = PipelineBuilder::new(device, pipeline_layout, shader)
             .with_label("MainRenderPipeline")
             .with_vertex_buffer(Vertex::layout())
+            // Every batch binds last frame's positions as slot 1 (see `BatchRecorder`).
+            .with_vertex_buffer(Vertex::previous_position_layout())
             .with_multisample(key.sample_count);
 
-        if key.gbuffer {
-            let entry = if key.write_pick {
-                "fs_main_gbuffer_pick"
-            } else {
-                "fs_main_gbuffer"
-            };
-            builder = builder.with_fragment_entry(entry);
-        } else if key.write_pick {
-            builder = builder.with_fragment_entry("fs_main_pick");
-        }
-
-        builder = builder.with_color_target(key.color_format, blend_state);
-
-        if key.gbuffer {
+        if key.pick_only {
             builder = builder
-                .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
-                .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
-        }
-
-        if key.write_pick {
-            builder = builder.with_color_target(GBUFFER_PICK_FORMAT, None);
+                .with_fragment_entry("fs_pick")
+                .with_color_target(GBUFFER_PICK_FORMAT, None);
+        } else {
+            if key.gbuffer {
+                builder = builder.with_fragment_entry("fs_main_gbuffer");
+            }
+            builder = builder.with_color_target(key.color_format, blend_state);
+            if key.gbuffer {
+                builder = builder
+                    .with_color_target(GBUFFER_NORMAL_FORMAT, Some(wgpu::BlendState::REPLACE))
+                    .with_color_target(GBUFFER_POSITION_FORMAT, Some(wgpu::BlendState::REPLACE));
+            }
         }
 
         builder = match key.cull_mode {
@@ -536,7 +580,8 @@ impl RenderPipeline {
             builder = builder.with_polygon_mode(wgpu::PolygonMode::Line);
         }
 
-        if key.depth_test || key.depth_write {
+        // The pick pass always has a depth attachment, so every pipeline in it declares one.
+        if key.depth_test || key.depth_write || key.pick_only {
             builder = builder.with_depth_stencil(depth_format, key.depth_write, depth_compare);
         }
 
@@ -550,12 +595,22 @@ impl RenderPipeline {
         key: PipelineKey,
         material_key: MaterialPipelineKey,
     ) -> &wgpu::RenderPipeline {
-        let effective_key = if matches!(material_key, MaterialPipelineKey::Shader(_))
-            && (key.gbuffer || key.write_pick)
-        {
-            MaterialPipelineKey::Pbr
-        } else {
-            material_key
+        // Pick ids come from the PBR shader's geometry for every material, and so does a
+        // shader material's G-buffer when it has no G-buffer entry of its own.
+        let effective_key = match material_key {
+            _ if key.pick_only => MaterialPipelineKey::Pbr,
+            MaterialPipelineKey::Shader(handle)
+                if key.gbuffer
+                    && !self.shader_writes_gbuffer(
+                        device,
+                        assets,
+                        handle,
+                        key.sampler_filtering,
+                    ) =>
+            {
+                MaterialPipelineKey::Pbr
+            }
+            _ => material_key,
         };
 
         let entry_key = (effective_key, key);
@@ -647,9 +702,26 @@ impl RenderPipeline {
                         log::error!("Failed to compile shader material {:?}: {}", handle, error);
                     }
 
+                    // Until the material changes (`invalidate_material_shader_modules`).
+                    self.shader_modules
+                        .insert((material_key, filtering), fallback.clone());
                     return fallback;
                 }
 
+                // Its G-buffer entry, when the shader's shape allows one.
+                let source = match super::shader_material::with_gbuffer_entry(&source) {
+                    Some(with_gbuffer) => {
+                        self.gbuffer_shader_modules.insert((handle, filtering));
+                        with_gbuffer
+                    }
+                    None => {
+                        log::debug!(
+                            "Shader material {handle:?} has no G-buffer entry; the PBR shader \
+                             stands in for its G-buffer"
+                        );
+                        source
+                    }
+                };
                 let label = format!("RendererMaterialShader{}", handle.index());
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(&label),
@@ -682,6 +754,7 @@ impl RenderPipeline {
             Some(mode) => {
                 self.shader_modules
                     .remove(&(MaterialPipelineKey::Shader(handle), mode));
+                self.gbuffer_shader_modules.remove(&(handle, mode));
                 self.pipelines.retain(|(material_key, pipeline_key), _| {
                     if let MaterialPipelineKey::Shader(existing) = material_key {
                         if *existing == handle {
@@ -695,6 +768,7 @@ impl RenderPipeline {
                 for mode in [SamplerFilterMode::Linear, SamplerFilterMode::Nearest] {
                     self.shader_modules
                         .remove(&(MaterialPipelineKey::Shader(handle), mode));
+                    self.gbuffer_shader_modules.remove(&(handle, mode));
                 }
                 self.pipelines.retain(|(material_key, _), _| {
                     !matches!(material_key, MaterialPipelineKey::Shader(existing) if *existing == handle)
@@ -722,12 +796,14 @@ impl RenderPipeline {
         &self.depth_prepass
     }
 
-    pub(crate) fn background(&self, write_pick: bool) -> &wgpu::RenderPipeline {
-        if write_pick {
-            &self.background_pick
-        } else {
-            &self.background
-        }
+    /// The prepass for cut-out surfaces: the main pipeline layout (lights and textures
+    /// as groups 2 and 3), with the alpha test.
+    pub(crate) fn depth_prepass_masked(&self) -> &wgpu::RenderPipeline {
+        &self.depth_prepass_masked
+    }
+
+    pub(crate) fn background(&self) -> &wgpu::RenderPipeline {
+        &self.background
     }
 }
 
@@ -738,6 +814,8 @@ pub(crate) struct BindlessTextureBinder {
     _fallback_texture: wgpu::Texture,
     fallback_view: wgpu::TextureView,
     bind_group: wgpu::BindGroup,
+    /// Textures past `MAX_TEXTURES` when last warned about (0: none).
+    reported_overflow: usize,
 }
 
 impl BindlessTextureBinder {
@@ -799,6 +877,7 @@ impl BindlessTextureBinder {
             _fallback_texture: fallback_texture,
             fallback_view,
             bind_group,
+            reported_overflow: 0,
         }
     }
 
@@ -848,6 +927,16 @@ impl BindlessTextureBinder {
             &self.nearest_sampler,
             views,
         );
+
+        let overflow = assets.textures.len().saturating_sub(MAX_TEXTURES);
+        if overflow > 0 && overflow != self.reported_overflow {
+            log::warn!(
+                "{} textures are loaded but the bindless texture array holds {MAX_TEXTURES}; \
+                 materials using the {overflow} past it draw without them",
+                assets.textures.len()
+            );
+        }
+        self.reported_overflow = overflow;
 
         log::debug!(
             "Updated bindless texture array with {} textures",
@@ -1095,6 +1184,42 @@ impl TextureBindingModel {
             TextureBindingModel::Bindless(_) => None,
             TextureBindingModel::Classic(classic) => {
                 Some(classic.create_material_bind_group(device, assets, material))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every source the main passes build at startup (the device only sees them then).
+    #[test]
+    fn main_pass_shaders_validate() {
+        let mut sources = vec![
+            ("depth prepass", RenderPipeline::depth_prepass_source()),
+            (
+                "cut-out depth prepass",
+                RenderPipeline::depth_prepass_masked_source(true),
+            ),
+            (
+                "cut-out depth prepass (classic)",
+                RenderPipeline::depth_prepass_masked_source(false),
+            ),
+            ("background", RenderPipeline::background_source()),
+        ];
+        for bindless in [true, false] {
+            for filtering in [SamplerFilterMode::Linear, SamplerFilterMode::Nearest] {
+                sources.push(("pbr", RenderPipeline::shader_source(bindless, filtering)));
+                sources.push((
+                    "error",
+                    RenderPipeline::error_shader_source(bindless, filtering),
+                ));
+            }
+        }
+        for (name, source) in sources {
+            if let Err(error) = RenderPipeline::validate_shader(&source) {
+                panic!("{name}: {error}");
             }
         }
     }

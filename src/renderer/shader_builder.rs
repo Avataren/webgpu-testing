@@ -53,6 +53,20 @@ impl ShaderBuilder {
         self
     }
 
+    /// Add the scene passes' camera uniform (`globals`, group 0; camera.wgsl).
+    pub fn with_camera(mut self) -> Self {
+        self.ensure_module(wgsl!("camera.wgsl"));
+        self
+    }
+
+    /// Add the per-instance objects and the frame's materials (`objects`, `materials`,
+    /// group 1; objects.wgsl), with the material module they need.
+    pub fn with_objects(mut self) -> Self {
+        self.ensure_with_material_system();
+        self.ensure_module(wgsl!("objects.wgsl"));
+        self
+    }
+
     /// Add constants (PI, TWO_PI, etc.)
     pub fn with_constants(mut self) -> Self {
         self.ensure_module(wgsl!("constants.wgsl"));
@@ -172,6 +186,8 @@ impl ShaderBuilder {
     /// Complete PBR shader with all features (main geometry)
     pub fn full_pbr_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
+            .with_camera()
+            .with_objects()
             .with_material_system()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
@@ -188,6 +204,7 @@ impl ShaderBuilder {
     /// Particle shader with full lighting support (including shadows)
     pub fn particles_filtered(bindless: bool, filtering: SamplerFilterMode) -> Self {
         Self::new()
+            .with_camera()
             .with_material_system()
             .with_constants()
             .with_bindings_for_filter(bindless, filtering)
@@ -215,7 +232,7 @@ impl ShaderBuilder {
 
     /// Background/skybox shader
     pub fn background() -> Self {
-        Self::new().with_constants()
+        Self::new().with_camera().with_constants()
     }
 }
 

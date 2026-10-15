@@ -7,16 +7,15 @@
 // per pixel (rotated by interleaved gradient noise), not per frame: the pass runs after
 // TAA, so changing it every frame would flicker; the blur averages neighbouring patterns.
 //
-// Needs `enable wgpu_ray_query;` (prepended by the Rust side) and post-processing's
-// common module.
+// Needs `enable wgpu_ray_query;`, post-processing's common module, the material module
+// and the scene modules (raytracing::scene_shader_modules), composed by rt_ao.rs.
 
 @group(1) @binding(180)
 var rt_ao_normal : texture_2d<f32>;
 @group(1) @binding(181)
 var rt_ao_position : texture_2d<f32>;
 
-@group(2) @binding(0)
-var rt_ao_tlas : acceleration_structure;
+// The ray tracing scene is group 2 (rt_scene.wgsl), the material textures group 3.
 
 const RT_AO_RAYS : u32 = 8u;
 
@@ -24,9 +23,9 @@ fn rt_ao_blocked(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
     var query : ray_query;
     rayQueryInitialize(
         &query,
-        rt_ao_tlas,
+        rt_tlas,
         RayDesc(
-            RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
+            RAY_FLAG_TERMINATE_ON_FIRST_HIT,
             // Opaque geometry only (MASK_OPAQUE in raytracing/scene.rs): light passes glass.
             0x01u,
             0.0,
@@ -38,6 +37,10 @@ fn rt_ao_blocked(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
     loop {
         if !rayQueryProceed(&query) {
             break;
+        }
+        // Cut-out surfaces come up as candidates (rt_alpha.wgsl).
+        if rt_candidate_blocks(rayQueryGetCandidateIntersection(&query)) {
+            rayQueryConfirmIntersection(&query);
         }
     }
     return rayQueryGetCommittedIntersection(&query).kind != RAY_QUERY_INTERSECTION_NONE;

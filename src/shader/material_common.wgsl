@@ -32,3 +32,21 @@ const FLAG_DOUBLE_SIDED: u32 = 64u;
 const FLAG_UNLIT: u32 = 128u;
 const FLAG_USE_NEAREST_FILTERING: u32 = 256u;
 const FLAG_BILLBOARDED: u32 = 512u;
+
+// Alpha below which the surface is cut away (glTF MASK), from the flags' top byte; 0 for
+// no cutoff.
+fn material_alpha_cutoff(flags: u32) -> f32 {
+    return f32(flags >> 24u) / 255.0;
+}
+
+// Turns object-space normals into world space for `model`: the cofactor matrix of its
+// upper 3x3, which is the inverse transpose up to a positive scale (normalise the
+// result). Transforming normals by the model matrix itself tilts them off the surface
+// under non-uniform scale. The determinant's sign keeps mirrored objects facing out.
+fn normal_matrix(model: mat4x4<f32>) -> mat3x3<f32> {
+    let x = model[0].xyz;
+    let y = model[1].xyz;
+    let z = model[2].xyz;
+    let cofactor = mat3x3<f32>(cross(y, z), cross(z, x), cross(x, y));
+    return cofactor * select(1.0, -1.0, dot(x, cross(y, z)) < 0.0);
+}

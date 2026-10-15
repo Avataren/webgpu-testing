@@ -3,6 +3,7 @@ use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::environment::Environment;
 #[path = "passes/mod.rs"]
 pub(crate) mod passes;
+use crate::renderer::internal::pick::PickState;
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, MaterialPipelineKey,
@@ -19,88 +20,12 @@ use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
 
 use glam::{Mat4, Vec2, Vec3};
-use std::mem::size_of;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 100;
 const POINT_SHADOW_FACE_COUNT: u32 = 6;
-const PICK_COPY_BYTES_PER_ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
-#[derive(Default)]
-struct PickState {
-    pending_request: Option<PickRequest>,
-    pending_readback: Option<PendingPickReadback>,
-    ready_value: Option<u64>,
-}
-
-struct PickRequest {
-    x: u32,
-    y: u32,
-}
-
-struct PendingPickReadback {
-    buffer: wgpu::Buffer,
-    status: Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>,
-    mapping_requested: bool,
-}
-
-impl PendingPickReadback {
-    fn new(buffer: wgpu::Buffer) -> Self {
-        Self {
-            buffer,
-            status: Arc::new(Mutex::new(None)),
-            mapping_requested: false,
-        }
-    }
-
-    fn ensure_mapping_requested(&mut self) {
-        if self.mapping_requested {
-            return;
-        }
-
-        let slice = self.buffer.slice(..PICK_COPY_BYTES_PER_ROW as u64);
-        let status_clone = Arc::clone(&self.status);
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            if let Ok(mut guard) = status_clone.lock() {
-                *guard = Some(result);
-            }
-        });
-
-        self.mapping_requested = true;
-    }
-
-    fn poll(&mut self, device: &wgpu::Device) -> Option<Result<u64, Box<dyn std::error::Error>>> {
-        self.ensure_mapping_requested();
-
-        {
-            let guard = self.status.lock().expect("pick readback status poisoned");
-            if guard.is_none() {
-                drop(guard);
-                let _ = device.poll(wgpu::PollType::Poll);
-            } else {
-                drop(guard);
-            }
-        }
-
-        let mut guard = self.status.lock().expect("pick readback status poisoned");
-        let result = guard.take();
-        drop(guard);
-
-        result.map(|status| {
-            let value = status.map_err(Into::into).and_then(|()| {
-                let slice = self.buffer.slice(..size_of::<u64>() as u64);
-                let data = slice.get_mapped_range()?;
-                let mut bytes = [0u8; 8];
-                bytes.copy_from_slice(&data[..8]);
-                Ok(u64::from_le_bytes(bytes))
-            });
-            self.buffer.unmap();
-            self.mapping_requested = false;
-            value
-        })
-    }
-}
 /// Why a frame could not be acquired from the surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceError {
@@ -131,14 +56,6 @@ impl std::fmt::Display for SurfaceError {
 
 impl std::error::Error for SurfaceError {}
 
-impl Drop for PendingPickReadback {
-    fn drop(&mut self) {
-        if self.mapping_requested {
-            self.buffer.unmap();
-            self.mapping_requested = false;
-        }
-    }
-}
 #[cfg(feature = "egui")]
 type UiHook =
     Box<dyn FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView)>;
@@ -158,6 +75,8 @@ pub struct RendererStats {
     pub overlay_draw_calls: u32,
     pub gizmo_draw_calls: u32,
     pub shadow_draw_calls: u32,
+    /// The pick pass's, on frames that resolve a pick.
+    pub pick_draw_calls: u32,
     /// Skinned mesh instances deformed this frame, and their vertices.
     pub skinned_instances: u32,
     pub skinned_vertices: u32,
@@ -175,6 +94,7 @@ impl RendererStats {
             + self.overlay_draw_calls
             + self.gizmo_draw_calls
             + self.shadow_draw_calls
+            + self.pick_draw_calls
     }
 }
 
@@ -187,7 +107,6 @@ struct FrameState {
     /// The part of the scene targets the 3D passes draw into: `render_region`, or a
     /// smaller rectangle at its origin while upscaling.
     scene_region: Option<RenderRegion>,
-    pick_active: bool,
     surface_view: wgpu::TextureView,
     /// Where egui draws: the surface, or the HDR UI layer.
     #[cfg_attr(not(feature = "egui"), allow(dead_code))]
@@ -197,6 +116,47 @@ struct FrameState {
     depth_view: wgpu::TextureView,
     resolved_depth_view: Option<wgpu::TextureView>,
     shadow_invocations: Vec<ShadowInvocation>,
+}
+
+/// What a frame runs, decided once before its passes are recorded (and `ray_traced`
+/// once the acceleration structures are built). Later passes read these instead of
+/// re-deriving them, or leaving flags for each other.
+#[derive(Clone, Copy, Debug, Default)]
+struct FramePlan {
+    /// Post-processing traces rays: reflections, ambient occlusion or path tracing.
+    post_ray_tracing: bool,
+    /// Directional shadows come from the ray-traced mask (single-sample targets only).
+    rt_shadows: bool,
+    /// Glass is on screen and refracted with ray tracing (it was batched as opaque).
+    refraction: bool,
+    /// The opaque lighting is path traced.
+    path_tracing: bool,
+    /// Nothing but the main pass's opaque PBR surfaces reads the shadow maps: no
+    /// transparent surfaces, shader materials, custom shadow passes or lit particles.
+    /// Maps the ray-traced mask replaces can then be skipped.
+    only_main_pass_reads_shadow_maps: bool,
+    /// The acceleration structures for this frame are built.
+    ray_traced: bool,
+    /// Ray-traced reflections and refraction see GPU particle systems.
+    particles_traced: bool,
+}
+
+impl FramePlan {
+    fn needs_acceleration_structures(&self) -> bool {
+        self.post_ray_tracing || self.rt_shadows || self.refraction
+    }
+
+    fn trace_rt_shadows(&self) -> bool {
+        self.ray_traced && self.rt_shadows
+    }
+
+    fn path_trace(&self) -> bool {
+        self.ray_traced && self.path_tracing
+    }
+
+    fn may_skip_shadow_maps(&self) -> bool {
+        self.trace_rt_shadows() && self.only_main_pass_reads_shadow_maps
+    }
 }
 
 /// What [`Renderer::reload_shaders`] did.
@@ -249,14 +209,16 @@ pub struct Renderer {
     /// screenshot renders through a game camera.
     editor_overlays: bool,
     settings: RenderSettings,
-    pick_active: bool,
+    /// GPU picking: requests, the pick pass's target and the readback.
     pick_state: PickState,
     #[cfg(feature = "egui")]
     ui_hook: Option<UiHook>,
     stats: RendererStats,
     render_region: Option<RenderRegion>,
-    /// Last frame's unjittered view-projection, for motion vectors.
+    /// Last rendered frame's unjittered view-projection, for motion vectors.
     prev_view_proj: Option<Mat4>,
+    /// This frame's, set by `set_camera`; it becomes `prev_view_proj` once rendered.
+    pending_view_proj: Option<Mat4>,
     /// Position in the TAA jitter sequence.
     jitter_index: u32,
     /// Whether ray-traced effects can run, or why not.
@@ -288,6 +250,13 @@ impl Renderer {
             &lights_buffer,
             sample_count,
         );
+        let mut shadows = shadows;
+        shadows.enable_alpha_masking(
+            &context.device,
+            &objects_buffer,
+            texture_binder.bind_layout(),
+            context.supports_bindless_textures,
+        );
         let hdr_display = context.hdr_display;
         let present_stage = hdr_display.is_hdr_path().then(|| {
             crate::renderer::hdr_output::PresentStage::new(
@@ -314,11 +283,7 @@ impl Renderer {
         let mut ray_tracing_support = context.ray_tracing.clone();
         let ray_tracing = if ray_tracing_support.is_available() {
             let scene = crate::renderer::raytracing::RayTracingScene::new(&context.device);
-            // Hits sample material textures from the bindless array, which the trace pass
-            // binds as a fifth group.
-            let textures_layout = (texture_binder.global_bind_group().is_some()
-                && context.device.limits().max_bind_groups >= 5)
-                .then(|| texture_binder.bind_layout());
+            let textures_layout = ray_traced_textures_layout(&texture_binder, &context.device);
             if textures_layout.is_none() {
                 log::info!("Ray-traced reflections shade hits without material textures");
             }
@@ -342,12 +307,14 @@ impl Renderer {
             None
         };
         if let Some(scene) = ray_tracing.as_ref() {
-            if let Err(error) = postprocess.enable_ray_traced_ao(&context.device, scene.layout()) {
+            if let Err(error) = postprocess.enable_ray_traced_ao(
+                &context.device,
+                scene.layout(),
+                cutout_textures_layout(&texture_binder),
+            ) {
                 log::warn!("Ray-traced ambient occlusion unavailable, using screen space: {error}");
             }
-            let textures_layout = (texture_binder.global_bind_group().is_some()
-                && context.device.limits().max_bind_groups >= 5)
-                .then(|| texture_binder.bind_layout());
+            let textures_layout = ray_traced_textures_layout(&texture_binder, &context.device);
             if let Err(error) = postprocess.enable_path_tracing(
                 &context.device,
                 &lights_buffer.bind_layout,
@@ -362,6 +329,7 @@ impl Renderer {
                 &context.device,
                 &camera_buffer.bind_layout,
                 scene.layout(),
+                cutout_textures_layout(&texture_binder),
             )
             .inspect_err(|error| {
                 log::warn!("Ray-traced shadows unavailable, using shadow maps: {error}")
@@ -394,13 +362,13 @@ impl Renderer {
             camera_aspect: aspect,
             editor_overlays: true,
             settings,
-            pick_active: false,
             pick_state: PickState::default(),
             #[cfg(feature = "egui")]
             ui_hook: None,
             stats: RendererStats::default(),
             render_region: None,
             prev_view_proj: None,
+            pending_view_proj: None,
             jitter_index: 0,
             ray_tracing_support,
         }
@@ -527,13 +495,12 @@ impl Renderer {
             )
             .map_err(|error| format!("main pass: {error}"))?;
         let scene_layout = self.ray_tracing.as_ref().map(|scene| scene.layout());
-        let textures = (self.texture_binder.global_bind_group().is_some()
-            && context.device.limits().max_bind_groups >= 5)
-            .then(|| self.texture_binder.bind_layout());
+        let textures = ray_traced_textures_layout(&self.texture_binder, &context.device);
         let ray_traced = scene_layout.map(|scene| crate::renderer::postprocess::RayTracedLayouts {
             lights: &self.lights_buffer.bind_layout,
             scene,
             textures,
+            cutout_textures: cutout_textures_layout(&self.texture_binder),
         });
         let post = self
             .postprocess
@@ -544,6 +511,7 @@ impl Renderer {
                     &context.device,
                     &self.camera_buffer.bind_layout,
                     scene,
+                    cutout_textures_layout(&self.texture_binder),
                 )
                 .map_err(|error| format!("ray-traced shadows: {error}"))?,
             ),
@@ -574,6 +542,14 @@ impl Renderer {
                 "Ray-traced shadow mask: one bit per light a pixel's shadow ray reached (bits 0-3 \
                  directional, 4-7 point, 8-11 spot lights); only lights traced this frame count",
                 mask,
+            ));
+        }
+        if let Some(target) = self.pick_state.last_target() {
+            out.push(FetchableTexture::new(
+                "pick",
+                "Entity pick ids from the last pick pass (the two halves of each pixel's pick \
+                 id; 0 where nothing pickable), at output resolution",
+                target.texture(),
             ));
         }
         self.shadows.fetchable_textures(&mut out);
@@ -608,14 +584,6 @@ impl Renderer {
         self.context.supports_bindless_textures
     }
 
-    pub fn set_pick_active(&mut self, active: bool) {
-        self.pick_active = active;
-    }
-
-    pub fn is_pick_active(&self) -> bool {
-        self.pick_active
-    }
-
     pub fn invalidate_material_shader_modules(
         &mut self,
         handle: Handle<MaterialAsset>,
@@ -625,38 +593,17 @@ impl Renderer {
             .invalidate_material_shader_modules(handle, filter);
     }
 
+    /// Pick the entity at output pixel `coords` with the next frame (a pick pass draws
+    /// entity ids then). False while an earlier pick is still in flight; the result
+    /// arrives through [`Self::poll_pick_result`].
     pub fn request_pick(&mut self, coords: [u32; 2]) -> bool {
-        if self.pick_state.pending_request.is_some() || self.pick_state.pending_readback.is_some() {
-            return false;
-        }
-
-        self.pick_state.ready_value = None;
-        self.pick_state.pending_request = Some(PickRequest {
-            x: coords[0],
-            y: coords[1],
-        });
-        true
+        self.pick_state.request(coords)
     }
 
+    /// The pick id under the last requested pixel (0: nothing pickable) once the GPU has
+    /// it.
     pub fn poll_pick_result(&mut self) -> Option<u64> {
-        if let Some(value) = self.pick_state.ready_value.take() {
-            return Some(value);
-        }
-
-        if let Some(readback) = self.pick_state.pending_readback.as_mut() {
-            if let Some(result) = readback.poll(&self.context.device) {
-                self.pick_state.pending_readback = None;
-                return Some(match result {
-                    Ok(value) => value,
-                    Err(error) => {
-                        log::error!("Failed to map pick readback buffer: {error}");
-                        0
-                    }
-                });
-            }
-        }
-
-        None
+        self.pick_state.poll(&self.context.device)
     }
 
     /// Presents a rendered frame to the window.
@@ -819,10 +766,10 @@ impl Renderer {
         let view_inv = view.inverse();
         let proj = camera.proj(aspect);
         let unjittered_vp = proj * view;
-        let prev_vp = self
-            .prev_view_proj
-            .replace(unjittered_vp)
-            .unwrap_or(unjittered_vp);
+        // Last *rendered* frame's: the view becomes history only once a frame is drawn
+        // with it (see `render`), so a skipped frame does not break motion vectors.
+        let prev_vp = self.prev_view_proj.unwrap_or(unjittered_vp);
+        self.pending_view_proj = Some(unjittered_vp);
         // TAA: shift the projection by a different sub-pixel offset every frame (a scene
         // pixel's worth, when the scene renders smaller and is upscaled).
         let scene_size = self
@@ -975,6 +922,13 @@ impl Renderer {
         let surface_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        if let Some(view_proj) = self.pending_view_proj.take() {
+            self.prev_view_proj = Some(view_proj);
+        }
+
+        // Shadow maps that follow the camera stay on one texel grid.
+        let mut lights = lights;
+        lights.snap_directional_shadows(self.shadows.directional_map_size());
 
         let mut custom_render = custom_render;
         let custom_shadow_enabled = custom_render
@@ -1005,39 +959,21 @@ impl Renderer {
         frame_state.stats.skinned_instances = self.skinning.instance_count;
         frame_state.stats.skinned_vertices = self.skinning.vertex_count;
         self.gpu_timer.mark(&mut frame_state.encoder, "skinning");
+
+        let mut plan = self.plan_frame(&frame_state.prepared_batches, custom_shadow_enabled);
         // Acceleration structures before the passes that trace against them.
-        let rt_shadows_wanted = self.rt_shadows.is_some()
-            && self.postprocess.settings().rt_shadows.enabled
-            && self.context.sample_count == 1;
-        // Transmissive surfaces were batched as opaque for ray-traced refraction.
-        let refraction_wanted = self.ray_traced_transmission()
-            && frame_state
-                .prepared_batches
-                .materials
-                .iter()
-                .any(Material::is_transmissive);
-        let ray_traced = self.update_ray_tracing(
+        plan.ray_traced = self.update_ray_tracing(
             &mut frame_state,
             assets,
-            self.postprocess.wants_ray_tracing() || rt_shadows_wanted || refraction_wanted,
+            plan.needs_acceleration_structures(),
         );
+        plan.particles_traced = plan.ray_traced && !self.ray_traced_particles.is_empty();
         self.gpu_timer
             .mark(&mut frame_state.encoder, "acceleration_structures");
 
-        // Shadow maps the ray-traced mask replaces, unless something else reads them:
-        // transparent surfaces, custom shadow passes, or lit GPU particles (which took the
-        // lights group last frame).
-        let particles_lit = self.lights_group_shared.replace(false);
+        // Shadow maps the ray-traced mask replaces, when nothing else reads them.
         let skip_maps = match self.rt_shadows.as_ref() {
-            Some(stage)
-                if ray_traced
-                    && rt_shadows_wanted
-                    && !custom_shadow_enabled
-                    && !particles_lit
-                    && frame_state.prepared_batches.transparent_range.is_empty() =>
-            {
-                stage.traced_bits(&lights)
-            }
+            Some(stage) if plan.may_skip_shadow_maps() => stage.traced_bits(&lights),
             _ => 0,
         };
         self.run_shadow_pass(
@@ -1053,22 +989,25 @@ impl Renderer {
         self.run_depth_prepass(&mut frame_state, assets);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "depth_prepass");
-        self.run_rt_shadows(&mut frame_state, &lights, ray_traced && rt_shadows_wanted);
+        self.run_rt_shadows(&mut frame_state, &lights, plan.trace_rt_shadows());
         self.run_main_color_pass(&mut frame_state, environment, assets);
         // Path traced lighting replaces the main pass's on opaque surfaces, before
         // particles and transparent surfaces are drawn over them.
-        if ray_traced && self.postprocess.wants_path_tracing() {
+        let path_traced = plan.path_trace() && {
             self.gpu_timer.mark(&mut frame_state.encoder, "main");
-            frame_state.stats.path_traced = self.run_path_tracing(&mut frame_state, &lights);
-        }
+            self.run_path_tracing(&mut frame_state, &lights)
+        };
+        frame_state.stats.path_traced = path_traced;
+        // Shader materials draw their own colour (after path tracing, which lights only
+        // the PBR surfaces).
+        self.run_shader_material_pass(&mut frame_state, assets, path_traced);
         // What particles and transparent surfaces change is reactive for FSR; where
         // particles cover the screen, ray-traced reflections trace them instead.
-        let particles_traced = ray_traced && !self.ray_traced_particles.is_empty();
         self.postprocess.capture_opaque_scene(
             &self.context.device,
             &mut frame_state.encoder,
             frame_state.scene_region,
-            particles_traced,
+            plan.particles_traced,
         );
         self.gpu_timer.mark(&mut frame_state.encoder, "main");
         self.run_custom_stage(
@@ -1086,7 +1025,7 @@ impl Renderer {
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "transparent");
-        self.execute_postprocess(&mut frame_state, ray_traced, refraction_wanted);
+        self.execute_postprocess(&mut frame_state, &plan, path_traced);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "post_process");
         self.run_custom_stage(
@@ -1096,7 +1035,7 @@ impl Renderer {
             custom_render.as_deref_mut(),
         );
         self.run_surface_passes(&mut frame_state, assets);
-        self.handle_pick_requests(&mut frame_state);
+        self.run_pick_pass(&mut frame_state, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "overlays");
         self.run_ui_hook(&mut frame_state);
         self.gpu_timer.mark(&mut frame_state.encoder, "ui");
@@ -1232,69 +1171,6 @@ impl Renderer {
         self.stats
     }
 
-    fn process_pick_request(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let Some(request) = self.pick_state.pending_request.take() else {
-            return;
-        };
-
-        let Some(texture) = self.postprocess.pick_texture() else {
-            log::warn!("Pick request issued without an available pick attachment");
-            self.pick_state.ready_value = Some(0);
-            return;
-        };
-
-        let Some(extent) = self.postprocess.pick_texture_extent() else {
-            self.pick_state.ready_value = Some(0);
-            return;
-        };
-
-        if extent.width == 0 || extent.height == 0 {
-            self.pick_state.ready_value = Some(0);
-            return;
-        }
-
-        let origin = wgpu::Origin3d {
-            x: request.x.min(extent.width.saturating_sub(1)),
-            y: request.y.min(extent.height.saturating_sub(1)),
-            z: 0,
-        };
-
-        let buffer = self.context.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("PickReadbackBuffer"),
-            size: PICK_COPY_BYTES_PER_ROW as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let source = wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin,
-            aspect: wgpu::TextureAspect::All,
-        };
-
-        let destination = wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(PICK_COPY_BYTES_PER_ROW),
-                rows_per_image: Some(1),
-            },
-        };
-
-        encoder.copy_texture_to_buffer(
-            source,
-            destination,
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        self.pick_state.pending_readback = Some(PendingPickReadback::new(buffer));
-    }
-
     fn draw_full_batch(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh, batch: &OrderedBatch) {
         self.set_geometry_buffers(pass, mesh);
         let instance_count = batch.instances.len() as u32;
@@ -1319,8 +1195,8 @@ impl Renderer {
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
     }
 
-    fn draw_environment_background(&self, pass: &mut wgpu::RenderPass<'_>, write_pick: bool) {
-        pass.set_pipeline(self.pipeline.background(write_pick));
+    fn draw_environment_background(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(self.pipeline.background());
         pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);
         pass.set_bind_group(1, &self.lights_buffer.bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -1382,12 +1258,6 @@ impl Renderer {
         self.postprocess
             .update_viewport(&self.context.queue, render_region, scene_region);
 
-        let pick_active = self.pick_active;
-        if pick_active {
-            self.postprocess
-                .ensure_pick_attachment(&self.context.device);
-        }
-
         let (scene_view, scene_resolve_view) = {
             let (view, resolve) = self.postprocess.scene_color_views();
             (view.clone(), resolve.cloned())
@@ -1399,7 +1269,6 @@ impl Renderer {
             stats,
             render_region,
             scene_region,
-            pick_active,
             surface_view,
             ui_view,
             scene_view,
@@ -1466,9 +1335,27 @@ impl Renderer {
             &frame.depth_view,
             frame.scene_region,
             self.context.scene_texture_format(),
-            frame.pick_active,
         );
         frame.stats.opaque_draw_calls += draw_calls;
+    }
+
+    fn run_shader_material_pass(
+        &mut self,
+        frame: &mut FrameState,
+        assets: &Assets,
+        path_traced: bool,
+    ) {
+        frame.stats.opaque_draw_calls += passes::shader_material_pass(
+            self,
+            assets,
+            &frame.prepared_batches,
+            &mut frame.encoder,
+            &frame.scene_view,
+            frame.scene_resolve_view.as_ref(),
+            &frame.depth_view,
+            frame.scene_region,
+            path_traced,
+        );
     }
 
     fn run_custom_stage(
@@ -1506,6 +1393,35 @@ impl Renderer {
             region,
             request,
         );
+    }
+
+    /// What this frame will run (see [`FramePlan`]); `ray_traced` and
+    /// `particles_traced` are filled in once the acceleration structures are built.
+    fn plan_frame(&self, batches: &PreparedBatches, custom_shadow_enabled: bool) -> FramePlan {
+        let settings = self.postprocess.settings();
+        // Lit GPU particles draw after the shadow pass, so the lights group taken last
+        // frame stands for this frame's.
+        let particles_lit = self.lights_group_shared.replace(false);
+        let shader_materials = batches
+            .material_pipeline_keys
+            .iter()
+            .any(|key| matches!(key, MaterialPipelineKey::Shader(_)));
+        FramePlan {
+            post_ray_tracing: self.postprocess.wants_ray_tracing(),
+            rt_shadows: self.rt_shadows.is_some()
+                && settings.rt_shadows.enabled
+                && self.context.sample_count == 1,
+            // Transmissive surfaces were batched as opaque for ray-traced refraction.
+            refraction: self.ray_traced_transmission()
+                && batches.materials.iter().any(Material::is_transmissive),
+            path_tracing: self.postprocess.wants_path_tracing(),
+            only_main_pass_reads_shadow_maps: !custom_shadow_enabled
+                && !particles_lit
+                && !shader_materials
+                && batches.transparent_range.is_empty(),
+            ray_traced: false,
+            particles_traced: false,
+        }
     }
 
     /// Build this frame's acceleration structures when a ray-traced effect will use
@@ -1580,6 +1496,7 @@ impl Renderer {
                 &self.context.queue,
                 &self.camera_buffer.bind_group,
                 scene,
+                self.texture_binder.global_bind_group(),
                 lights,
                 self.postprocess.settings().rt_shadows.softness,
                 self.postprocess.settings().rt_shadows.light_radius,
@@ -1619,11 +1536,12 @@ impl Renderer {
         )
     }
 
-    fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool, refraction: bool) {
+    fn execute_postprocess(&mut self, frame: &mut FrameState, plan: &FramePlan, path_traced: bool) {
+        let refraction = plan.refraction;
         let ray_tracing = self
             .ray_tracing
             .as_ref()
-            .filter(|_| ray_traced)
+            .filter(|_| plan.ray_traced)
             .and_then(|scene| scene.bind_group())
             .map(|scene| crate::renderer::raytracing::RayTracingFrame {
                 lights: &self.lights_buffer.bind_group,
@@ -1639,6 +1557,7 @@ impl Renderer {
             frame.render_region,
             frame.scene_region,
             ray_tracing,
+            path_traced,
             &mut self.gpu_timer,
         );
         frame.resolved_depth_view = self.postprocess.after_postprocess_depth_view().cloned();
@@ -1654,7 +1573,6 @@ impl Renderer {
             frame.scene_resolve_view.as_ref(),
             &frame.depth_view,
             frame.scene_region,
-            frame.pick_active,
             self.context.scene_texture_format(),
         );
         frame.stats.transparent_draw_calls += transparent_draw_calls;
@@ -1663,7 +1581,6 @@ impl Renderer {
     /// Editor overlays and gizmos, drawn on the finished (tonemapped) image.
     fn run_surface_passes(&mut self, frame: &mut FrameState, assets: &Assets) {
         let render_region = frame.render_region;
-        let pick_active = frame.pick_active;
         let surface_format = self.output_format();
         let surface_view = frame.surface_view.clone();
         // Single-sample, output-resolution depth (upscaled or MSAA-resolved).
@@ -1680,7 +1597,6 @@ impl Renderer {
             &surface_view,
             &depth_view,
             render_region,
-            pick_active,
             surface_format,
         );
         frame.stats.overlay_draw_calls += overlay_draw_calls;
@@ -1700,7 +1616,6 @@ impl Renderer {
             &mut frame.encoder,
             &surface_view,
             render_region,
-            pick_active,
             surface_format,
             "GizmoPass",
         );
@@ -1714,15 +1629,21 @@ impl Renderer {
             &mut frame.encoder,
             &surface_view,
             render_region,
-            pick_active,
             surface_format,
             "GizmoSolidPass",
         );
         frame.stats.gizmo_draw_calls += gizmo_draws + gizmo_solid_draws;
     }
 
-    fn handle_pick_requests(&mut self, frame: &mut FrameState) {
-        passes::process_pick(self, &mut frame.encoder);
+    /// Entity ids for a pending pick request (nothing otherwise).
+    fn run_pick_pass(&mut self, frame: &mut FrameState, assets: &Assets) {
+        frame.stats.pick_draw_calls += passes::pick_pass(
+            self,
+            assets,
+            &frame.prepared_batches,
+            &mut frame.encoder,
+            frame.render_region,
+        );
     }
 
     #[cfg(feature = "egui")]
@@ -1748,6 +1669,26 @@ impl Renderer {
             lights,
         );
     }
+}
+
+/// The bindless texture array's layout for ray-traced passes, whose hits sample material
+/// textures from it as a fifth bind group; `None` without bindless textures or that many
+/// bind groups (hits then use material factors only).
+fn ray_traced_textures_layout<'a>(
+    texture_binder: &'a TextureBindingModel,
+    device: &wgpu::Device,
+) -> Option<&'a wgpu::BindGroupLayout> {
+    (texture_binder.global_bind_group().is_some() && device.limits().max_bind_groups >= 5)
+        .then(|| texture_binder.bind_layout())
+}
+
+/// The bindless texture array's layout for ray-traced passes that only alpha-test
+/// cut-out surfaces (bound as their fourth group); `None` without bindless textures.
+fn cutout_textures_layout(texture_binder: &TextureBindingModel) -> Option<&wgpu::BindGroupLayout> {
+    texture_binder
+        .global_bind_group()
+        .is_some()
+        .then(|| texture_binder.bind_layout())
 }
 
 fn estimate_shadow_draw_calls(

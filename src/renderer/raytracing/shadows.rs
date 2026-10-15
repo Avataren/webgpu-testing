@@ -6,7 +6,7 @@ use crate::renderer::shader_source::wgsl;
 use bytemuck::{Pod, Zeroable};
 
 use crate::renderer::lights::LightsData;
-use crate::renderer::{PipelineBuilder, RenderRegion};
+use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 
 /// Lights of each kind the mask has bits for: bits 0-3 directional, 4-7 point, 8-11 spot.
 pub(crate) const RT_SHADOW_LIGHTS: usize = 4;
@@ -35,6 +35,8 @@ pub(crate) struct RtShadowStage {
     /// The depth view `bind_group` reads.
     bound_depth: Option<wgpu::TextureView>,
     mask: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// Shadow rays alpha-test cut-out surfaces with the bindless textures (group 3).
+    textures: bool,
 }
 
 impl RtShadowStage {
@@ -44,6 +46,7 @@ impl RtShadowStage {
         device: &wgpu::Device,
         camera_layout: &wgpu::BindGroupLayout,
         scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Result<Self, String> {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -75,11 +78,18 @@ impl RtShadowStage {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RtShadowShader"),
-            source: wgpu::ShaderSource::Wgsl(rt_shadows_shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(
+                rt_shadows_shader_source(textures_layout.is_some()).into(),
+            ),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RtShadowPipelineLayout"),
-            bind_group_layouts: &[Some(camera_layout), Some(&layout), Some(scene_layout)],
+            bind_group_layouts: &[
+                Some(camera_layout),
+                Some(&layout),
+                Some(scene_layout),
+                textures_layout,
+            ],
             immediate_size: 0,
         });
         let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
@@ -109,6 +119,7 @@ impl RtShadowStage {
             bind_group: None,
             bound_depth: None,
             mask: None,
+            textures: textures_layout.is_some(),
         })
     }
 
@@ -187,6 +198,7 @@ impl RtShadowStage {
         queue: &wgpu::Queue,
         camera: &wgpu::BindGroup,
         scene: &wgpu::BindGroup,
+        textures: Option<&wgpu::BindGroup>,
         lights: &LightsData,
         softness_degrees: f32,
         light_radius: f32,
@@ -198,6 +210,11 @@ impl RtShadowStage {
             return 0;
         };
         let (mut uniform, bits) = traced_lights(lights);
+        let textures = match (self.textures, textures) {
+            (true, None) => return 0,
+            (true, textures) => textures,
+            (false, _) => None,
+        };
         if bits == 0 {
             return 0;
         }
@@ -254,6 +271,9 @@ impl RtShadowStage {
         pass.set_bind_group(0, camera, &[]);
         pass.set_bind_group(1, bind_group, &[]);
         pass.set_bind_group(2, scene, &[]);
+        if let Some(textures) = textures {
+            pass.set_bind_group(3, textures, &[]);
+        }
         pass.draw(0..3, 0..1);
         bits
     }
@@ -316,8 +336,19 @@ fn traced_lights(lights: &LightsData) -> (RtShadowUniform, u32) {
     (uniform, bits)
 }
 
-pub(crate) fn rt_shadows_shader_source() -> String {
-    format!("enable wgpu_ray_query;\n\n{}", wgsl!("rt_shadows.wgsl"))
+/// The mask shader: the scene as group 2 and, with `textures`, the bindless material
+/// textures as group 3 (for cut-out surfaces).
+pub(crate) fn rt_shadows_shader_source(textures: bool) -> String {
+    let main = format!(
+        "{}\n\n{}",
+        super::scene_shader_modules(2, textures.then_some(3)),
+        wgsl!("rt_shadows.wgsl")
+    );
+    let source = ShaderBuilder::new()
+        .with_camera()
+        .with_material_system()
+        .build(&main);
+    format!("enable wgpu_ray_query;\n\n{source}")
 }
 
 #[cfg(test)]
@@ -331,14 +362,16 @@ mod tests {
 
     #[test]
     fn shader_validates() {
-        let source = rt_shadows_shader_source();
-        let module = naga::front::wgsl::parse_str(&source)
+        for textures in [false, true] {
+            let source = rt_shadows_shader_source(textures);
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
             .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::RAY_QUERY,
-        )
-        .validate(&module)
-        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        }
     }
 }

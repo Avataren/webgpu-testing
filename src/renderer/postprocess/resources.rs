@@ -1,4 +1,4 @@
-use super::{PickAttachmentViews, BLOOM_FORMAT, GBUFFER_PICK_FORMAT};
+use super::BLOOM_FORMAT;
 
 pub struct MsaaTarget {
     // CRITICAL: view must drop before texture
@@ -159,23 +159,6 @@ impl TextureBundle {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self { view, texture }
     }
-
-    pub fn pick(device: &wgpu::Device, size: &wgpu::Extent3d) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("SceneId"),
-            size: *size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: GBUFFER_PICK_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self { view, texture }
-    }
 }
 
 pub struct BloomMip {
@@ -201,69 +184,5 @@ impl BloomMip {
             view,
             _texture: texture,
         }
-    }
-}
-
-#[derive(Default)]
-pub struct LazyPickTarget {
-    source: Option<TextureBundle>,
-    msaa: Option<MsaaTarget>,
-    size: Option<wgpu::Extent3d>,
-    sample_count: Option<u32>,
-}
-
-impl LazyPickTarget {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn invalidate(&mut self) {
-        self.source = None;
-        self.msaa = None;
-        self.size = None;
-        self.sample_count = None;
-    }
-
-    pub fn ensure(&mut self, device: &wgpu::Device, size: &wgpu::Extent3d, sample_count: u32) {
-        let needs_rebuild = self.size.map(|current| current != *size).unwrap_or(true)
-            || self.sample_count != Some(sample_count);
-
-        if needs_rebuild {
-            self.source = Some(TextureBundle::pick(device, size));
-            self.msaa = (sample_count > 1).then(|| {
-                MsaaTarget::new(
-                    device,
-                    size,
-                    GBUFFER_PICK_FORMAT,
-                    sample_count,
-                    "SceneIdMsaa",
-                )
-            });
-            self.size = Some(*size);
-            self.sample_count = Some(sample_count);
-        }
-    }
-
-    pub fn views(&self) -> Option<PickAttachmentViews<'_>> {
-        let source = self.source.as_ref()?;
-        let views = match self.msaa.as_ref() {
-            Some(msaa) => PickAttachmentViews {
-                multisample: &msaa.view,
-                resolve: Some(&source.view),
-            },
-            None => PickAttachmentViews {
-                multisample: &source.view,
-                resolve: None,
-            },
-        };
-        Some(views)
-    }
-
-    pub fn texture(&self) -> Option<&wgpu::Texture> {
-        self.source.as_ref().map(|bundle| bundle.texture())
-    }
-
-    pub fn extent(&self) -> Option<wgpu::Extent3d> {
-        self.size
     }
 }

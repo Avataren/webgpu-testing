@@ -152,7 +152,10 @@ impl<'a> PassPlan<'a> {
     }
 }
 
-/// Small helper that schedules render passes sequentially using a shared encoder.
+/// Records render passes one after another into a shared encoder, applying the render
+/// region to each. Despite the name it is not a frame graph: it tracks no resources or
+/// dependencies, and passes run in the order they are recorded (`Renderer::render`
+/// decides that order, see its `FramePlan`).
 pub struct FrameGraph<'a> {
     encoder: &'a mut wgpu::CommandEncoder,
 }

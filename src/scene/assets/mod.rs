@@ -70,6 +70,7 @@ mod tests {
             transmission_factor: 0,
             ior: crate::renderer::Material::DEFAULT_IOR,
             dispersion: 0,
+            alpha_cutoff: 0,
             kind: SerializedMaterialKind::default(),
         }
     }

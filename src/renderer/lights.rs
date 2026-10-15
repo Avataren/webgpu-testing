@@ -125,6 +125,36 @@ impl LightsData {
     pub fn spot_shadows(&self) -> &[SpotShadowRaw] {
         &self.spot_shadows
     }
+
+    /// Shift each directional shadow projection so the world lands on the same
+    /// `map_size` texel grid every frame. The shadow area follows the camera; without
+    /// this its edges crawl across the texels as it moves and shadow borders shimmer.
+    pub fn snap_directional_shadows(&mut self, map_size: u32) {
+        if map_size == 0 {
+            return;
+        }
+        let texel = 2.0 / map_size as f32;
+        for shadow in &mut self.directional_shadows {
+            if shadow.params[0] == 0.0 {
+                continue;
+            }
+            let view_proj = Mat4::from_cols_array_2d(&shadow.view_proj);
+            shadow.view_proj = snap_to_texel_grid(view_proj, texel).to_cols_array_2d();
+        }
+    }
+}
+
+/// `view_proj` (orthographic) moved by under a texel so the world origin falls on a
+/// texel corner: every world point then keeps its place within its texel as the
+/// projection slides by whole texels.
+fn snap_to_texel_grid(view_proj: Mat4, texel: f32) -> Mat4 {
+    let origin = view_proj * glam::Vec4::W;
+    if origin.w.abs() < 1e-6 {
+        return view_proj;
+    }
+    let ndc = origin.truncate().truncate() / origin.w;
+    let snapped = (ndc / texel).round() * texel;
+    Mat4::from_translation((snapped - ndc).extend(0.0)) * view_proj
 }
 
 // All raw light/shadow structs are uploaded directly to GPU buffers.  WebGPU
@@ -417,6 +447,24 @@ impl ShadowsUniform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapped_shadows_keep_world_points_on_the_texel_grid() {
+        let texel = 2.0 / 1024.0;
+        let light_dir = Vec3::new(0.3, -1.0, 0.2).normalize();
+        let proj = Mat4::orthographic_rh(-20.0, 20.0, -20.0, 20.0, 0.1, 200.0);
+        let point = glam::Vec4::new(3.3, 0.7, -5.1, 1.0);
+        // The same world point lands at the same sub-texel offset whatever the focus.
+        let fraction = |focus: Vec3| {
+            let view = Mat4::look_at_rh(focus - light_dir * 100.0, focus, Vec3::Z);
+            let ndc = snap_to_texel_grid(proj * view, texel) * point;
+            let texels = ndc.truncate().truncate() / texel;
+            texels - texels.floor()
+        };
+        let a = fraction(Vec3::new(0.0, 0.0, 0.0));
+        let b = fraction(Vec3::new(0.123, 0.0, 0.457));
+        assert!((a - b).abs().max_element() < 1e-2, "{a:?} vs {b:?}");
+    }
 
     #[test]
     fn spot_light_uniform_includes_shadow_data() {

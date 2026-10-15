@@ -10,17 +10,25 @@ pub struct RtAoStage {
     inputs_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     inputs_bind_group: Option<wgpu::BindGroup>,
+    /// Rays alpha-test cut-out surfaces with the bindless textures (group 3).
+    textures: bool,
 }
 
 /// The occlusion shader: post-processing's common helpers and the ray-traced pass, with
-/// ray queries enabled.
-pub(crate) fn rt_ao_shader_source() -> String {
-    let modules = ShaderBuilder::new()
+/// ray queries enabled; the scene is group 2 and, with `textures`, the bindless material
+/// textures group 3 (for cut-out surfaces).
+pub(crate) fn rt_ao_shader_source(textures: bool) -> String {
+    let main = format!(
+        "{}\n\n{}",
+        crate::renderer::raytracing::scene_shader_modules(2, textures.then_some(3)),
+        wgsl!("postprocess/rt_ao.wgsl")
+    );
+    let source = ShaderBuilder::new()
         .with_module(wgsl!("postprocess/fullscreen.wgsl"))
         .with_module(wgsl!("postprocess/common.wgsl"))
-        .with_module(wgsl!("postprocess/rt_ao.wgsl"))
-        .build_modules_only();
-    format!("enable wgpu_ray_query;\n\n{modules}")
+        .with_material_system()
+        .build(&main);
+    format!("enable wgpu_ray_query;\n\n{source}")
 }
 
 impl RtAoStage {
@@ -30,6 +38,7 @@ impl RtAoStage {
         device: &wgpu::Device,
         uniform_layout: &wgpu::BindGroupLayout,
         scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
     ) -> Result<Self, String> {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -50,7 +59,7 @@ impl RtAoStage {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RtAoShader"),
-            source: wgpu::ShaderSource::Wgsl(rt_ao_shader_source().into()),
+            source: wgpu::ShaderSource::Wgsl(rt_ao_shader_source(textures_layout.is_some()).into()),
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RtAoPipelineLayout"),
@@ -58,6 +67,7 @@ impl RtAoStage {
                 Some(uniform_layout),
                 Some(&inputs_layout),
                 Some(scene_layout),
+                textures_layout,
             ],
             immediate_size: 0,
         });
@@ -82,6 +92,7 @@ impl RtAoStage {
             inputs_layout,
             pipeline,
             inputs_bind_group: None,
+            textures: textures_layout.is_some(),
         })
     }
 
@@ -118,10 +129,16 @@ impl RtAoStage {
         encoder: &mut wgpu::CommandEncoder,
         uniform_bind_group: &wgpu::BindGroup,
         scene: &wgpu::BindGroup,
+        textures: Option<&wgpu::BindGroup>,
         occlusion: &wgpu::TextureView,
     ) -> bool {
         let Some(inputs) = self.inputs_bind_group.as_ref() else {
             return false;
+        };
+        let textures = match (self.textures, textures) {
+            (true, None) => return false,
+            (true, textures) => textures,
+            (false, _) => None,
         };
         let mut pass = begin_color_pass(
             encoder,
@@ -134,6 +151,9 @@ impl RtAoStage {
         pass.set_bind_group(0, uniform_bind_group, &[]);
         pass.set_bind_group(1, inputs, &[]);
         pass.set_bind_group(2, scene, &[]);
+        if let Some(textures) = textures {
+            pass.set_bind_group(3, textures, &[]);
+        }
         pass.draw(0..3, 0..1);
         true
     }

@@ -14,6 +14,26 @@ pub(crate) use shadows::{RtShadowStage, MASK_FORMAT as RT_SHADOW_MASK_FORMAT};
 
 use std::fmt;
 
+use crate::renderer::shader_source::wgsl;
+
+/// The ray tracing scene's declarations (rt_scene.wgsl) and the cut-out test for ray
+/// queries (rt_alpha.wgsl), for a pass that binds the scene as `scene_group` and the
+/// bindless material textures as `textures_group` (`None`: no textures, so a cut-out
+/// surface's own alpha alone counts). Needs the material module.
+pub(crate) fn scene_shader_modules(scene_group: u32, textures_group: Option<u32>) -> String {
+    let scene =
+        wgsl!("postprocess/rt_scene.wgsl").replace("@group(3)", &format!("@group({scene_group})"));
+    let textures = match textures_group {
+        Some(group) => wgsl!("postprocess/rt_textures_bindless.wgsl")
+            .replace("@group(4)", &format!("@group({group})")),
+        None => wgsl!("postprocess/rt_textures_none.wgsl").to_owned(),
+    };
+    format!(
+        "{scene}\n\n{textures}\n\n{}",
+        wgsl!("postprocess/rt_alpha.wgsl")
+    )
+}
+
 /// Device features the ray-traced effects need.
 pub(crate) const RAY_TRACING_FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY;
 

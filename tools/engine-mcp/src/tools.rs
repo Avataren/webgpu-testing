@@ -137,6 +137,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
             "dispersion": { "type": "number", "minimum": 0, "maximum": 2.55, "description": "Transmissive materials: how much refraction splits light into colours (gem fire, prism rainbows), as glTF KHR_materials_dispersion (20 / Abbe number): 0 none, 0.34 crown glass, 0.36 diamond; exaggerate up to 1-2 for a showier effect" },
             "unlit": { "type": "boolean" },
             "transparent": { "type": "boolean", "description": "Alpha blending; set the color's alpha below 1" },
+            "alpha_cutoff": { "type": "number", "minimum": 0, "maximum": 1, "description": "Cut-out (glTF MASK): the surface is cut away where its alpha (color alpha times the base color texture's) is below this, and is otherwise opaque, with depth and shadows (foliage, fences). 0 turns it off" },
             "double_sided": { "type": "boolean" },
             "nearest_filtering": { "type": "boolean", "description": "Pixel-art style texture sampling" },
             "base_color_texture": { "type": ["string", "null"], "description": "Image path (png/jpg), or null to remove" },
@@ -1012,8 +1013,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "editor_select",
-            description: "Editor only: select an entity (shows it in the inspector), or null to clear.",
-            schema: object(json!({ "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }] } }), &[]),
+            description: "Editor only: select an entity (shows it in the inspector), or null to clear. With uv instead, click the Scene view there: the same GPU pick a mouse click makes (what is visible under that point, cut-out holes and gizmos included); the selection follows a few frames later in editor_state.selected.",
+            schema: object(json!({
+                "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }] },
+                "uv": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 }, "minItems": 2, "maxItems": 2, "description": "[u, v] across the Scene view, 0..1 from its top-left corner" }
+            }), &[]),
             action: Action::Engine("editor.select"),
         },
         Tool {
