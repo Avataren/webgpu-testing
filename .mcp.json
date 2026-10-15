@@ -3,6 +3,17 @@
     "engine": {
       "command": "tools/engine-mcp/run.sh",
       "args": []
+    },
+    "blender": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://projects.blender.org/lab/blender_mcp.git@v1.0.3#subdirectory=mcp",
+        "blender-mcp"
+      ],
+      "env": {
+        "BLENDER_PATH": "${BLENDER_PATH:-${HOME}/.local/share/Steam/steamapps/common/Blender/blender}"
+      }
     }
   }
 }
