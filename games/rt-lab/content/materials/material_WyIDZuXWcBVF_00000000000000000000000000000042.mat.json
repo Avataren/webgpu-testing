@@ -15,6 +15,7 @@
   "roughness_factor": 5,
   "emissive_strength": 0,
   "transmission_factor": 255,
+  "dispersion": 50,
   "kind": {
     "type": "pbr"
   }

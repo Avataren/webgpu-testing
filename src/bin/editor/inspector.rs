@@ -744,6 +744,7 @@ fn show_material_section(
                     |value| material.transmission_factor = value,
                 );
                 changed |= material_ior_editor(ui, &mut material.ior);
+                changed |= material_dispersion_editor(ui, &mut material.dispersion);
 
                 let slots = [
                     (
@@ -2364,6 +2365,25 @@ fn material_float_editor(
     } else {
         false
     }
+}
+
+/// Dispersion of transmissive materials (20 / Abbe number: 0.36 diamond).
+fn material_dispersion_editor(ui: &mut egui::Ui, encoded_value: &mut u8) -> bool {
+    let mut value = f32::from(*encoded_value) / 100.0;
+    ui.label("Dispersion");
+    let changed = ui
+        .add(
+            DragValue::new(&mut value)
+                .speed(0.01)
+                .range(0.0..=2.55)
+                .fixed_decimals(2),
+        )
+        .changed();
+    ui.end_row();
+    if changed {
+        *encoded_value = Material::encode_dispersion(value);
+    }
+    changed
 }
 
 /// Index of refraction of transmissive materials (1.5 glass, 2.42 diamond).

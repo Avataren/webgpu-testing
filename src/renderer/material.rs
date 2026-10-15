@@ -26,6 +26,10 @@ pub struct Material {
     /// Index of refraction as `(ior - 1) * 100`: 50 is 1.5 (glass), 142 is 2.42
     /// (diamond); covers 1.00 to 3.55.
     pub ior: u8,
+    /// How much the index of refraction varies with wavelength (prisms, the "fire" of a
+    /// cut gem), in hundredths: as glTF KHR_materials_dispersion, 20 / Abbe number (36 for
+    /// diamond, about 34 for crown glass); 0 for none.
+    pub dispersion: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -101,6 +105,7 @@ impl Material {
             emissive_strength: 0,
             transmission_factor: 0,
             ior: Self::DEFAULT_IOR,
+            dispersion: 0,
         }
     }
 
@@ -146,6 +151,20 @@ impl Material {
     pub fn with_ior(mut self, ior: f32) -> Self {
         self.ior = Self::encode_ior(ior);
         self
+    }
+
+    /// Dispersion as glTF KHR_materials_dispersion (20 / Abbe number, 0-2.55).
+    pub fn with_dispersion(mut self, dispersion: f32) -> Self {
+        self.dispersion = Self::encode_dispersion(dispersion);
+        self
+    }
+
+    pub fn encode_dispersion(dispersion: f32) -> u8 {
+        (dispersion.clamp(0.0, 2.55) * 100.0).round() as u8
+    }
+
+    pub fn dispersion_f32(&self) -> f32 {
+        self.dispersion as f32 / 100.0
     }
 
     pub fn encode_ior(ior: f32) -> u8 {

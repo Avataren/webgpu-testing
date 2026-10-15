@@ -528,33 +528,61 @@ fn rt_view_ray(scene_uv : vec2<f32>) -> vec3<f32> {
     return direction;
 }
 
-// Light that reaches the camera through transmissive geometry along the view ray `v`
-// (zero when the ray's first hit is not transmissive), weighted by 1 - Fresnel at entry.
-// The ray refracts in, crosses the object (bending, absorbing its colour, reflecting
-// internally where it cannot leave), refracts out and lights what it reaches.
-fn rt_refracted(v : vec3<f32>, pixel_angle : f32) -> vec3<f32> {
-    let camera = post_uniform.camera_position.xyz;
-    let primary = rt_closest_hit(camera, v, 1.0e3);
-    if primary.kind == RAY_QUERY_INTERSECTION_NONE {
-        return vec3<f32>(0.0);
-    }
-    let entry_surface = rt_surface(primary, v);
-    let entry_material = rt_materials[entry_surface.material_index];
-    if entry_material.transmission <= 0.0 {
-        return vec3<f32>(0.0);
-    }
-    var ior = max(entry_material.ior, 1.0);
-    var tint = entry_material.color.rgb * entry_surface.color.rgb;
-    let n = entry_surface.normal;
-    let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
-    let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(v, n), 0.0, 1.0), 5.0);
-    let weight = entry_material.transmission * (1.0 - fresnel);
+// Dispersion: wavelengths a dispersive pixel traces per sub-pixel sample (so
+// RT_REFRACTION_SAMPLES * RT_DISPERSION_WAVELENGTHS across the visible spectrum per pixel,
+// shifted every frame for TAA to average).
+const RT_DISPERSION_WAVELENGTHS : u32 = 2u;
+// The traced part of the spectrum, in nanometres.
+const RT_SPECTRUM_SHORT : f32 = 400.0;
+const RT_SPECTRUM_LONG : f32 = 700.0;
 
-    let entry = camera + v * primary.t;
-    let bias = 0.002 + 0.0005 * primary.t;
+// Linear RGB response to light of `wavelength` nm (smooth bumps, violet with a little
+// red), scaled so a uniform spectrum averages to white.
+fn rt_spectral_rgb(wavelength : f32) -> vec3<f32> {
+    let bump = vec4<f32>(605.0, 545.0, 455.0, 415.0);
+    let width = vec4<f32>(40.0, 38.0, 32.0, 18.0);
+    let x = (vec4<f32>(wavelength) - bump) / width;
+    let g = exp(-0.5 * x * x);
+    // The bumps' averages over 400-700 nm.
+    return vec3<f32>(g.x + 0.18 * g.w, g.y, g.z) / vec3<f32>(0.35288, 0.31748, 0.25592);
+}
+
+// Where `wavelength` sits in the spread of the index of refraction, as Cauchy's equation
+// (n = A + B / wavelength^2) puts it: -1 at the red C line (656.3 nm), 0 at the d line
+// (587.6 nm, where `ior` is given), +1 at the blue F line (486.1 nm).
+fn rt_dispersion_position(wavelength : f32) -> f32 {
+    let inv_sq = 1.0 / (wavelength * wavelength);
+    return 2.0 * (inv_sq - 2.8963e-6) / 1.9103e-6;
+}
+
+// Index of refraction at a dispersion position (above), as glTF KHR_materials_dispersion:
+// the C and F lines are (ior - 1) * 0.025 * dispersion either side of ior.
+fn rt_dispersed_ior(ior : f32, dispersion : f32, position : f32) -> f32 {
+    let base = max(ior, 1.0);
+    return max(base + (base - 1.0) * 0.025 * dispersion * position, 1.0);
+}
+
+// The light a ray brings back after refracting into a transmissive surface at `entry`
+// (normal `n` facing the ray `v`, which travelled `travelled` from the camera): it
+// crosses the object (bending, absorbing `tint`, reflecting internally where it cannot
+// leave), refracts out and lights what it reaches. `position` is the ray's wavelength as
+// a dispersion position (0 for none).
+fn rt_refraction_path(
+    entry : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    entry_travelled : f32,
+    entry_ior : f32,
+    entry_tint : vec3<f32>,
+    position : f32,
+    bias : f32,
+    pixel_angle : f32,
+) -> vec3<f32> {
+    var ior = entry_ior;
+    var tint = entry_tint;
     var direction = refract(v, n, 1.0 / ior);
     var origin = entry - n * bias;
-    var travelled = primary.t;
+    var travelled = entry_travelled;
     var throughput = vec3<f32>(1.0);
     var inside = true;
     var color = vec3<f32>(0.0);
@@ -585,7 +613,7 @@ fn rt_refracted(v : vec3<f32>, pixel_angle : f32) -> vec3<f32> {
         }
         if material.transmission > 0.0 {
             // Into glass again (another object, or this one's far side seen past it).
-            ior = max(material.ior, 1.0);
+            ior = rt_dispersed_ior(material.ior, material.dispersion, position);
             tint = material.color.rgb * surface.color.rgb;
             let into = refract(direction, surface.normal, 1.0 / ior);
             inside = dot(into, into) >= 1e-8;
@@ -602,7 +630,52 @@ fn rt_refracted(v : vec3<f32>, pixel_angle : f32) -> vec3<f32> {
         break;
     }
     color = select(color, vec3<f32>(0.0), color != color);
-    return clamp(color * throughput * weight, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
+    return min(color, vec3<f32>(SSR_MAX_RADIANCE)) * throughput;
+}
+
+// Light that reaches the camera through transmissive geometry along the view ray `v`
+// (zero when the ray's first hit is not transmissive), weighted by 1 - Fresnel at entry.
+// A dispersive surface (one with `dispersion`) splits the ray into RT_DISPERSION_WAVELENGTHS
+// wavelengths, each refracting with its own index: `sample` (this ray's sub-pixel sample)
+// and `spectrum_shift` (0-1, per pixel and frame) pick which.
+fn rt_refracted(v : vec3<f32>, pixel_angle : f32, sample : u32, spectrum_shift : f32) -> vec3<f32> {
+    let camera = post_uniform.camera_position.xyz;
+    let primary = rt_closest_hit(camera, v, 1.0e3);
+    if primary.kind == RAY_QUERY_INTERSECTION_NONE {
+        return vec3<f32>(0.0);
+    }
+    let entry_surface = rt_surface(primary, v);
+    let entry_material = rt_materials[entry_surface.material_index];
+    if entry_material.transmission <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let ior = max(entry_material.ior, 1.0);
+    let tint = entry_material.color.rgb * entry_surface.color.rgb;
+    let n = entry_surface.normal;
+    let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(v, n), 0.0, 1.0), 5.0);
+    let weight = entry_material.transmission * (1.0 - fresnel);
+
+    let entry = camera + v * primary.t;
+    let bias = 0.002 + 0.0005 * primary.t;
+    var color = vec3<f32>(0.0);
+    if entry_material.dispersion <= 0.0 {
+        color = rt_refraction_path(entry, n, v, primary.t, ior, tint, 0.0, bias, pixel_angle);
+    } else {
+        // Stratified over the spectrum: the pixel's samples interleave, so each covers
+        // red to violet and together they cover it evenly.
+        let strata = f32(RT_REFRACTION_SAMPLES * RT_DISPERSION_WAVELENGTHS);
+        for (var k = 0u; k < RT_DISPERSION_WAVELENGTHS; k = k + 1u) {
+            let stratum = f32(k * RT_REFRACTION_SAMPLES + sample);
+            let wavelength = mix(RT_SPECTRUM_SHORT, RT_SPECTRUM_LONG, (stratum + spectrum_shift) / strata);
+            let position = rt_dispersion_position(wavelength);
+            let path_ior = rt_dispersed_ior(ior, entry_material.dispersion, position);
+            color += rt_spectral_rgb(wavelength)
+                * rt_refraction_path(entry, n, v, primary.t, path_ior, tint, position, bias, pixel_angle);
+        }
+        color /= f32(RT_DISPERSION_WAVELENGTHS);
+    }
+    return clamp(color * weight, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
 }
 
 // Light passing through transmissive surfaces (glass, gems), at the pixels the main pass
@@ -624,10 +697,12 @@ fn fs_rt_refraction_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         vec2<f32>(0.375, 0.125),
         vec2<f32>(-0.125, 0.375),
     );
+    // Which wavelengths dispersive surfaces trace, new every frame for TAA to average.
+    let spectrum_shift = noise_2d(vec2<u32>(pixel), u32(post_uniform.output.z));
     var sum = vec3<f32>(0.0);
     for (var i = 0u; i < RT_REFRACTION_SAMPLES; i = i + 1u) {
         let scene_uv = (in.position.xy + offsets[i]) / vec2<f32>(dims);
-        sum += rt_refracted(rt_view_ray(scene_uv), pixel_angle * 0.5);
+        sum += rt_refracted(rt_view_ray(scene_uv), pixel_angle * 0.5, i, spectrum_shift);
     }
     return vec4<f32>(sum / f32(RT_REFRACTION_SAMPLES), 0.0);
 }

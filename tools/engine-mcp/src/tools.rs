@@ -133,6 +133,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
             "emissive": { "type": "number", "minimum": 0, "maximum": 64, "description": "Emission strength: the surface glows in its own base color. 1 is full color; above 1 is HDR, which is what makes bloom pick a lit surface up (try 2-5)" },
             "transmission": { "type": "number", "minimum": 0, "maximum": 1, "description": "Light passing through the surface: glass, gems, water (1 = clear). Refracted by ior and tinted by the color; ray traced where engine_info surface.ray_tracing is available, otherwise drawn see-through. Use low roughness and metallic 0" },
             "ior": { "type": "number", "minimum": 1, "maximum": 3.55, "description": "Index of refraction for transmissive materials: 1.33 water, 1.5 glass (default), 1.77 sapphire, 2.42 diamond" },
+            "dispersion": { "type": "number", "minimum": 0, "maximum": 2.55, "description": "Transmissive materials: how much refraction splits light into colours (gem fire, prism rainbows), as glTF KHR_materials_dispersion (20 / Abbe number): 0 none, 0.34 crown glass, 0.36 diamond; exaggerate up to 1-2 for a showier effect" },
             "unlit": { "type": "boolean" },
             "transparent": { "type": "boolean", "description": "Alpha blending; set the color's alpha below 1" },
             "double_sided": { "type": "boolean" },

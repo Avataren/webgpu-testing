@@ -137,7 +137,9 @@ engine you launched; save first).
   diamond), roughness near 0 and metallic 0; the color tints what shows through. With
   hardware ray tracing (`engine_info` `surface.ray_tracing`) light refracts through the
   object (internal reflections, absorption); otherwise it is drawn see-through without
-  bending. glTF imports read KHR_materials_transmission / KHR_materials_ior.
+  bending. `dispersion` (0.36 diamond; 1 or more for showy rainbow fire) splits the light
+  into colours as it refracts. glTF imports read KHR_materials_transmission / _ior /
+  _dispersion.
 - The cone's tip points toward +Z, opposite to forward: ships and arrows made from cones
   need a 180 degree yaw.
 

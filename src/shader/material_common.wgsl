@@ -18,7 +18,8 @@ struct MaterialData {
     // Share of light passing through (refracting glass), and its index of refraction.
     transmission: f32,
     ior: f32,
-    _padding: u32,
+    // 20 / Abbe number (glTF KHR_materials_dispersion): how much ior varies with wavelength.
+    dispersion: f32,
 };
 
 const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;

@@ -201,10 +201,22 @@ glass sphere (ior 1.5) and a Blender-modelled round brilliant (81 facets, ior 2.
 blue) under an emissive light bar. Cost scales with glass pixels (about 0.03 ms with none
 on screen).
 
+**Dispersion (2026-10-15).** Materials have `dispersion` (glTF KHR_materials_dispersion,
+20 / Abbe number, stored in hundredths; 0.36 is diamond). A view ray whose entry surface
+disperses splits into 2 wavelengths per sub-pixel sample (8 per pixel, stratified over
+400-700 nm and shifted every frame by noise for TAA to average). Each refracts with its own
+index: Cauchy's equation through the glTF definition (the C and F lines at
+`(ior - 1) * 0.025 * dispersion` either side of ior), applied to every dispersive surface the
+path enters. Each path's light is weighted by a smooth spectral RGB response (Gaussian
+bumps) normalised so a flat spectrum sums to white. That gives a cut gem its fire and a
+glass sphere rainbow rims. Cost: about 1.75x a non-dispersive path per pixel (3.0 vs
+1.7 ms with the rt-lab gem filling half of a 1045x687 viewport); 3 wavelengths per sample
+cost 2.6x.
+
 Not yet: a denoiser for large lights' soft shadows, temporal accumulation for RT AO (it
 would allow fewer rays), shadow rays for alpha-tested geometry; for refraction, rough
-(frosted) glass, dispersion, coloured shadows and caustics, and refraction of glass seen in
-reflections off screen (it is see-through without bending there).
+(frosted) glass, coloured shadows and caustics, and refraction of glass seen in reflections
+off screen (it is see-through without bending there, and never dispersive).
 
 ### What wgpu 30 provides
 

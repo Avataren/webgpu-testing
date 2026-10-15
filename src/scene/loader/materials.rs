@@ -101,6 +101,14 @@ pub(super) fn load_materials<D: SceneImportDevice>(
         if let Some(ior) = gltf_mat.ior() {
             material = material.with_ior(ior);
         }
+        // KHR_materials_dispersion (no typed accessor in the gltf crate).
+        if let Some(dispersion) = gltf_mat
+            .extension_value("KHR_materials_dispersion")
+            .and_then(|value| value.get("dispersion"))
+            .and_then(|value| value.as_f64())
+        {
+            material = material.with_dispersion(dispersion as f32);
+        }
 
         if let Some(occlusion) = gltf_mat.occlusion_texture() {
             let tex_index = occlusion.texture().index();

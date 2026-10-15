@@ -43,7 +43,7 @@ pub struct MaterialData {
     pub emissive_strength: f32,          // 4 bytes
     pub transmission: f32,               // 4 bytes
     pub ior: f32,                        // 4 bytes
-    pub _padding: u32,                   // 4 bytes (ensures 64-byte stride)
+    pub dispersion: f32,                 // 4 bytes (64-byte stride)
 }
 
 impl MaterialData {
@@ -61,7 +61,7 @@ impl MaterialData {
             emissive_strength: material.emissive_f32(),
             transmission: material.transmission_f32(),
             ior: material.ior_f32(),
-            _padding: 0,
+            dispersion: material.dispersion_f32(),
         }
     }
 }

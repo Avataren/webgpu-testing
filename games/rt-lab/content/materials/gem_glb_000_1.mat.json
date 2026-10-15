@@ -16,6 +16,7 @@
   "emissive_strength": 0,
   "transmission_factor": 255,
   "ior": 142,
+  "dispersion": 100,
   "kind": {
     "type": "pbr"
   }

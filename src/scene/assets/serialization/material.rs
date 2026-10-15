@@ -205,6 +205,8 @@ pub struct SerializedMaterial {
     pub transmission_factor: u8,
     #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
     pub ior: u8,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub dispersion: u8,
     #[serde(default)]
     pub kind: SerializedMaterialKind,
 }
@@ -292,6 +294,7 @@ impl SerializedMaterial {
             emissive_strength: material.emissive_strength,
             transmission_factor: material.transmission_factor,
             ior: material.ior,
+            dispersion: material.dispersion,
             kind: SerializedMaterialKind::default(),
         }
     }
@@ -472,6 +475,7 @@ impl From<SerializedMaterial> for Material {
             emissive_strength: serialized.emissive_strength,
             transmission_factor: serialized.transmission_factor,
             ior: serialized.ior,
+            dispersion: serialized.dispersion,
         }
     }
 }

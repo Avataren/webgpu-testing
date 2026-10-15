@@ -162,6 +162,7 @@ pub(super) fn material_json(asset: &MaterialAsset) -> Value {
         "emissive": round(material.emissive_f32()),
         "transmission": round(material.transmission_f32()),
         "ior": round(material.ior_f32()),
+        "dispersion": round(material.dispersion_f32()),
         "unlit": flags.contains(MaterialFlags::UNLIT),
         "transparent": flags.contains(MaterialFlags::ALPHA_BLEND),
         "double_sided": flags.contains(MaterialFlags::DOUBLE_SIDED),
@@ -1410,6 +1411,9 @@ pub(crate) fn patch_material(
     }
     if let Some(ior) = opt_f64(patch, "ior") {
         material.ior = Material::encode_ior(ior as f32);
+    }
+    if let Some(dispersion) = opt_f64(patch, "dispersion") {
+        material.dispersion = Material::encode_dispersion(dispersion as f32);
     }
     for (key, flag) in [
         ("unlit", MaterialFlags::UNLIT),

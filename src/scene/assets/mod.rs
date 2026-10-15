@@ -69,6 +69,7 @@ mod tests {
             emissive_strength: 0,
             transmission_factor: 0,
             ior: crate::renderer::Material::DEFAULT_IOR,
+            dispersion: 0,
             kind: SerializedMaterialKind::default(),
         }
     }

@@ -1,8 +1,11 @@
 # RT Lab
 
 A test room for the ray-traced rendering work (`ssr.ray_traced`). It is not a game:
-it has no scripts and exists to show, in one frame, what each reflection path gets right
-and wrong.
+it exists to show, in one frame, what each reflection path gets right and wrong. In play
+mode the game camera runs a looping tour (`content/scripts/camera_tour.lua`): slow sweeps
+past each effect, gliding from one into the next, with captions. Space pauses, the arrow
+keys skip between shots, H hides the captions. Stop play (or remove the script) to use the
+fixed camera for comparisons.
 
 | Object | What it tests |
 | --- | --- |
@@ -16,8 +19,8 @@ and wrong.
 | Polished marble floor (textured roughness) | Per-pixel smoothness from a metallic-roughness map |
 | CesiumMan (skinned, walks in play mode) | Skinned meshes in the TLAS: his reflection follows the animation |
 | Sun and two lamps with ray-traced shadows (`rt_shadows`) | Per-pixel shadow rays: the side walls shadow the room (shadow maps let the sun through them), the lamps cast soft shadows (5 cm radius), including CesiumMan's |
-| Glass sphere (transmission 1, ior 1.5) on the left pedestal | Ray-traced refraction: an inverted, magnified view of the room; no solid shadow |
-| Round brilliant gem (Blender, 81 facets, ior 2.42, pale blue) on the right pedestal, turning in play mode | Total internal reflection across many facets, absorption tint, sparkle from the emissive light bar overhead |
+| Glass sphere (transmission 1, ior 1.5, dispersion 0.5) on the left pedestal | Ray-traced refraction: an inverted, magnified view of the room, rainbow fringes at the rim; no solid shadow |
+| Round brilliant gem (Blender, 81 facets, ior 2.42, pale blue, dispersion 1.0, about three times diamond's) on the right pedestal, turning in play mode | Total internal reflection across many facets, absorption tint, fire (dispersion), sparkle from the emissive light bar overhead |
 | Ray-traced ambient occlusion (`ssao.ray_traced`, 0.5 m) | Contact darkening at the pedestal bases, wall corners and inside the knot, from geometry on or off screen |
 
 The torus knot, Suzanne and the gem were modelled in Blender (through the Blender MCP server) and
