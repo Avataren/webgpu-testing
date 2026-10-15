@@ -96,7 +96,7 @@ pub fn sphere_mesh(segments: u32, rings: u32) -> (Vec<Vertex>, Vec<u32>) {
 
 pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
     let segments = segments.max(3);
-    let mut vertices = Vec::with_capacity((segments + 2) as usize);
+    let mut vertices = Vec::with_capacity((2 * segments + 3) as usize);
     let mut indices = Vec::with_capacity((segments * 6) as usize);
     let tangent = [1.0, 0.0, 0.0, 1.0];
 
@@ -116,8 +116,15 @@ pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
         vertices.push(v(pos, normal.to_array(), uv, tangent));
     }
 
+    // The base cap has its own rim, facing -Z (the side's rim normals tilt toward the apex).
     let base_center = vertices.len() as u32;
     vertices.push(v([0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.5, 0.5], tangent));
+    for i in 0..segments {
+        let theta = 2.0 * PI * i as f32 / segments as f32;
+        let (y, x) = theta.sin_cos();
+        let uv = [0.5 + 0.5 * x, 0.5 - 0.5 * y];
+        vertices.push(v([x, y, -1.0], [0.0, 0.0, -1.0], uv, tangent));
+    }
 
     for i in 1..=segments {
         let next = if i == segments { 1 } else { i + 1 };
@@ -127,12 +134,13 @@ pub fn cone_mesh(segments: u32) -> (Vec<Vertex>, Vec<u32>) {
         indices.push(next);
     }
 
-    for i in 1..=segments {
-        let next = if i == segments { 1 } else { i + 1 };
+    for i in 0..segments {
+        let current = base_center + 1 + i;
+        let next = base_center + 1 + (i + 1) % segments;
         // Base cap (center -> next -> current)
         indices.push(base_center);
         indices.push(next);
-        indices.push(i);
+        indices.push(current);
     }
 
     (vertices, indices)
@@ -301,13 +309,14 @@ pub fn torus_mesh(
             let current_next = next_i * ring_stride + j;
             let next_next = next_i * ring_stride + next_j;
 
+            // Counter-clockwise seen from outside the tube.
             indices.push(current);
-            indices.push(next);
             indices.push(next_next);
+            indices.push(next);
 
             indices.push(current);
-            indices.push(next_next);
             indices.push(current_next);
+            indices.push(next_next);
         }
     }
 
@@ -546,6 +555,36 @@ mod tests {
             }
         }
     }
+    /// Every primitive's triangles wind counter-clockwise seen from the side their vertex
+    /// normals face, so back-face culling keeps the outside.
+    #[test]
+    fn triangles_face_their_normals() {
+        let meshes = [
+            ("sphere", sphere_mesh(16, 12)),
+            ("cone", cone_mesh(12)),
+            ("cone side", cone_side_mesh(12)),
+            ("cylinder", cylinder_mesh(12)),
+            ("torus", torus_mesh(32, 16, 1.0, 0.35)),
+            ("quad", quad_mesh()),
+            ("cube", cube_mesh()),
+        ];
+        for (name, (vertices, indices)) in meshes {
+            for triangle in indices.as_chunks::<3>().0 {
+                let [a, b, c] = triangle.map(|index| vertices[index as usize]);
+                let face = (Vec3::from(b.pos) - Vec3::from(a.pos))
+                    .cross(Vec3::from(c.pos) - Vec3::from(a.pos));
+                if face.length_squared() < 1e-12 {
+                    continue;
+                }
+                let normal = Vec3::from(a.normal) + Vec3::from(b.normal) + Vec3::from(c.normal);
+                assert!(
+                    face.dot(normal) > 0.0,
+                    "{name}: triangle {triangle:?} winds against its normals"
+                );
+            }
+        }
+    }
+
     #[test]
     fn cube_counts_look_right() {
         let (v, i) = cube_mesh();
