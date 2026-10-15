@@ -12,6 +12,7 @@ mod exposure;
 mod lut;
 mod pipelines;
 mod resources;
+mod rt_reflections;
 mod settings;
 mod ssao;
 mod ssr;
@@ -35,10 +36,12 @@ use pipelines::{
     FinalPipeline,
 };
 use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
+use rt_reflections::{RtReflectionInputs, RtReflectionStage};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
 use ssr::{SsrInputs, SsrStage};
 use temporal::{TemporalInputs, TemporalStage};
 
+use crate::renderer::raytracing::RayTracingFrame;
 use crate::renderer::{RenderRegion, ShaderBuilder};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
@@ -156,6 +159,10 @@ pub struct PostProcess {
     final_pipeline: FinalPipeline,
     ssao_stage: SsaoStage,
     ssr_stage: SsrStage,
+    /// Ray-traced reflections, when the device has ray queries and the pass built.
+    rt_reflection_stage: Option<RtReflectionStage>,
+    /// Kept to build stages added after construction (ray-traced reflections).
+    uniform_layout: wgpu::BindGroupLayout,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
     dof_stage: DofStage,
@@ -362,6 +369,9 @@ pub(crate) fn postprocess_shader_source() -> String {
         .with_module(include_str!("../../shader/postprocess/common.wgsl"))
         .with_module(include_str!("../../shader/postprocess/ssao.wgsl"))
         .with_module(include_str!("../../shader/postprocess/ssao_blur.wgsl"))
+        .with_module(include_str!(
+            "../../shader/postprocess/reflection_common.wgsl"
+        ))
         .with_module(include_str!("../../shader/postprocess/ssr.wgsl"))
         .with_module(include_str!("../../shader/postprocess/bloom_common.wgsl"))
         .with_module(include_str!(
@@ -499,6 +509,8 @@ impl PostProcess {
             final_pipeline,
             ssao_stage,
             ssr_stage,
+            rt_reflection_stage: None,
+            uniform_layout,
             bloom_stage,
             exposure_stage,
             dof_stage,
@@ -679,6 +691,29 @@ impl PostProcess {
         }
     }
 
+    /// Build the ray-traced reflection pass. `lights_layout` is the main pass's lights
+    /// group and `scene_layout` the ray tracing scene's. On error reflections stay
+    /// screen-space.
+    pub(crate) fn enable_ray_traced_reflections(
+        &mut self,
+        device: &wgpu::Device,
+        lights_layout: &wgpu::BindGroupLayout,
+        scene_layout: &wgpu::BindGroupLayout,
+    ) -> Result<(), String> {
+        let stage =
+            RtReflectionStage::new(device, &self.uniform_layout, lights_layout, scene_layout)?;
+        self.rt_reflection_stage = Some(stage);
+        self.mark_bind_groups_dirty();
+        Ok(())
+    }
+
+    /// Whether this frame's reflections would be ray traced if the scene is ready.
+    pub(crate) fn wants_ray_traced_reflections(&self) -> bool {
+        self.rt_reflection_stage.is_some()
+            && self.settings.ssr_active()
+            && self.settings.ssr.ray_traced
+    }
+
     pub fn settings(&self) -> &PostProcessSettings {
         &self.settings
     }
@@ -717,6 +752,7 @@ impl PostProcess {
         device: &wgpu::Device,
         target: &wgpu::TextureView,
         region: Option<RenderRegion>,
+        ray_tracing: Option<RayTracingFrame<'_>>,
     ) {
         self.ensure_cached_bind_groups(device);
 
@@ -738,14 +774,34 @@ impl PostProcess {
         }
 
         if self.settings.ssr_active() {
-            self.ssr_stage.render(
-                encoder,
-                &self.uniform_bind_group,
-                &self.ssr_half.view,
-                &self.ssr_ping.view,
-                &self.scene_source.view,
-                region,
-            );
+            let traced = match (self.rt_reflection_stage.as_ref(), ray_tracing.as_ref()) {
+                (Some(stage), Some(frame)) if self.settings.ssr.ray_traced => stage.trace(
+                    encoder,
+                    &self.uniform_bind_group,
+                    frame,
+                    &self.ssr_half.view,
+                ),
+                _ => false,
+            };
+            if traced {
+                self.ssr_stage.resolve(
+                    encoder,
+                    &self.uniform_bind_group,
+                    &self.ssr_half.view,
+                    &self.ssr_ping.view,
+                    &self.scene_source.view,
+                    region,
+                );
+            } else {
+                self.ssr_stage.render(
+                    encoder,
+                    &self.uniform_bind_group,
+                    &self.ssr_half.view,
+                    &self.ssr_ping.view,
+                    &self.scene_source.view,
+                    region,
+                );
+            }
         }
 
         let (taa, motion_blur) = self.temporal_routing;
@@ -847,6 +903,9 @@ impl PostProcess {
         self.final_bind_group = None;
         self.ssao_stage.invalidate();
         self.ssr_stage.invalidate();
+        if let Some(stage) = self.rt_reflection_stage.as_mut() {
+            stage.invalidate();
+        }
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
         self.dof_stage.invalidate();
@@ -913,6 +972,17 @@ impl PostProcess {
                 ping: &self.ssr_ping.view,
             },
         );
+        if let Some(stage) = self.rt_reflection_stage.as_mut() {
+            stage.ensure_bind_groups(
+                device,
+                RtReflectionInputs {
+                    scene: &self.scene_source.view,
+                    normal: &self.normal_source.view,
+                    position: &self.position_source.view,
+                    sampler: &self.sampler_linear,
+                },
+            );
+        }
 
         // Later passes read the temporal output when TAA or motion blur run.
         let (taa, motion_blur) = self.temporal_routing;
@@ -1452,6 +1522,19 @@ mod tests {
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+    }
+
+    #[test]
+    fn rt_reflections_shader_validates() {
+        let source = rt_reflections::rt_reflections_shader_source();
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::RAY_QUERY,
         )
         .validate(&module)
         .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));

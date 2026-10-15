@@ -22,6 +22,8 @@ pub(crate) struct RenderContext {
     pub(crate) scene_texture_format: wgpu::TextureFormat,
     pub(crate) supports_bindless_textures: bool,
     pub(crate) supports_wireframe: bool,
+    /// Whether the device has hardware ray queries, or why not.
+    pub(crate) ray_tracing: crate::renderer::raytracing::RayTracingSupport,
     pub(crate) sample_count: u32,
     /// How frames reach the display (SDR, or one of the HDR modes).
     pub(crate) hdr_display: crate::renderer::hdr_output::HdrDisplay,
@@ -168,17 +170,44 @@ impl RenderContext {
 
         limits.max_bind_groups = limits.max_bind_groups.max(4);
 
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("Device"),
-                required_features,
-                required_limits: limits,
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                trace: wgpu::Trace::Off,
-            })
-            .await
-            .expect("Failed to create device");
+        let mut ray_tracing = crate::renderer::raytracing::RayTracingSupport::probe(&adapter);
+        let (device, queue) = if ray_tracing.is_available() {
+            let rt_limits = limits
+                .clone()
+                .using_acceleration_structure_values(adapter.limits());
+            match adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("Device"),
+                    required_features: required_features
+                        | crate::renderer::raytracing::RAY_TRACING_FEATURES,
+                    required_limits: rt_limits,
+                    // SAFETY: ray queries are experimental in wgpu. The engine only uses
+                    // them through the validated wgpu API, and falls back to screen-space
+                    // reflections when anything about them fails.
+                    experimental_features: unsafe { wgpu::ExperimentalFeatures::enabled() },
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+            {
+                Ok(pair) => {
+                    log::info!("Hardware ray tracing enabled (ray queries)");
+                    pair
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Device with ray queries failed ({error}); retrying without ray tracing"
+                    );
+                    ray_tracing = crate::renderer::raytracing::RayTracingSupport::Unavailable(
+                        format!("device request failed: {error}"),
+                    );
+                    Self::request_plain_device(&adapter, required_features, limits).await
+                }
+            }
+        } else {
+            log::info!("Hardware ray tracing unavailable: {ray_tracing}");
+            Self::request_plain_device(&adapter, required_features, limits).await
+        };
 
         let surface_caps = surface.get_capabilities(&adapter);
 
@@ -268,9 +297,28 @@ impl RenderContext {
             depth,
             supports_bindless_textures,
             supports_wireframe,
+            ray_tracing,
             sample_count,
             hdr_display,
         }
+    }
+
+    async fn request_plain_device(
+        adapter: &wgpu::Adapter,
+        required_features: wgpu::Features,
+        required_limits: wgpu::Limits,
+    ) -> (wgpu::Device, wgpu::Queue) {
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Device"),
+                required_features,
+                required_limits,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                trace: wgpu::Trace::Off,
+            })
+            .await
+            .expect("Failed to create device")
     }
 
     pub(crate) fn scene_texture_format(&self) -> wgpu::TextureFormat {

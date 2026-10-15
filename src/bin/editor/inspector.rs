@@ -3246,7 +3246,7 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
-            "Reflections (SSR)",
+            "Reflections",
             "ssr",
             Some(&mut settings.ssr.enabled),
             &mut rows,
@@ -3275,6 +3275,12 @@ fn show_post_process_volume_section(
                     0.5..=100.0,
                     0.1,
                     " m",
+                );
+                rows.checkbox(
+                    ui,
+                    "ssr.ray_traced",
+                    "Ray traced (hardware)",
+                    &mut settings.ssr.ray_traced,
                 );
                 rows.slider_with(
                     ui,

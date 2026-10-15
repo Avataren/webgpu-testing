@@ -190,41 +190,54 @@ impl SsrStage {
         scene: &wgpu::TextureView,
         region: Option<RenderRegion>,
     ) {
-        let (Some(trace), Some(horizontal), Some(vertical), Some(apply)) = (
-            self.trace_bind_group.as_ref(),
+        let Some(trace) = self.trace_bind_group.as_ref() else {
+            return;
+        };
+        Self::fullscreen(
+            encoder,
+            "SsrTrace",
+            &self.trace_pipeline,
+            uniform_bind_group,
+            trace,
+            reflection,
+        );
+        self.resolve(encoder, uniform_bind_group, reflection, ping, scene, region);
+    }
+
+    /// Blur a traced `reflection` (screen-space or ray-traced) and add it to `scene`
+    /// inside `region`.
+    pub fn resolve(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        uniform_bind_group: &wgpu::BindGroup,
+        reflection: &wgpu::TextureView,
+        ping: &wgpu::TextureView,
+        scene: &wgpu::TextureView,
+        region: Option<RenderRegion>,
+    ) {
+        let (Some(horizontal), Some(vertical), Some(apply)) = (
             self.blur_horizontal_bind_group.as_ref(),
             self.blur_vertical_bind_group.as_ref(),
             self.apply_bind_group.as_ref(),
         ) else {
             return;
         };
-        for (label, pipeline, group, target) in [
-            ("SsrTrace", &self.trace_pipeline, trace, reflection),
-            (
-                "SsrBlurHorizontal",
-                &self.blur_horizontal_pipeline,
-                horizontal,
-                ping,
-            ),
-            (
-                "SsrBlurVertical",
-                &self.blur_vertical_pipeline,
-                vertical,
-                reflection,
-            ),
-        ] {
-            let mut pass = begin_color_pass(
-                encoder,
-                label,
-                ColorAttachment::single(target),
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                None,
-            );
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, uniform_bind_group, &[]);
-            pass.set_bind_group(1, group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        Self::fullscreen(
+            encoder,
+            "SsrBlurHorizontal",
+            &self.blur_horizontal_pipeline,
+            uniform_bind_group,
+            horizontal,
+            ping,
+        );
+        Self::fullscreen(
+            encoder,
+            "SsrBlurVertical",
+            &self.blur_vertical_pipeline,
+            uniform_bind_group,
+            vertical,
+            reflection,
+        );
         let mut pass = begin_color_pass(
             encoder,
             "SsrApply",
@@ -235,6 +248,27 @@ impl SsrStage {
         pass.set_pipeline(&self.apply_pipeline);
         pass.set_bind_group(0, uniform_bind_group, &[]);
         pass.set_bind_group(1, apply, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn fullscreen(
+        encoder: &mut wgpu::CommandEncoder,
+        label: &'static str,
+        pipeline: &wgpu::RenderPipeline,
+        uniform_bind_group: &wgpu::BindGroup,
+        group: &wgpu::BindGroup,
+        target: &wgpu::TextureView,
+    ) {
+        let mut pass = begin_color_pass(
+            encoder,
+            label,
+            ColorAttachment::single(target),
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            None,
+        );
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, uniform_bind_group, &[]);
+        pass.set_bind_group(1, group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

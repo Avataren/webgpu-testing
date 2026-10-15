@@ -654,9 +654,11 @@ impl DepthOfFieldSettings {
     }
 }
 
-/// Screen-space reflections: smooth surfaces reflect what is on screen, blurred into a
-/// glossy sheen rather than a mirror. How much a surface reflects follows its material's
-/// roughness and the viewing angle (Fresnel); what is off screen is not reflected.
+/// Reflections: smooth surfaces reflect their surroundings, blurred into a glossy sheen
+/// rather than a mirror. How much a surface reflects follows its material's roughness
+/// and the viewing angle (Fresnel). Screen-space by default, reflecting only what is on
+/// screen; with `ray_traced` on a GPU with hardware ray tracing, off-screen and hidden
+/// things too.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReflectionSettings {
@@ -669,6 +671,9 @@ pub struct ReflectionSettings {
     pub thickness: f32,
     /// Blur of the reflected image, 0 (sharp) to 1 (very glossy).
     pub blur: f32,
+    /// Trace reflections against the scene with hardware ray tracing when the GPU has it;
+    /// falls back to screen space otherwise. `thickness` only applies to screen space.
+    pub ray_traced: bool,
 }
 
 impl Default for ReflectionSettings {
@@ -679,6 +684,7 @@ impl Default for ReflectionSettings {
             max_distance: 20.0,
             thickness: 0.4,
             blur: 0.5,
+            ray_traced: false,
         }
     }
 }
@@ -697,6 +703,7 @@ impl ReflectionSettings {
             max_distance: lerp(from.max_distance, to.max_distance, t),
             thickness: lerp(from.thickness, to.thickness, t),
             blur: lerp(from.blur, to.blur, t),
+            ray_traced: pick(from.ray_traced, to.ray_traced, t),
         }
     }
 }

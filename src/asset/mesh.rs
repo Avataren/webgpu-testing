@@ -163,6 +163,11 @@ impl Mesh {
         &self.data
     }
 
+    /// The shared geometry: a new `Arc` means the mesh changed (ray tracing rebuilds).
+    pub(crate) fn shared_data(&self) -> &Arc<MeshData> {
+        &self.data
+    }
+
     /// Whether this mesh is deformed by a skeleton when its entity has a
     /// [`SkinnedMesh`](crate::scene::components::SkinnedMesh).
     pub fn is_skinned(&self) -> bool {

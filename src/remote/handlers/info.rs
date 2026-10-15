@@ -32,6 +32,7 @@ pub(super) fn engine_info(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "format": format!("{:?}", ctx.gpu.renderer.surface_format()),
             "hdr_output": ctx.gpu.renderer.hdr_display().mode.label(),
             "sample_count": ctx.gpu.renderer.sample_count(),
+            "ray_tracing": ctx.gpu.renderer.ray_tracing_support().to_string(),
         },
         "project_root": crate::project::active_project_root().map(|path| path.display().to_string()),
         "working_directory": std::env::current_dir().ok().map(|path| path.display().to_string()),
@@ -107,6 +108,12 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "opaque_draw_calls": stats.opaque_draw_calls,
             "transparent_draw_calls": stats.transparent_draw_calls,
             "shadow_draw_calls": stats.shadow_draw_calls,
+            "ray_tracing": stats.ray_tracing.map(|rt| json!({
+                "tlas_instances": rt.instances,
+                "meshes": rt.meshes,
+                "blas_builds": rt.blas_builds,
+                "pool_vertices": rt.pool_vertices,
+            })),
         },
         "assets": {
             "meshes": scene.assets.meshes.len(),

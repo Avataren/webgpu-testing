@@ -125,6 +125,15 @@ downlevel tier and keep only steps 1 to 3.
 
 ## Part 2: ray tracing
 
+**Status (2026-10-15): RT reflections implemented (experiment).** `ssr.ray_traced`
+traces reflections with ray queries and falls back to SSR when the device has no ray
+queries (`engine_info` `surface.ray_tracing` says why). Code: `renderer/raytracing/`
+(support probe, geometry pool, BLAS cache, per-frame TLAS), `postprocess/rt_reflections.rs`
+and `shader/postprocess/rt_reflections.wgsl`. Hits the screen shows reuse the lit scene
+colour; other hits are shaded from material factors with ray-traced shadow rays. Not yet:
+skinned meshes, alpha-blended and billboarded geometry, texture sampling at hits, GPU
+timing. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
+
 ### What wgpu 30 provides
 
 - Features: `EXPERIMENTAL_RAY_QUERY` (Vulkan, DX12 Tier 1.1 + SM 6.5, Metal),

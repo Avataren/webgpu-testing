@@ -161,6 +161,8 @@ pub struct RendererStats {
     /// Skinned mesh instances deformed this frame, and their vertices.
     pub skinned_instances: u32,
     pub skinned_vertices: u32,
+    /// Acceleration structure counters when ray-traced effects ran this frame.
+    pub ray_tracing: Option<crate::renderer::raytracing::RayTracingStats>,
 }
 
 impl RendererStats {
@@ -206,6 +208,9 @@ pub struct Renderer {
     postprocess: PostProcess,
     pipeline: RenderPipeline,
     skinning: crate::renderer::skinning::SkinningStage,
+    /// Acceleration structures for ray-traced effects; `None` without hardware ray
+    /// tracing (or when its passes failed to build).
+    ray_tracing: Option<crate::renderer::raytracing::RayTracingScene>,
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
 
@@ -230,6 +235,8 @@ pub struct Renderer {
     prev_view_proj: Option<Mat4>,
     /// Position in the TAA jitter sequence.
     jitter_index: u32,
+    /// Whether ray-traced effects can run, or why not.
+    ray_tracing_support: crate::renderer::raytracing::RayTracingSupport,
 }
 
 impl Renderer {
@@ -278,6 +285,28 @@ impl Renderer {
         postprocess.set_display_peak(&context.queue, hdr_display.peak_ratio());
         postprocess.set_depth_view(&context.depth.sampled_view);
 
+        let mut ray_tracing_support = context.ray_tracing.clone();
+        let ray_tracing = if ray_tracing_support.is_available() {
+            let scene = crate::renderer::raytracing::RayTracingScene::new(&context.device);
+            match postprocess.enable_ray_traced_reflections(
+                &context.device,
+                &lights_buffer.bind_layout,
+                scene.layout(),
+            ) {
+                Ok(()) => Some(scene),
+                Err(error) => {
+                    log::warn!("Ray-traced reflections unavailable, using screen space: {error}");
+                    ray_tracing_support =
+                        crate::renderer::raytracing::RayTracingSupport::Unavailable(format!(
+                            "reflection pass failed to build: {error}"
+                        ));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             context,
             pipeline,
@@ -290,6 +319,7 @@ impl Renderer {
             shadows,
             postprocess,
             skinning,
+            ray_tracing,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -306,6 +336,7 @@ impl Renderer {
             render_region: None,
             prev_view_proj: None,
             jitter_index: 0,
+            ray_tracing_support,
         }
     }
 
@@ -329,6 +360,11 @@ impl Renderer {
     /// How skinned meshes are deformed on this device.
     pub fn skinning_backend(&self) -> crate::renderer::skinning::SkinningBackend {
         self.skinning.backend()
+    }
+
+    /// Whether hardware ray tracing is available for ray-traced effects, or why not.
+    pub fn ray_tracing_support(&self) -> &crate::renderer::raytracing::RayTracingSupport {
+        &self.ray_tracing_support
     }
 
     pub fn supports_bindless_textures(&self) -> bool {
@@ -732,7 +768,8 @@ impl Renderer {
         // Transparent surfaces are part of the lit HDR scene, so they get exposure,
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
-        self.execute_postprocess(&mut frame_state);
+        let ray_traced = self.update_ray_tracing(&mut frame_state, assets);
+        self.execute_postprocess(&mut frame_state, ray_traced);
         self.run_custom_stage(
             &mut frame_state,
             scene,
@@ -1095,12 +1132,43 @@ impl Renderer {
         );
     }
 
-    fn execute_postprocess(&mut self, frame: &mut FrameState) {
+    /// Build this frame's acceleration structures when a ray-traced effect will use
+    /// them. Returns whether they are ready.
+    fn update_ray_tracing(&mut self, frame: &mut FrameState, assets: &Assets) -> bool {
+        let Some(scene) = self.ray_tracing.as_mut() else {
+            return false;
+        };
+        if !self.postprocess.wants_ray_traced_reflections() {
+            return false;
+        }
+        scene.update(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            assets,
+            &frame.prepared_batches,
+            &self.objects_buffer.materials,
+        );
+        frame.stats.ray_tracing = Some(scene.stats());
+        scene.bind_group().is_some()
+    }
+
+    fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool) {
+        let ray_tracing = self
+            .ray_tracing
+            .as_ref()
+            .filter(|_| ray_traced)
+            .and_then(|scene| scene.bind_group())
+            .map(|scene| crate::renderer::raytracing::RayTracingFrame {
+                lights: &self.lights_buffer.bind_group,
+                scene,
+            });
         self.postprocess.execute(
             &mut frame.encoder,
             &self.context.device,
             &frame.surface_view,
             frame.render_region,
+            ray_tracing,
         );
         frame.resolved_depth_view = self.postprocess.after_postprocess_depth_view().cloned();
     }
