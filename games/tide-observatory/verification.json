@@ -151,10 +151,12 @@
     ],
     "wasm_build": "passed",
     "browser_smoke": {
-      "ok": false,
-      "existing_issues": [
+      "ok": true,
+      "checked": "2026-10-15",
+      "fixed_issues": [
         "HTTP decoding of literal percent escapes in material filenames",
-        "GPU particle renderer requires bindless textures"
+        "GPU particle renderer requires bindless textures",
+        "particle dead-list and sort readbacks block on the GPU"
       ]
     }
   }

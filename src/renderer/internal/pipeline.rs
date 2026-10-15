@@ -923,75 +923,66 @@ impl TraditionalTextureBinder {
         self.material_bind_groups.clear();
     }
 
+    /// Builds the texture bind group for `material`: the views of the textures it uses, and
+    /// the fallback texture for the others.
+    fn create_material_bind_group(
+        &self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        material: Material,
+    ) -> wgpu::BindGroup {
+        let fallback = &self.fallback_view;
+        let view_for = |flag: MaterialFlags, index: u32| {
+            if material.flags.contains(flag) {
+                Self::view_or_fallback(assets, fallback, index)
+            } else {
+                fallback
+            }
+        };
+        let base_color_view = view_for(
+            MaterialFlags::USE_BASE_COLOR_TEXTURE,
+            material.base_color_texture,
+        );
+        let metallic_roughness_view = view_for(
+            MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE,
+            material.metallic_roughness_texture,
+        );
+        let normal_view = view_for(MaterialFlags::USE_NORMAL_TEXTURE, material.normal_texture);
+        let emissive_view = view_for(
+            MaterialFlags::USE_EMISSIVE_TEXTURE,
+            material.emissive_texture,
+        );
+        let occlusion_view = view_for(
+            MaterialFlags::USE_OCCLUSION_TEXTURE,
+            material.occlusion_texture,
+        );
+
+        Self::create_bind_group(
+            device,
+            &self.layout,
+            &self.linear_sampler,
+            &self.nearest_sampler,
+            [
+                base_color_view,
+                metallic_roughness_view,
+                normal_view,
+                emissive_view,
+                occlusion_view,
+            ],
+        )
+    }
+
     fn bind_group_for_material(
         &mut self,
         device: &wgpu::Device,
         assets: &Assets,
         material: Material,
     ) -> &wgpu::BindGroup {
-        let layout = self.layout.clone();
-        let linear_sampler = self.linear_sampler.clone();
-        let nearest_sampler = self.nearest_sampler.clone();
-        let fallback_view = self.fallback_view.clone();
-
-        self.material_bind_groups
-            .entry(material)
-            .or_insert_with(|| {
-                let fallback_view_ref = &fallback_view;
-                let base_color_view = if material
-                    .flags
-                    .contains(MaterialFlags::USE_BASE_COLOR_TEXTURE)
-                {
-                    Self::view_or_fallback(assets, fallback_view_ref, material.base_color_texture)
-                } else {
-                    fallback_view_ref
-                };
-                let metallic_roughness_view = if material
-                    .flags
-                    .contains(MaterialFlags::USE_METALLIC_ROUGHNESS_TEXTURE)
-                {
-                    Self::view_or_fallback(
-                        assets,
-                        fallback_view_ref,
-                        material.metallic_roughness_texture,
-                    )
-                } else {
-                    fallback_view_ref
-                };
-                let normal_view = if material.flags.contains(MaterialFlags::USE_NORMAL_TEXTURE) {
-                    Self::view_or_fallback(assets, fallback_view_ref, material.normal_texture)
-                } else {
-                    fallback_view_ref
-                };
-                let emissive_view = if material.flags.contains(MaterialFlags::USE_EMISSIVE_TEXTURE)
-                {
-                    Self::view_or_fallback(assets, fallback_view_ref, material.emissive_texture)
-                } else {
-                    fallback_view_ref
-                };
-                let occlusion_view = if material
-                    .flags
-                    .contains(MaterialFlags::USE_OCCLUSION_TEXTURE)
-                {
-                    Self::view_or_fallback(assets, fallback_view_ref, material.occlusion_texture)
-                } else {
-                    fallback_view_ref
-                };
-
-                Self::create_bind_group(
-                    device,
-                    &layout,
-                    &linear_sampler,
-                    &nearest_sampler,
-                    [
-                        base_color_view,
-                        metallic_roughness_view,
-                        normal_view,
-                        emissive_view,
-                        occlusion_view,
-                    ],
-                )
-            })
+        if !self.material_bind_groups.contains_key(&material) {
+            let bind_group = self.create_material_bind_group(device, assets, material);
+            self.material_bind_groups.insert(material, bind_group);
+        }
+        &self.material_bind_groups[&material]
     }
 }
 
@@ -1028,6 +1019,23 @@ impl TextureBindingModel {
             TextureBindingModel::Bindless(_) => None,
             TextureBindingModel::Classic(classic) => {
                 Some(classic.bind_group_for_material(device, assets, material))
+            }
+        }
+    }
+
+    /// A new bind group with `material`'s textures, for draws outside the batched passes
+    /// (GPU particles). `None` with bindless textures, where the one global group serves
+    /// every material.
+    pub fn create_material_bind_group(
+        &self,
+        device: &wgpu::Device,
+        assets: &Assets,
+        material: Material,
+    ) -> Option<wgpu::BindGroup> {
+        match self {
+            TextureBindingModel::Bindless(_) => None,
+            TextureBindingModel::Classic(classic) => {
+                Some(classic.create_material_bind_group(device, assets, material))
             }
         }
     }

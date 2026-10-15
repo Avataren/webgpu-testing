@@ -18,10 +18,9 @@ The launcher builds the player and opens this demo. Alternatively, use
 `cargo run --all-features --bin player -- games/tide-observatory`, or open this
 directory as a project in the editor and press Play.
 
-The WASM package compiles, but the browser smoke test exposes existing engine
-issues with percent-escaped material filenames and particle rendering on adapters
-without bindless textures. Use the native player for this demo until those browser
-runtime issues are fixed.
+The WASM package builds and runs in a WebGPU browser (`web_build` then `web_playtest`
+report no console errors or failed requests). Browsers have no bindless textures, so the
+demo uses the per-material texture path there.
 
 ## Controls
 

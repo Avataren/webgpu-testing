@@ -13,7 +13,7 @@ use wgpu::util::DeviceExt;
 
 use super::super::{behavior::ParticleBehavior, emitter::ParticleEmitter, particle::Particle};
 use super::{
-    pipeline::create_render_pipeline, shadow::ParticleShadowResources,
+    pipeline::create_render_pipeline, readback::AsyncReadback, shadow::ParticleShadowResources,
     slot_allocator_v2::SlotAllocator, sorting::ParticleSorting,
 };
 
@@ -64,13 +64,19 @@ pub struct GpuParticleSystem {
     compute_bind_group: wgpu::BindGroup,
     dead_list_buffer: wgpu::Buffer,
     dead_list_size: u64,
-    dead_list_readback: wgpu::Buffer,
-    pending_readback: bool,
+    /// The dead list as of the last copy; its slots are reclaimed when it arrives.
+    dead_list_readback: AsyncReadback,
+    /// A copy was scheduled, so the GPU's dead list restarts from empty (deaths between a
+    /// copy and the next one pile up in it, none are lost while a readback is in flight).
+    dead_list_reset_pending: bool,
 
     render_pipeline: wgpu::RenderPipeline,
     render_bind_group: wgpu::BindGroup,
     particle_bind_group_layout: wgpu::BindGroupLayout,
     _material_buffer: wgpu::Buffer,
+    /// Textured particles bind this material's textures when the adapter has no bindless
+    /// textures (the global texture array stands in for it otherwise).
+    material: Material,
 
     shadow_resources: Option<ParticleShadowResources>,
 
@@ -83,7 +89,6 @@ pub struct GpuParticleSystem {
     last_emitter_transform: Mat4,
     slot_allocator: SlotAllocator,
     spawn_scratch: Vec<Particle>,
-    dead_list_dirty: bool,
 
     render_format: wgpu::TextureFormat,
     render_sample_count: u32,
@@ -158,12 +163,8 @@ impl GpuParticleSystem {
         });
         queue.write_buffer(&dead_list_buffer, 0, bytes_of(&0u32));
 
-        let dead_list_readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ParticleDeadListReadback"),
-            size: dead_list_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let dead_list_readback =
+            AsyncReadback::new(device, dead_list_size, "ParticleDeadListReadback");
 
         let sampler_filtering = material.sampler_filtering();
         let blend_state = render_mode.blend_state();
@@ -335,11 +336,12 @@ impl GpuParticleSystem {
             dead_list_buffer,
             dead_list_size,
             dead_list_readback,
-            pending_readback: false,
+            dead_list_reset_pending: false,
             render_pipeline,
             render_bind_group,
             particle_bind_group_layout,
             _material_buffer: material_buffer,
+            material,
             shadow_resources: None,
             max_particles,
             active_particles: 0,
@@ -348,7 +350,6 @@ impl GpuParticleSystem {
             emitters: Vec::new(),
             slot_allocator: SlotAllocator::new(max_particles),
             spawn_scratch: Vec::new(),
-            dead_list_dirty: false,
             render_format,
             render_sample_count,
             sampler_filtering,
@@ -399,7 +400,10 @@ impl GpuParticleSystem {
             .try_complete_readback(device, self.render_high_water);
 
         self.harvest_dead_particles(device);
-        self.reset_dead_list(queue);
+        if self.dead_list_reset_pending {
+            self.reset_dead_list(queue);
+            self.dead_list_reset_pending = false;
+        }
 
         self.spawn_scratch.clear();
         for emitter in &mut self.emitters {
@@ -437,16 +441,12 @@ impl GpuParticleSystem {
             pass.dispatch_workgroups(self.workgroup_count, 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &self.dead_list_buffer,
-            0,
-            &self.dead_list_readback,
-            0,
-            self.dead_list_size,
-        );
-
-        self.pending_readback = true;
-        self.dead_list_dirty = true;
+        if self
+            .dead_list_readback
+            .schedule(encoder, &self.dead_list_buffer, self.dead_list_size)
+        {
+            self.dead_list_reset_pending = true;
+        }
 
         self.sorting
             .schedule_readback(encoder, &self.particles_buffer, self.render_high_water);
@@ -506,6 +506,19 @@ impl GpuParticleSystem {
 
                 let render_region = ctx.render_region();
 
+                // One global texture group with bindless textures; otherwise this system's
+                // material binds its own textures.
+                let material_textures = ctx
+                    .renderer
+                    .material_textures_bind_group(&ctx.scene.assets, self.material);
+                let Some(textures_group) = ctx
+                    .renderer
+                    .bindless_textures_bind_group()
+                    .or(material_textures.as_ref())
+                else {
+                    return;
+                };
+
                 let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("ParticleRenderPass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -538,7 +551,7 @@ impl GpuParticleSystem {
                 pass.set_bind_group(0, ctx.renderer.camera_bind_group(), &[]);
                 pass.set_bind_group(1, &self.render_bind_group, &[]);
                 pass.set_bind_group(2, ctx.renderer.lights_bind_group(), &[]);
-                pass.set_bind_group(3, ctx.renderer.textures_bind_group(), &[]);
+                pass.set_bind_group(3, textures_group, &[]);
 
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
                 pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
@@ -636,51 +649,18 @@ impl GpuParticleSystem {
     }
 
     fn harvest_dead_particles(&mut self, device: &wgpu::Device) {
-        if !self.dead_list_dirty || !self.pending_readback {
-            self.dead_list_dirty = false;
-            return;
-        }
-
-        let slice = self.dead_list_readback.slice(..self.dead_list_size);
-        let status = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let status_clone = std::sync::Arc::clone(&status);
-
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            *status_clone.lock().unwrap() = Some(result);
+        let mut reclaimed = 0;
+        let slot_allocator = &mut self.slot_allocator;
+        let max_particles = self.max_particles;
+        self.dead_list_readback.poll(device, |bytes| {
+            reclaimed = reclaim_dead_slots(slot_allocator, max_particles, bytes);
         });
 
-        if let Err(error) = device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        }) {
-            log::error!("Failed to poll device for particle readback: {error}");
-            self.pending_readback = false;
-            self.dead_list_dirty = false;
-            return;
+        if reclaimed > 0 {
+            self.active_particles = self.active_particles.saturating_sub(reclaimed);
+            self.slot_allocator.compact_trailing_free_slots();
+            self.render_high_water = self.slot_allocator.high_water();
         }
-
-        let result = status.lock().unwrap().take();
-        match result {
-            Some(Ok(())) => {
-                match slice.get_mapped_range() {
-                    Ok(data) => {
-                        self.process_dead_list_bytes(&data);
-                        drop(data);
-                    }
-                    Err(error) => log::error!("Failed to read particle dead list: {error}"),
-                }
-                self.dead_list_readback.unmap();
-            }
-            Some(Err(error)) => {
-                log::error!("Failed to map particle dead list: {error}");
-            }
-            None => {
-                log::error!("Particle dead list mapping did not complete");
-            }
-        }
-
-        self.pending_readback = false;
-        self.dead_list_dirty = false;
     }
 
     fn reset_dead_list(&self, queue: &wgpu::Queue) {
@@ -761,63 +741,44 @@ impl GpuParticleSystem {
         // ✅ CRITICAL: Update render high water mark after spawning
         self.render_high_water = self.slot_allocator.high_water();
     }
+}
 
-    fn process_dead_list_bytes(&mut self, bytes: &[u8]) {
-        if bytes.len() < std::mem::size_of::<u32>() {
-            return;
+/// Frees the slots named by a dead list (a count, then that many particle indices) and
+/// returns how many were reclaimed.
+fn reclaim_dead_slots(allocator: &mut SlotAllocator, max_particles: u32, bytes: &[u8]) -> u32 {
+    let Some((count_bytes, index_bytes)) = bytes.split_first_chunk::<4>() else {
+        return 0;
+    };
+    let recorded = u32::from_ne_bytes(*count_bytes);
+    let available_indices = (index_bytes.len() / 4) as u32;
+    let to_process = recorded.min(available_indices);
+    if to_process == 0 {
+        return 0;
+    }
+
+    let mut reclaimed = 0u32;
+    for chunk in index_bytes
+        .as_chunks::<{ std::mem::size_of::<u32>() }>()
+        .0
+        .iter()
+        .take(to_process as usize)
+    {
+        let index = u32::from_ne_bytes(*chunk);
+
+        if index >= max_particles {
+            log::warn!("Discarding reclaimed particle index {index} (max {max_particles})");
+            continue;
         }
 
-        let mut count_bytes = [0u8; 4];
-        count_bytes.copy_from_slice(&bytes[..4]);
-        let recorded = u32::from_ne_bytes(count_bytes);
-
-        if recorded == 0 {
-            return;
-        }
-
-        let available_indices = ((bytes.len() - 4) / 4) as u32;
-        let to_process = recorded.min(available_indices);
-        if to_process == 0 {
-            return;
-        }
-
-        let mut reclaimed = 0u32;
-        for index_bytes in bytes[4..]
-            .as_chunks::<{ std::mem::size_of::<u32>() }>()
-            .0
-            .iter()
-            .take(to_process as usize)
-        {
-            let index = u32::from_ne_bytes(*index_bytes);
-
-            if index >= self.max_particles {
-                log::warn!(
-                    "Discarding reclaimed particle index {} (max {})",
-                    index,
-                    self.max_particles
-                );
-                continue;
-            }
-
-            if self.slot_allocator.reclaim(index) {
-                reclaimed += 1;
-            } else {
-                log::debug!("Ignoring duplicate reclaimed particle index {index}");
-            }
-        }
-
-        if reclaimed > 0 {
-            self.active_particles = self.active_particles.saturating_sub(reclaimed);
-            self.slot_allocator.compact_trailing_free_slots();
-            self.render_high_water = self.slot_allocator.high_water();
-        }
-
-        if recorded > to_process {
-            log::warn!(
-                "Dead list recorded {} indices but only processed {}",
-                recorded,
-                to_process
-            );
+        if allocator.reclaim(index) {
+            reclaimed += 1;
+        } else {
+            log::debug!("Ignoring duplicate reclaimed particle index {index}");
         }
     }
+
+    if recorded > to_process {
+        log::warn!("Dead list recorded {recorded} indices but only processed {to_process}");
+    }
+    reclaimed
 }

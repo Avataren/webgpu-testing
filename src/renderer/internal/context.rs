@@ -118,7 +118,10 @@ impl RenderContext {
         let adapter_features = adapter.features();
         log::info!("Adapter features: {:?}", adapter_features);
 
-        let force_traditional = false;
+        // WGPU_CUBE_FORCE_TRADITIONAL_TEXTURES=1 runs the per-material texture path that
+        // adapters without bindless textures (many browsers) use, for testing it natively.
+        let force_traditional = std::env::var("WGPU_CUBE_FORCE_TRADITIONAL_TEXTURES")
+            .is_ok_and(|value| !matches!(value.as_str(), "" | "0" | "false"));
 
         let mut required_features = wgpu::Features::empty();
         let supports_bindless_textures = if force_traditional {

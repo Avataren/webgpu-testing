@@ -1,15 +1,13 @@
-use std::sync::{Arc, Mutex};
-
 use bytemuck::cast_slice;
 use glam::Vec3;
 
+use super::readback::AsyncReadback;
 use crate::gpu_particles::particle::Particle;
 
 pub(crate) struct ParticleSorting {
-    readback_buffer: wgpu::Buffer,
+    readback: AsyncReadback,
     staging: Vec<Particle>,
     sorted_indices: Vec<u32>,
-    pending_readback: bool,
     last_camera_position: Vec3,
     needs_alpha_sorting: bool,
 }
@@ -21,18 +19,11 @@ impl ParticleSorting {
         needs_alpha_sorting: bool,
     ) -> Self {
         let buffer_size = (max_particles as usize * std::mem::size_of::<Particle>()) as u64;
-        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ParticlesReadback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
 
         Self {
-            readback_buffer,
+            readback: AsyncReadback::new(device, buffer_size, "ParticlesReadback"),
             staging: Vec::with_capacity(max_particles as usize),
             sorted_indices: Vec::with_capacity(max_particles as usize),
-            pending_readback: false,
             last_camera_position: Vec3::ZERO,
             needs_alpha_sorting,
         }
@@ -42,58 +33,26 @@ impl ParticleSorting {
         self.needs_alpha_sorting
     }
 
+    /// Takes the particles copied by an earlier `schedule_readback` once they have arrived
+    /// and sorts them back to front. The order is a few frames old, which is fine for sorting.
     pub(crate) fn try_complete_readback(&mut self, device: &wgpu::Device, render_high_water: u32) {
-        if !self.needs_alpha_sorting || !self.pending_readback {
+        if !self.needs_alpha_sorting {
             return;
         }
 
         if render_high_water == 0 {
-            self.pending_readback = false;
+            self.readback.reset();
             return;
         }
 
-        let readback_size = (render_high_water as usize * std::mem::size_of::<Particle>()) as u64;
-        let slice = self.readback_buffer.slice(..readback_size);
-        let status = Arc::new(Mutex::new(None));
-        let status_clone = Arc::clone(&status);
-
-        slice.map_async(wgpu::MapMode::Read, move |result| {
-            *status_clone.lock().unwrap() = Some(result);
+        let staging = &mut self.staging;
+        let arrived = self.readback.poll(device, |bytes| {
+            let particles = cast_slice::<u8, Particle>(bytes);
+            staging.clear();
+            staging.extend_from_slice(particles);
         });
-
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
-
-        let mut guard = status.lock().unwrap();
-        if let Some(result) = guard.take() {
-            drop(guard);
-            match result {
-                Ok(()) => {
-                    let data = match slice.get_mapped_range() {
-                        Ok(data) => data,
-                        Err(error) => {
-                            log::warn!("Failed to read particles for sorting: {error}");
-                            self.readback_buffer.unmap();
-                            self.pending_readback = false;
-                            return;
-                        }
-                    };
-                    let particles = cast_slice::<u8, Particle>(&data);
-
-                    let available = particles.len().min(render_high_water as usize);
-                    self.staging.clear();
-                    self.staging.extend_from_slice(&particles[..available]);
-
-                    drop(data);
-                    self.readback_buffer.unmap();
-
-                    self.sort_particles(available as u32);
-                    self.pending_readback = false;
-                }
-                Err(error) => {
-                    log::warn!("Failed to map particles for sorting: {:?}", error);
-                    self.pending_readback = false;
-                }
-            }
+        if arrived {
+            self.sort_particles(self.staging.len() as u32);
         }
     }
 
@@ -103,13 +62,12 @@ impl ParticleSorting {
         particles_buffer: &wgpu::Buffer,
         render_high_water: u32,
     ) {
-        if !self.needs_alpha_sorting || self.pending_readback || render_high_water == 0 {
+        if !self.needs_alpha_sorting || render_high_water == 0 {
             return;
         }
 
         let copy_size = (render_high_water as usize * std::mem::size_of::<Particle>()) as u64;
-        encoder.copy_buffer_to_buffer(particles_buffer, 0, &self.readback_buffer, 0, copy_size);
-        self.pending_readback = true;
+        self.readback.schedule(encoder, particles_buffer, copy_size);
     }
 
     pub(crate) fn sorted_indices(&self) -> &[u32] {
@@ -121,7 +79,7 @@ impl ParticleSorting {
     }
 
     pub(crate) fn reset(&mut self) {
-        self.pending_readback = false;
+        self.readback.reset();
         self.sorted_indices.clear();
         self.staging.clear();
     }

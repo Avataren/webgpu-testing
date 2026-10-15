@@ -126,6 +126,16 @@ to flicker, especially at a distant horizon.
 - **Bind groups** for the main pipeline: 0 = camera, 1 = objects, 2 = lights,
   3 = textures. Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
   adapter supports it. Otherwise it is "traditional", with one binding per material slot.
+  Browsers never offer bindless textures, so every web build takes the traditional path;
+  GPU particle systems bind their own material's textures there
+  (`Renderer::material_textures_bind_group`). `WGPU_CUBE_FORCE_TRADITIONAL_TEXTURES=1`
+  forces that path natively for testing.
+- **Web asset requests** (`src/io.rs`) percent-encode each file path (`percent_encode_path`),
+  so a file name holding a literal `%2e` is requested as `%252e`. glTF URIs are already
+  encoded and are decoded before they are joined to a path.
+- **GPU readbacks never block** (`gpu_particles/system/readback.rs`): a browser cannot wait on
+  the GPU, so the particle dead list and the alpha-sort copy are recorded in one frame, mapped
+  in the next and consumed once the map callback has run.
 - **`ShaderBuilder`** composes WGSL from the modules in `src/shader/`. It patches
   constants and expands markers such as `// @include_lighting`.
 - **Surface**: the swapchain uses an sRGB format but also registers a non-sRGB
@@ -371,13 +381,6 @@ agent workflow.
 
 - **Web filesystem limits**: Lua uses the vendored wasm libc/SjLj shim. File watching and
   authoring remain native-only; player assets load through HTTP, and audio needs a gesture.
-- **Browser project assets**: material filenames containing literal percent escapes
-  (such as `%2e` in an exported scene namespace) are passed directly to HTTP requests.
-  URL decoding changes the filename and can produce 404s even when the asset was staged.
-- **Browser GPU particles**: the pipeline supports traditional texture layouts, but
-  particle rendering still requests the global bindless texture group and panics on
-  adapters without that feature. A WASM build can compile and initialize its device,
-  then fail when a script emits its first particles.
 - **glTF data-URI images**: images embedded as `data:` URIs are treated as file paths, so
   `packaged_gltf_roundtrip_without_source` fails.
 - **Inspector script picker** lists only `scripts/` and `examples/scripts/`, not the open

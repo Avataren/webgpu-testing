@@ -465,10 +465,21 @@ impl Renderer {
         self.texture_binder.bind_layout()
     }
 
-    pub fn textures_bind_group(&self) -> &wgpu::BindGroup {
+    /// The one bind group holding every texture, with bindless textures; `None` on adapters
+    /// without them, where textures are bound per material instead.
+    pub fn bindless_textures_bind_group(&self) -> Option<&wgpu::BindGroup> {
+        self.texture_binder.global_bind_group()
+    }
+
+    /// The group-3 bind group for drawing with `material` outside the batched passes (GPU
+    /// particles) on adapters without bindless textures; `None` with them.
+    pub fn material_textures_bind_group(
+        &self,
+        assets: &Assets,
+        material: Material,
+    ) -> Option<wgpu::BindGroup> {
         self.texture_binder
-            .global_bind_group()
-            .expect("GPU-driven particles require bindless textures")
+            .create_material_bind_group(&self.context.device, assets, material)
     }
 
     pub fn depth_view(&self) -> &wgpu::TextureView {

@@ -183,6 +183,10 @@ pub(super) fn load_external_resource(
         return crate::io::load_binary_from_str(uri);
     }
 
+    // glTF URIs are percent-encoded, while web requests encode the file name themselves.
+    let decoded = crate::io::percent_decode_uri(uri).unwrap_or_else(|_| uri.to_string());
+    let uri = decoded.as_str();
+
     let path = if uri.starts_with('/') {
         PathBuf::from(uri.trim_start_matches('/'))
     } else if let Some(base_path) = base {

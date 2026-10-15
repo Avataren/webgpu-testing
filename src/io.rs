@@ -72,9 +72,42 @@ use std::path::PathBuf;
 use js_sys::Uint8Array;
 #[cfg(target_arch = "wasm32")]
 use web_sys::XmlHttpRequest;
-#[cfg(target_arch = "wasm32")]
-fn normalize_web_path(path: &Path) -> Result<String, String> {
-    let mut path_str = path.to_string_lossy().replace('\\', "/");
+
+/// Percent-encodes a file path for use inside a relative URL.
+///
+/// Everything outside the RFC 3986 unreserved set (and the `/` separators) becomes `%XX`,
+/// so the server decodes the request back to the exact file name: `a%2e.png` is requested
+/// as `a%252e.png`, and names with spaces, `#`, `?` or non-ASCII characters survive too.
+/// This is the inverse of [`percent_decode_uri`].
+pub fn percent_encode_path(path: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(path.len());
+    for &byte in path.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                encoded.push(byte as char)
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+    encoded
+}
+
+/// The URL, relative to the page, that a web build requests for the file at `path`.
+///
+/// `path` is a file system path (a literal file name, never an already encoded URI), so each
+/// byte that is not URL safe is encoded. Absolute `http(s)://` URLs pass through unchanged.
+#[cfg(any(target_arch = "wasm32", test))]
+fn web_path_to_url(path: &str) -> Result<String, String> {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return Ok(path.to_string());
+    }
+
+    let mut path_str = path.replace('\\', "/");
 
     while let Some(stripped) = path_str.strip_prefix("./") {
         path_str = stripped.to_string();
@@ -92,7 +125,12 @@ fn normalize_web_path(path: &Path) -> Result<String, String> {
         return Err("Cannot load empty web path".into());
     }
 
-    Ok(path_str)
+    Ok(percent_encode_path(&path_str))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn normalize_web_path(path: &Path) -> Result<String, String> {
+    web_path_to_url(&path.to_string_lossy())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -171,5 +209,70 @@ pub fn read_to_string(path: &Path) -> std::io::Result<String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         std::fs::read_to_string(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_percent_signs_are_encoded_so_the_server_decodes_the_same_name() {
+        // The B20 case: a file whose name really contains "%2e".
+        assert_eq!(
+            percent_encode_path("content/mat%2e.json"),
+            "content/mat%252e.json"
+        );
+        assert_eq!(
+            percent_decode_uri(&percent_encode_path("content/mat%2e.json")).unwrap(),
+            "content/mat%2e.json"
+        );
+    }
+
+    #[test]
+    fn unreserved_characters_and_separators_are_kept() {
+        assert_eq!(
+            percent_encode_path("content/materials/Brass-01_v2~a.json"),
+            "content/materials/Brass-01_v2~a.json"
+        );
+    }
+
+    #[test]
+    fn url_special_and_non_ascii_names_round_trip() {
+        for name in [
+            "a b.png",
+            "hash#1.png",
+            "what?.png",
+            "100%.png",
+            "plus+sign.png",
+            "café/テクスチャ.png",
+            "a%20b.png",
+        ] {
+            let encoded = percent_encode_path(name);
+            assert!(
+                encoded
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._~/%".contains(&b)),
+                "{encoded}"
+            );
+            assert_eq!(percent_decode_uri(&encoded).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn web_urls_are_relative_normalized_and_encoded() {
+        assert_eq!(
+            web_path_to_url("./web/content/a b.png").unwrap(),
+            "content/a%20b.png"
+        );
+        assert_eq!(
+            web_path_to_url("/content/scenes\\main%2e.json").unwrap(),
+            "content/scenes/main%252e.json"
+        );
+        assert_eq!(
+            web_path_to_url("https://example.com/a%20b.png").unwrap(),
+            "https://example.com/a%20b.png"
+        );
+        assert!(web_path_to_url("./").is_err());
     }
 }

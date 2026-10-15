@@ -1,6 +1,7 @@
 // src/gpu_particles/system/mod.rs
 mod gpu_particle_system;
 mod pipeline;
+mod readback;
 mod shadow;
 mod slot_allocator;
 mod slot_allocator_v2;
