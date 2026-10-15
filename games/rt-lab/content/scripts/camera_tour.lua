@@ -32,6 +32,19 @@ local function cruise(t)
     return 0.7 * t + 0.3 * smoother(t)
 end
 
+-- Heading, pitch and distance from `eye` to `target`.
+local function view_of(eye, target)
+    local dx, dy, dz = target[1] - eye[1], target[2] - eye[2], target[3] - eye[3]
+    local flat = math.sqrt(dx * dx + dz * dz)
+    return math.atan(dx, dz), math.atan(dy, flat), math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- The point `distance` from `eye` along heading `yaw` and `pitch`.
+local function view_target(eye, yaw, pitch, distance)
+    local flat = math.cos(pitch) * distance
+    return { eye[1] + math.sin(yaw) * flat, eye[2] + math.sin(pitch) * distance, eye[3] + math.cos(yaw) * flat }
+end
+
 local function orbit(center, radius, height, degrees)
     local a = math.rad(degrees)
     return { center[1] + math.sin(a) * radius, height, center[3] + math.cos(a) * radius }
@@ -124,6 +137,8 @@ for index, shot in ipairs(SHOTS) do
 end
 
 local clock = 0.0
+-- The first pass opens on the first shot instead of gliding in from the last one.
+local opening = true
 local paused = false
 local captions = true
 
@@ -153,22 +168,29 @@ local function pose_at(t)
     local index, seconds_in = shot_at(t)
     local shot = SHOTS[index]
     local eye, target, fov = shot.pose(shot_u(shot, seconds_in))
-    if seconds_in < GLIDE then
+    if seconds_in < GLIDE and not (opening and index == 1) then
         local previous = SHOTS[(index - 2) % #SHOTS + 1]
         local from_eye, from_target, from_fov =
             previous.pose(shot_u(previous, previous.seconds - GLIDE + seconds_in))
         local s = smoother(seconds_in / GLIDE)
         local low = math.min(eye[2], from_eye[2])
+        -- Turn from one view direction to the other (the shorter way round) rather than
+        -- sliding the look-at point between them: shots facing opposite ways would drag
+        -- it past the camera and swing the view steeply down.
+        local from_yaw, from_pitch, from_distance = view_of(from_eye, from_target)
+        local yaw, pitch, distance = view_of(eye, target)
+        local turn = (yaw - from_yaw + math.pi) % (2.0 * math.pi) - math.pi
         eye = lerp3(from_eye, eye, s)
-        target = lerp3(from_target, target, s)
         fov = lerp(from_fov, fov, s)
         local lift = math.max(0.0, GLIDE_HEIGHT - low)
         eye[2] = math.max(eye[2], low + lift * math.sin(math.pi * s))
+        target = view_target(eye, from_yaw + turn * s, lerp(from_pitch, pitch, s), lerp(from_distance, distance, s))
     end
     return eye, target, fov, index, seconds_in
 end
 
 local function skip(direction)
+    opening = false
     local index = shot_at(clock)
     local target = (index - 1 + direction) % #SHOTS + 1
     -- Straight to the shot, past the glide into it.
@@ -181,6 +203,7 @@ TOUR = {
     loop_seconds = loop_seconds,
     starts = starts,
     go = function(t)
+        opening = false
         clock = t % loop_seconds
     end,
     pause = function(on)
@@ -189,7 +212,9 @@ TOUR = {
 }
 
 function on_created(self_entity)
-    clock = 0.0
+    -- Where the first shot's own motion begins (its glide in is skipped).
+    clock = GLIDE * 0.5
+    opening = true
 end
 
 function update(self_entity, dt)
@@ -205,7 +230,11 @@ function update(self_entity, dt)
         captions = not captions
     end
     if not paused then
-        clock = (clock + dt) % loop_seconds
+        clock = clock + dt
+        if clock >= loop_seconds then
+            clock = clock % loop_seconds
+            opening = false
+        end
     end
 
     local eye, target, fov = pose_at(clock)
