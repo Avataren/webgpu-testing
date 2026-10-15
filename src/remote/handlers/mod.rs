@@ -28,7 +28,9 @@ pub(crate) use diff::SceneBaseline;
 pub(crate) use entity::{
     patch_material, set_active_camera, set_camera, set_generated_mesh, set_light, set_mesh,
 };
-pub(crate) use rendering::{adjust_camera, patch_post_process, post_process_patch};
+pub(crate) use rendering::{
+    adjust_camera, environment_patch, patch_environment, patch_post_process, post_process_patch,
+};
 
 /// Outcome of a remote method: a JSON result or an error message.
 pub type RemoteResult = Result<Value, String>;

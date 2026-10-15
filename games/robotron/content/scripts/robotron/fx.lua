@@ -4,7 +4,7 @@
 
 local C = require("robotron.config")
 local COLORS, HW, HD, VOX, SPREAD, TRANS_T = C.COLORS, C.HW, C.HD, C.VOX, C.SPREAD, C.TRANS_T
-local CL, SL, FLASH = C.CL, C.SL, C.FLASH
+local CL, SL, FLASH, LOOK = C.CL, C.SL, C.FLASH, C.LOOK
 local U = require("robotron.util")
 local frand = U.frand
 local S = require("robotron.state")
@@ -237,7 +237,35 @@ local function update_transition(dt)
     end
 end
 
+-- Whether the frame is path traced (the player's graphics setting, which can change at any
+-- time). g.pt_force (true/false) overrides it for testing.
+local function pt_on()
+    if g.pt_force ~= nil then return g.pt_force end
+    return path_traced ~= nil and path_traced()
+end
+
+-- Switch the arena between the raster and the path-traced look (config.LOOK)
+local function apply_look(pt)
+    local L = pt and LOOK.pt or LOOK.raster
+    g.pt = pt
+    if g.sun then set_light(g.sun, { intensity = L.sun }) end
+    if g.fill then set_light(g.fill, { intensity = L.fill_cool }) end
+    if g.rim then set_light(g.rim, { intensity = L.fill_warm }) end
+    for n = 1, #g.spills do set_vis(g.spills[n], L.spills) end
+    if g.arena then set_material(g.arena, L.floor) end
+    if set_environment then set_environment({ ambient_intensity = L.ambient }) end
+    g.grid_glow = nil
+end
+
+-- every frame, paused or not, so the look follows the settings page while it is open
+local function update_look()
+    local pt = pt_on()
+    if pt ~= g.pt then apply_look(pt) end
+end
+
 local function update_walls(dt)
+    local pt = g.pt
+    local L = pt and LOOK.pt or LOOK.raster
     g.wall_hue = (g.wall_hue + dt * 0.12) % 1
     local h = g.wall_hue * 6
     local i = floor(h)
@@ -250,24 +278,26 @@ local function update_walls(dt)
     elseif i == 3 then r, gg, b = 0, q, 1
     elseif i == 4 then r, gg, b = f, 0, 1
     else r, gg, b = 1, 0, q end
-    local glow = 2.6 + g.shake * 3 + (g.hit or 0) * 2
+    local glow = L.wall_glow * (1 + g.shake * 1.15 + (g.hit or 0) * 0.8)
     for n = 1, #g.walls do
         set_material(g.walls[n], { color = { r, gg, b }, emissive = glow })
     end
     -- the dark wall under the tube glows faintly in its colour
     for n = 1, #g.wall_bodies do
-        set_material(g.wall_bodies[n], { color = { 0.05 + r * 0.25, 0.05 + gg * 0.25, 0.05 + b * 0.25 }, emissive = 0.15 + g.shake * 0.3 })
+        set_material(g.wall_bodies[n], { color = { 0.05 + r * 0.25, 0.05 + gg * 0.25, 0.05 + b * 0.25 }, emissive = L.body_emissive + g.shake * 0.3 })
     end
-    -- the border's light on the floor beside it
-    local sa = min(1, 0.35 + g.shake * 0.3 + (g.hit or 0) * 0.3)
-    for n = 1, #g.spills do
-        set_material(g.spills[n], { color = { r, gg, b, sa }, emissive = 0.2 + g.shake * 0.5 })
+    if not pt then
+        -- the border's light on the floor beside it
+        local sa = min(1, 0.35 + g.shake * 0.3 + (g.hit or 0) * 0.3)
+        for n = 1, #g.spills do
+            set_material(g.spills[n], { color = { r, gg, b, sa }, emissive = 0.2 + g.shake * 0.5 })
+        end
+        -- the border's colour spills onto the arena through the rim fill light
+        if g.rim then set_light(g.rim, { color = { 0.35 + r * 0.65, 0.35 + gg * 0.65, 0.35 + b * 0.65 } }) end
     end
-    -- the border's colour spills onto the arena through the rim fill light
-    if g.rim then set_light(g.rim, { color = { 0.35 + r * 0.65, 0.35 + gg * 0.65, 0.35 + b * 0.65 } }) end
     -- the floor grid pulses with explosions
     if g.arena then
-        local pulse = 0.4 + g.shake * 0.4 + (g.hit or 0) * 0.6
+        local pulse = L.grid + g.shake * 0.4 + (g.hit or 0) * 0.6
         if abs(pulse - (g.grid_glow or 0)) > 0.02 then
             g.grid_glow = pulse
             set_material(g.arena, { emissive = pulse })
@@ -278,7 +308,7 @@ end
 return {
     px_particle = px_particle, materialize = materialize, explode = explode, afterimage = afterimage, burst = burst,
     ring = ring, add_shake = add_shake, popup = popup, update_effects = update_effects, build_rects = build_rects,
-    update_transition = update_transition, update_walls = update_walls,
+    update_transition = update_transition, update_walls = update_walls, update_look = update_look,
     build_lights = build_lights, flash_light = flash_light, update_lights = update_lights,
     hit_flash = hit_flash, update_hit = update_hit,
 }

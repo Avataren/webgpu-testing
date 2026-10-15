@@ -154,12 +154,41 @@ pub(super) fn environment_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
 }
 
 pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let patch = environment_patch(params)?;
+    let created = patch_environment(&mut ctx.gpu.scene, &patch)?;
+    ctx.mark_modified();
+    let mut result = environment_get(ctx)?;
+    if created {
+        result["note"] =
+            json!("Created an Environment entity so these settings are saved with the scene.");
+    }
+    Ok(result)
+}
+
+/// Check an environment change (`ambient_intensity`, `clear_color` as `[r, g, b(, a)]` or
+/// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`}) and return it in the form
+/// [`patch_environment`] takes: the colour as four numbers, the sky's path resolved.
+pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     if params.get("color_grading").is_some() {
         return Err(
             "color grading moved to post-process volumes: use postprocess.set with \
                     exposure.compensation and color.saturation / color.contrast"
                 .into(),
         );
+    }
+    let Some(fields) = params.as_object() else {
+        return Err("environment settings must be an object".into());
+    };
+    let unknown: Vec<&str> = fields
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !matches!(*key, "ambient_intensity" | "clear_color" | "hdr"))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "unknown environment setting(s): {}; use ambient_intensity, clear_color, hdr",
+            unknown.join(", ")
+        ));
     }
     let mut patch = params.clone();
     if let Some(color) = params.get("clear_color") {
@@ -176,15 +205,22 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
             patch["hdr"]["enabled"] = json!(true);
         }
     }
+    Ok(patch)
+}
 
-    let mut current = EnvironmentComponent::from_environment(ctx.gpu.scene.environment());
+/// Apply an [`environment_patch`] to the scene. Scenes save their environment through an
+/// environment entity, so one is created when there is none; returns whether it was.
+pub(crate) fn patch_environment(
+    scene: &mut crate::scene::Scene,
+    patch: &Value,
+) -> Result<bool, String> {
+    let mut current = EnvironmentComponent::from_environment(scene.environment());
     if current.hdr.is_none() && patch.get("hdr").is_some_and(Value::is_object) {
         current.hdr = Some(Default::default());
     }
-    let updated: EnvironmentComponent = patch_serde(&current, &patch)?;
-    // Scenes save their environment through an environment entity, so make sure one
-    // exists; set_environment then keeps every environment entity in sync.
-    let world = ctx.gpu.scene.main_world_mut();
+    let updated: EnvironmentComponent = patch_serde(&current, patch)?;
+    // set_environment then keeps every environment entity in sync.
+    let world = scene.main_world_mut();
     let has_entity = world
         .query_mut::<&EnvironmentComponent>()
         .into_iter()
@@ -193,14 +229,8 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
     if !has_entity {
         world.spawn((Name::new("Environment"), updated.clone()));
     }
-    ctx.gpu.scene.set_environment(updated.to_environment());
-    ctx.mark_modified();
-    let mut result = environment_get(ctx)?;
-    if !has_entity {
-        result["note"] =
-            json!("Created an Environment entity so these settings are saved with the scene.");
-    }
-    Ok(result)
+    scene.set_environment(updated.to_environment());
+    Ok(!has_entity)
 }
 
 /// The post-processing in effect at the view camera, and every volume that feeds it.

@@ -21,6 +21,12 @@ light, and dying (or a big kill) kicks a `HitVolume` post-process volume in: chr
 aberration, a red vignette and a punch of exposure. The rest of the stack is ACES, bloom, SSAO,
 TAA, a vignette and light film grain.
 
+With path tracing on (the settings page, Escape in the demo) the arena switches to a night
+look lit by the rail itself: the fake glow strips and fill lights go, the sun dims to a moon,
+the sky darkens, and the brighter tube throws real coloured light across a lighter, glossier
+floor that mirrors it and the actors. The switch follows the setting live (`config.LOOK`,
+`fx.update_look`).
+
 The game boots into an attract mode where an autopilot plays a demo game under the title, a
 voxel ROBOTRON 2084 logo whose letters cycle through the colours; press Enter to take over.
 

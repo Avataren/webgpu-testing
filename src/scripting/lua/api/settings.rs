@@ -8,6 +8,9 @@
 //! - `set_settings_hotkey(enabled)` turns Escape's toggle off for games that use Escape
 //!   themselves (and back on); the page stays available through `open_settings()`
 //! - `settings_hotkey()` is whether Escape toggles it (to restore it in `on_destroyed`)
+//! - `path_traced()` is true while the player has path tracing on and the GPU can run it,
+//!   so a game can swap lighting it fakes for the raster renderer (glow planes, fill
+//!   lights) for emissive surfaces the path tracer lights the scene with
 
 use mlua::{Lua, Result as LuaResult};
 
@@ -36,6 +39,13 @@ pub(crate) fn register_settings_api(lua: &Lua) -> LuaResult<()> {
     globals.set(
         "settings_hotkey",
         lua.create_function(|_, ()| Ok(graphics_settings().hotkey_enabled))?,
+    )?;
+    globals.set(
+        "path_traced",
+        lua.create_function(|_, ()| {
+            let state = graphics_settings();
+            Ok(state.settings.path_tracing && state.capabilities.path_tracing)
+        })?,
     )?;
     globals.set(
         "set_settings_hotkey",

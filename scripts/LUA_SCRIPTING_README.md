@@ -354,6 +354,17 @@ function update(self, dt)
 end
 ```
 
+- `set_environment(settings)` - Change the scene's environment: `ambient_intensity` (the
+  flat ambient light, and the sky that path-traced rays see where nothing is in the way),
+  `clear_color` (the background, `{r, g, b[, a]}` or `"#rrggbb"`) and `hdr = { enabled,
+  intensity, path }` (an HDR sky). Only the settings you name change; an unknown name is an
+  error. Undone when play mode stops.
+
+```lua
+-- Path tracing lights the scene from its emissive surfaces: dim the sky for it.
+set_environment({ ambient_intensity = path_traced() and 0.03 or 0.18 })
+```
+
 ### Particle effects
 - `emit_particles(x, y, z[, options])` - A one-off burst of GPU particles at a world point:
   sparks, explosions, warp-in rings, debris. Thousands of particles cost almost nothing on
@@ -457,6 +468,11 @@ Escape opens and closes it.
   itself (the page stays available through `open_settings()`)
 - `settings_hotkey()` → `bool` - whether Escape toggles it; save it in `on_created` and
   restore it in `on_destroyed`, so the editor gets its Escape back when play stops
+- `path_traced()` → `bool` - true while the player has path tracing on and the GPU can
+  run it. Path tracing lights the scene from emissive surfaces and bounces light by
+  itself, so a game can drop lighting it fakes for the raster renderer (glow decals, fill
+  lights) and make more things glow; check it every frame, since the player can switch
+  it on the settings page at any time
 
 ```lua
 function update(self, dt)

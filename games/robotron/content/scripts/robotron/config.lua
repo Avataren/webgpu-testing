@@ -43,7 +43,32 @@ for _, n in ipairs(FLASH) do
     COLORS["fx_" .. n] = { c[1], c[2], c[3], 3.0, true }
 end
 
+-- Two looks for the arena. The raster renderer has to fake the neon's light: translucent glow
+-- strips on the floor along the border (Spill_*), a cool and a warm directional fill light (the
+-- warm one takes the border's colour) and a strong sun so the actors read. With path tracing
+-- the border tube lights the arena by itself (soft, coloured, shadowed by the actors and
+-- reflected in the floor), so the fakes go: a dimmer sun, no fills, no strips, a floor
+-- light enough to catch the neon and glossy enough to mirror it, and a brighter tube.
+-- `floor` is the Arena's material; the raster values are the scene's own. `ambient` is the
+-- environment's ambient light, which path-traced rays also see as a grey sky: too much of it
+-- washes out the neon.
+local LOOK = {
+    raster = {
+        sun = 2.4, fill_cool = 0.55, fill_warm = 0.35, spills = true, ambient = 0.18,
+        wall_glow = 2.6, body_emissive = 0.15, grid = 0.4,
+        floor = { color = { 0.3216, 0.3216, 0.3412 }, roughness = 0.2196, metallic = 0.149,
+            base_color_texture = "content/textures/floor_base.png" },
+    },
+    pt = {
+        sun = 0.65, fill_cool = 0.0, fill_warm = 0.0, spills = false, ambient = 0.03,
+        wall_glow = 8.0, body_emissive = 0.0, grid = 0.6,
+        floor = { color = { 1.0, 1.0, 1.0 }, roughness = 0.12, metallic = 0.0,
+            base_color_texture = "content/textures/floor_base_pt.png" },
+    },
+}
+
 return {
+    LOOK = LOOK,
     SPR = SPR, COLORS = COLORS, HW = HW, HD = HD, P_R = P_R,
     LX = LX, LZ = LZ, P_SPEED = P_SPEED, FIRE_INT = FIRE_INT, B_SPEED = B_SPEED,
     B_R = B_R, N_PBULLETS = N_PBULLETS, START_LIVES = START_LIVES, EXTRA_LIFE = EXTRA_LIFE, SFX_VOLUME = SFX_VOLUME,

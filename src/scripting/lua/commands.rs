@@ -32,6 +32,8 @@ pub(crate) struct ScriptCommands {
     /// `set_postprocess` patches: the volume's script handle (`None` for the scene's
     /// infinite volume) and the settings to change.
     pub post_process: Vec<(Option<i64>, serde_json::Value)>,
+    /// `set_environment` patches, already checked.
+    pub environment: Vec<serde_json::Value>,
 }
 
 impl ScriptCommands {
@@ -43,7 +45,13 @@ impl ScriptCommands {
             assets: Vec::new(),
             particle_bursts: Vec::new(),
             post_process: Vec::new(),
+            environment: Vec::new(),
         }
+    }
+
+    /// Queue a change to the scene's environment (ambient light, background, sky).
+    pub fn environment(&mut self, patch: serde_json::Value) {
+        self.environment.push(patch);
     }
 
     /// Queue a post-processing change on the volume `handle` names, or on the scene's
@@ -424,6 +432,7 @@ impl ScriptCommands {
             && self.existing.is_empty()
             && self.assets.is_empty()
             && self.post_process.is_empty()
+            && self.environment.is_empty()
     }
 
     pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
@@ -571,6 +580,7 @@ impl ScriptCommands {
                 .post_process
                 .push(PendingPostProcess { target, patch });
         }
+        result.environment.append(&mut self.environment);
 
         Ok(result)
     }
@@ -1684,6 +1694,8 @@ pub(crate) struct ScriptApplyResult {
     pub asset_commands: Vec<PendingAssetCommand>,
     pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
     pub post_process: Vec<PendingPostProcess>,
+    /// `set_environment` patches, in order.
+    pub environment: Vec<serde_json::Value>,
     pub event_subscriptions: Vec<PendingEventSubscription>,
     pub event_unsubscriptions: Vec<PendingEventUnsubscription>,
 }

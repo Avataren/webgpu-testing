@@ -998,6 +998,7 @@ impl Scene {
         self.runtime.scripting_mut().set_view_rect(Some(rect));
 
         self.apply_script_post_process();
+        self.apply_script_environment();
 
         let commands = self.runtime.scripting_mut().take_pending_asset_commands();
         // Asset commands may still attach materials created earlier in the frame, so
@@ -1079,6 +1080,16 @@ impl Scene {
         }
         if created {
             self.propagate_transforms();
+        }
+    }
+
+    /// Apply the `set_environment` changes scripts made since the last call.
+    fn apply_script_environment(&mut self) {
+        let changes = self.runtime.scripting_mut().take_pending_environment();
+        for patch in changes {
+            if let Err(err) = crate::remote::handlers::patch_environment(self, &patch) {
+                warn!(target: "script", "set_environment failed: {err}");
+            }
         }
     }
 
@@ -1654,6 +1665,34 @@ mod tests {
         assert_eq!(found.len(), 1, "the volume is reused");
         assert_eq!(found[0].1.settings.bloom.threshold, 0.5);
         assert_eq!(found[0].1.settings.bloom.intensity, 2.5);
+    }
+
+    #[test]
+    fn set_environment_changes_only_the_named_fields() {
+        let mut scene = Scene::new();
+        let clear = scene.environment().clear_color();
+        scene
+            .eval_lua("set_environment({ ambient_intensity = 0.07 })", None)
+            .unwrap();
+        // Nothing changes until the scene applies the queued change.
+        scene.apply_script_environment();
+        assert_eq!(scene.environment().ambient_intensity(), 0.07);
+        // The colour goes through f32, so it comes back within f32 precision.
+        let kept = scene.environment().clear_color();
+        assert!((kept.r - clear.r).abs() < 1e-6 && (kept.b - clear.b).abs() < 1e-6);
+
+        scene
+            .eval_lua("set_environment({ clear_color = '#ff0000' })", None)
+            .unwrap();
+        scene.apply_script_environment();
+        assert_eq!(scene.environment().ambient_intensity(), 0.07);
+        let red = scene.environment().clear_color();
+        assert_eq!((red.r, red.g, red.b), (1.0, 0.0, 0.0));
+
+        let err = scene
+            .eval_lua("set_environment({ ambient = 1 })", None)
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown environment setting"), "{err}");
     }
 
     #[test]

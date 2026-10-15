@@ -45,6 +45,7 @@ local S = require("robotron.state")
 local g, units, pools, entities = S.g, S.units, S.pools, S.entities
 local Fx = require("robotron.fx")
 local update_effects, build_rects, update_walls = Fx.update_effects, Fx.build_rects, Fx.update_walls
+local update_look = Fx.update_look
 local build_lights, update_lights, update_hit = Fx.build_lights, Fx.update_lights, Fx.update_hit
 local Actors = require("robotron.actors")
 local show_unit, spawn_unit = Actors.show_unit, Actors.spawn_unit
@@ -89,6 +90,9 @@ function on_created(self_entity)
         if e then g.wall_bodies[#g.wall_bodies + 1] = e end
     end
     g.rim = find_entity_by_name("FillWarm")
+    g.fill = find_entity_by_name("FillCool")
+    g.sun = find_entity_by_name("Sun")
+    g.pt = nil -- the look (fx.update_walls) is applied on the first frame
     g.arena = find_entity_by_name("Arena")
     g.hit_vol = find_entity_by_name("HitVolume")
     g.hi = tonumber(load_data("highscore") or "0") or 0
@@ -122,6 +126,7 @@ function update(self_entity, dt)
     g.time = g.time + dt
     g.demo_t = g.demo_t + dt
     meta_input()
+    update_look()
     if g.paused then
         update_camera(dt)
         return

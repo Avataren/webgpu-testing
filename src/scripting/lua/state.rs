@@ -138,6 +138,8 @@ struct ScriptOutputs {
     particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
     /// `set_postprocess` changes waiting for the scene.
     pending_post_process: Vec<PendingPostProcess>,
+    /// `set_environment` changes waiting for the scene.
+    pending_environment: Vec<serde_json::Value>,
 }
 
 impl ScriptOutputs {
@@ -156,6 +158,7 @@ impl ScriptOutputs {
         self.pending_asset_commands.extend(result.asset_commands);
         self.particle_bursts.extend(result.particle_bursts);
         self.pending_post_process.extend(result.post_process);
+        self.pending_environment.extend(result.environment);
 
         self.entities_despawned |= !result.despawned.is_empty();
         for entity in result.despawned {
@@ -953,6 +956,11 @@ impl ScriptingState {
     /// Post-processing changes scripts asked for since the last call.
     pub fn take_pending_post_process(&mut self) -> Vec<PendingPostProcess> {
         std::mem::take(&mut self.outputs.pending_post_process)
+    }
+
+    /// Environment changes scripts asked for since the last call.
+    pub fn take_pending_environment(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.outputs.pending_environment)
     }
 
     /// Mesh and material changes scripts asked for since the last call.
