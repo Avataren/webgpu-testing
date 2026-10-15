@@ -3262,7 +3262,7 @@ fn show_post_process_volume_section(
                 rows.slider(
                     ui,
                     "ssr.blur",
-                    "Blur",
+                    "Roughness blur",
                     &mut settings.ssr.blur,
                     0.0..=1.0,
                     0.01,

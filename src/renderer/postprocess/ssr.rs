@@ -58,7 +58,7 @@ impl SsrStage {
         });
         let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("SsrBlurLayout"),
-            entries: &[texture_entry(150), sampler_entry(151)],
+            entries: &[texture_entry(150), sampler_entry(151), unfilterable(152)],
         });
         let apply_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("SsrApplyLayout"),
@@ -160,13 +160,21 @@ impl SsrStage {
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SsrBlurHorizontalBindGroup"),
                 layout: &self.blur_layout,
-                entries: &[texture(150, inputs.reflection), sampler(151)],
+                entries: &[
+                    texture(150, inputs.reflection),
+                    sampler(151),
+                    texture(152, inputs.position),
+                ],
             }));
         self.blur_vertical_bind_group =
             Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SsrBlurVerticalBindGroup"),
                 layout: &self.blur_layout,
-                entries: &[texture(150, inputs.ping), sampler(151)],
+                entries: &[
+                    texture(150, inputs.ping),
+                    sampler(151),
+                    texture(152, inputs.position),
+                ],
             }));
         self.apply_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SsrApplyBindGroup"),

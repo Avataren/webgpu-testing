@@ -1,8 +1,8 @@
 // Screen-space reflections. A half-resolution pass reflects the view ray off every smooth
 // surface and marches it through the G-buffer positions until it passes behind something,
-// two separable blur passes turn the result into a glossy sheen, and a full-resolution pass
-// adds it to the HDR scene (before TAA), weighted by the surface's smoothness and the
-// viewing angle.
+// two separable blur passes, as wide as each surface is rough, turn the result into a
+// glossy sheen, and a full-resolution pass adds it to the HDR scene (before TAA), weighted
+// by the surface's smoothness and the viewing angle.
 //
 // Stable over time: each pixel's ray jitter is fixed (the blur averages the pattern out),
 // so a still scene reflects the same way every frame, and reflections are blurred in
@@ -23,6 +23,8 @@ var ssr_sampler : sampler;
 var ssr_blur_source : texture_2d<f32>;
 @group(1) @binding(151)
 var ssr_blur_sampler : sampler;
+@group(1) @binding(152)
+var ssr_blur_position : texture_2d<f32>;
 
 @group(1) @binding(160)
 var ssr_reflection : texture_2d<f32>;
@@ -147,10 +149,15 @@ fn fs_ssr_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(ssr_compress(color) * weight, weight);
 }
 
-// 9-tap Gaussian, spread by the blur setting (up to 4 half-res texels between taps).
-fn ssr_blur(uv : vec2<f32>, direction : vec2<f32>) -> vec4<f32> {
+// 9-tap Gaussian, as wide as the surface is rough: a smooth floor keeps a crisp mirror
+// image, a rough one a glossy sheen. The blur setting scales it (at 1 a fully rough surface
+// spreads 8 half-res texels between taps). `pixel` is the half-res fragment position.
+fn ssr_blur(uv : vec2<f32>, pixel : vec2<f32>, direction : vec2<f32>) -> vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(ssr_blur_position));
+    let surface = textureLoad(ssr_blur_position, min(vec2<i32>(pixel * 2.0), dims - vec2<i32>(1)), 0);
+    let roughness = 1.0 - ssr_smoothness(surface);
     let texel = 1.0 / vec2<f32>(textureDimensions(ssr_blur_source));
-    let spread = post_uniform.ssr.w * 4.0;
+    let spread = post_uniform.ssr.w * 8.0 * roughness;
     let tap_step = direction * texel * spread;
     var weights = array<f32, 5>(0.2270270, 0.1945946, 0.1216216, 0.0540541, 0.0162162);
     var sum = textureSampleLevel(ssr_blur_source, ssr_blur_sampler, uv, 0.0) * weights[0];
@@ -164,12 +171,12 @@ fn ssr_blur(uv : vec2<f32>, direction : vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_ssr_blur_horizontal(in : VertexOutput) -> @location(0) vec4<f32> {
-    return ssr_blur(in.uv, vec2<f32>(1.0, 0.0));
+    return ssr_blur(in.uv, in.position.xy, vec2<f32>(1.0, 0.0));
 }
 
 @fragment
 fn fs_ssr_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
-    return ssr_blur(in.uv, vec2<f32>(0.0, 1.0));
+    return ssr_blur(in.uv, in.position.xy, vec2<f32>(0.0, 1.0));
 }
 
 // Added to the scene: smoother surfaces and grazing views reflect more (Schlick's

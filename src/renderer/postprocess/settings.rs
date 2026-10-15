@@ -654,8 +654,8 @@ impl DepthOfFieldSettings {
     }
 }
 
-/// Reflections: smooth surfaces reflect their surroundings, blurred into a glossy sheen
-/// rather than a mirror. How much a surface reflects follows its material's roughness
+/// Reflections: smooth surfaces reflect their surroundings, sharper the smoother they are.
+/// How much a surface reflects follows its material's roughness
 /// and the viewing angle (Fresnel). Screen-space by default, reflecting only what is on
 /// screen; with `ray_traced` on a GPU with hardware ray tracing, off-screen and hidden
 /// things too.
@@ -669,7 +669,8 @@ pub struct ReflectionSettings {
     pub max_distance: f32,
     /// How far behind a surface a ray may pass and still hit it, in meters.
     pub thickness: f32,
-    /// Blur of the reflected image, 0 (sharp) to 1 (very glossy).
+    /// How much a surface's roughness blurs its reflection, 0 (every surface a sharp
+    /// mirror) to 1 (rough surfaces very glossy); smooth surfaces stay sharp either way.
     pub blur: f32,
     /// Trace reflections against the scene with hardware ray tracing when the GPU has it;
     /// falls back to screen space otherwise. `thickness` only applies to screen space.

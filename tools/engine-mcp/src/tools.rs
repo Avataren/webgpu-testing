@@ -782,7 +782,7 @@ pub fn tools() -> Vec<Tool> {
                     "intensity": { "type": "number", "description": "1 = physically based for the material (0-4)" },
                     "max_distance": { "type": "number", "description": "How far a reflected ray travels, meters" },
                     "thickness": { "type": "number", "description": "Screen space only: how far behind a surface a ray may pass and still hit it, meters" },
-                    "blur": { "type": "number", "description": "0 sharp .. 1 very glossy" }
+                    "blur": { "type": "number", "description": "How much material roughness blurs reflections: 0 all sharp .. 1 rough surfaces very glossy (smooth ones stay sharp)" }
                 }},
                 "motion_blur": { "type": "object", "description": "Camera and per-object motion blur", "properties": {
                     "enabled": { "type": "boolean" },
