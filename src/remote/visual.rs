@@ -43,8 +43,6 @@ const MAX_GRID: u32 = 16;
 const DEFAULT_THRESHOLD: u64 = 4;
 const DEFAULT_DIFF_GAIN: f64 = 16.0;
 const MAX_DIFF_GAIN: f64 = 255.0;
-/// The most frames a variant waits to be at the reference's jitter phase.
-const MAX_ALIGN_FRAMES: u64 = TAA_JITTER_FRAMES as u64 - 1;
 /// How many of the last frames rendered while a variant settles are read back for the
 /// settle check.
 const SETTLE_TRACE_FRAMES: u64 = 16;
@@ -165,6 +163,9 @@ struct Sequence {
     captured: u64,
     /// Frames the current variant has waited for alignment.
     waited: u64,
+    /// The most frames a variant waits to be at the reference's jitter phase: one jitter
+    /// period less one (upscaling lengthens it, see `Renderer::jitter_period`).
+    max_wait: u64,
 }
 
 impl Sequence {
@@ -178,6 +179,7 @@ impl Sequence {
             applied_at: None,
             captured: 0,
             waited: 0,
+            max_wait: TAA_JITTER_FRAMES as u64 - 1,
         }
     }
 
@@ -210,7 +212,7 @@ impl Sequence {
             kind,
             index,
         };
-        let waiting = self.captured == 0 && !aligned && self.waited < MAX_ALIGN_FRAMES;
+        let waiting = self.captured == 0 && !aligned && self.waited < self.max_wait;
         if age >= self.settle && waiting {
             // More settle frames, read back like the last ones before them.
             self.waited += 1;
@@ -553,6 +555,7 @@ impl VisualCapture {
         }
 
         let aligned = self.jitter_aligned(ctx);
+        self.sequence.max_wait = u64::from(ctx.renderer.jitter_period().saturating_sub(1));
         let step = self.sequence.step(hub.frame(), image_done, aligned);
         if step.finished {
             return Ok(true);
@@ -577,7 +580,7 @@ impl VisualCapture {
         if renderer.postprocess_settings().anti_aliasing != AntiAliasing::Taa {
             return true;
         }
-        renderer.jitter_index().wrapping_add(1) % TAA_JITTER_FRAMES == target
+        renderer.jitter_index().wrapping_add(1) % renderer.jitter_period() == target
     }
 
     /// Resolve the view, freeze the simulation and remember what to restore.
@@ -682,7 +685,7 @@ impl VisualCapture {
             && pending.index == 0
             && ctx.renderer.postprocess_settings().anti_aliasing == AntiAliasing::Taa
         {
-            self.target_phase = Some(ctx.renderer.jitter_index() % TAA_JITTER_FRAMES);
+            self.target_phase = Some(ctx.renderer.jitter_index() % ctx.renderer.jitter_period());
         }
         let report = &mut self.reports[pending.variant];
         match &report.settings {

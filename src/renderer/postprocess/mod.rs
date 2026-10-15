@@ -5,6 +5,13 @@
 //! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> composite
 //! (HDR to display, into an intermediate target) -> final (anti-aliasing, sharpening,
 //! grain and dither, onto the surface).
+//!
+//! With upscaling the scene is drawn into a smaller rectangle of the same targets (the
+//! scene region, at the display region's origin). The passes up to the TAA read it through
+//! a second uniform describing that rectangle; the TAA upscales into the display region,
+//! and everything after it runs at output resolution, mapping into the scene region where
+//! it reads the G-buffer or occlusion. Depth and pick ids are upscaled too, for what is
+//! drawn after post-processing.
 
 mod bloom;
 mod dof;
@@ -18,6 +25,7 @@ mod settings;
 mod ssao;
 mod ssr;
 mod temporal;
+mod upscale;
 
 pub use lut::CubeLut;
 pub use settings::{
@@ -25,7 +33,7 @@ pub use settings::{
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
     LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
     PostProcessEffects, PostProcessSettings, ReflectionSettings, SharpenSettings, SsaoSettings,
-    Tonemapper, VignetteSettings, TRACKBALL_NEUTRAL,
+    Tonemapper, UpscalingSettings, VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
@@ -42,6 +50,7 @@ use rt_reflections::{RtReflectionInputs, RtReflectionStage};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
 use ssr::{SsrInputs, SsrStage, SsrTargets};
 use temporal::{TemporalInputs, TemporalStage};
+use upscale::UpscaledTargets;
 
 use crate::renderer::raytracing::RayTracingFrame;
 use crate::renderer::{RenderRegion, ShaderBuilder};
@@ -141,6 +150,8 @@ pub struct PostProcess {
     position_source: TextureBundle,
     position_msaa: Option<MsaaTarget>,
     pick_target: LazyPickTarget,
+    /// Output-resolution copies of depth and pick ids while upscaling.
+    upscaled: UpscaledTargets,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
     /// Reflection textures, at half or full resolution (`ssr.full_resolution`).
@@ -160,6 +171,10 @@ pub struct PostProcess {
     noise_view: wgpu::TextureView,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    /// The uniform for passes on the scene before it is upscaled: the same, with the
+    /// viewport of the scene region.
+    scene_uniform_buffer: wgpu::Buffer,
+    scene_uniform_bind_group: wgpu::BindGroup,
     depth_resolve_pipeline: Option<DepthResolvePipeline>,
     composite_pipeline: CompositePipeline,
     final_pipeline: FinalPipeline,
@@ -195,6 +210,12 @@ pub struct PostProcess {
     viewport_resolution: Vec2,
     viewport_offset: Vec2,
     viewport_scale: Vec2,
+    /// The scene region's size in pixels and share of the targets; the display region's
+    /// when not upscaling.
+    scene_resolution: Vec2,
+    scene_scale: Vec2,
+    /// The scene renders smaller than the display region and the TAA pass upscales it.
+    upscaling: bool,
     sample_count: u32,
     /// The surface has no sRGB format, so the final pass encodes itself.
     encode_srgb: bool,
@@ -213,6 +234,8 @@ pub struct PostProcessCamera {
     pub position: Vec3,
     pub near: f32,
     pub far: f32,
+    /// How far the TAA jitter moves the image, in scene pixels (+y down).
+    pub jitter_pixels: Vec2,
 }
 
 impl Default for PostProcessCamera {
@@ -226,6 +249,7 @@ impl Default for PostProcessCamera {
             position: Vec3::ZERO,
             near: 0.01,
             far: 100.0,
+            jitter_pixels: Vec2::ZERO,
         }
     }
 }
@@ -469,6 +493,20 @@ impl PostProcess {
                 resource: uniform_buffer.as_entire_binding(),
             }],
         });
+        let scene_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PostProcessSceneUniformBuffer"),
+            size: std::mem::size_of::<PostProcessUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let scene_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PostProcessSceneUniformBindGroup"),
+            layout: &uniform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: scene_uniform_buffer.as_entire_binding(),
+            }],
+        });
 
         let noise_texture = create_noise_texture(device, queue);
         let noise_view = noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -499,6 +537,7 @@ impl PostProcess {
             position_source: targets.position_source,
             position_msaa: targets.position_msaa,
             pick_target: LazyPickTarget::new(),
+            upscaled: UpscaledTargets::new(device, &uniform_layout),
             ssao: targets.ssao,
             ssao_ping: targets.ssao_ping,
             reflection: ReflectionTargets::new(device, &size, false),
@@ -516,6 +555,8 @@ impl PostProcess {
             noise_view,
             uniform_buffer,
             uniform_bind_group,
+            scene_uniform_buffer,
+            scene_uniform_bind_group,
             depth_resolve_pipeline,
             composite_pipeline,
             final_pipeline,
@@ -544,6 +585,9 @@ impl PostProcess {
             viewport_resolution: Vec2::new(size.width as f32, size.height as f32),
             viewport_offset: Vec2::ZERO,
             viewport_scale: Vec2::ONE,
+            scene_resolution: Vec2::new(size.width as f32, size.height as f32),
+            scene_scale: Vec2::ONE,
+            upscaling: false,
             sample_count,
             // Float targets (the HDR composition texture) take linear values.
             encode_srgb: !config.format.is_srgb() && !is_float_format(config.format),
@@ -586,41 +630,75 @@ impl PostProcess {
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
         self.pick_target.invalidate();
+        self.upscaled.invalidate();
         self.viewport_resolution = Vec2::new(width as f32, height as f32);
         self.viewport_offset = Vec2::ZERO;
         self.viewport_scale = Vec2::ONE;
+        self.scene_resolution = self.viewport_resolution;
+        self.scene_scale = Vec2::ONE;
         self.mark_bind_groups_dirty();
         self.upload_uniform(queue);
     }
 
-    pub fn update_viewport(&mut self, queue: &wgpu::Queue, region: Option<RenderRegion>) {
-        let full_width = self.size.width.max(1) as f32;
-        let full_height = self.size.height.max(1) as f32;
-
-        let (resolution, offset, scale) = if let Some(region) = region {
-            let region_width = region.width().max(1) as f32;
-            let region_height = region.height().max(1) as f32;
-            let offset = Vec2::new(
-                region.x() as f32 / full_width,
-                region.y() as f32 / full_height,
-            );
-            let scale = Vec2::new(region_width / full_width, region_height / full_height);
-            (Vec2::new(region_width, region_height), offset, scale)
-        } else {
-            (Vec2::new(full_width, full_height), Vec2::ZERO, Vec2::ONE)
+    /// The part of the targets post-processing outputs to (`region`, all of them when
+    /// `None`) and the part the scene was drawn into: the same, or a smaller rectangle at
+    /// its origin when upscaling.
+    pub fn update_viewport(
+        &mut self,
+        queue: &wgpu::Queue,
+        region: Option<RenderRegion>,
+        scene_region: Option<RenderRegion>,
+    ) {
+        let full = Vec2::new(
+            self.size.width.max(1) as f32,
+            self.size.height.max(1) as f32,
+        );
+        let rect = |region: Option<RenderRegion>| match region {
+            Some(region) => {
+                let size = Vec2::new(region.width().max(1) as f32, region.height().max(1) as f32);
+                let offset = Vec2::new(region.x() as f32, region.y() as f32) / full;
+                (size, offset, size / full)
+            }
+            None => (full, Vec2::ZERO, Vec2::ONE),
         };
+        let (resolution, offset, scale) = rect(region);
+        let (scene_resolution, _, scene_scale) = rect(scene_region.or(region));
+        let upscaling = scene_resolution != resolution;
 
         if self.viewport_resolution != resolution
             || self.viewport_offset != offset
             || self.viewport_scale != scale
+            || self.scene_resolution != scene_resolution
         {
             self.viewport_resolution = resolution;
             self.viewport_offset = offset;
             self.viewport_scale = scale;
+            self.scene_resolution = scene_resolution;
+            self.scene_scale = scene_scale;
             // The history no longer lines up with the view.
             self.taa_history_valid = false;
             self.reflection_history = None;
             self.upload_uniform(queue);
+        }
+        if upscaling != self.upscaling {
+            self.upscaling = upscaling;
+            self.refresh_temporal_routing();
+            self.upload_uniform(queue);
+        }
+    }
+
+    /// Which temporal passes run: the TAA pass when TAA is on or it upscales.
+    fn refresh_temporal_routing(&mut self) {
+        let routing = (
+            self.settings.taa_active() || self.upscaling,
+            self.settings.motion_blur_active(),
+        );
+        if routing != self.temporal_routing {
+            if routing.0 && !self.temporal_routing.0 {
+                self.taa_history_valid = false;
+            }
+            self.temporal_routing = routing;
+            self.mark_bind_groups_dirty();
         }
     }
 
@@ -666,12 +744,20 @@ impl PostProcess {
         self.mark_bind_groups_dirty();
     }
 
+    /// Single-sample depth at output resolution, for what draws after post-processing.
     pub fn after_postprocess_depth_view(&self) -> Option<&wgpu::TextureView> {
-        if let Some(resolved) = self.resolved_depth.as_ref() {
+        if let Some(upscaled) = self.upscaled.depth_view().filter(|_| self.upscaling) {
+            Some(upscaled)
+        } else if let Some(resolved) = self.resolved_depth.as_ref() {
             Some(&resolved.view)
         } else {
             self.cached_depth_view.as_ref()
         }
+    }
+
+    /// Whether the scene renders below the output resolution and is upscaled.
+    pub fn is_upscaling(&self) -> bool {
+        self.upscaling
     }
 
     /// Apply new settings; values outside the supported ranges are clamped. A changed
@@ -700,24 +786,22 @@ impl PostProcess {
             // The uniform's reflection texel scale changes with it.
             self.upload_uniform(queue);
         }
-        let routing = (settings.taa_active(), settings.motion_blur_active());
-        if routing != self.temporal_routing {
-            if routing.0 && !self.temporal_routing.0 {
-                self.taa_history_valid = false;
-            }
-            self.temporal_routing = routing;
-            self.mark_bind_groups_dirty();
-        }
         if self.settings != *settings {
             let was_auto = self.settings.auto_exposure_active();
+            let was_taa = self.settings.taa_active();
             self.settings = settings.clone().sanitized();
             if self.settings.auto_exposure_active() && !was_auto {
                 // Start from a fresh measurement instead of whatever was adapted to
                 // when auto exposure was last on.
                 self.exposure_stage.reset(queue);
             }
+            if self.settings.taa_active() != was_taa {
+                // The upscale pass starts (or stops) accumulating.
+                self.taa_history_valid = false;
+            }
             self.upload_uniform(queue);
         }
+        self.refresh_temporal_routing();
     }
 
     /// Build the ray-traced reflection pass. `lights_layout` is the main pass's lights
@@ -806,28 +890,48 @@ impl PostProcess {
             .ensure(device, &self.size, self.sample_count);
     }
 
-    pub fn pick_attachment_views(&self) -> Option<PickAttachmentViews<'_>> {
+    /// The pick target the scene passes write ids into (at the scene's resolution).
+    pub fn scene_pick_views(&self) -> Option<PickAttachmentViews<'_>> {
         self.pick_target.views()
     }
 
+    /// The pick target at output resolution, for passes after post-processing (overlays,
+    /// gizmos): the upscaled copy of the scene's ids while upscaling.
+    pub fn pick_attachment_views(&self) -> Option<PickAttachmentViews<'_>> {
+        match self.upscaled.pick.as_ref().filter(|_| self.upscaling) {
+            Some(pick) => Some(PickAttachmentViews {
+                multisample: &pick.view,
+                resolve: None,
+            }),
+            None => self.pick_target.views(),
+        }
+    }
+
+    /// The pick ids clicks are read from, at output resolution.
     pub fn pick_texture(&self) -> Option<&wgpu::Texture> {
-        self.pick_target.texture()
+        match self.upscaled.pick.as_ref().filter(|_| self.upscaling) {
+            Some(pick) => Some(pick.texture()),
+            None => self.pick_target.texture(),
+        }
     }
 
     pub fn pick_texture_extent(&self) -> Option<wgpu::Extent3d> {
         self.pick_target.extent()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn execute(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
         target: &wgpu::TextureView,
         region: Option<RenderRegion>,
+        scene_region: Option<RenderRegion>,
         ray_tracing: Option<RayTracingFrame<'_>>,
         timer: &mut crate::renderer::gpu_timer::GpuTimer,
     ) {
         self.ensure_cached_bind_groups(device);
+        let scene_uniform = &self.scene_uniform_bind_group;
 
         if let (Some(depth_pipeline), Some(bind_group), Some(resolved)) = (
             self.depth_resolve_pipeline.as_ref(),
@@ -854,10 +958,10 @@ impl PostProcess {
                 self.scene_source.copy_to(encoder, &self.scene_copy);
                 stage.refract(
                     encoder,
-                    &self.uniform_bind_group,
+                    scene_uniform,
                     frame,
                     &self.scene_source.view,
-                    region,
+                    scene_region,
                 );
                 timer.mark(encoder, "refraction");
             }
@@ -865,12 +969,9 @@ impl PostProcess {
 
         if self.settings.ssr_active() {
             let traced = match (self.rt_reflection_stage.as_ref(), ray_tracing.as_ref()) {
-                (Some(stage), Some(frame)) if self.settings.ssr.ray_traced => stage.trace(
-                    encoder,
-                    &self.uniform_bind_group,
-                    frame,
-                    &self.reflection.trace.view,
-                ),
+                (Some(stage), Some(frame)) if self.settings.ssr.ray_traced => {
+                    stage.trace(encoder, scene_uniform, frame, &self.reflection.trace.view)
+                }
                 _ => false,
             };
             let targets = SsrTargets {
@@ -883,18 +984,18 @@ impl PostProcess {
             if traced {
                 self.ssr_stage.resolve(
                     encoder,
-                    &self.uniform_bind_group,
+                    scene_uniform,
                     &targets,
                     &self.scene_source.view,
-                    region,
+                    scene_region,
                 );
             } else {
                 self.ssr_stage.render(
                     encoder,
-                    &self.uniform_bind_group,
+                    scene_uniform,
                     &targets,
                     &self.scene_source.view,
-                    region,
+                    scene_region,
                 );
             }
             self.reflection_history = Some(traced);
@@ -910,6 +1011,8 @@ impl PostProcess {
                 &self.uniform_bind_group,
                 &self.taa_output,
                 &self.taa_history,
+                self.upscaling,
+                region,
             );
             self.taa_history_valid = true;
         }
@@ -928,20 +1031,15 @@ impl PostProcess {
         };
         if self.settings.ssao_active() {
             let traced = match (self.rt_ao_stage.as_ref(), ray_tracing.as_ref()) {
-                (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => stage.trace(
-                    encoder,
-                    &self.uniform_bind_group,
-                    frame.scene,
-                    ssao_targets.output,
-                ),
+                (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => {
+                    stage.trace(encoder, scene_uniform, frame.scene, ssao_targets.output)
+                }
                 _ => false,
             };
             if traced {
-                self.ssao_stage
-                    .blur(encoder, &self.uniform_bind_group, ssao_targets);
+                self.ssao_stage.blur(encoder, scene_uniform, ssao_targets);
             } else {
-                self.ssao_stage
-                    .render(encoder, &self.uniform_bind_group, ssao_targets);
+                self.ssao_stage.render(encoder, scene_uniform, ssao_targets);
             }
             timer.mark(encoder, "ambient_occlusion");
         } else {
@@ -1010,6 +1108,21 @@ impl PostProcess {
         pass.set_bind_group(0, &self.uniform_bind_group, &[]);
         pass.set_bind_group(1, final_bind_group, &[]);
         pass.draw(0..3, 0..1);
+        drop(pass);
+
+        if self.upscaling {
+            if let Some(depth) = self.cached_depth_view.as_ref() {
+                self.upscaled.render(
+                    device,
+                    encoder,
+                    &self.uniform_bind_group,
+                    &self.size,
+                    depth,
+                    self.pick_target.views().map(|views| views.single_sample()),
+                    region,
+                );
+            }
+        }
     }
 
     fn mark_bind_groups_dirty(&mut self) {
@@ -1028,6 +1141,7 @@ impl PostProcess {
         self.exposure_stage.invalidate();
         self.dof_stage.invalidate();
         self.temporal_stage.invalidate();
+        self.upscaled.invalidate_bind_group();
         self.bind_groups_dirty = true;
     }
 
@@ -1204,11 +1318,13 @@ impl PostProcess {
     }
 
     fn upload_uniform(&self, queue: &wgpu::Queue) {
-        let uniform = PostProcessUniform::new(&UniformInputs {
+        let mut inputs = UniformInputs {
             camera: &self.camera,
             viewport_resolution: self.viewport_resolution,
             viewport_offset: self.viewport_offset,
             viewport_scale: self.viewport_scale,
+            scene_resolution: self.scene_resolution,
+            output_resolution: self.viewport_resolution,
             settings: &self.settings,
             lut_loaded: self.lut.is_loaded(),
             taa_history_valid: self.taa_history_valid,
@@ -1219,8 +1335,18 @@ impl PostProcess {
             frame: self.clock.frame,
             reflection_scale: self.reflection.scale(),
             ambient: self.ambient,
-        });
+        };
+        let uniform = PostProcessUniform::new(&inputs);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        // The scene passes see the scene region as their viewport.
+        inputs.viewport_resolution = self.scene_resolution;
+        inputs.viewport_scale = self.scene_scale;
+        let scene_uniform = PostProcessUniform::new(&inputs);
+        queue.write_buffer(
+            &self.scene_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&scene_uniform),
+        );
     }
 }
 
@@ -1427,6 +1553,10 @@ struct UniformInputs<'a> {
     viewport_resolution: Vec2,
     viewport_offset: Vec2,
     viewport_scale: Vec2,
+    /// The size of the region the scene was drawn into (the upscale's source), and of the
+    /// output region it is upscaled to.
+    scene_resolution: Vec2,
+    output_resolution: Vec2,
     settings: &'a PostProcessSettings,
     lut_loaded: bool,
     taa_history_valid: bool,
@@ -1481,6 +1611,8 @@ struct PostProcessUniform {
     display: [f32; 4],
     ssr: [f32; 4],
     reflection: [f32; 4],
+    upscale: [f32; 4],
+    upscale_source: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1627,6 +1759,26 @@ impl PostProcessUniform {
                 let [r, g, b] = inputs.ambient;
                 [inputs.reflection_scale, r, g, b]
             },
+            // Scene pixels per output pixel, and the jitter (only the upscale pass and the
+            // passes reading the scene region at output resolution need it; 0 otherwise so
+            // those read the same pixel they always did).
+            upscale: if inputs.scene_resolution != resolution {
+                let ratio = inputs.scene_resolution / resolution.max(Vec2::ONE);
+                [
+                    ratio.x,
+                    ratio.y,
+                    camera.jitter_pixels.x,
+                    camera.jitter_pixels.y,
+                ]
+            } else {
+                [1.0, 1.0, 0.0, 0.0]
+            },
+            upscale_source: [
+                inputs.scene_resolution.x,
+                inputs.scene_resolution.y,
+                flag(settings.taa_active()),
+                inputs.scene_resolution.y / inputs.output_resolution.y.max(1.0),
+            ],
             output: [
                 flag(inputs.encode_srgb),
                 1.0,
@@ -1660,6 +1812,7 @@ mod tests {
             position: eye,
             near: 0.1,
             far: 1200.0,
+            jitter_pixels: Vec2::ZERO,
         };
         for jitter in [
             Vec2::ZERO,
@@ -1687,8 +1840,8 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        // 6 matrices, camera position, 8 vec2 pairs and 21 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 816);
+        // 6 matrices, camera position, 8 vec2 pairs and 23 vec4 blocks.
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 848);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 

@@ -1,6 +1,6 @@
-// Temporal anti-aliasing and motion blur. Both read the motion vectors the main pass
-// packs into the normal G-buffer (zw, in viewport UV units) and run first in the
-// post-processing chain, on the HDR scene.
+// Temporal anti-aliasing (and upscaling) and motion blur. They read the motion vectors
+// the main pass packs into the normal G-buffer (zw, in viewport UV units) and run first in
+// the post-processing chain, on the HDR scene.
 
 @group(1) @binding(140)
 var taa_current : texture_2d<f32>;
@@ -154,8 +154,10 @@ fn fs_motion_blur(in : VertexOutput) -> @location(0) vec4<f32> {
     let dims = vec2<f32>(textureDimensions(blur_color));
     let pixel = vec2<i32>(in.position.xy);
     let center = textureLoad(blur_color, pixel, 0).rgb;
+    // Motion and positions are at the scene's resolution (smaller when upscaling).
+    let gbuffer_pixel = display_to_scene_pixel(in.position.xy, dims);
     // Viewport UV per frame, scaled by the shutter, as viewport pixels.
-    var motion = textureLoad(blur_motion, pixel, 0).zw * post_uniform.misc.z;
+    var motion = textureLoad(blur_motion, gbuffer_pixel, 0).zw * post_uniform.misc.z;
     let motion_px = motion * post_uniform.resolution;
     let length_px = length(motion_px);
     if length_px < 0.5 {
@@ -166,7 +168,7 @@ fn fs_motion_blur(in : VertexOutput) -> @location(0) vec4<f32> {
         motion = motion * (max_px / length_px);
     }
     let step = motion * post_uniform.viewport_scale;
-    let center_depth = temporal_view_depth(textureLoad(blur_position, pixel, 0));
+    let center_depth = temporal_view_depth(textureLoad(blur_position, gbuffer_pixel, 0));
     let streak_px = min(length_px, max_px);
     // Per-pixel offset hides the banding of a fixed sample pattern.
     let jitter = noise_2d(vec2<u32>(pixel), u32(post_uniform.output.z)) - 0.5;
@@ -183,7 +185,7 @@ fn fs_motion_blur(in : VertexOutput) -> @location(0) vec4<f32> {
             post_uniform.viewport_offset,
             post_uniform.viewport_offset + post_uniform.viewport_scale,
         );
-        let sample_pixel = vec2<i32>(uv * dims);
+        let sample_pixel = display_to_scene_pixel(uv * dims, dims);
         let depth = temporal_view_depth(textureLoad(blur_position, sample_pixel, 0));
         // A still foreground in front of this pixel does not smear over it; a moving
         // one only as far as its own streak reaches.
@@ -196,4 +198,89 @@ fn fs_motion_blur(in : VertexOutput) -> @location(0) vec4<f32> {
         weight += w;
     }
     return vec4<f32>(sum / weight, 1.0);
+}
+
+// Temporal upscaling (TAAU): the scene region is smaller than the output region, at the
+// same origin. Each output pixel gathers the 3x3 scene pixels around where it falls; each
+// sample shows the point at its centre moved back by the jitter, so over the jitter
+// sequence the samples land at many sub-pixel positions of the output. A frame adds to the
+// history by how close its samples landed (a ~1 output pixel wide kernel); the history's
+// alpha counts the sample weight gathered so far. Without history (or without TAA, as a
+// plain spatial upscale) the frame is filtered bilinearly in scene pixels.
+const TAAU_MAX_WEIGHT : f32 = 10.0;
+// Weight of the bilinear frame a fresh history starts from.
+const TAAU_START_WEIGHT : f32 = 1.0;
+
+@fragment
+fn fs_taau(in : VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(taa_current));
+    let ratio = post_uniform.upscale.xy;
+    let jitter = post_uniform.upscale.zw;
+    let origin = round(post_uniform.viewport_offset * dims);
+    let last = max(vec2<i32>(post_uniform.upscale_source.xy) - vec2<i32>(1), vec2<i32>(0));
+    // Where this output pixel's centre falls in the unjittered scene region, in scene
+    // pixels from its corner, and the scene pixel that shows it.
+    let source = (in.position.xy - origin) * ratio;
+    let center = vec2<i32>(floor(source + jitter));
+
+    var near_sum = vec3<f32>(0.0);
+    var near_weight = 0.0;
+    var bilinear_sum = vec3<f32>(0.0);
+    var bilinear_weight = 0.0;
+    var mean = vec3<f32>(0.0);
+    var second = vec3<f32>(0.0);
+    var closest = TEMPORAL_FAR * 2.0;
+    var closest_pixel = vec2<i32>(origin);
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let local = clamp(center + vec2<i32>(x, y), vec2<i32>(0), last);
+            let p = vec2<i32>(origin) + local;
+            let c = temporal_safe(textureLoad(taa_current, p, 0).rgb);
+            // The unjittered point this sample shows, relative to the output pixel centre.
+            let offset = vec2<f32>(local) + 0.5 - jitter - source;
+            let offset_out = offset / ratio;
+            // Blackman-Harris-like falloff over about one output pixel.
+            let w = exp(-2.29 * dot(offset_out, offset_out));
+            near_sum += c * w;
+            near_weight += w;
+            let tent = max(vec2<f32>(0.0), vec2<f32>(1.0) - abs(offset));
+            let b = tent.x * tent.y;
+            bilinear_sum += c * b;
+            bilinear_weight += b;
+            let ycocg = rgb_to_ycocg(taa_compress(c));
+            mean += ycocg;
+            second += ycocg * ycocg;
+            let depth = temporal_view_depth(textureLoad(taa_position, p, 0));
+            if depth < closest {
+                closest = depth;
+                closest_pixel = p;
+            }
+        }
+    }
+    mean = mean / 9.0;
+    let sigma = sqrt(max(second / 9.0 - mean * mean, vec3<f32>(0.0)));
+    let bilinear = bilinear_sum / max(bilinear_weight, 1e-4);
+
+    let velocity = textureLoad(taa_motion, closest_pixel, 0).zw;
+    let uv = in.position.xy / dims;
+    let previous_uv = uv - velocity * post_uniform.viewport_scale;
+    let accumulate = post_uniform.upscale_source.z > 0.5;
+    if !accumulate || post_uniform.misc.y < 0.5 || !inside_viewport(previous_uv) {
+        return vec4<f32>(bilinear, TAAU_START_WEIGHT);
+    }
+
+    let history = rgb_to_ycocg(taa_compress(sample_history(previous_uv)));
+    let history_weight = clamp(
+        textureSampleLevel(taa_history, taa_sampler, previous_uv, 0.0).a,
+        0.0,
+        TAAU_MAX_WEIGHT,
+    );
+    let clipped = clip_to_box(mean - sigma, mean + sigma, history);
+    let current = rgb_to_ycocg(taa_compress(near_sum / max(near_weight, 1e-4)));
+    let total = history_weight + near_weight;
+    let blended = (clipped * history_weight + current * near_weight) / max(total, 1e-4);
+    return vec4<f32>(
+        temporal_safe(taa_expand(max(ycocg_to_rgb(blended), vec3<f32>(0.0)))),
+        min(total, TAAU_MAX_WEIGHT),
+    );
 }

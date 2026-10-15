@@ -20,7 +20,7 @@ use wgpu_cube::asset::{
 };
 use wgpu_cube::renderer::postprocess::{
     setting_overridden, AntiAliasing, ExposureMode, FocusMode, PostProcessSettings, Tonemapper,
-    TRACKBALL_NEUTRAL,
+    UpscalingSettings, TRACKBALL_NEUTRAL,
 };
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
@@ -3569,6 +3569,26 @@ fn show_post_process_volume_section(
                         (AntiAliasing::Fxaa, "FXAA"),
                         (AntiAliasing::Taa, "TAA (temporal)"),
                     ],
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
+            "Upscaling",
+            "upscaling",
+            None,
+            &mut rows,
+            |ui, rows| {
+                rows.slider_with(
+                    ui,
+                    "upscaling.render_scale",
+                    "Render scale",
+                    &mut settings.upscaling.render_scale,
+                    UpscalingSettings::MIN_RENDER_SCALE..=1.0,
+                    0.01,
+                    "x",
                 );
             },
         );

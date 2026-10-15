@@ -24,7 +24,9 @@ fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
     color = select(color, vec3<f32>(0.0), color != color);
     color = min(color, vec3<f32>(65000.0));
     if post_uniform.effects.x > 0.5 {
-        color = color * textureSampleLevel(composite_ssao, composite_sampler, uv, 0.0).r;
+        let dims = vec2<f32>(textureDimensions(composite_ssao));
+        let ssao_uv = display_to_scene_uv(uv, dims);
+        color = color * textureSampleLevel(composite_ssao, composite_sampler, ssao_uv, 0.0).r;
     }
     if post_uniform.dof_params.x > 0.5 {
         // Blend toward the blurred image once the blur passes about a pixel.

@@ -2,13 +2,15 @@ use crate::renderer::PipelineBuilder;
 
 use super::pipelines::sampler_entry;
 use super::resources::TextureBundle;
-use super::{begin_color_pass, fullscreen_vertex, ColorAttachment, HDR_FORMAT};
+use super::{begin_color_pass, fullscreen_vertex, ColorAttachment, RenderRegion, HDR_FORMAT};
 
-/// Temporal anti-aliasing and motion blur: the first post passes, on the HDR scene,
-/// driven by the motion vectors in the normal G-buffer.
+/// Temporal anti-aliasing (or upscaling) and motion blur: the first post passes, on the
+/// HDR scene, driven by the motion vectors in the normal G-buffer.
 pub struct TemporalStage {
     taa_layout: wgpu::BindGroupLayout,
     taa_pipeline: wgpu::RenderPipeline,
+    /// The TAA pass when the scene renders smaller than the output.
+    taau_pipeline: wgpu::RenderPipeline,
     blur_layout: wgpu::BindGroupLayout,
     blur_pipeline: wgpu::RenderPipeline,
     taa_bind_group: Option<wgpu::BindGroup>,
@@ -83,10 +85,12 @@ impl TemporalStage {
                 .build()
         };
         let taa_pipeline = make_pipeline("TaaPipeline", "fs_taa", &taa_layout);
+        let taau_pipeline = make_pipeline("TaauPipeline", "fs_taau", &taa_layout);
         let blur_pipeline = make_pipeline("MotionBlurPipeline", "fs_motion_blur", &blur_layout);
         Self {
             taa_layout,
             taa_pipeline,
+            taau_pipeline,
             blur_layout,
             blur_pipeline,
             taa_bind_group: None,
@@ -133,13 +137,17 @@ impl TemporalStage {
         }));
     }
 
-    /// Resolve TAA into `output`, then keep it as next frame's history.
+    /// Resolve TAA into `output`, then keep it as next frame's history. With `upscale`
+    /// the scene is smaller than the output and the pass reconstructs the output
+    /// `region` from it.
     pub fn render_taa(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         uniform_bind_group: &wgpu::BindGroup,
         output: &TextureBundle,
         history: &TextureBundle,
+        upscale: bool,
+        region: Option<RenderRegion>,
     ) {
         let Some(group) = self.taa_bind_group.as_ref() else {
             return;
@@ -150,9 +158,13 @@ impl TemporalStage {
                 "Taa",
                 ColorAttachment::single(&output.view),
                 wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                None,
+                region.filter(|_| upscale),
             );
-            pass.set_pipeline(&self.taa_pipeline);
+            pass.set_pipeline(if upscale {
+                &self.taau_pipeline
+            } else {
+                &self.taa_pipeline
+            });
             pass.set_bind_group(0, uniform_bind_group, &[]);
             pass.set_bind_group(1, group, &[]);
             pass.draw(0..3, 0..1);

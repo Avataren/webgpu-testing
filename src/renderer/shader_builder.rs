@@ -285,6 +285,11 @@ impl ShaderBuilder {
         for constant in self.constant_overrides {
             Self::replace_constant(&mut source, constant.name, constant.value);
         }
+        // The texture helpers' mip bias: the main material shader defines it from the
+        // camera; elsewhere (particles, shader materials) textures sample unbiased.
+        if source.contains("material_mip_bias()") && !source.contains("fn material_mip_bias") {
+            source.push_str("\nfn material_mip_bias() -> f32 {\n    return 0.0;\n}\n");
+        }
         // naga requires the extension to be enabled before any declaration.
         if source.contains("binding_array<") && !source.contains(ENABLE_BINDING_ARRAY) {
             source.insert_str(0, &format!("{ENABLE_BINDING_ARRAY}\n\n"));

@@ -180,7 +180,11 @@ struct FrameState {
     prepared_batches: PreparedBatches,
     encoder: wgpu::CommandEncoder,
     stats: RendererStats,
+    /// The part of the output the frame fills.
     render_region: Option<RenderRegion>,
+    /// The part of the scene targets the 3D passes draw into: `render_region`, or a
+    /// smaller rectangle at its origin while upscaling.
+    scene_region: Option<RenderRegion>,
     pick_active: bool,
     surface_view: wgpu::TextureView,
     /// Where egui draws: the surface, or the HDR UI layer.
@@ -636,19 +640,31 @@ impl Renderer {
             .prev_view_proj
             .replace(unjittered_vp)
             .unwrap_or(unjittered_vp);
-        // TAA: shift the projection by a different sub-pixel offset every frame.
+        // TAA: shift the projection by a different sub-pixel offset every frame (a scene
+        // pixel's worth, when the scene renders smaller and is upscaled).
+        let scene_size = self
+            .display_region()
+            .map(|region| region.scaled(self.render_scale()))
+            .map(|region| (region.width(), region.height()))
+            .unwrap_or((1, 1));
         let jitter = if self.postprocess.settings().anti_aliasing
             == crate::renderer::postprocess::AntiAliasing::Taa
         {
             self.jitter_index = self.jitter_index.wrapping_add(1);
-            let (width, height) = self
-                .render_region
-                .map(|region| (region.width(), region.height()))
-                .unwrap_or((self.context.config.width, self.context.config.height));
-            taa_jitter(self.jitter_index, width.max(1), height.max(1))
+            taa_jitter(
+                self.jitter_index,
+                self.jitter_period(),
+                scene_size.0,
+                scene_size.1,
+            )
         } else {
             Vec2::ZERO
         };
+        // The same offset in scene pixels (+y down, as textures are addressed).
+        let jitter_pixels = Vec2::new(
+            jitter.x * scene_size.0 as f32 * 0.5,
+            -jitter.y * scene_size.1 as f32 * 0.5,
+        );
         let vp = Mat4::from_translation(jitter.extend(0.0)) * unjittered_vp;
         let inv_vp = vp.inverse();
         let camera_pos = camera.position();
@@ -662,7 +678,7 @@ impl Renderer {
         if up.length_squared() < 1e-6 {
             up = Vec3::Y;
         }
-        let uni = CameraUniform::from_matrices(
+        let mut uni = CameraUniform::from_matrices(
             vp,
             inv_vp,
             camera_pos,
@@ -671,6 +687,8 @@ impl Renderer {
             unjittered_vp,
             prev_vp,
         );
+        // Sample material textures at the mip the output resolution would pick.
+        uni.mip_bias = self.render_scale().log2();
         self.context
             .queue
             .write_buffer(&self.camera_buffer.buffer, 0, bytemuck::bytes_of(&uni));
@@ -699,6 +717,7 @@ impl Renderer {
                 position: camera.position(),
                 near: camera.near(),
                 far: camera.far(),
+                jitter_pixels,
             }
             .with_projection_jitter(jitter),
         );
@@ -953,6 +972,30 @@ impl Renderer {
         self.jitter_index
     }
 
+    /// Frames after which the TAA jitter repeats: [`TAA_JITTER_FRAMES`] at native
+    /// resolution, more when upscaling (as FSR: 8 x the pixel ratio), so the jittered
+    /// samples cover each scene pixel's share of output pixels.
+    pub fn jitter_period(&self) -> u32 {
+        jitter_period(self.render_scale())
+    }
+
+    /// The share of the output resolution (per axis) the scene renders at this frame:
+    /// the upscaling setting, or 1 under MSAA, which upscaling does not support.
+    pub fn render_scale(&self) -> f32 {
+        let upscaling = &self.postprocess.settings().upscaling;
+        if self.context.sample_count == 1 && upscaling.active() {
+            upscaling.render_scale
+        } else {
+            1.0
+        }
+    }
+
+    /// The part of the surface the frame fills: the render region, or all of it.
+    fn display_region(&self) -> Option<RenderRegion> {
+        self.render_region
+            .or_else(|| RenderRegion::full(self.context.config.width, self.context.config.height))
+    }
+
     /// The post-processing settings in effect (after clamping).
     pub fn postprocess_settings(&self) -> &PostProcessSettings {
         self.postprocess.settings()
@@ -1111,12 +1154,12 @@ impl Renderer {
         )?;
         self.lights_buffer.update(&self.context.queue, lights);
 
-        let render_region = self
-            .render_region
-            .or_else(|| RenderRegion::full(self.context.config.width, self.context.config.height));
+        let render_region = self.display_region();
+        let scale = self.render_scale();
+        let scene_region = render_region.map(|region| region.scaled(scale));
 
         self.postprocess
-            .update_viewport(&self.context.queue, render_region);
+            .update_viewport(&self.context.queue, render_region, scene_region);
 
         let pick_active = self.pick_active;
         if pick_active {
@@ -1134,6 +1177,7 @@ impl Renderer {
             encoder,
             stats,
             render_region,
+            scene_region,
             pick_active,
             surface_view,
             ui_view,
@@ -1179,7 +1223,7 @@ impl Renderer {
             &mut frame.prepared_batches,
             &mut frame.encoder,
             &frame.depth_view,
-            frame.render_region,
+            frame.scene_region,
         );
         frame.stats.depth_prepass_draw_calls += draw_calls;
     }
@@ -1199,7 +1243,7 @@ impl Renderer {
             &frame.scene_view,
             frame.scene_resolve_view.as_ref(),
             &frame.depth_view,
-            frame.render_region,
+            frame.scene_region,
             self.context.scene_texture_format(),
             frame.pick_active,
         );
@@ -1213,10 +1257,12 @@ impl Renderer {
         stage: CustomRenderStage,
         request: Option<&mut CustomRenderRequest<'_>>,
     ) {
-        let (color_view, depth_view) = match stage {
-            CustomRenderStage::BeforePostprocess => {
-                (frame.scene_view.clone(), frame.depth_view.clone())
-            }
+        let (color_view, depth_view, region) = match stage {
+            CustomRenderStage::BeforePostprocess => (
+                frame.scene_view.clone(),
+                frame.depth_view.clone(),
+                frame.scene_region,
+            ),
             CustomRenderStage::AfterPostprocess => (
                 frame.surface_view.clone(),
                 frame
@@ -1224,6 +1270,7 @@ impl Renderer {
                     .as_ref()
                     .cloned()
                     .unwrap_or_else(|| frame.depth_view.clone()),
+                frame.render_region,
             ),
             CustomRenderStage::Shadow(_) => return,
         };
@@ -1235,7 +1282,7 @@ impl Renderer {
             &color_view,
             &depth_view,
             stage,
-            frame.render_region,
+            region,
             request,
         );
     }
@@ -1300,7 +1347,7 @@ impl Renderer {
                 self.postprocess.settings().rt_shadows.softness,
                 self.postprocess.settings().rt_shadows.light_radius,
                 self.jitter_index,
-                frame.render_region,
+                frame.scene_region,
             );
             self.gpu_timer.mark(&mut frame.encoder, "rt_shadows");
         }
@@ -1325,6 +1372,7 @@ impl Renderer {
             &self.context.device,
             &frame.surface_view,
             frame.render_region,
+            frame.scene_region,
             ray_tracing,
             &mut self.gpu_timer,
         );
@@ -1340,7 +1388,7 @@ impl Renderer {
             &frame.scene_view,
             frame.scene_resolve_view.as_ref(),
             &frame.depth_view,
-            frame.render_region,
+            frame.scene_region,
             frame.pick_active,
             self.context.scene_texture_format(),
         );
@@ -1353,7 +1401,11 @@ impl Renderer {
         let pick_active = frame.pick_active;
         let surface_format = self.output_format();
         let surface_view = frame.surface_view.clone();
-        let depth_view = frame.depth_view.clone();
+        // Single-sample, output-resolution depth (upscaled or MSAA-resolved).
+        let depth_view = frame
+            .resolved_depth_view
+            .clone()
+            .unwrap_or_else(|| frame.depth_view.clone());
 
         let overlay_draw_calls = passes::overlay_pass(
             self,
@@ -1524,10 +1576,20 @@ fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) ->
 /// unchanged view repeat with this period, so comparisons of them use whole periods.
 pub const TAA_JITTER_FRAMES: u32 = 8;
 
-/// Clip-space offset for TAA frame `index`: a Halton(2, 3) point inside the pixel,
-/// converted to NDC for a `width` x `height` view.
-fn taa_jitter(index: u32, width: u32, height: u32) -> Vec2 {
-    let sample = index % TAA_JITTER_FRAMES + 1;
+/// Jitter frames for a scene rendered at `render_scale` of the output (per axis): FSR's
+/// 8 x (output pixels per scene pixel), at most 64.
+fn jitter_period(render_scale: f32) -> u32 {
+    if render_scale >= 0.999 {
+        return TAA_JITTER_FRAMES;
+    }
+    let ratio = 1.0 / render_scale.max(0.01);
+    ((TAA_JITTER_FRAMES as f32 * ratio * ratio).round() as u32).clamp(TAA_JITTER_FRAMES, 64)
+}
+
+/// Clip-space offset for TAA frame `index` of a `period`-frame sequence: a Halton(2, 3)
+/// point inside the pixel, converted to NDC for a `width` x `height` view.
+fn taa_jitter(index: u32, period: u32, width: u32, height: u32) -> Vec2 {
+    let sample = index % period.max(1) + 1;
     let offset = Vec2::new(halton(sample, 2), halton(sample, 3)) - Vec2::splat(0.5);
     Vec2::new(
         offset.x * 2.0 / width as f32,
@@ -1552,12 +1614,20 @@ mod taa_tests {
 
     #[test]
     fn jitter_stays_within_half_a_pixel() {
-        for index in 0..32 {
-            let jitter = taa_jitter(index, 100, 50);
+        for index in 0..64 {
+            let jitter = taa_jitter(index, jitter_period(0.5), 100, 50);
             assert!(jitter.x.abs() <= 1.0 / 100.0 + 1e-6, "{jitter:?}");
             assert!(jitter.y.abs() <= 1.0 / 50.0 + 1e-6, "{jitter:?}");
         }
         assert_eq!(halton(1, 2), 0.5);
         assert_eq!(halton(2, 3), 2.0 / 3.0);
+    }
+
+    #[test]
+    fn jitter_period_grows_with_the_upscale_ratio() {
+        assert_eq!(jitter_period(1.0), TAA_JITTER_FRAMES);
+        assert_eq!(jitter_period(0.5), 32);
+        assert_eq!(jitter_period(2.0 / 3.0), 18);
+        assert_eq!(jitter_period(0.25), 64);
     }
 }

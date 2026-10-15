@@ -8,7 +8,9 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub inverse_view_proj: [[f32; 4]; 4],
     pub camera_pos: [f32; 3],
-    pub _padding0: f32,
+    /// LOD bias for material textures: log2 of the render scale while upscaling (so
+    /// textures stay as sharp as at output resolution), else 0.
+    pub mip_bias: f32,
     pub camera_forward: [f32; 3],
     pub _padding1: f32,
     pub camera_up: [f32; 3],
@@ -25,7 +27,7 @@ impl CameraUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             inverse_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             camera_pos: [0.0, 0.0, 0.0],
-            _padding0: 0.0,
+            mip_bias: 0.0,
             camera_forward: [0.0, 0.0, -1.0],
             _padding1: 0.0,
             camera_up: [0.0, 1.0, 0.0],
@@ -53,7 +55,7 @@ impl CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
             inverse_view_proj: inverse_view_proj.to_cols_array_2d(),
             camera_pos: camera_pos.to_array(),
-            _padding0: 0.0,
+            mip_bias: 0.0,
             camera_forward: camera_forward.to_array(),
             _padding1: 0.0,
             camera_up: camera_up.to_array(),

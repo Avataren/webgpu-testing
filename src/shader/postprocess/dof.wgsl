@@ -21,8 +21,10 @@ const DOF_MAX_SAMPLES : i32 = 256;
 const DOF_SENSOR_HEIGHT : f32 = 0.024;
 const DOF_FAR_AWAY : f32 = 1.0e6;
 
+// `pixel` at output resolution; the G-buffer is at the scene's (smaller when upscaling).
 fn dof_view_depth(pixel : vec2<i32>) -> f32 {
-    let position = textureLoad(dof_position, pixel, 0);
+    let dims = vec2<f32>(textureDimensions(dof_position));
+    let position = textureLoad(dof_position, display_to_scene_pixel(vec2<f32>(pixel) + 0.5, dims), 0);
     // Background pixels carry no position: treat them as infinitely far.
     if position.w < 0.5 {
         return DOF_FAR_AWAY;

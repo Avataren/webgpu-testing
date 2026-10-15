@@ -66,6 +66,17 @@ impl RenderRegion {
         })
     }
 
+    /// The region at the same origin with its size scaled by `scale` (at least a pixel):
+    /// where the scene renders when it is upscaled to this region.
+    pub fn scaled(self, scale: f32) -> Self {
+        let scale_axis = |size: u32| ((size as f32 * scale).round() as u32).clamp(1, size);
+        Self {
+            width: scale_axis(self.width),
+            height: scale_axis(self.height),
+            ..self
+        }
+    }
+
     pub fn apply_to_pass<'a>(&self, pass: &mut wgpu::RenderPass<'a>) {
         pass.set_viewport(
             self.x as f32,

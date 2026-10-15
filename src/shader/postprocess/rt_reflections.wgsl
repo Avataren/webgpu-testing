@@ -355,7 +355,9 @@ fn rt_screen_radiance(position : vec3<f32>) -> vec4<f32> {
         return vec4<f32>(0.0);
     }
     // A pixel covers more of the world further away; allow for that and for TAA jitter.
-    let tolerance = 0.03 + 0.01 * ssr_view_depth(position);
+    // Tuned at 1080 viewport pixels; a lower resolution (upscaling) has bigger pixels.
+    let pixel_scale = max(1.0, 1080.0 / max(post_uniform.resolution.y, 1.0));
+    let tolerance = 0.03 + 0.01 * ssr_view_depth(position) * pixel_scale;
     if distance(surface.xyz, position) > tolerance {
         return vec4<f32>(0.0);
     }
@@ -468,8 +470,11 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if screen.w > 0.5 {
         color = screen.rgb;
     } else {
-        // Angle one trace texel covers, from the projection.
-        let pixel_angle = 2.0 * ssr_texel_scale() / (post_uniform.proj[1][1] * f32(dims.y));
+        // Angle one trace texel covers, from the projection and the viewport's height
+        // (not the target's, which the editor draws into part of), in output pixels so
+        // reflected textures keep the output's detail while upscaling.
+        let output_height = max(post_uniform.resolution.y, 1.0) / render_scale();
+        let pixel_angle = 2.0 * ssr_texel_scale() / (post_uniform.proj[1][1] * output_height);
         let travelled = distance(post_uniform.camera_position.xyz, origin) + hit.t;
         let material = rt_material(hit, r, pixel_angle * travelled);
         color = rt_light(material, hit_position, r);
@@ -689,7 +694,9 @@ fn fs_rt_refraction_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if textureLoad(rt_scene_color, pixel, 0).a >= 0.0 {
         return vec4<f32>(0.0);
     }
-    let pixel_angle = 2.0 / (post_uniform.proj[1][1] * f32(dims.y));
+    // An output pixel's angle (see fs_rt_reflection_trace).
+    let output_height = max(post_uniform.resolution.y, 1.0) / render_scale();
+    let pixel_angle = 2.0 / (post_uniform.proj[1][1] * output_height);
     // Rotated grid: four distinct rows and columns within the pixel.
     var offsets = array<vec2<f32>, 4>(
         vec2<f32>(-0.375, -0.125),

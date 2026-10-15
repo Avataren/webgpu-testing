@@ -1,6 +1,6 @@
 // Shared by every post-processing pass. Mirrors `PostProcessUniform` in
 // src/renderer/postprocess/mod.rs: matrices, then vec2 pairs, then vec4 blocks, all
-// 16-byte aligned (816 bytes).
+// 16-byte aligned (848 bytes).
 struct PostUniform {
     view_proj : mat4x4<f32>,
     view_proj_inv : mat4x4<f32>,
@@ -68,6 +68,12 @@ struct PostUniform {
     // reflections: full-resolution pixels per reflection texel (1 or 2), then the flat
     // ambient light the main pass adds to every lit surface (rgb)
     reflection : vec4<f32>,
+    // upscaling: scene pixels per output pixel (xy; 1 when not upscaling) and the TAA
+    // jitter in scene pixels (zw, +y down; 0 when not upscaling)
+    upscale : vec4<f32>,
+    // upscaling: the scene region's size in pixels, whether frames accumulate (TAA on),
+    // render scale (scene pixels per output pixel, 1 when not upscaling)
+    upscale_source : vec4<f32>,
 };
 
 @group(0) @binding(0)
@@ -80,6 +86,44 @@ fn viewport_to_scene_uv(uv : vec2<f32>) -> vec2<f32> {
 fn scene_to_viewport_uv(uv : vec2<f32>) -> vec2<f32> {
     let scale = max(post_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
     return (uv - post_uniform.viewport_offset) / scale;
+}
+
+// While upscaling, output-resolution passes read the G-buffer and occlusion from the
+// smaller scene region at the same origin. Identity when not upscaling.
+
+// The scene-region position (in scene pixels, from the region's corner) showing what the
+// output pixel centre `pixel` (in target pixels) shows: the jittered frame drew each point
+// `upscale.zw` pixels away from where the unjittered view has it.
+fn display_to_scene_position(pixel : vec2<f32>, dims : vec2<f32>) -> vec2<f32> {
+    let origin = round(post_uniform.viewport_offset * dims);
+    return (pixel - origin) * post_uniform.upscale.xy + post_uniform.upscale.zw;
+}
+
+// The scene pixel (in target pixels) nearest to output pixel centre `pixel`.
+fn display_to_scene_pixel(pixel : vec2<f32>, dims : vec2<f32>) -> vec2<i32> {
+    let origin = round(post_uniform.viewport_offset * dims);
+    let last = max(post_uniform.upscale_source.xy - 1.0, vec2<f32>(0.0));
+    let p = clamp(floor(display_to_scene_position(pixel, dims)), vec2<f32>(0.0), last);
+    return vec2<i32>(origin + p);
+}
+
+// `display_to_scene_pixel` for texture coordinates, kept half a texel inside the scene
+// region so filtering does not reach past it.
+fn display_to_scene_uv(uv : vec2<f32>, dims : vec2<f32>) -> vec2<f32> {
+    let origin = round(post_uniform.viewport_offset * dims);
+    let p = clamp(
+        display_to_scene_position(uv * dims, dims),
+        vec2<f32>(0.5),
+        max(post_uniform.upscale_source.xy - 0.5, vec2<f32>(0.5)),
+    );
+    return (origin + p) / dims;
+}
+
+// Scene pixels per output pixel (below 1 while upscaling). Texture detail follows the
+// output: material textures take a matching mip bias, and ray hits size their texture
+// footprint by output pixels.
+fn render_scale() -> f32 {
+    return post_uniform.upscale_source.w;
 }
 
 fn viewport_texel_size() -> vec2<f32> {

@@ -1,4 +1,4 @@
-# Future rendering work: WebGL2 fallback and ray tracing
+# Future rendering work: WebGL2 fallback, ray tracing and upscaling
 
 Status: investigation only, nothing implemented. Written against commit `9abfd9f`
 (wgpu 30.0.1, naga 30.0.1). Line numbers drift; search for the named symbols.
@@ -330,3 +330,46 @@ the hit-shading and geometry-access parts so they do not assume hardware RT.
 - For RT work, start with a spike that only enables `EXPERIMENTAL_RAY_QUERY`, builds
   one BLAS and TLAS for a test scene and traces mirror reflections into `ssr_half`.
 - For GL work, start with step 2 and 3 of Part 1 to get a real failure list.
+
+## Part 3: upscaling and frame generation
+
+Status (2026-10-15): temporal upscaling is implemented; FSR-quality reconstruction and
+frame generation are not.
+
+### What exists
+
+- `PostProcessSettings::upscaling.render_scale` (0.25-1, inspector "Upscaling",
+  `postprocess_set {upscaling: {render_scale}}`). The scene draws into a smaller
+  rectangle of the same targets (`RenderRegion::scaled`, same origin), so a new scale
+  reallocates nothing. Ignored with MSAA.
+- The passes before the TAA read a second post uniform describing that rectangle
+  (`scene_uniform_bind_group`); `fs_taau` in `temporal.wgsl` upscales into the output
+  region; later passes map into the scene region where they read the G-buffer or AO
+  (`display_to_scene_pixel` / `_uv` in `postprocess/common.wgsl`). Depth and pick ids
+  are upscaled for overlays, gizmos, the editor grid and editor particles
+  (`postprocess/upscale.rs`).
+- Jitter period 8 x (output/scene pixels), max 64 (`jitter_period`). Material textures
+  get a mip bias of log2(render scale) (`material_mip_bias()`, zero for particles and
+  shader materials); ray hits size texture footprints by output pixels.
+- Without TAA the upscale pass filters one frame bilinearly (blurry, no accumulation).
+
+### Measured (rt-lab, RX 7900 XTX, 1824x1080, GPU shared with a game)
+
+GPU ms per frame, median of 45 timestamp samples: native 4.37, 0.75: 3.53, 0.67: 3.32,
+0.5: 2.92. Raster passes, RT shadows and AO scale with the pixel count; RT reflections
+and AO traces less than linearly (sparser pixels give less coherent rays).
+Ray-traced refraction does not scale (about 1.3-1.6 ms at any scale with the gem in view,
+0.05 ms without): it is latency bound, 4 samples x 2 wavelengths x up to 8 events of
+serial ray queries on the few waves that cover glass. Spreading those samples over frames
+(TAA averages them) would cut it more than any resolution change.
+
+### Next steps
+
+1. Port the FSR 2/3.1 upscaler (MIT) to WGSL compute, replacing `fs_taau`: depth-based
+   disocclusion, luma stability/locks, reactive mask for particles and glass, RCAS in
+   place of the current sharpen. pmndrs/upscaler (three.js) has done this in WGSL.
+2. Frame generation: AFMF is a Windows driver feature; FSR 4 ships as prebuilt DLLs.
+   An in-engine port of FSR 3.1 frame interpolation needs optical flow, a hudless
+   composite and present pacing, which wgpu does not expose (no present-wait/timing).
+   For trying the feel on Linux, lsfg-vk (Vulkan layer, needs Lossless Scaling) works
+   on the engine unchanged.

@@ -545,7 +545,7 @@ pub(crate) fn transparent_pass(
     let pick_views = if write_pick {
         renderer
             .postprocess
-            .pick_attachment_views()
+            .scene_pick_views()
             .map(|views| (views.multisample.clone(), views.resolve.cloned()))
     } else {
         None
