@@ -41,6 +41,21 @@ struct Shadows {
 @group(2) @binding(5) var spot_shadow_sampler: sampler_comparison;
 @group(2) @binding(6) var point_shadow_maps: texture_depth_2d_array;
 @group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
+// Ray-traced visibility of directional light i in channel i, per screen pixel, for the
+// lights whose bit is set in lights.counts.w (src/renderer/raytracing/shadows.rs).
+@group(2) @binding(11) var rt_shadow_mask: texture_2d<f32>;
+
+// Directional light `index`'s ray-traced visibility at framebuffer `pixel`, or -1 when
+// the frame did not trace it or `pixel` is not a real pixel (x < 0: surfaces the mask does
+// not describe, such as transparent ones).
+fn rt_directional_shadow(index: u32, pixel: vec2<f32>) -> f32 {
+    if pixel.x < 0.0 || ((lights.counts.w >> index) & 1u) == 0u {
+        return -1.0;
+    }
+    let dims = vec2<i32>(textureDimensions(rt_shadow_mask));
+    let p = clamp(vec2<i32>(pixel), vec2<i32>(0), dims - vec2<i32>(1));
+    return textureLoad(rt_shadow_mask, p, 0)[index];
+}
 
 // ============================================================================
 // Shadow Projection

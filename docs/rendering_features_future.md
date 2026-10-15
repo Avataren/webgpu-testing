@@ -153,6 +153,20 @@ pass takes off the flat ambient light the main pass added there, so mirrors no l
 hazy; with an HDR environment the main pass's environment specular is still added under
 the reflection. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
 
+**RT shadows (2026-10-15): directional lights.** `rt_shadows.enabled` traces one shadow ray
+per pixel and shadow-casting directional light (up to 4) between the depth prepass and the
+main pass, into a screen-space mask (`renderer/raytracing/shadows.rs`,
+`shader/rt_shadows.wgsl`): the surface comes from depth through the jittered camera, its
+geometric normal from neighbouring depths. The main pass reads the mask (lights group
+binding 11; `lights.counts.w` says which lights) instead of the shadow maps for opaque
+surfaces. `rt_shadows.softness` is the light's apparent size in degrees (0.5 like the sun):
+each pixel and frame aims at another point of its disc and TAA averages them, so large
+values look grainy. Unlike shadow maps, one-sided walls block the sun too (rt-lab's side
+walls leaked light before). About 0.08 ms in the rt-lab editor view. Falls back to shadow
+maps without ray queries, with MSAA, and for transparent surfaces and particles. Not yet:
+point and spot lights, skipping the directional shadow maps when nothing needs them, a
+denoiser for large lights, ray-traced AO.
+
 ### What wgpu 30 provides
 
 - Features: `EXPERIMENTAL_RAY_QUERY` (Vulkan, DX12 Tier 1.1 + SM 6.5, Metal),

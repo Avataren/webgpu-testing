@@ -408,11 +408,18 @@ pub(crate) struct LightsBuffer {
     pub(crate) bind_layout: wgpu::BindGroupLayout,
     last_lights: Option<LightsUniform>,
     last_shadows: Option<ShadowsUniform>,
+    /// The ray-traced shadow mask (binding 11), or a white 1x1 texture without one.
+    rt_shadow_mask: Option<wgpu::TextureView>,
+    _fallback_mask: wgpu::Texture,
+    fallback_mask_view: wgpu::TextureView,
+    /// Directional lights whose shadows the main pass reads from the mask (`counts.w`).
+    rt_shadow_bits: u32,
 }
 
 impl LightsBuffer {
     pub(crate) fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
     ) -> Self {
@@ -517,6 +524,16 @@ impl LightsBuffer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -534,6 +551,28 @@ impl LightsBuffer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        // Fully lit: what the main pass reads when no frame traced shadows.
+        let fallback_mask = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("RtShadowMaskFallback"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &[255; 4],
+        );
+        let fallback_mask_view = fallback_mask.create_view(&Default::default());
+
         let bind_group = Self::create_bind_group(
             device,
             &layout,
@@ -541,6 +580,7 @@ impl LightsBuffer {
             &shadow_buffer,
             shadows,
             environment,
+            &fallback_mask_view,
         );
 
         Self {
@@ -550,6 +590,10 @@ impl LightsBuffer {
             bind_layout: layout,
             last_lights: None,
             last_shadows: None,
+            rt_shadow_mask: None,
+            _fallback_mask: fallback_mask,
+            fallback_mask_view,
+            rt_shadow_bits: 0,
         }
     }
 
@@ -560,6 +604,7 @@ impl LightsBuffer {
         shadow_buffer: &wgpu::Buffer,
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
+        rt_shadow_mask: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("LightsBindGroup"),
@@ -609,6 +654,10 @@ impl LightsBuffer {
                     binding: 10,
                     resource: wgpu::BindingResource::Sampler(environment.sampler()),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: wgpu::BindingResource::TextureView(rt_shadow_mask),
+                },
             ],
         })
     }
@@ -624,6 +673,8 @@ impl LightsBuffer {
         if should_update_lights {
             queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
             self.last_lights = Some(data);
+            // The upload wrote counts.w (the ray-traced shadow bits) as 0.
+            self.rt_shadow_bits = 0;
         }
 
         let shadow_data = ShadowsUniform::from_data(lights);
@@ -639,6 +690,27 @@ impl LightsBuffer {
         }
     }
 
+    /// Which directional lights (bit i = light i) take their shadow from the ray-traced
+    /// mask this frame (`lights.counts.w`).
+    pub(crate) fn set_rt_shadow_bits(&mut self, queue: &wgpu::Queue, bits: u32) {
+        if bits != self.rt_shadow_bits {
+            queue.write_buffer(&self.buffer, 12, bytemuck::bytes_of(&bits));
+            self.rt_shadow_bits = bits;
+        }
+    }
+
+    /// Bind `mask` as the ray-traced shadow mask (None: the white fallback).
+    pub(crate) fn set_rt_shadow_mask(
+        &mut self,
+        device: &wgpu::Device,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+        mask: Option<&wgpu::TextureView>,
+    ) {
+        self.rt_shadow_mask = mask.cloned();
+        self.rebuild_bind_group(device, shadows, environment);
+    }
+
     pub(crate) fn rebuild_bind_group(
         &mut self,
         device: &wgpu::Device,
@@ -652,6 +724,9 @@ impl LightsBuffer {
             &self.shadow_buffer,
             shadows,
             environment,
+            self.rt_shadow_mask
+                .as_ref()
+                .unwrap_or(&self.fallback_mask_view),
         );
     }
 }

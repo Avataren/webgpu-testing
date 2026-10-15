@@ -16,6 +16,22 @@ fn calculate_scene_lighting(
     metallic: f32,
     roughness: f32
 ) -> vec3<f32> {
+    return calculate_scene_lighting_at(
+        world_pos, N, V, base_color, metallic, roughness, vec2<f32>(-1.0)
+    );
+}
+
+// The same for the opaque surface at framebuffer `pixel`, whose directional shadows may
+// come from the ray-traced shadow mask instead of the shadow maps (pixel.x < 0: never).
+fn calculate_scene_lighting_at(
+    world_pos: vec3<f32>,
+    N: vec3<f32>,
+    V: vec3<f32>,
+    base_color: vec3<f32>,
+    metallic: f32,
+    roughness: f32,
+    pixel: vec2<f32>,
+) -> vec3<f32> {
     var Lo = vec3<f32>(0.0);
 
     // Directional lights
@@ -25,7 +41,9 @@ fn calculate_scene_lighting(
         let light_dir = normalize(-light.direction.xyz);
         let light_color = light.color_intensity.xyz;
         let light_intensity = light.color_intensity.w;
-        let shadow = sample_directional_shadow(i, world_pos, N, light_dir);
+        let map_shadow = sample_directional_shadow(i, world_pos, N, light_dir);
+        let traced = rt_directional_shadow(i, pixel);
+        let shadow = select(map_shadow, traced, traced >= 0.0);
         Lo += shadow * calculate_light_contribution(
             N, V, light_dir, base_color, metallic, roughness,
             light_color, light_intensity

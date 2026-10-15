@@ -285,9 +285,12 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     // Calculate lighting using imported functions
     let V = normalize(globals.camera_pos - in.world_pos);
     
-    // This function is from lighting_with_shadows.wgsl
-    let Lo = calculate_scene_lighting(
-        in.world_pos, N, V, base_color.rgb, metallic, roughness
+    // This function is from lighting_with_shadows.wgsl. Opaque surfaces are the ones the
+    // ray-traced shadow mask was traced for (from the depth prepass).
+    let opaque = (material_flags & FLAG_ALPHA_BLEND) == 0u;
+    let Lo = calculate_scene_lighting_at(
+        in.world_pos, N, V, base_color.rgb, metallic, roughness,
+        select(vec2<f32>(-1.0), in.pos.xy, opaque)
     );
     
     // This function is from environment.wgsl

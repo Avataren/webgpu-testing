@@ -211,6 +211,9 @@ pub struct Renderer {
     /// Acceleration structures for ray-traced effects; `None` without hardware ray
     /// tracing (or when its passes failed to build).
     ray_tracing: Option<crate::renderer::raytracing::RayTracingScene>,
+    /// Ray-traced directional shadows; `None` without hardware ray tracing (or when the
+    /// pass failed to build).
+    rt_shadows: Option<crate::renderer::raytracing::RtShadowStage>,
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
     gpu_timer: crate::renderer::gpu_timer::GpuTimer,
@@ -256,7 +259,8 @@ impl Renderer {
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
         let shadows =
             ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
-        let lights_buffer = LightsBuffer::new(&context.device, &shadows, &environment);
+        let lights_buffer =
+            LightsBuffer::new(&context.device, &context.queue, &shadows, &environment);
         let (pipeline, texture_binder) = RenderPipeline::new(
             &context,
             &camera_buffer,
@@ -317,6 +321,17 @@ impl Renderer {
         } else {
             None
         };
+        let rt_shadows = ray_tracing.as_ref().and_then(|scene| {
+            crate::renderer::raytracing::RtShadowStage::new(
+                &context.device,
+                &camera_buffer.bind_layout,
+                scene.layout(),
+            )
+            .inspect_err(|error| {
+                log::warn!("Ray-traced shadows unavailable, using shadow maps: {error}")
+            })
+            .ok()
+        });
 
         Self {
             context,
@@ -331,6 +346,7 @@ impl Renderer {
             postprocess,
             skinning,
             ray_tracing,
+            rt_shadows,
             gpu_timer,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
@@ -768,6 +784,17 @@ impl Renderer {
         frame_state.stats.skinned_instances = self.skinning.instance_count;
         frame_state.stats.skinned_vertices = self.skinning.vertex_count;
         self.gpu_timer.mark(&mut frame_state.encoder, "skinning");
+        // Acceleration structures before the passes that trace against them.
+        let rt_shadows_wanted = self.rt_shadows.is_some()
+            && self.postprocess.settings().rt_shadows.enabled
+            && self.context.sample_count == 1;
+        let ray_traced = self.update_ray_tracing(
+            &mut frame_state,
+            assets,
+            self.postprocess.wants_ray_traced_reflections() || rt_shadows_wanted,
+        );
+        self.gpu_timer
+            .mark(&mut frame_state.encoder, "acceleration_structures");
 
         self.run_shadow_pass(
             &mut frame_state,
@@ -781,6 +808,7 @@ impl Renderer {
         self.run_depth_prepass(&mut frame_state, assets);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "depth_prepass");
+        self.run_rt_shadows(&mut frame_state, &lights, ray_traced && rt_shadows_wanted);
         self.run_main_color_pass(&mut frame_state, environment, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "main");
         self.run_custom_stage(
@@ -793,9 +821,6 @@ impl Renderer {
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "transparent");
-        let ray_traced = self.update_ray_tracing(&mut frame_state, assets);
-        self.gpu_timer
-            .mark(&mut frame_state.encoder, "acceleration_structures");
         self.execute_postprocess(&mut frame_state, ray_traced);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "post_process");
@@ -1168,11 +1193,16 @@ impl Renderer {
 
     /// Build this frame's acceleration structures when a ray-traced effect will use
     /// them. Returns whether they are ready.
-    fn update_ray_tracing(&mut self, frame: &mut FrameState, assets: &Assets) -> bool {
+    fn update_ray_tracing(
+        &mut self,
+        frame: &mut FrameState,
+        assets: &Assets,
+        wanted: bool,
+    ) -> bool {
         let Some(scene) = self.ray_tracing.as_mut() else {
             return false;
         };
-        if !self.postprocess.wants_ray_traced_reflections() {
+        if !wanted {
             return false;
         }
         scene.update(
@@ -1186,6 +1216,46 @@ impl Renderer {
         );
         frame.stats.ray_tracing = Some(scene.stats());
         scene.bind_group().is_some()
+    }
+
+    /// Trace the directional shadow mask after the depth prepass (when `active`) and tell
+    /// the main pass which lights read it; otherwise they all use shadow maps.
+    fn run_rt_shadows(&mut self, frame: &mut FrameState, lights: &LightsData, active: bool) {
+        let mut bits = 0;
+        if let (true, Some(stage), Some(scene)) = (
+            active,
+            self.rt_shadows.as_mut(),
+            self.ray_tracing
+                .as_ref()
+                .and_then(|scene| scene.bind_group()),
+        ) {
+            let depth = &self.context.depth;
+            if stage.ensure_targets(
+                &self.context.device,
+                depth.texture.size(),
+                &depth.sampled_view,
+            ) {
+                self.lights_buffer.set_rt_shadow_mask(
+                    &self.context.device,
+                    &self.shadows,
+                    &self.environment,
+                    stage.mask_view(),
+                );
+            }
+            bits = stage.trace(
+                &mut frame.encoder,
+                &self.context.queue,
+                &self.camera_buffer.bind_group,
+                scene,
+                lights,
+                self.postprocess.settings().rt_shadows.softness,
+                self.jitter_index,
+                frame.render_region,
+            );
+            self.gpu_timer.mark(&mut frame.encoder, "rt_shadows");
+        }
+        self.lights_buffer
+            .set_rt_shadow_bits(&self.context.queue, bits);
     }
 
     fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool) {

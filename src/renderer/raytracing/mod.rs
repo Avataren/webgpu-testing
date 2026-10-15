@@ -7,8 +7,10 @@
 //! test the fallbacks on hardware that has them.
 
 mod scene;
+mod shadows;
 
 pub(crate) use scene::RayTracingScene;
+pub(crate) use shadows::RtShadowStage;
 
 use std::fmt;
 

@@ -31,6 +31,7 @@ pub struct PostProcessSettings {
     pub bloom: BloomSettings,
     pub ssao: SsaoSettings,
     pub ssr: ReflectionSettings,
+    pub rt_shadows: RayTracedShadowSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
@@ -60,6 +61,7 @@ impl PostProcessSettings {
             bloom: self.bloom.blend(&other.bloom, t),
             ssao: self.ssao.blend(&other.ssao, t),
             ssr: self.ssr.blend(&other.ssr, t),
+            rt_shadows: self.rt_shadows.blend(&other.rt_shadows, t),
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -129,6 +131,7 @@ impl PostProcessSettings {
         ssr.max_distance = finite_or(ssr.max_distance, 20.0).clamp(0.1, 1000.0);
         ssr.thickness = finite_or(ssr.thickness, 0.4).clamp(0.01, 100.0);
         ssr.blur = finite_or(ssr.blur, 0.5).clamp(0.0, 1.0);
+        self.rt_shadows.softness = finite_or(self.rt_shadows.softness, 0.5).clamp(0.0, 10.0);
         let blur = &mut self.motion_blur;
         blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
         blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
@@ -710,6 +713,38 @@ impl ReflectionSettings {
             blur: lerp(from.blur, to.blur, t),
             ray_traced: pick(from.ray_traced, to.ray_traced, t),
             full_resolution: pick(from.full_resolution, to.full_resolution, t),
+        }
+    }
+}
+
+/// Shadows of directional lights (the sun) traced per pixel with hardware ray tracing
+/// instead of read from shadow maps: exact at any distance and resolution, with no acne or
+/// light leaking. Needs a GPU with ray queries and no MSAA; otherwise (and for transparent
+/// surfaces and particles) shadow maps are used. Point and spot lights keep shadow maps.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RayTracedShadowSettings {
+    pub enabled: bool,
+    /// The light's apparent size in degrees: 0 casts hard shadows; the sun is about 0.5,
+    /// edges that soften with distance from the caster (one ray per pixel, smoothed by
+    /// TAA).
+    pub softness: f32,
+}
+
+impl Default for RayTracedShadowSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            softness: 0.5,
+        }
+    }
+}
+
+impl RayTracedShadowSettings {
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        Self {
+            enabled: pick(self.enabled, other.enabled, t),
+            softness: lerp(self.softness, other.softness, t),
         }
     }
 }

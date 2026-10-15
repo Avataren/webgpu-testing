@@ -3246,6 +3246,26 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Ray-traced shadows",
+            "rt_shadows",
+            Some(&mut settings.rt_shadows.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.slider_with(
+                    ui,
+                    "rt_shadows.softness",
+                    "Light size",
+                    &mut settings.rt_shadows.softness,
+                    0.0..=5.0,
+                    0.05,
+                    " deg",
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Reflections",
             "ssr",
             Some(&mut settings.ssr.enabled),

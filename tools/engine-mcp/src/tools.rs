@@ -776,6 +776,10 @@ pub fn tools() -> Vec<Tool> {
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
+                "rt_shadows": { "type": "object", "description": "Directional light (sun) shadows traced per pixel with hardware ray tracing instead of shadow maps: exact at any distance, no acne. Needs engine_info surface.ray_tracing and no MSAA; otherwise shadow maps", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "softness": { "type": "number", "description": "Light's apparent size in degrees: 0 hard shadows, 0.5 like the sun (soft edges smoothed by TAA)" }
+                }},
                 "ssr": { "type": "object", "description": "Reflections: smooth surfaces (low material roughness) reflect their surroundings as a blurred, glossy sheen. Screen-space (only what is on screen) unless ray_traced", "properties": {
                     "enabled": { "type": "boolean" },
                     "ray_traced": { "type": "boolean", "description": "Trace against the scene with hardware ray tracing (sees off-screen and hidden objects); falls back to screen space when engine_info surface.ray_tracing is unavailable" },
