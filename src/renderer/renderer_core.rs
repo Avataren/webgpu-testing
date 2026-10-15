@@ -163,6 +163,8 @@ pub struct RendererStats {
     pub skinned_vertices: u32,
     /// Acceleration structure counters when ray-traced effects ran this frame.
     pub ray_tracing: Option<crate::renderer::raytracing::RayTracingStats>,
+    /// The frame's lighting was path traced.
+    pub path_traced: bool,
 }
 
 impl RendererStats {
@@ -334,6 +336,17 @@ impl Renderer {
             if let Err(error) = postprocess.enable_ray_traced_ao(&context.device, scene.layout()) {
                 log::warn!("Ray-traced ambient occlusion unavailable, using screen space: {error}");
             }
+            let textures_layout = (texture_binder.global_bind_group().is_some()
+                && context.device.limits().max_bind_groups >= 5)
+                .then(|| texture_binder.bind_layout());
+            if let Err(error) = postprocess.enable_path_tracing(
+                &context.device,
+                &lights_buffer.bind_layout,
+                scene.layout(),
+                textures_layout,
+            ) {
+                log::warn!("Path tracing unavailable: {error}");
+            }
         }
         let rt_shadows = ray_tracing.as_ref().and_then(|scene| {
             crate::renderer::raytracing::RtShadowStage::new(
@@ -432,6 +445,11 @@ impl Renderer {
     /// Whether hardware ray tracing is available for ray-traced effects, or why not.
     pub fn ray_tracing_support(&self) -> &crate::renderer::raytracing::RayTracingSupport {
         &self.ray_tracing_support
+    }
+
+    /// Whether lighting can be path traced (hardware ray tracing, no MSAA).
+    pub fn path_tracing_available(&self) -> bool {
+        self.ray_tracing.is_some() && self.postprocess.path_tracing_available()
     }
 
     pub fn supports_bindless_textures(&self) -> bool {
@@ -725,6 +743,7 @@ impl Renderer {
                 view_inv,
                 view_proj: unjittered_vp,
                 view_proj_inv: unjittered_vp.inverse(),
+                unjittered_view_proj: unjittered_vp,
                 position: camera.position(),
                 near: camera.near(),
                 far: camera.far(),
@@ -884,6 +903,12 @@ impl Renderer {
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, ray_traced && rt_shadows_wanted);
         self.run_main_color_pass(&mut frame_state, environment, assets);
+        // Path traced lighting replaces the main pass's on opaque surfaces, before
+        // particles and transparent surfaces are drawn over them.
+        if ray_traced && self.postprocess.wants_path_tracing() {
+            self.gpu_timer.mark(&mut frame_state.encoder, "main");
+            frame_state.stats.path_traced = self.run_path_tracing(&mut frame_state, &lights);
+        }
         // What particles and transparent surfaces change is reactive for FSR; where
         // particles cover the screen, ray-traced reflections trace them instead.
         let particles_traced = ray_traced && !self.ray_traced_particles.is_empty();
@@ -1413,6 +1438,33 @@ impl Renderer {
         }
         self.lights_buffer
             .set_rt_shadow_bits(&self.context.queue, bits);
+    }
+
+    fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> bool {
+        let Some(rt_scene) = self.ray_tracing.as_ref() else {
+            return false;
+        };
+        let Some(scene) = rt_scene.bind_group() else {
+            return false;
+        };
+        let ray_tracing = crate::renderer::raytracing::RayTracingFrame {
+            lights: &self.lights_buffer.bind_group,
+            scene,
+            textures: self.texture_binder.global_bind_group(),
+            refraction: false,
+        };
+        self.postprocess.path_trace(
+            &mut frame.encoder,
+            &self.context.device,
+            &self.context.queue,
+            &ray_tracing,
+            crate::renderer::postprocess::CausticSources {
+                casters: rt_scene.caustic_casters(),
+                lights,
+            },
+            frame.scene_region,
+            &mut self.gpu_timer,
+        )
     }
 
     fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool, refraction: bool) {

@@ -144,6 +144,9 @@ fn show_page(
             section(ui, "Ray tracing", |ui| {
                 ray_tracing_rows(ui, settings, capabilities)
             });
+            section(ui, "Path tracing", |ui| {
+                path_tracing_rows(ui, settings, capabilities)
+            });
             if !capabilities.ray_tracing {
                 ui.label(
                     egui::RichText::new(
@@ -343,12 +346,15 @@ fn ray_tracing_rows(
     );
     ui.end_row();
 
+    // Path tracing traces its own reflections and occlusion.
+    let path_traced = capabilities.path_tracing && settings.path_tracing;
     effect_row(
         ui,
         "Reflections",
         "engine_settings_reflections",
         &mut settings.reflections,
         rt,
+        !path_traced,
     );
     effect_row(
         ui,
@@ -356,6 +362,7 @@ fn ray_tracing_rows(
         "engine_settings_ambient_occlusion",
         &mut settings.ambient_occlusion,
         rt,
+        !path_traced,
     );
 
     ui.label("Ray-traced refraction");
@@ -366,25 +373,105 @@ fn ray_tracing_rows(
     ui.end_row();
 }
 
-fn effect_row(ui: &mut egui::Ui, label: &str, id: &str, value: &mut EffectQuality, rt: bool) {
+fn effect_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    id: &str,
+    value: &mut EffectQuality,
+    rt: bool,
+    enabled: bool,
+) {
     let name = |quality: EffectQuality| match quality {
         EffectQuality::Off => "Off",
         EffectQuality::ScreenSpace => "Screen space",
         EffectQuality::RayTraced => "Ray traced",
     };
     ui.label(label);
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(name(*value))
-        .show_ui(ui, |ui| {
-            for quality in [
-                EffectQuality::Off,
-                EffectQuality::ScreenSpace,
-                EffectQuality::RayTraced,
-            ] {
-                ui.add_enabled_ui(rt || quality != EffectQuality::RayTraced, |ui| {
-                    ui.selectable_value(value, quality, name(quality));
-                });
-            }
-        });
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(name(*value))
+            .show_ui(ui, |ui| {
+                for quality in [
+                    EffectQuality::Off,
+                    EffectQuality::ScreenSpace,
+                    EffectQuality::RayTraced,
+                ] {
+                    ui.add_enabled_ui(rt || quality != EffectQuality::RayTraced, |ui| {
+                        ui.selectable_value(value, quality, name(quality));
+                    });
+                }
+            });
+    })
+    .response
+    .on_disabled_hover_text("Part of path tracing");
+    ui.end_row();
+}
+
+fn path_tracing_rows(
+    ui: &mut egui::Ui,
+    settings: &mut GraphicsSettings,
+    capabilities: &GraphicsCapabilities,
+) {
+    let available = capabilities.path_tracing;
+    ui.label("Path tracing");
+    ui.add_enabled(
+        available,
+        egui::Checkbox::without_text(&mut settings.path_tracing),
+    )
+    .on_hover_text(
+        "Light traced per pixel and denoised: soft shadows, bounced light, glowing surfaces \
+         lighting their surroundings. Demanding; reflections and ambient occlusion are part of it.",
+    )
+    .on_disabled_hover_text(if capabilities.ray_tracing {
+        "Path tracing needs MSAA off"
+    } else {
+        "Path tracing needs hardware ray tracing"
+    });
+    ui.end_row();
+
+    let on = available && settings.path_tracing;
+    ui.label("Bounces");
+    ui.add_enabled(
+        on,
+        egui::Slider::new(
+            &mut settings.path_tracing_bounces,
+            1..=crate::renderer::postprocess::PathTracingSettings::MAX_BOUNCES,
+        ),
+    )
+    .on_hover_text("Surfaces light bounces off: more fills enclosed spaces, at a cost per bounce");
+    ui.end_row();
+
+    ui.label("Samples per pixel");
+    ui.add_enabled_ui(on, |ui| {
+        egui::ComboBox::from_id_salt("engine_settings_path_tracing_samples")
+            .selected_text(settings.path_tracing_samples.to_string())
+            .show_ui(ui, |ui| {
+                for samples in [1, 2, 4, 8] {
+                    ui.selectable_value(
+                        &mut settings.path_tracing_samples,
+                        samples,
+                        samples.to_string(),
+                    );
+                }
+            });
+    })
+    .response
+    .on_hover_text("Paths traced per pixel each frame: less noise, proportionally slower");
+    ui.end_row();
+
+    ui.label("Denoiser");
+    ui.add_enabled(
+        on,
+        egui::Checkbox::without_text(&mut settings.path_tracing_denoiser),
+    )
+    .on_hover_text("Spatiotemporal denoiser (ReLAX-style); off shows the raw samples");
+    ui.end_row();
+
+    ui.label("Caustics");
+    ui.add_enabled(
+        on,
+        egui::Checkbox::without_text(&mut settings.path_tracing_caustics),
+    )
+    .on_hover_text("Light focused through glass and off mirrors onto the surfaces around them");
     ui.end_row();
 }

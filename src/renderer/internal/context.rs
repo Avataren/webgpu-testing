@@ -187,6 +187,14 @@ impl RenderContext {
             rt_limits.max_bind_groups = rt_limits
                 .max_bind_groups
                 .max(adapter.limits().max_bind_groups.min(5));
+            // The path tracer's denoiser writes several targets per pass.
+            rt_limits.max_storage_textures_per_shader_stage =
+                rt_limits.max_storage_textures_per_shader_stage.max(
+                    adapter
+                        .limits()
+                        .max_storage_textures_per_shader_stage
+                        .min(8),
+                );
             match adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("Device"),

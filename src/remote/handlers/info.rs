@@ -33,6 +33,7 @@ pub(super) fn engine_info(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "hdr_output": ctx.gpu.renderer.hdr_display().mode.label(),
             "sample_count": ctx.gpu.renderer.sample_count(),
             "ray_tracing": ctx.gpu.renderer.ray_tracing_support().to_string(),
+            "path_tracing": ctx.gpu.renderer.path_tracing_available(),
         },
         "project_root": crate::project::active_project_root().map(|path| path.display().to_string()),
         "working_directory": std::env::current_dir().ok().map(|path| path.display().to_string()),
@@ -109,6 +110,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "transparent_draw_calls": stats.transparent_draw_calls,
             "shadow_draw_calls": stats.shadow_draw_calls,
             "render_scale": ctx.gpu.renderer.render_scale(),
+            "path_traced": stats.path_traced,
             "ray_tracing": stats.ray_tracing.map(|rt| json!({
                 "tlas_instances": rt.instances,
                 "meshes": rt.meshes,
@@ -120,7 +122,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),
                 "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
-                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
+                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
             })),
         },
         "assets": {

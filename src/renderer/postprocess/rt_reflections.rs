@@ -53,6 +53,7 @@ pub(crate) fn rt_reflections_shader_source(textures: bool) -> String {
         .with_lighting()
         .with_environment()
         .with_module(textures_module)
+        .with_module(include_str!("../../shader/postprocess/rt_common.wgsl"))
         .with_module(include_str!("../../shader/postprocess/rt_reflections.wgsl"))
         .build_modules_only();
     format!("enable wgpu_ray_query;\n\n{modules}")

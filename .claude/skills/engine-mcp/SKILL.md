@@ -95,6 +95,16 @@ engine you launched; save first).
   them back after testing), and `postprocess_get`'s `rendered` shows the result. To
   compare those effects without changing the player's choice, use `visual_capture`
   variants, which apply last. `show_fps` draws the yellow FPS readout (on by default).
+- Path tracing (`graphics_set {path_tracing: true, path_tracing_bounces, path_tracing_samples,
+  path_tracing_denoiser}`, or a volume's `path_tracing` group) replaces the raster lighting of
+  opaque surfaces with denoised path-traced light; it needs `engine_info`
+  `surface.path_tracing`. `engine_stats` `renderer.path_traced` confirms a frame used it, and
+  `renderer.gpu` splits out `path_tracing` (the trace), `caustics` and `denoise`.
+  Caustics (`path_tracing_caustics`, on by default) trace photons from point, spot and
+  directional lights through glass (`transmission`) and off smooth metals (roughness
+  <= 0.2) onto diffuse surfaces; they show best on light, matte receivers. Glass casts a
+  shadow while they are on. Bounce rays reuse last frame's finished image where it shows
+  what they hit (a radiance cache), so look at a still view for a second before judging.
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`

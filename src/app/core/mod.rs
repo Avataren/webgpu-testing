@@ -396,6 +396,7 @@ impl AppCore {
             graphics.sync_namespace();
             graphics.capabilities = crate::graphics_settings::GraphicsCapabilities {
                 ray_tracing: renderer.ray_tracing_support().is_available(),
+                path_tracing: renderer.path_tracing_available(),
                 upscaling: renderer.sample_count() == 1,
                 vsync_optional: renderer.vsync_optional(),
             };

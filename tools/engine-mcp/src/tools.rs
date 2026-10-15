@@ -729,6 +729,11 @@ pub fn tools() -> Vec<Tool> {
                 "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
                 "ambient_occlusion": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
                 "ray_traced_refraction": { "type": "boolean" },
+                "path_tracing": { "type": "boolean", "description": "Path-traced lighting with a denoiser instead of raster lighting (soft shadows, bounced light, emissive surfaces light the scene; reflections and AO included). Needs capabilities.path_tracing (hardware ray tracing, no MSAA). Demanding: check engine_stats renderer.gpu path_tracing/denoise" },
+                "path_tracing_bounces": { "type": "integer", "description": "Indirect bounces per path, 1-8 (default 2)" },
+                "path_tracing_samples": { "type": "integer", "description": "Paths per pixel per frame, 1-8 (default 1)" },
+                "path_tracing_denoiser": { "type": "boolean", "description": "Denoise the paths (default true); off shows the raw noisy samples" },
+                "path_tracing_caustics": { "type": "boolean", "description": "Caustics: light focused through glass (transmission > 0) and off smooth metals onto other surfaces, traced as photons from the lights (default true); glass then casts a shadow with the focused light in it" },
                 "show_fps": { "type": "boolean", "description": "Yellow frame rate in the corner of the view" },
                 "open": { "type": "boolean", "description": "Show or hide the settings page" },
                 "reset": { "type": "boolean", "description": "Restore the defaults first" }
@@ -809,6 +814,15 @@ pub fn tools() -> Vec<Tool> {
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
                 "refraction": { "type": "object", "description": "Light through transmissive materials (material transmission > 0)", "properties": {
                     "ray_traced": { "type": "boolean", "description": "Refract with hardware ray tracing (bending, internal reflection, absorption; default true); off or without engine_info surface.ray_tracing they are drawn see-through" }
+                }},
+                "path_tracing": { "type": "object", "description": "Path-traced lighting for opaque surfaces instead of the main pass's (direct light with soft shadows sized by rt_shadows.softness/light_radius, multi-bounce diffuse and specular light, emissive surfaces lighting the scene, glass), denoised spatiotemporally (ReLAX-style). Reflections and SSAO stand down while it runs. Needs engine_info surface.path_tracing; engine_stats renderer.path_traced says whether a frame used it. The player's graphics settings control enabled/bounces/samples/denoiser", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "bounces": { "type": "integer", "description": "Indirect bounces per path, 1-8 (default 2)" },
+                    "samples": { "type": "integer", "description": "Paths per pixel per frame, 1-8 (default 1)" },
+                    "denoiser": { "type": "boolean", "description": "Denoise (default true); off shows raw samples" },
+                    "max_history": { "type": "integer", "description": "Most frames the denoiser accumulates, 1-256 (default 32): more is smoother, slower to follow changing light" },
+                    "caustics": { "type": "boolean", "description": "Caustic photons through glass and off smooth metals (default true); point, spot and directional lights only (not emissive surfaces)" },
+                    "caustic_photons": { "type": "integer", "description": "Photons per frame shared by every light and every glass/mirror object, 1024-4194304 (default 262144); engine_stats renderer.gpu caustics shows their cost" }
                 }},
                 "rt_shadows": { "type": "object", "description": "Shadows of shadow-casting lights (up to 4 directional, 4 point, 4 spot) traced per pixel with hardware ray tracing instead of shadow maps: exact at any distance, no acne or leaks. Needs engine_info surface.ray_tracing and no MSAA; otherwise shadow maps", "properties": {
                     "enabled": { "type": "boolean" },

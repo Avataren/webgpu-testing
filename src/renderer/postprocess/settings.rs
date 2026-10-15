@@ -33,6 +33,7 @@ pub struct PostProcessSettings {
     pub ssr: ReflectionSettings,
     pub rt_shadows: RayTracedShadowSettings,
     pub refraction: RefractionSettings,
+    pub path_tracing: PathTracingSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
@@ -67,6 +68,8 @@ impl PostProcessSettings {
             refraction: RefractionSettings {
                 ray_traced: pick(self.refraction.ray_traced, other.refraction.ray_traced, t),
             },
+            // Switched rather than blended: path tracing on or off changes the whole frame.
+            path_tracing: pick(self.path_tracing, other.path_tracing, t),
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -141,6 +144,14 @@ impl PostProcessSettings {
         self.rt_shadows.softness = finite_or(self.rt_shadows.softness, 0.5).clamp(0.0, 10.0);
         self.rt_shadows.light_radius =
             finite_or(self.rt_shadows.light_radius, 0.05).clamp(0.0, 10.0);
+        let path = &mut self.path_tracing;
+        path.bounces = path.bounces.clamp(1, PathTracingSettings::MAX_BOUNCES);
+        path.samples = path.samples.clamp(1, PathTracingSettings::MAX_SAMPLES);
+        path.max_history = path.max_history.clamp(1, PathTracingSettings::MAX_HISTORY);
+        path.caustic_photons = path.caustic_photons.clamp(
+            PathTracingSettings::MIN_CAUSTIC_PHOTONS,
+            PathTracingSettings::MAX_CAUSTIC_PHOTONS,
+        );
         let blur = &mut self.motion_blur;
         blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
         blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
@@ -748,6 +759,57 @@ pub struct RefractionSettings {
 impl Default for RefractionSettings {
     fn default() -> Self {
         Self { ray_traced: true }
+    }
+}
+
+/// Path tracing: every opaque surface's light traced with hardware ray tracing instead of
+/// the main pass's lighting (direct light with soft shadows sized as `rt_shadows` sizes
+/// them, bounced diffuse and specular light, emissive surfaces lighting the scene, glass),
+/// then denoised. Reflections and ambient occlusion are part of it, so their passes stand
+/// down while it runs. Needs a GPU with ray queries and no MSAA; otherwise the main pass
+/// lights the scene as usual.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PathTracingSettings {
+    pub enabled: bool,
+    /// Surfaces a path bounces off after the first: 1 is one bounce of indirect light,
+    /// more lights enclosed spaces fuller (at a cost per bounce).
+    pub bounces: u32,
+    /// Paths per pixel per frame (each a diffuse and a specular one).
+    pub samples: u32,
+    /// Denoise the paths (a spatiotemporal filter after NVIDIA's ReLAX); off shows the
+    /// raw samples.
+    pub denoiser: bool,
+    /// Most frames the denoiser accumulates: more is smoother but follows changing light
+    /// more slowly.
+    pub max_history: u32,
+    /// Light focused through glass and off mirrors onto other surfaces, traced from the
+    /// lights as photons (glass then casts a shadow, with the focused light inside it).
+    pub caustics: bool,
+    /// Caustic photons traced per frame, shared between every light and every glass or
+    /// mirror surface.
+    pub caustic_photons: u32,
+}
+
+impl PathTracingSettings {
+    pub const MAX_BOUNCES: u32 = 8;
+    pub const MAX_SAMPLES: u32 = 8;
+    pub const MAX_HISTORY: u32 = 256;
+    pub const MIN_CAUSTIC_PHOTONS: u32 = 1024;
+    pub const MAX_CAUSTIC_PHOTONS: u32 = 4 * 1024 * 1024;
+}
+
+impl Default for PathTracingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bounces: 2,
+            samples: 1,
+            denoiser: true,
+            max_history: 32,
+            caustics: true,
+            caustic_photons: 256 * 1024,
+        }
     }
 }
 

@@ -63,6 +63,18 @@ pub struct GraphicsSettings {
     pub ambient_occlusion: EffectQuality,
     /// Light bends through glass and gems (otherwise they are drawn see-through).
     pub ray_traced_refraction: bool,
+    /// Path-traced lighting with a denoiser instead of the raster lighting: soft shadows,
+    /// bounced light, emissive surfaces lighting the scene. Reflections and ambient
+    /// occlusion come with it.
+    pub path_tracing: bool,
+    /// Indirect bounces per path (1 to 8).
+    pub path_tracing_bounces: u32,
+    /// Paths per pixel per frame (1 to 8).
+    pub path_tracing_samples: u32,
+    /// Denoise the paths (off shows the raw samples).
+    pub path_tracing_denoiser: bool,
+    /// Light focused through glass and off mirrors (caustic photons).
+    pub path_tracing_caustics: bool,
     /// The frame rate in the corner of the view.
     pub show_fps: bool,
 }
@@ -81,6 +93,11 @@ impl Default for GraphicsSettings {
             reflections: EffectQuality::RayTraced,
             ambient_occlusion: EffectQuality::RayTraced,
             ray_traced_refraction: true,
+            path_tracing: false,
+            path_tracing_bounces: 2,
+            path_tracing_samples: 1,
+            path_tracing_denoiser: true,
+            path_tracing_caustics: true,
             show_fps: true,
         }
     }
@@ -108,7 +125,7 @@ impl GraphicsSettings {
 
     /// Post-processing settings (dotted paths) these replace: the scene's volumes set
     /// them in vain.
-    pub const CONTROLLED_PATHS: [&'static str; 8] = [
+    pub const CONTROLLED_PATHS: [&'static str; 13] = [
         "anti_aliasing",
         "upscaling",
         "rt_shadows.enabled",
@@ -117,6 +134,11 @@ impl GraphicsSettings {
         "ssao.enabled",
         "ssao.ray_traced",
         "refraction.ray_traced",
+        "path_tracing.enabled",
+        "path_tracing.bounces",
+        "path_tracing.samples",
+        "path_tracing.denoiser",
+        "path_tracing.caustics",
     ];
 
     /// `post`, the scene's post-processing, with the player's choices in place.
@@ -131,6 +153,11 @@ impl GraphicsSettings {
         post.ssao.enabled = self.ambient_occlusion != EffectQuality::Off;
         post.ssao.ray_traced = self.ambient_occlusion == EffectQuality::RayTraced;
         post.refraction.ray_traced = self.ray_traced_refraction;
+        post.path_tracing.enabled = self.path_tracing;
+        post.path_tracing.bounces = self.path_tracing_bounces;
+        post.path_tracing.samples = self.path_tracing_samples;
+        post.path_tracing.denoiser = self.path_tracing_denoiser;
+        post.path_tracing.caustics = self.path_tracing_caustics;
         post
     }
 
@@ -143,6 +170,13 @@ impl GraphicsSettings {
             1.0,
         );
         self.sharpness = finite_or(self.sharpness, 0.5).clamp(0.0, 1.0);
+        use crate::renderer::postprocess::PathTracingSettings;
+        self.path_tracing_bounces = self
+            .path_tracing_bounces
+            .clamp(1, PathTracingSettings::MAX_BOUNCES);
+        self.path_tracing_samples = self
+            .path_tracing_samples
+            .clamp(1, PathTracingSettings::MAX_SAMPLES);
         self.window_size = self
             .window_size
             .filter(|size| size[0] >= 320 && size[1] >= 200)
@@ -156,6 +190,8 @@ impl GraphicsSettings {
 pub struct GraphicsCapabilities {
     /// Hardware ray tracing (otherwise ray-traced effects fall back to raster ones).
     pub ray_tracing: bool,
+    /// Path tracing can run (hardware ray tracing and no MSAA).
+    pub path_tracing: bool,
     /// Upscaling works (it does not with MSAA, which renders at full resolution).
     pub upscaling: bool,
     /// Present modes the surface offers besides vsync (an off switch for vsync).
@@ -281,18 +317,29 @@ mod tests {
         assert!(applied.ssr.enabled && !applied.ssr.ray_traced);
         assert!(!applied.ssao.enabled);
         assert!(applied.rt_shadows.enabled);
+        assert!(!applied.path_tracing.enabled);
+        let path_traced = GraphicsSettings {
+            path_tracing: true,
+            path_tracing_bounces: 3,
+            path_tracing_denoiser: false,
+            ..GraphicsSettings::default()
+        }
+        .apply(PostProcessSettings::default());
+        assert!(path_traced.path_tracing.enabled && !path_traced.path_tracing.denoiser);
+        assert_eq!(path_traced.path_tracing.bounces, 3);
     }
 
     #[test]
     fn loading_repairs_bad_values() {
         let settings: GraphicsSettings = serde_json::from_str(
-            r#"{"render_scale": 7, "sharpness": -1, "window_size": [10, 10]}"#,
+            r#"{"render_scale": 7, "sharpness": -1, "window_size": [10, 10], "path_tracing_bounces": 0}"#,
         )
         .unwrap();
         let settings = settings.sanitized();
         assert_eq!(settings.render_scale, 1.0);
         assert_eq!(settings.sharpness, 0.0);
         assert_eq!(settings.window_size, None);
+        assert_eq!(settings.path_tracing_bounces, 1);
         // Fields missing from an older file keep their defaults.
         assert!(settings.show_fps);
     }

@@ -71,6 +71,11 @@ const EXPAND_WORKGROUP_SIZE: u32 = 64;
 /// Most vertices one particle system may expand to (one dispatch row of workgroups).
 const MAX_PARTICLE_VERTICES: u64 = 65535 * EXPAND_WORKGROUP_SIZE as u64;
 const INITIAL_PARTICLE_MATERIALS: u64 = 16;
+/// Most surfaces caustic photons are aimed at (`CAUSTIC_MAX_CASTERS` in pt_caustics.wgsl).
+pub(crate) const MAX_CAUSTIC_CASTERS: usize = 32;
+/// Metals at least this metallic and this smooth reflect light into caustics.
+const CAUSTIC_MIN_METALLIC: f32 = 0.5;
+const CAUSTIC_MAX_ROUGHNESS: f32 = 0.2;
 
 /// Pool vertices are the engine's [`Vertex`] (`RtVertex` in rt_reflections.wgsl), so
 /// skinned vertex buffers copy straight in and BLAS builds read the position at offset 0.
@@ -211,6 +216,8 @@ struct MeshEntry {
     index_base: u32,
     needs_build: bool,
     last_used: u64,
+    /// Bounding sphere in object space (centre, radius), for caustic photons.
+    bounds: [f32; 4],
 }
 
 /// Growable storage buffer that keeps its contents when it grows.
@@ -308,6 +315,8 @@ pub(crate) struct RayTracingScene {
     instance_scratch: Vec<RtInstance>,
     /// Geometry, transform and mask of each entry in `instance_scratch`.
     instance_transforms: Vec<(GeometryKey, [f32; 12], u8)>,
+    /// World bounding spheres of what focuses light (see [`Self::caustic_casters`]).
+    casters: Vec<[f32; 4]>,
     layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     /// The materials buffer `bind_group` was made with (it is replaced when it grows).
@@ -354,10 +363,7 @@ impl RayTracingScene {
             meshes: HashMap::new(),
             particles: HashMap::new(),
             expand_pipeline: None,
-            particle_materials: Self::create_particle_materials(
-                device,
-                INITIAL_PARTICLE_MATERIALS,
-            ),
+            particle_materials: Self::create_particle_materials(device, INITIAL_PARTICLE_MATERIALS),
             particle_material_capacity: INITIAL_PARTICLE_MATERIALS,
             particle_material_scratch: Vec::new(),
             deformed_copies: Vec::new(),
@@ -368,6 +374,7 @@ impl RayTracingScene {
             instance_capacity: INITIAL_INSTANCES,
             instance_scratch: Vec::new(),
             instance_transforms: Vec::new(),
+            casters: Vec::new(),
             layout,
             bind_group: None,
             bound_materials: None,
@@ -412,6 +419,12 @@ impl RayTracingScene {
 
     pub(crate) fn bind_group(&self) -> Option<&wgpu::BindGroup> {
         self.bind_group.as_ref()
+    }
+
+    /// World bounding spheres (centre, radius) of the surfaces that focus light into
+    /// caustics: transmissive ones, then smooth metals, at most [`MAX_CAUSTIC_CASTERS`].
+    pub(crate) fn caustic_casters(&self) -> &[[f32; 4]] {
+        &self.casters
     }
 
     pub(crate) fn stats(&self) -> RayTracingStats {
@@ -463,6 +476,8 @@ impl RayTracingScene {
 
         self.instance_scratch.clear();
         self.instance_transforms.clear();
+        self.casters.clear();
+        let mut metal_casters = Vec::new();
         for batch in opaque {
             if batch.alpha_blend {
                 continue;
@@ -490,6 +505,18 @@ impl RayTracingScene {
                 } else {
                     MASK_OPAQUE
                 };
+                let caster = if material.is_transmissive() {
+                    Some(&mut self.casters)
+                } else if material.metallic_f32() >= CAUSTIC_MIN_METALLIC
+                    && material.roughness_f32() <= CAUSTIC_MAX_ROUGHNESS
+                {
+                    Some(&mut metal_casters)
+                } else {
+                    None
+                };
+                if let Some(list) = caster {
+                    list.push(world_sphere(entry.bounds, instance.transform.matrix()));
+                }
                 self.instance_scratch.push(RtInstance {
                     vertex_base: entry.vertex_base,
                     index_base: entry.index_base,
@@ -503,6 +530,10 @@ impl RayTracingScene {
                 ));
             }
         }
+        // Glass first: past the limit, mirrors are left out before it is.
+        self.casters.extend(metal_casters);
+        self.casters.truncate(MAX_CAUSTIC_CASTERS);
+
         // Particle systems: their geometry is in world space already. Each one's material
         // goes into the particle materials, in instance order.
         self.particle_material_scratch.clear();
@@ -521,9 +552,7 @@ impl RayTracingScene {
             let entry = &self.particles[&id];
             let (mask, flags) = match entry.blend {
                 RayTracedParticleBlend::Opaque => (MASK_PARTICLES_OPAQUE, INSTANCE_PARTICLES),
-                RayTracedParticleBlend::AlphaBlend => {
-                    (MASK_PARTICLES_BLENDED, INSTANCE_PARTICLES)
-                }
+                RayTracedParticleBlend::AlphaBlend => (MASK_PARTICLES_BLENDED, INSTANCE_PARTICLES),
                 RayTracedParticleBlend::Additive => (
                     MASK_PARTICLES_BLENDED,
                     INSTANCE_PARTICLES | INSTANCE_ADDITIVE,
@@ -610,21 +639,23 @@ impl RayTracingScene {
                     .filter(|entry| entry.count > 0)
                     .map(|entry| (entry, entry.build_size()))
                     .collect();
-            let particle_builds = particle_sizes.iter().map(|(entry, size)| wgpu::BlasBuildEntry {
-                blas: &entry.blas,
-                geometry: wgpu::BlasGeometries::TriangleGeometries(vec![
-                    wgpu::BlasTriangleGeometry {
-                        size,
-                        vertex_buffer: &self.vertices.buffer,
-                        first_vertex: entry.vertex_base,
-                        vertex_stride: VERTEX_STRIDE,
-                        index_buffer: Some(&self.indices.buffer),
-                        first_index: Some(entry.index_base),
-                        transform_buffer: None,
-                        transform_buffer_offset: None,
-                    },
-                ]),
-            });
+            let particle_builds = particle_sizes
+                .iter()
+                .map(|(entry, size)| wgpu::BlasBuildEntry {
+                    blas: &entry.blas,
+                    geometry: wgpu::BlasGeometries::TriangleGeometries(vec![
+                        wgpu::BlasTriangleGeometry {
+                            size,
+                            vertex_buffer: &self.vertices.buffer,
+                            first_vertex: entry.vertex_base,
+                            vertex_stride: VERTEX_STRIDE,
+                            index_buffer: Some(&self.indices.buffer),
+                            first_index: Some(entry.index_base),
+                            transform_buffer: None,
+                            transform_buffer_offset: None,
+                        },
+                    ]),
+                });
             let entries: Vec<wgpu::BlasBuildEntry<'_>> = pending
                 .iter()
                 .map(|entry| wgpu::BlasBuildEntry {
@@ -739,16 +770,16 @@ impl RayTracingScene {
             .iter()
             .any(|&index| index as u64 >= template_vertices)
         {
-            log::warn!("Ray tracing skips particle system {}: index out of range", system.id);
+            log::warn!(
+                "Ray tracing skips particle system {}: index out of range",
+                system.id
+            );
             return false;
         }
 
-        let (template_base, template_grew) = self.vertices.append(
-            device,
-            queue,
-            encoder,
-            bytemuck::cast_slice(&data.vertices),
-        );
+        let (template_base, template_grew) =
+            self.vertices
+                .append(device, queue, encoder, bytemuck::cast_slice(&data.vertices));
         // The output starts out zeroed; the expansion fills the slots in use each frame.
         let output = vec![0u8; (template_vertices * capacity * VERTEX_STRIDE) as usize];
         let (vertex_base, output_grew) = self.vertices.append(device, queue, encoder, &output);
@@ -1001,6 +1032,7 @@ impl RayTracingScene {
                 index_base: index_base as u32,
                 needs_build: true,
                 last_used: self.frame,
+                bounds: bounding_sphere(&data.vertices),
             },
         );
         vertices_grew || indices_grew
@@ -1087,6 +1119,37 @@ impl RayTracingScene {
 }
 
 /// A model matrix as the 3x4 row-major affine transform a TLAS instance takes.
+/// A sphere around `vertices` (the box's centre and farthest vertex).
+fn bounding_sphere(vertices: &[Vertex]) -> [f32; 4] {
+    let Some(first) = vertices.first() else {
+        return [0.0; 4];
+    };
+    let (mut min, mut max) = (Vec3::from(first.pos), Vec3::from(first.pos));
+    for vertex in vertices {
+        min = min.min(Vec3::from(vertex.pos));
+        max = max.max(Vec3::from(vertex.pos));
+    }
+    let center = (min + max) * 0.5;
+    let radius = vertices
+        .iter()
+        .map(|vertex| center.distance_squared(Vec3::from(vertex.pos)))
+        .fold(0.0f32, f32::max)
+        .sqrt();
+    [center.x, center.y, center.z, radius]
+}
+
+/// `sphere` (object space) moved into the world by `model`.
+fn world_sphere(sphere: [f32; 4], model: Mat4) -> [f32; 4] {
+    let center = model.transform_point3(Vec3::new(sphere[0], sphere[1], sphere[2]));
+    let scale = model
+        .x_axis
+        .truncate()
+        .length()
+        .max(model.y_axis.truncate().length())
+        .max(model.z_axis.truncate().length());
+    [center.x, center.y, center.z, sphere[3] * scale]
+}
+
 fn affine_rows(model: Mat4) -> [f32; 12] {
     let m = model.to_cols_array_2d();
     [

@@ -231,11 +231,15 @@ fn timings_from(stamps: &[u64], labels: &[&'static str], period_ns: f32) -> Opti
         return None;
     }
     let ms = |ticks: u64| ticks as f32 * period_ns / 1.0e6;
-    let stages = labels
-        .iter()
-        .zip(stamps.windows(2))
-        .map(|(label, pair)| (*label, ms(pair[1].saturating_sub(pair[0]))))
-        .collect();
+    // A stage marked more than once in a frame (work split around another stage) adds up.
+    let mut stages: Vec<(&'static str, f32)> = Vec::new();
+    for (label, pair) in labels.iter().zip(stamps.windows(2)) {
+        let time = ms(pair[1].saturating_sub(pair[0]));
+        match stages.iter_mut().find(|(name, _)| name == label) {
+            Some((_, total)) => *total += time,
+            None => stages.push((*label, time)),
+        }
+    }
     Some(GpuTimings {
         stages,
         total_ms: ms(last - first),
@@ -254,6 +258,12 @@ mod tests {
             vec![("a", 0.004), ("b", 0.001), ("c", 0.012)]
         );
         assert!((timings.total_ms - 0.017).abs() < 1e-6);
+    }
+
+    #[test]
+    fn repeated_stages_add_up() {
+        let timings = timings_from(&[0, 1_000, 3_000, 3_500], &["a", "b", "a"], 1.0).unwrap();
+        assert_eq!(timings.stages, vec![("a", 0.0015), ("b", 0.002)]);
     }
 
     #[test]

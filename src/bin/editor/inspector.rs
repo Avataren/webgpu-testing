@@ -2593,6 +2593,25 @@ impl PostRows<'_> {
         ui.end_row();
     }
 
+    /// A whole number in `range`.
+    fn integer(
+        &mut self,
+        ui: &mut egui::Ui,
+        path: &str,
+        label: &str,
+        value: &mut u32,
+        range: RangeInclusive<u32>,
+    ) {
+        self.label(ui, path, label);
+        if ui
+            .add(DragValue::new(value).range(range).speed(0.05))
+            .changed()
+        {
+            self.touched(path);
+        }
+        ui.end_row();
+    }
+
     /// A combo box row choosing one of `options`.
     fn choice<T: Copy + PartialEq>(
         &mut self,
@@ -3337,6 +3356,59 @@ fn show_post_process_volume_section(
                     0.0..=1.0,
                     0.01,
                     " m",
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
+            "Path tracing",
+            "path_tracing",
+            Some(&mut settings.path_tracing.enabled),
+            &mut rows,
+            |ui, rows| {
+                use wgpu_cube::renderer::postprocess::PathTracingSettings;
+                rows.integer(
+                    ui,
+                    "path_tracing.bounces",
+                    "Bounces",
+                    &mut settings.path_tracing.bounces,
+                    1..=PathTracingSettings::MAX_BOUNCES,
+                );
+                rows.integer(
+                    ui,
+                    "path_tracing.samples",
+                    "Samples per pixel",
+                    &mut settings.path_tracing.samples,
+                    1..=PathTracingSettings::MAX_SAMPLES,
+                );
+                rows.checkbox(
+                    ui,
+                    "path_tracing.denoiser",
+                    "Denoiser",
+                    &mut settings.path_tracing.denoiser,
+                );
+                rows.integer(
+                    ui,
+                    "path_tracing.max_history",
+                    "Max history (frames)",
+                    &mut settings.path_tracing.max_history,
+                    1..=PathTracingSettings::MAX_HISTORY,
+                );
+                rows.checkbox(
+                    ui,
+                    "path_tracing.caustics",
+                    "Caustics",
+                    &mut settings.path_tracing.caustics,
+                );
+                rows.integer(
+                    ui,
+                    "path_tracing.caustic_photons",
+                    "Caustic photons",
+                    &mut settings.path_tracing.caustic_photons,
+                    PathTracingSettings::MIN_CAUSTIC_PHOTONS
+                        ..=PathTracingSettings::MAX_CAUSTIC_PHOTONS,
                 );
             },
         );

@@ -1,6 +1,10 @@
 //! Post-processing on the HDR scene: SSAO, bloom, auto exposure, colour correction,
 //! tonemapping, vignette, chromatic aberration, film grain, sharpening and FXAA.
 //!
+//! With path tracing on, [`PostProcess::path_trace`] runs first, right after the main
+//! pass (see `path_tracing`): it replaces the opaque lighting, and the reflection and
+//! ambient occlusion passes below stand down for that frame.
+//!
 //! Frame order: depth resolve (MSAA only) -> screen-space reflections (added to the scene)
 //! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> composite
 //! (HDR to display, into an intermediate target) -> final (anti-aliasing, sharpening,
@@ -18,6 +22,7 @@ mod dof;
 mod exposure;
 mod fsr;
 mod lut;
+mod path_tracing;
 mod pipelines;
 mod resources;
 mod rt_ao;
@@ -33,8 +38,9 @@ pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
     LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
-    PostProcessEffects, PostProcessSettings, ReflectionSettings, SharpenSettings, SsaoSettings,
-    Tonemapper, Upscaler, UpscalingSettings, VignetteSettings, TRACKBALL_NEUTRAL,
+    PathTracingSettings, PostProcessEffects, PostProcessSettings, ReflectionSettings,
+    SharpenSettings, SsaoSettings, Tonemapper, Upscaler, UpscalingSettings, VignetteSettings,
+    TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
@@ -42,6 +48,8 @@ use dof::DofStage;
 use exposure::ExposureStage;
 use fsr::{FsrFrame, FsrUpscaler, ReactiveFrame};
 use lut::LutTexture;
+pub(crate) use path_tracing::CausticSources;
+use path_tracing::{PathTracingFrame, PathTracingInputs, PathTracingStage};
 use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
     FinalPipeline,
@@ -186,6 +194,10 @@ pub struct PostProcess {
     rt_reflection_stage: Option<RtReflectionStage>,
     /// Ray-traced ambient occlusion, likewise.
     rt_ao_stage: Option<RtAoStage>,
+    /// Path tracing with its denoiser, likewise.
+    path_tracing_stage: Option<PathTracingStage>,
+    /// This frame's lighting was path traced (reflection and occlusion passes stand down).
+    path_traced: bool,
     /// Kept to build stages added after construction (ray-traced reflections).
     uniform_layout: wgpu::BindGroupLayout,
     bloom_stage: BloomStage,
@@ -239,6 +251,8 @@ pub struct PostProcess {
 pub struct PostProcessCamera {
     pub proj: Mat4,
     pub view_proj: Mat4,
+    /// `view_proj` without the TAA jitter (what motion vectors are measured with).
+    pub unjittered_view_proj: Mat4,
     pub view_proj_inv: Mat4,
     pub view: Mat4,
     pub view_inv: Mat4,
@@ -254,6 +268,7 @@ impl Default for PostProcessCamera {
         Self {
             proj: Mat4::IDENTITY,
             view_proj: Mat4::IDENTITY,
+            unjittered_view_proj: Mat4::IDENTITY,
             view_proj_inv: Mat4::IDENTITY,
             view: Mat4::IDENTITY,
             view_inv: Mat4::IDENTITY,
@@ -575,6 +590,8 @@ impl PostProcess {
             ssr_stage,
             rt_reflection_stage: None,
             rt_ao_stage: None,
+            path_tracing_stage: None,
+            path_traced: false,
             uniform_layout,
             bloom_stage,
             exposure_stage,
@@ -730,6 +747,9 @@ impl PostProcess {
             // Reprojected histories would show the old view for a few frames.
             self.reflection_history = None;
             self.taa_history_valid = false;
+            if let Some(stage) = self.path_tracing_stage.as_mut() {
+                stage.reset_history();
+            }
         }
         self.camera = camera;
         self.clock.tick();
@@ -835,6 +855,11 @@ impl PostProcess {
             }
             self.upload_uniform(queue);
         }
+        if !self.settings.path_tracing.enabled {
+            if let Some(stage) = self.path_tracing_stage.as_mut() {
+                stage.release();
+            }
+        }
         self.refresh_temporal_routing();
     }
 
@@ -873,6 +898,84 @@ impl PostProcess {
         Ok(())
     }
 
+    /// Build the path tracer and its denoiser (layouts as for
+    /// [`Self::enable_ray_traced_reflections`]). On error the main pass keeps lighting.
+    pub(crate) fn enable_path_tracing(
+        &mut self,
+        device: &wgpu::Device,
+        lights_layout: &wgpu::BindGroupLayout,
+        scene_layout: &wgpu::BindGroupLayout,
+        textures_layout: Option<&wgpu::BindGroupLayout>,
+    ) -> Result<(), String> {
+        self.path_tracing_stage = Some(PathTracingStage::new(
+            device,
+            &self.uniform_layout,
+            lights_layout,
+            scene_layout,
+            textures_layout,
+        )?);
+        Ok(())
+    }
+
+    /// Whether path tracing can run: it built, and the targets are single-sample.
+    pub(crate) fn path_tracing_available(&self) -> bool {
+        self.path_tracing_stage.is_some() && self.sample_count == 1
+    }
+
+    /// Whether this frame's lighting would be path traced if the scene is ready (it needs
+    /// single-sample targets).
+    pub(crate) fn wants_path_tracing(&self) -> bool {
+        self.path_tracing_available() && self.settings.path_tracing.enabled
+    }
+
+    /// Path trace the opaque scene and write it over the main pass's colour (call after
+    /// the main pass, before particles and transparent surfaces). `lamp_radius` and
+    /// `sun_size_degrees` size the lights. Returns whether it ran.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn path_trace(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        ray_tracing: &RayTracingFrame<'_>,
+        caustics: CausticSources<'_>,
+        scene_region: Option<RenderRegion>,
+        timer: &mut crate::renderer::gpu_timer::GpuTimer,
+    ) -> bool {
+        if !self.wants_path_tracing() {
+            return false;
+        }
+        let Some(region) = scene_region
+            .or_else(|| RenderRegion::full(self.size.width, self.size.height))
+            .and_then(|region| region.clamp(self.size.width, self.size.height))
+        else {
+            return false;
+        };
+        let Some(stage) = self.path_tracing_stage.as_mut() else {
+            return false;
+        };
+        let frame = PathTracingFrame {
+            uniform_bind_group: &self.scene_uniform_bind_group,
+            ray_tracing,
+            caustics,
+            inputs: PathTracingInputs {
+                normal: &self.normal_source.view,
+                position: &self.position_source.view,
+                scene: &self.scene_source.view,
+            },
+            camera: &self.camera,
+            settings: &self.settings.path_tracing,
+            sun_size_degrees: self.settings.rt_shadows.softness,
+            lamp_radius: self.settings.rt_shadows.light_radius,
+            region,
+            output_height: self.viewport_resolution.y,
+            scene: &self.scene_source.view,
+            scene_texture: self.scene_source.texture(),
+        };
+        self.path_traced = stage.run(device, queue, encoder, frame, timer);
+        self.path_traced
+    }
+
     /// Whether transmissive surfaces are refracted with ray tracing (otherwise they are
     /// drawn see-through).
     pub(crate) fn ray_traced_refraction(&self) -> bool {
@@ -882,7 +985,8 @@ impl PostProcess {
     /// Whether this frame's post-processing would trace rays (reflections or occlusion)
     /// if the scene is ready.
     pub(crate) fn wants_ray_tracing(&self) -> bool {
-        self.wants_ray_traced_reflections()
+        self.wants_path_tracing()
+            || self.wants_ray_traced_reflections()
             || (self.rt_ao_stage.is_some()
                 && self.settings.ssao_active()
                 && self.settings.ssao.ray_traced)
@@ -1006,7 +1110,14 @@ impl PostProcess {
             }
         }
 
-        if self.settings.ssr_active() {
+        // Path traced lighting has its reflections and occlusion already.
+        let path_traced = std::mem::take(&mut self.path_traced);
+        if !path_traced {
+            if let Some(stage) = self.path_tracing_stage.as_mut() {
+                stage.reset_history();
+            }
+        }
+        if self.settings.ssr_active() && !path_traced {
             let traced = match (self.rt_reflection_stage.as_ref(), ray_tracing.as_ref()) {
                 (Some(stage), Some(frame)) if self.settings.ssr.ray_traced => {
                     stage.trace(encoder, scene_uniform, frame, &self.reflection.trace.view)
@@ -1071,7 +1182,7 @@ impl PostProcess {
             output: &self.ssao.view,
             ping: &self.ssao_ping.view,
         };
-        if self.settings.ssao_active() {
+        if self.settings.ssao_active() && !path_traced {
             let traced = match (self.rt_ao_stage.as_ref(), ray_tracing.as_ref()) {
                 (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => {
                     stage.trace(encoder, scene_uniform, frame.scene, ssao_targets.output)
@@ -1178,8 +1289,8 @@ impl PostProcess {
         scene_region: Option<RenderRegion>,
         particles: bool,
     ) {
-        let particles = particles
-            && (self.wants_ray_traced_reflections() || self.ray_traced_refraction());
+        let particles =
+            particles && (self.wants_ray_traced_reflections() || self.ray_traced_refraction());
         if particles != self.particles_traced {
             // The ray-traced passes bind the copies only while particles are traced.
             self.particles_traced = particles;
@@ -1357,6 +1468,9 @@ impl PostProcess {
         self.ssao_stage.invalidate();
         self.ssr_stage.invalidate();
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
+            stage.invalidate();
+        }
+        if let Some(stage) = self.path_tracing_stage.as_mut() {
             stage.invalidate();
         }
         if let Some(stage) = self.rt_ao_stage.as_mut() {
@@ -2050,6 +2164,7 @@ mod tests {
             view_inv: view.inverse(),
             view_proj: stable_vp,
             view_proj_inv: stable_vp.inverse(),
+            unjittered_view_proj: stable_vp,
             position: eye,
             near: 0.1,
             far: 1200.0,
