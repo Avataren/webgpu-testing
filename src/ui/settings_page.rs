@@ -380,24 +380,33 @@ fn ray_tracing_rows(
         GlobalIllumination::Off => "Off",
         GlobalIllumination::RayTraced => "Ray traced",
     };
+    // Stays editable while path tracing is on (which traces all of this light itself and
+    // wins), so the choice is ready for when path tracing is switched off.
     ui.label("Global illumination");
-    ui.add_enabled_ui(capabilities.path_tracing && !path_traced, |ui| {
-        egui::ComboBox::from_id_salt("engine_settings_global_illumination")
-            .selected_text(name(settings.global_illumination))
-            .show_ui(ui, |ui| {
-                for gi in [GlobalIllumination::Off, GlobalIllumination::RayTraced] {
-                    ui.selectable_value(&mut settings.global_illumination, gi, name(gi));
-                }
-            });
-    })
-    .response
-    .on_hover_text(
-        "Light bounced off other surfaces and the sky seen through openings, traced and \
-         denoised over the raster lighting: closer to path tracing at a fraction of its cost.",
-    )
-    .on_disabled_hover_text(if path_traced {
-        "Part of path tracing"
-    } else if capabilities.ray_tracing {
+    let response = ui
+        .add_enabled_ui(capabilities.path_tracing, |ui| {
+            egui::ComboBox::from_id_salt("engine_settings_global_illumination")
+                .selected_text(name(settings.global_illumination))
+                .show_ui(ui, |ui| {
+                    for gi in [GlobalIllumination::Off, GlobalIllumination::RayTraced] {
+                        ui.selectable_value(&mut settings.global_illumination, gi, name(gi));
+                    }
+                });
+        })
+        .response;
+    let response = if path_traced {
+        response.on_hover_text(
+            "Path tracing is on and traces this light itself; this applies when path \
+             tracing is off.",
+        )
+    } else {
+        response.on_hover_text(
+            "Light bounced off other surfaces and the sky seen through openings, traced and \
+             denoised over the raster lighting: closer to path tracing at a fraction of its \
+             cost.",
+        )
+    };
+    response.on_disabled_hover_text(if capabilities.ray_tracing {
         "Ray-traced global illumination needs MSAA off"
     } else {
         "Ray-traced global illumination needs hardware ray tracing"
