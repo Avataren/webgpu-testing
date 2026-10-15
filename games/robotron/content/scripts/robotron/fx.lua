@@ -96,7 +96,7 @@ end
 local function add_shake(a) g.shake = min(1.0, max(g.shake, a)) end
 
 -- LIGHT FLASHES: a few pooled point lights that light the floor and the actors around an
--- explosion and fade out. The renderer takes four point lights; the player's light is the fourth.
+-- explosion and fade out. The renderer takes four point lights.
 local N_FLASH = 3
 local flashes = {}
 local function build_lights()
@@ -105,8 +105,6 @@ local function build_lights()
         set_translation(e, 0, -40, 0)
         flashes[i] = { e = e, t = 0, dur = 1, peak = 0, on = false }
     end
-    g.p_light = reg(spawn_light("point", { color = { 0.55, 0.8, 1.0 }, intensity = 0, range = 5.5 }, "RT_player_light"))
-    set_translation(g.p_light, 0, -40, 0)
 end
 
 local function flash_light(x, y, z, col, peak, range, dur)

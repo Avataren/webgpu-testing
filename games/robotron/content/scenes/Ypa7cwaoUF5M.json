@@ -1219,10 +1219,11 @@
           },
           "ssr": {
             "enabled": true,
-            "intensity": 1.5,
+            "intensity": 3.5,
             "max_distance": 20.0,
             "thickness": 0.5,
-            "blur": 0.55
+            "blur": 0.3,
+            "ray_traced": true
           },
           "depth_of_field": {
             "enabled": false,
