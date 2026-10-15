@@ -215,6 +215,8 @@ pub struct Renderer {
     /// Acceleration structures for ray-traced effects; `None` without hardware ray
     /// tracing (or when its passes failed to build).
     ray_tracing: Option<crate::renderer::raytracing::RayTracingScene>,
+    /// GPU particle systems rays see, as last handed in.
+    ray_traced_particles: Vec<crate::renderer::raytracing::RayTracedParticles>,
     /// Ray-traced directional shadows; `None` without hardware ray tracing (or when the
     /// pass failed to build).
     rt_shadows: Option<crate::renderer::raytracing::RtShadowStage>,
@@ -358,6 +360,7 @@ impl Renderer {
             postprocess,
             skinning,
             ray_tracing,
+            ray_traced_particles: Vec::new(),
             rt_shadows,
             lights_group_shared: std::cell::Cell::new(false),
             gpu_timer,
@@ -404,6 +407,16 @@ impl Renderer {
     /// before each frame.
     pub fn ray_traced_transmission(&self) -> bool {
         self.ray_tracing.is_some() && self.postprocess.ray_traced_refraction()
+    }
+
+    /// The GPU particle systems ray-traced reflections and refraction see, replacing the
+    /// last list: hand in every system that draws, each frame they change (after their
+    /// simulation step, before the frame renders). Ignored without ray tracing.
+    pub fn set_ray_traced_particles(
+        &mut self,
+        particles: Vec<crate::renderer::raytracing::RayTracedParticles>,
+    ) {
+        self.ray_traced_particles = particles;
     }
 
     /// GPU time per frame stage, from a frame or two ago; `None` without timestamp
@@ -871,11 +884,14 @@ impl Renderer {
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, ray_traced && rt_shadows_wanted);
         self.run_main_color_pass(&mut frame_state, environment, assets);
-        // What particles and transparent surfaces change is reactive for FSR.
+        // What particles and transparent surfaces change is reactive for FSR; where
+        // particles cover the screen, ray-traced reflections trace them instead.
+        let particles_traced = ray_traced && !self.ray_traced_particles.is_empty();
         self.postprocess.capture_opaque_scene(
             &self.context.device,
             &mut frame_state.encoder,
             frame_state.scene_region,
+            particles_traced,
         );
         self.gpu_timer.mark(&mut frame_state.encoder, "main");
         self.run_custom_stage(
@@ -883,6 +899,11 @@ impl Renderer {
             scene,
             CustomRenderStage::BeforePostprocess,
             custom_render.as_deref_mut(),
+        );
+        self.postprocess.capture_particle_scene(
+            &self.context.device,
+            &mut frame_state.encoder,
+            frame_state.scene_region,
         );
         // Transparent surfaces are part of the lit HDR scene, so they get exposure,
         // bloom and tonemapping like everything else.
@@ -1324,6 +1345,20 @@ impl Renderer {
         if !wanted {
             return false;
         }
+        // Only reflection and refraction rays see particles.
+        let particles = if self.postprocess.wants_ray_traced_reflections()
+            || self.postprocess.ray_traced_refraction()
+        {
+            &self.ray_traced_particles[..]
+        } else {
+            &[]
+        };
+        let camera = crate::renderer::raytracing::RtCamera {
+            forward: (self.camera_target - self.camera_position)
+                .try_normalize()
+                .unwrap_or(Vec3::NEG_Z),
+            up: self.camera_up.try_normalize().unwrap_or(Vec3::Y),
+        };
         scene.update(
             &self.context.device,
             &self.context.queue,
@@ -1332,6 +1367,8 @@ impl Renderer {
             &frame.prepared_batches,
             &self.skinning,
             &self.objects_buffer.materials,
+            particles,
+            camera,
         );
         frame.stats.ray_tracing = Some(scene.stats());
         scene.bind_group().is_some()

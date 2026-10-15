@@ -27,6 +27,10 @@ pub struct RtReflectionInputs<'a> {
     pub normal: &'a wgpu::TextureView,
     pub position: &'a wgpu::TextureView,
     pub sampler: &'a wgpu::Sampler,
+    /// The scene before and after particles were drawn (both the scene when no particles
+    /// are traced): where they differ, particles cover the screen.
+    pub opaque: &'a wgpu::TextureView,
+    pub particles: &'a wgpu::TextureView,
 }
 
 /// The trace shader: post-processing helpers plus the main pass's material, lighting and
@@ -86,6 +90,8 @@ impl RtReflectionStage {
                 unfilterable(171),
                 unfilterable(172),
                 sampler_entry(173),
+                unfilterable(174),
+                unfilterable(175),
             ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -172,6 +178,8 @@ impl RtReflectionStage {
                         binding: 173,
                         resource: wgpu::BindingResource::Sampler(inputs.sampler),
                     },
+                    texture(174, inputs.opaque),
+                    texture(175, inputs.particles),
                 ],
             })
         };

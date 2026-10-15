@@ -16,6 +16,7 @@ use super::{ColorGradient, EmissionShape, GpuParticleSystem, ParticleBehavior, P
 use super::{ParticleRenderMode, SizeCurve};
 use crate::app::GpuUpdateContext;
 use crate::asset::{Handle, MaterialAsset, Mesh};
+use crate::renderer::raytracing::RayTracedParticles;
 use crate::renderer::{CustomRenderContext, Material, PrimitiveMeshDescriptor, Renderer};
 use crate::scene::components::{
     Billboard, CanCastShadow, DepthState, GpuParticleInstance, MaterialComponent, MeshComponent,
@@ -301,6 +302,22 @@ impl ParticleRuntime {
         let speed = if real > 0.0 { stepped / real } else { 0.0 };
         let dt = (real.min(f64::from(MAX_STEP)) * speed) as f32;
         self.update_gpu(ctx.renderer, dt);
+        ctx.renderer
+            .set_ray_traced_particles(self.ray_traced_particles());
+    }
+
+    /// Every system that draws, for ray-traced reflections and refraction.
+    fn ray_traced_particles(&self) -> Vec<RayTracedParticles> {
+        let systems = self
+            .systems
+            .values()
+            .filter_map(|entry| entry.system.ray_traced(entry.descriptor.mesh));
+        let effects = self.effect_mesh.into_iter().flat_map(|mesh| {
+            self.effects
+                .values()
+                .filter_map(move |effect| effect.system.ray_traced(mesh))
+        });
+        systems.chain(effects).collect()
     }
 
     fn start_bursts(

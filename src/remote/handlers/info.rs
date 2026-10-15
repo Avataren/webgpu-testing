@@ -114,6 +114,8 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "meshes": rt.meshes,
                 "blas_builds": rt.blas_builds,
                 "pool_vertices": rt.pool_vertices,
+                "particle_systems": rt.particle_systems,
+                "particles": rt.particles,
             })),
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),

@@ -1,7 +1,10 @@
 // src/gpu_particles/system/gpu_particle_system.rs - Non-blocking particle sorting
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::super::pools::{acquire_particle_vec, acquire_spawn_request_vec};
-use crate::asset::Mesh;
+use crate::asset::{Handle, Mesh};
+use crate::renderer::raytracing::{RayTracedParticleBlend, RayTracedParticles};
 use crate::renderer::{
     CustomRenderContext, CustomRenderStage, Material, MaterialData, Renderer, SamplerFilterMode,
     ShadowPassStage,
@@ -19,6 +22,9 @@ use super::{
 
 const WORKGROUP_SIZE: u32 = 256;
 
+/// Source of [`GpuParticleSystem`] ids.
+static NEXT_SYSTEM_ID: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ParticleRenderMode {
     #[default]
@@ -34,6 +40,14 @@ impl ParticleRenderMode {
 
     fn needs_sorting(self) -> bool {
         matches!(self, Self::AlphaBlend)
+    }
+
+    fn ray_traced_blend(self) -> RayTracedParticleBlend {
+        match self {
+            Self::Opaque => RayTracedParticleBlend::Opaque,
+            Self::AlphaBlend => RayTracedParticleBlend::AlphaBlend,
+            Self::Additive => RayTracedParticleBlend::Additive,
+        }
     }
 
     fn blend_state(self) -> Option<wgpu::BlendState> {
@@ -57,6 +71,8 @@ impl ParticleRenderMode {
 }
 
 pub struct GpuParticleSystem {
+    /// Unique to this system (ray tracing keeps its geometry by it).
+    id: u64,
     particles_buffer: wgpu::Buffer,
     params_buffer: wgpu::Buffer,
 
@@ -329,6 +345,7 @@ impl GpuParticleSystem {
         let sorting = ParticleSorting::new(device, max_particles, needs_alpha_sorting);
 
         Self {
+            id: NEXT_SYSTEM_ID.fetch_add(1, Ordering::Relaxed),
             particles_buffer,
             params_buffer,
             compute_pipeline,
@@ -383,6 +400,23 @@ impl GpuParticleSystem {
 
     pub fn particles_buffer(&self) -> &wgpu::Buffer {
         &self.particles_buffer
+    }
+
+    /// This system as ray-traced reflections and refraction see it, drawn with `mesh`
+    /// (hand it to [`Renderer::set_ray_traced_particles`]); `None` while nothing draws.
+    pub fn ray_traced(&self, mesh: Handle<Mesh>) -> Option<RayTracedParticles> {
+        if self.render_high_water == 0 {
+            return None;
+        }
+        Some(RayTracedParticles {
+            id: self.id,
+            particles: self.particles_buffer.clone(),
+            capacity: self.max_particles,
+            count: self.render_high_water,
+            mesh,
+            material: self.material,
+            blend: self.render_mode.ray_traced_blend(),
+        })
     }
 
     // In src/gpu_particles/system/gpu_particle_system.rs

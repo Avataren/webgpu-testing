@@ -9,7 +9,7 @@
 mod scene;
 mod shadows;
 
-pub(crate) use scene::RayTracingScene;
+pub(crate) use scene::{RayTracingScene, RtCamera};
 pub(crate) use shadows::{RtShadowStage, MASK_FORMAT as RT_SHADOW_MASK_FORMAT};
 
 use std::fmt;
@@ -76,6 +76,36 @@ pub struct RayTracingFrame<'a> {
     pub refraction: bool,
 }
 
+/// How a particle system's particles combine with what is behind them (as they are drawn).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RayTracedParticleBlend {
+    /// Solid: rays stop at them, as at any surface.
+    Opaque,
+    /// Over what is behind, by their alpha.
+    AlphaBlend,
+    /// Added to what is behind.
+    Additive,
+}
+
+/// A GPU particle system, for rays to see (reflections and refraction): each frame its
+/// live particles are expanded into triangles of `mesh` placed as the particle shader
+/// places them, into a bottom-level structure of its own. Hand the renderer every system
+/// that draws this frame with [`crate::renderer::Renderer::set_ray_traced_particles`].
+#[derive(Clone, Debug)]
+pub struct RayTracedParticles {
+    /// Stays the same for the system's lifetime (its structure is kept by it).
+    pub id: u64,
+    /// The particles, laid out as `Particle` in particle_render.wgsl.
+    pub particles: wgpu::Buffer,
+    /// Particle slots the buffer holds.
+    pub capacity: u32,
+    /// Slots that may hold a live particle this frame (the rest are skipped).
+    pub count: u32,
+    pub mesh: crate::asset::Handle<crate::asset::Mesh>,
+    pub material: crate::renderer::Material,
+    pub blend: RayTracedParticleBlend,
+}
+
 /// Ray tracing counters for the last frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RayTracingStats {
@@ -87,4 +117,7 @@ pub struct RayTracingStats {
     pub blas_builds: u32,
     /// Vertices in the shared geometry pool (including space freed meshes left).
     pub pool_vertices: u32,
+    /// Particle systems in the acceleration structure, and their live particle slots.
+    pub particle_systems: u32,
+    pub particles: u32,
 }

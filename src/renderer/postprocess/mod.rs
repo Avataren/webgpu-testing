@@ -197,6 +197,10 @@ pub struct PostProcess {
     /// The scene as the opaque pass left it, before particles and transparent surfaces:
     /// FSR's reactive mask compares it with the finished scene.
     opaque_copy: Option<TextureBundle>,
+    /// The scene with particles drawn over the opaque pass, before transparent surfaces,
+    /// while particles are ray traced (`particles_traced`).
+    particle_copy: Option<TextureBundle>,
+    particles_traced: bool,
     /// The history holds last frame's TAA result (false after a resize or turning TAA on).
     taa_history_valid: bool,
     /// How last frame's reflections were traced (Some(true) = ray traced), None when
@@ -578,6 +582,8 @@ impl PostProcess {
             temporal_stage,
             fsr: None,
             opaque_copy: None,
+            particle_copy: None,
+            particles_traced: false,
             taa_history_valid: false,
             reflection_history: None,
             temporal_routing: (false, false),
@@ -639,6 +645,8 @@ impl PostProcess {
             fsr.resize();
         }
         self.opaque_copy = None;
+        self.particle_copy = None;
+        self.particles_traced = false;
         self.reflection_history = None;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
@@ -1160,15 +1168,27 @@ impl PostProcess {
     }
 
     /// Keep the scene as the opaque pass left it (call before particles and transparent
-    /// surfaces are drawn), when FSR upscales this frame: its reactive mask comes from
-    /// what changes after.
+    /// surfaces are drawn), when FSR upscales this frame (its reactive mask comes from
+    /// what changes after) or `particles` are ray traced this frame (reflections tell
+    /// where particles cover the screen from what [`Self::capture_particle_scene`] adds).
     pub(crate) fn capture_opaque_scene(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         scene_region: Option<RenderRegion>,
+        particles: bool,
     ) {
-        if !self.fsr_active() {
+        let particles = particles
+            && (self.wants_ray_traced_reflections() || self.ray_traced_refraction());
+        if particles != self.particles_traced {
+            // The ray-traced passes bind the copies only while particles are traced.
+            self.particles_traced = particles;
+            if !particles {
+                self.particle_copy = None;
+            }
+            self.mark_bind_groups_dirty();
+        }
+        if !self.fsr_active() && !particles {
             return;
         }
         if self.opaque_copy.is_none() {
@@ -1181,10 +1201,46 @@ impl PostProcess {
             if let Some(fsr) = self.fsr.as_mut() {
                 fsr.invalidate_bind_groups();
             }
+            self.mark_bind_groups_dirty();
         }
-        let Some(copy) = self.opaque_copy.as_ref() else {
+        if let Some(copy) = self.opaque_copy.as_ref() {
+            self.copy_scene(encoder, copy, scene_region);
+        }
+    }
+
+    /// Keep the scene with particles drawn over it, before transparent surfaces are (call
+    /// between the two), while particles are ray traced: where it differs from the opaque
+    /// copy, the screen shows particles, which reflections trace instead of taking from it.
+    pub(crate) fn capture_particle_scene(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        scene_region: Option<RenderRegion>,
+    ) {
+        if !self.particles_traced {
             return;
-        };
+        }
+        if self.particle_copy.is_none() {
+            self.particle_copy = Some(TextureBundle::copyable(
+                device,
+                &self.size,
+                HDR_FORMAT,
+                "SceneParticleCopy",
+            ));
+            self.mark_bind_groups_dirty();
+        }
+        if let Some(copy) = self.particle_copy.as_ref() {
+            self.copy_scene(encoder, copy, scene_region);
+        }
+    }
+
+    /// Copy the scene (its `scene_region`, or all of it) into `copy`.
+    fn copy_scene(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        copy: &TextureBundle,
+        scene_region: Option<RenderRegion>,
+    ) {
         let (origin, extent) = match scene_region {
             Some(region) => (
                 wgpu::Origin3d {
@@ -1382,11 +1438,21 @@ impl PostProcess {
             stage.ensure_bind_groups(device, &self.normal_source.view, &self.position_source.view);
         }
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
+            // Without traced particles one texture stands in for both, so nothing differs
+            // (not the scene, which refraction draws into while reading these).
+            let (opaque, particles) = match (&self.opaque_copy, &self.particle_copy) {
+                (Some(opaque), Some(particles)) if self.particles_traced => {
+                    (&opaque.view, &particles.view)
+                }
+                _ => (&self.scene_copy.view, &self.scene_copy.view),
+            };
             stage.ensure_bind_groups(
                 device,
                 RtReflectionInputs {
                     scene: &self.scene_source.view,
                     scene_copy: &self.scene_copy.view,
+                    opaque,
+                    particles,
                     normal: &self.normal_source.view,
                     position: &self.position_source.view,
                     sampler: &self.sampler_linear,

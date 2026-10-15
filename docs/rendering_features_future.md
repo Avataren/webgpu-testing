@@ -261,8 +261,10 @@ off screen (it is see-through without bending there, and never dispersive).
 - A hit-shading WGSL module: material fetch at the hit uv, direct light with a shadow
   ray, environment on miss. Reuse the PBR code in `lighting_common.wgsl` where possible.
 - Settings plumbing (`PostProcessSettings`, volumes, inspector, Lua, remote API).
-- Transparent and particle geometry: skip at first; ray queries need manual handling
-  of non-opaque candidates.
+- Transparent geometry: skip at first; ray queries need manual handling of non-opaque
+  candidates. (GPU particles are done: each system is expanded into a BLAS of its own
+  every frame, `rt_particles.wgsl`; reflection rays stop at opaque ones and gather
+  blended ones as candidates, `rt_blended_particles` in `rt_reflections.wgsl`.)
 
 ### Options, by value for effort
 

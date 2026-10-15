@@ -60,3 +60,17 @@ impl Particle {
         self.position = [0.0, -10000.0, 0.0]; // Hide far offscreen
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn particle_matches_the_shader_layout() {
+        // `Particle` in particle_render.wgsl and rt_particles.wgsl.
+        assert_eq!(std::mem::size_of::<Particle>(), 192);
+        assert_eq!(std::mem::offset_of!(Particle, rotation), 32);
+        assert_eq!(std::mem::offset_of!(Particle, scale), 48);
+        assert_eq!(std::mem::offset_of!(Particle, color), 64);
+    }
+}

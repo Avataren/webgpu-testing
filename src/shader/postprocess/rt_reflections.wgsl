@@ -10,6 +10,10 @@
 // the environment and the lights, each light behind a shadow ray, and a smooth one traces
 // its own reflection once more (rt_second_bounce).
 //
+// GPU particles are in the acceleration structure too (raytracing/scene.rs): opaque ones
+// stop rays like any surface; alpha-blended and additive ones are gathered along the
+// reflection ray up to what it hits (rt_blended_particles).
+//
 // Needs `enable wgpu_ray_query;` (prepended by the Rust side), post-processing's common
 // and reflection_common modules, the main pass's constants, material, lighting and
 // environment modules (the lights bind group is group 2, as in the main pass), and one
@@ -23,6 +27,12 @@ var rt_gbuffer_normal : texture_2d<f32>;
 var rt_gbuffer_position : texture_2d<f32>;
 @group(1) @binding(173)
 var rt_scene_sampler : sampler;
+// The scene before and after particles were drawn over it, while particles are traced
+// (otherwise both are the scene): where they differ, the screen shows particles.
+@group(1) @binding(174)
+var rt_opaque_scene : texture_2d<f32>;
+@group(1) @binding(175)
+var rt_particle_scene : texture_2d<f32>;
 
 // The engine's `Vertex` (src/renderer/vertex.rs), as the ray tracing pool stores it;
 // scalars keep the vec3s at their packed offsets. `RtInstance` mirrors
@@ -48,12 +58,24 @@ fn rt_vertex_normal(vertex : RtVertex) -> vec3<f32> {
     return vec3<f32>(vertex.nx, vertex.ny, vertex.nz);
 }
 
+// `material_index` is into `rt_particle_materials` for a particle system
+// (RT_INSTANCE_PARTICLES), else into `rt_materials`.
 struct RtInstance {
     vertex_base : u32,
     index_base : u32,
     material_index : u32,
-    _padding : u32,
+    flags : u32,
 };
+
+// RtInstance flags (INSTANCE_* in raytracing/scene.rs).
+const RT_INSTANCE_PARTICLES : u32 = 1u;
+const RT_INSTANCE_ADDITIVE : u32 = 2u;
+
+// TLAS instance masks (MASK_* in raytracing/scene.rs): what stops reflection and
+// refraction rays (opaque and transmissive surfaces, opaque particles), and the blended
+// particles they gather on the way.
+const RT_MASK_SURFACES : u32 = 0x07u;
+const RT_MASK_BLENDED_PARTICLES : u32 = 0x08u;
 
 @group(3) @binding(0)
 var rt_tlas : acceleration_structure;
@@ -65,6 +87,8 @@ var<storage, read> rt_indices : array<u32>;
 var<storage, read> rt_instances : array<RtInstance>;
 @group(3) @binding(4)
 var<storage, read> rt_materials : array<MaterialData>;
+@group(3) @binding(5)
+var<storage, read> rt_particle_materials : array<MaterialData>;
 
 // Shadow rays start this far off the hit surface.
 const RT_SHADOW_BIAS : f32 = 0.02;
@@ -74,7 +98,7 @@ const RT_SHADOW_BIAS : f32 = 0.02;
 const RT_BOUNCE_MIN_SMOOTHNESS : f32 = 0.7;
 
 fn rt_closest_hit(origin : vec3<f32>, direction : vec3<f32>, max_t : f32) -> RayIntersection {
-    return rt_closest_hit_masked(origin, direction, max_t, 0xffu);
+    return rt_closest_hit_masked(origin, direction, max_t, RT_MASK_SURFACES);
 }
 
 // `mask` 0x01 sees opaque geometry only (MASK_OPAQUE in raytracing/scene.rs).
@@ -127,6 +151,8 @@ struct RtSurface {
     uv : vec2<f32>,
     color : vec4<f32>,
     material_index : u32,
+    // The instance's RT_INSTANCE_* flags.
+    instance_flags : u32,
     // log2 of the triangle's uv extent per meter (half the log of the area ratio): with
     // the ray cone's width it picks the texture level.
     uv_density : f32,
@@ -172,6 +198,7 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     out.uv = uv_a * w.x + uv_b * w.y + uv_c * w.z;
     out.color = a.color * w.x + b.color * w.y + c.color * w.z;
     out.material_index = instance.material_index;
+    out.instance_flags = instance.flags;
     out.uv_density = 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12));
     return out;
 }
@@ -268,6 +295,8 @@ fn rt_direct_lighting(
 struct RtMaterial {
     normal : vec3<f32>,
     base_color : vec3<f32>,
+    // Opacity, for blended particles.
+    alpha : f32,
     emissive : vec3<f32>,
     metallic : f32,
     roughness : f32,
@@ -278,7 +307,13 @@ struct RtMaterial {
 
 fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -> RtMaterial {
     let surface = rt_surface(hit, direction);
-    let material = rt_materials[surface.material_index];
+    let particle = (surface.instance_flags & RT_INSTANCE_PARTICLES) != 0u;
+    var material : MaterialData;
+    if particle {
+        material = rt_particle_materials[surface.material_index];
+    } else {
+        material = rt_materials[surface.material_index];
+    }
     let flags = material.material_flags;
     let facing = max(abs(dot(surface.normal, direction)), 0.05);
     let lod_base = surface.uv_density + log2(max(cone_width, 1e-6) / facing);
@@ -286,10 +321,13 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
 
     var out : RtMaterial;
     out.normal = surface.normal;
-    out.base_color = material.color.rgb * surface.color.rgb;
+    // A particle's vertex colour is the particle's (rt_particles.wgsl).
+    var base_color = material.color * surface.color;
     if (flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u {
-        out.base_color *= rt_sample_texture(material.base_color_texture, surface.uv, lod_base, nearest).rgb;
+        base_color *= rt_sample_texture(material.base_color_texture, surface.uv, lod_base, nearest);
     }
+    out.base_color = base_color.rgb;
+    out.alpha = base_color.a;
     out.emissive = out.base_color * material.emissive_strength;
     if (flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u {
         out.emissive = rt_sample_texture(material.emissive_texture, surface.uv, lod_base, nearest).rgb
@@ -309,7 +347,69 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
     if (flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u {
         out.occlusion = rt_sample_texture(material.occlusion_texture, surface.uv, lod_base, nearest).r;
     }
+    if particle {
+        // As particle_render.wgsl, which draws neither emission nor transmission.
+        out.emissive = vec3<f32>(0.0);
+        out.transmission = 0.0;
+    }
     return out;
+}
+
+// Most blended particles one ray gathers; past these it stops looking.
+const RT_MAX_BLENDED_PARTICLES : u32 = 32u;
+
+// Light from the alpha-blended and additive particles a ray passes on its way from
+// `origin` to `max_t` (rgb), and how much of what lies beyond still shows through them
+// (a). The acceleration structure reports them in no particular order, so alpha-blended
+// ones are combined order-independently: their colours averaged by alpha, covering as
+// much as all of them together would (weighted blended order-independent transparency,
+// McGuire and Bavoil 2013, without its depth weight). `pixel_angle` and `travelled` (the
+// path's length up to `origin`) size the ray cone for texture levels.
+fn rt_blended_particles(
+    origin : vec3<f32>,
+    direction : vec3<f32>,
+    max_t : f32,
+    pixel_angle : f32,
+    travelled : f32,
+) -> vec4<f32> {
+    var query : ray_query;
+    rayQueryInitialize(
+        &query,
+        rt_tlas,
+        RayDesc(RAY_FLAG_NONE, RT_MASK_BLENDED_PARTICLES, 0.0, max_t, origin, direction),
+    );
+    var added = vec3<f32>(0.0);
+    var blended = vec3<f32>(0.0);
+    var coverage = 0.0;
+    var transmittance = 1.0;
+    var gathered = 0u;
+    loop {
+        if gathered >= RT_MAX_BLENDED_PARTICLES || !rayQueryProceed(&query) {
+            break;
+        }
+        // Never confirmed: every particle along the ray comes up as a candidate.
+        let hit = rayQueryGetCandidateIntersection(&query);
+        if hit.kind != RAY_QUERY_INTERSECTION_TRIANGLE {
+            continue;
+        }
+        gathered += 1u;
+        let material = rt_material(hit, direction, pixel_angle * (travelled + hit.t));
+        let light = rt_light(material, origin + direction * hit.t, direction);
+        if (rt_instances[hit.instance_custom_data].flags & RT_INSTANCE_ADDITIVE) != 0u {
+            // Additive particles are drawn adding their colour, whatever their alpha.
+            added += light;
+        } else {
+            let alpha = clamp(material.alpha, 0.0, 1.0);
+            blended += light * alpha;
+            coverage += alpha;
+            transmittance *= 1.0 - alpha;
+        }
+    }
+    var color = added;
+    if coverage > 1e-4 {
+        color += blended / coverage * (1.0 - transmittance);
+    }
+    return vec4<f32>(color, transmittance);
 }
 
 // What the main pass would have drawn at a hit: lights (each behind a shadow ray),
@@ -352,6 +452,13 @@ fn rt_screen_radiance(position : vec3<f32>) -> vec4<f32> {
     // through them, which they are mostly made of.
     let screen_color = textureSampleLevel(rt_scene_color, rt_scene_sampler, scene_uv, 0.0);
     if ssr_smoothness(surface) >= RT_BOUNCE_MIN_SMOOTHNESS && screen_color.a >= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    // Particles drawn over the surface there are not on it (they are traced where they
+    // are), so the surface is shaded here instead.
+    let before = textureLoad(rt_opaque_scene, pixel, 0).rgb;
+    let after = textureLoad(rt_particle_scene, pixel, 0).rgb;
+    if any(abs(after - before) > vec3<f32>(1e-3) * (vec3<f32>(1.0) + before)) {
         return vec4<f32>(0.0);
     }
     // A pixel covers more of the world further away; allow for that and for TAA jitter.
@@ -459,9 +566,28 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     // Start a little off the surface so it does not hit itself.
     let start = origin + n * (0.01 + 0.001 * ssr_view_depth(origin));
     let hit = rt_closest_hit(start, r, max_distance);
-    if hit.kind == RAY_QUERY_INTERSECTION_NONE {
-        // Misses reflect the environment, which the main pass's lighting already adds.
-        return vec4<f32>(0.0);
+    let missed = hit.kind == RAY_QUERY_INTERSECTION_NONE;
+
+    // Angle one trace texel covers, from the projection and the viewport's height (not
+    // the target's, which the editor draws into part of), in output pixels so reflected
+    // textures keep the output's detail while upscaling.
+    let output_height = max(post_uniform.resolution.y, 1.0) / render_scale();
+    let pixel_angle = 2.0 * ssr_texel_scale() / (post_uniform.proj[1][1] * output_height);
+    let to_origin = distance(post_uniform.camera_position.xyz, origin);
+    let particles = rt_blended_particles(
+        start, r, select(hit.t, max_distance, missed), pixel_angle, to_origin
+    );
+
+    if missed {
+        // Misses reflect the environment, which the main pass's lighting already adds;
+        // particles in front of it add their light to that (with no weight, the rest of
+        // the reflection stays the main pass's).
+        if all(particles.rgb <= vec3<f32>(0.0)) {
+            return vec4<f32>(0.0);
+        }
+        var light = select(particles.rgb, vec3<f32>(0.0), particles.rgb != particles.rgb);
+        light = clamp(light, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
+        return vec4<f32>(ssr_compress(light), 0.0);
     }
 
     let hit_position = start + r * hit.t;
@@ -470,12 +596,7 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if screen.w > 0.5 {
         color = screen.rgb;
     } else {
-        // Angle one trace texel covers, from the projection and the viewport's height
-        // (not the target's, which the editor draws into part of), in output pixels so
-        // reflected textures keep the output's detail while upscaling.
-        let output_height = max(post_uniform.resolution.y, 1.0) / render_scale();
-        let pixel_angle = 2.0 * ssr_texel_scale() / (post_uniform.proj[1][1] * output_height);
-        let travelled = distance(post_uniform.camera_position.xyz, origin) + hit.t;
+        let travelled = to_origin + hit.t;
         let material = rt_material(hit, r, pixel_angle * travelled);
         color = rt_light(material, hit_position, r);
         let hit_smoothness = 1.0 - material.roughness;
@@ -486,6 +607,7 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
             color += rt_seen_through(hit, material, hit_position, r, pixel_angle * (travelled + hit.t));
         }
     }
+    color = color * particles.a + particles.rgb;
     color = select(color, vec3<f32>(0.0), color != color);
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
 

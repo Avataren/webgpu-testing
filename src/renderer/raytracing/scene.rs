@@ -9,30 +9,68 @@
 //! receives a GPU copy of the vertices the skinning pass just deformed, and its BLAS is
 //! rebuilt from it (wgpu 30 cannot refit). The pool only grows; when geometry that is gone
 //! or changed wastes most of it, it is rebuilt from what is still in use.
+//!
+//! GPU particle systems handed in by the application are geometry too: each keeps its
+//! particle mesh (the template) and room for a copy per particle slot in the pool. Every
+//! frame a compute pass places a copy at each live particle, as the particle shader
+//! does, and the system's BLAS is rebuilt from the slots in use. Opaque particles are
+//! instanced like any surface; blended ones under their own mask, for reflection rays to
+//! gather as they pass through them instead of stopping.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
-use super::RayTracingStats;
+use super::{RayTracedParticleBlend, RayTracedParticles, RayTracingStats};
 use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::batch::{InstanceSource, SkinKey};
 use crate::renderer::internal::PreparedBatches;
 use crate::renderer::skinning::SkinningStage;
-use crate::renderer::Vertex;
+use crate::renderer::{MaterialData, Vertex};
 
 /// What a hit shader needs about a TLAS instance (`RtInstance` in the shader), found by
-/// the instance's custom data.
+/// the instance's custom data. `material_index` indexes the scene's materials, or the
+/// particle materials for a particle system (`INSTANCE_PARTICLES`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 struct RtInstance {
     vertex_base: u32,
     index_base: u32,
     material_index: u32,
-    _padding: u32,
+    flags: u32,
 }
+
+/// `RtInstance::flags` (RT_INSTANCE_* in rt_reflections.wgsl).
+const INSTANCE_PARTICLES: u32 = 1;
+const INSTANCE_ADDITIVE: u32 = 2;
+
+/// The camera billboarded particles turn to, as the particle shader turns them.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RtCamera {
+    pub forward: Vec3,
+    pub up: Vec3,
+}
+
+/// `ExpandParams` in rt_particles.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+struct ExpandParams {
+    camera_forward: [f32; 4],
+    camera_up: [f32; 4],
+    template_base: u32,
+    template_count: u32,
+    output_base: u32,
+    particle_count: u32,
+    billboarded: u32,
+    _padding: [u32; 3],
+}
+
+const EXPAND_WORKGROUP_SIZE: u32 = 64;
+/// Most vertices one particle system may expand to (one dispatch row of workgroups).
+const MAX_PARTICLE_VERTICES: u64 = 65535 * EXPAND_WORKGROUP_SIZE as u64;
+const INITIAL_PARTICLE_MATERIALS: u64 = 16;
 
 /// Pool vertices are the engine's [`Vertex`] (`RtVertex` in rt_reflections.wgsl), so
 /// skinned vertex buffers copy straight in and BLAS builds read the position at offset 0.
@@ -49,12 +87,119 @@ const MAX_INSTANCES: u32 = 1 << 24;
 /// reflection and refraction rays see both.
 pub(crate) const MASK_OPAQUE: u8 = 0x01;
 pub(crate) const MASK_TRANSMISSIVE: u8 = 0x02;
+/// Particles stop reflection and refraction rays like surfaces when opaque; blended ones
+/// are only gathered along a reflection ray (by a query of their own, with this mask).
+pub(crate) const MASK_PARTICLES_OPAQUE: u8 = 0x04;
+pub(crate) const MASK_PARTICLES_BLENDED: u8 = 0x08;
 
-/// What a BLAS is built from: a rigid mesh, or one skinned instance's deformed copy.
+/// What a BLAS is built from: a rigid mesh, one skinned instance's deformed copy, or a
+/// particle system (by [`RayTracedParticles::id`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum GeometryKey {
     Mesh(Handle<Mesh>),
     Skin(SkinKey),
+    Particles(u64),
+}
+
+/// A particle system's geometry in the pool: its mesh once (the template), then room for
+/// a copy per particle slot (the output), with indices for every slot written once.
+struct ParticleEntry {
+    /// The mesh the template came from: a different `Arc` means it changed.
+    source: Arc<MeshData>,
+    capacity: u32,
+    blend: RayTracedParticleBlend,
+    blas: wgpu::Blas,
+    /// Flags the BLAS was created with; every build must repeat them.
+    geometry_flags: wgpu::AccelerationStructureGeometryFlags,
+    template_base: u32,
+    template_vertices: u32,
+    /// Indices per particle (the mesh's).
+    template_indices: u32,
+    vertex_base: u32,
+    index_base: u32,
+    /// Slots expanded and built this frame; 0 when the system did not draw.
+    count: u32,
+    billboarded: bool,
+    material: MaterialData,
+    /// The system's particles, which the expansion reads.
+    particles: wgpu::Buffer,
+    params: wgpu::Buffer,
+    /// The expansion's bindings, and the pool buffer they were made with.
+    bind_group: Option<(wgpu::BindGroup, wgpu::Buffer)>,
+    last_used: u64,
+}
+
+impl ParticleEntry {
+    fn pool_vertices(&self) -> u64 {
+        self.template_vertices as u64 * (1 + self.capacity as u64)
+    }
+
+    /// The BLAS geometry for this frame's slots.
+    fn build_size(&self) -> wgpu::BlasTriangleGeometrySizeDescriptor {
+        wgpu::BlasTriangleGeometrySizeDescriptor {
+            vertex_format: wgpu::VertexFormat::Float32x3,
+            vertex_count: self.count * self.template_vertices,
+            index_format: Some(wgpu::IndexFormat::Uint32),
+            index_count: Some(self.count * self.template_indices),
+            flags: self.geometry_flags,
+        }
+    }
+}
+
+/// The compute pipeline that places particles (rt_particles.wgsl).
+struct ExpandPipeline {
+    pipeline: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl ExpandPipeline {
+    fn new(device: &wgpu::Device) -> Self {
+        let storage = |binding, read_only| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RtParticleExpandLayout"),
+            entries: &[
+                storage(0, true),
+                storage(1, false),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("RtParticleExpandShader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shader/rt_particles.wgsl").into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("RtParticleExpandPipelineLayout"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("RtParticleExpandPipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("cs_expand_particles"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Self { pipeline, layout }
+    }
 }
 
 struct MeshEntry {
@@ -144,6 +289,14 @@ pub(crate) struct RayTracingScene {
     /// Pool elements still referenced by live entries, to know when to compact.
     live_vertices: u64,
     meshes: HashMap<GeometryKey, MeshEntry>,
+    /// Particle systems by [`RayTracedParticles::id`]; dropped the first frame one is not
+    /// handed in.
+    particles: HashMap<u64, ParticleEntry>,
+    expand_pipeline: Option<ExpandPipeline>,
+    /// The particle systems' materials (`rt_particle_materials` in the shader).
+    particle_materials: wgpu::Buffer,
+    particle_material_capacity: u64,
+    particle_material_scratch: Vec<MaterialData>,
     /// This frame's skinned vertex buffers and where in the pool they are copied.
     deformed_copies: Vec<(wgpu::Buffer, u64, u64)>,
     tlas: wgpu::Tlas,
@@ -191,6 +344,7 @@ impl RayTracingScene {
                 storage(2),
                 storage(3),
                 storage(4),
+                storage(5),
             ],
         });
         Self {
@@ -198,6 +352,14 @@ impl RayTracingScene {
             indices: PoolBuffer::new(device, "RtIndexPool", 4, INITIAL_POOL_INDICES),
             live_vertices: 0,
             meshes: HashMap::new(),
+            particles: HashMap::new(),
+            expand_pipeline: None,
+            particle_materials: Self::create_particle_materials(
+                device,
+                INITIAL_PARTICLE_MATERIALS,
+            ),
+            particle_material_capacity: INITIAL_PARTICLE_MATERIALS,
+            particle_material_scratch: Vec::new(),
             deformed_copies: Vec::new(),
             tlas: Self::create_tlas(device, INITIAL_INSTANCES),
             tlas_capacity: INITIAL_INSTANCES,
@@ -233,7 +395,17 @@ impl RayTracingScene {
         })
     }
 
-    /// Layout of [`Self::bind_group`]: TLAS, vertices, indices, instances, materials.
+    fn create_particle_materials(device: &wgpu::Device, capacity: u64) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("RtParticleMaterials"),
+            size: capacity * std::mem::size_of::<MaterialData>() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Layout of [`Self::bind_group`]: TLAS, vertices, indices, instances, materials,
+    /// particle materials.
     pub(crate) fn layout(&self) -> &wgpu::BindGroupLayout {
         &self.layout
     }
@@ -247,8 +419,9 @@ impl RayTracingScene {
     }
 
     /// Bring the acceleration structures up to date with this frame's opaque batches and
-    /// record their builds into `encoder`, after the skinning pass `skinning` recorded.
-    /// `materials` is the buffer the batches' material indices refer to.
+    /// particle systems and record their builds into `encoder`, after the skinning pass
+    /// `skinning` recorded. `materials` is the buffer the batches' material indices refer
+    /// to; `camera` is what billboarded particles face.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
@@ -259,6 +432,8 @@ impl RayTracingScene {
         batches: &PreparedBatches,
         skinning: &SkinningStage,
         materials: &wgpu::Buffer,
+        particles: &[RayTracedParticles],
+        camera: RtCamera,
     ) {
         self.frame += 1;
         let mut buffers_changed = self.compact_if_wasteful();
@@ -273,10 +448,18 @@ impl RayTracingScene {
             buffers_changed |=
                 self.ensure_geometry(device, queue, encoder, assets, skinning, batch);
         }
+        // Only systems handed in this frame are expanded and instanced.
+        for entry in self.particles.values_mut() {
+            entry.count = 0;
+        }
+        for system in particles {
+            buffers_changed |= self.ensure_particles(device, queue, encoder, assets, system);
+        }
         // After any pool growth above, which copies the old contents in this encoder.
         for (buffer, offset, size) in &self.deformed_copies {
             encoder.copy_buffer_to_buffer(buffer, 0, &self.vertices.buffer, *offset, *size);
         }
+        self.expand_particles(device, queue, encoder, camera);
 
         self.instance_scratch.clear();
         self.instance_transforms.clear();
@@ -311,7 +494,7 @@ impl RayTracingScene {
                     vertex_base: entry.vertex_base,
                     index_base: entry.index_base,
                     material_index: instance.material_index,
-                    _padding: 0,
+                    flags: 0,
                 });
                 self.instance_transforms.push((
                     key,
@@ -319,6 +502,60 @@ impl RayTracingScene {
                     mask,
                 ));
             }
+        }
+        // Particle systems: their geometry is in world space already. Each one's material
+        // goes into the particle materials, in instance order.
+        self.particle_material_scratch.clear();
+        let mut particle_count = 0u32;
+        let mut ids: Vec<u64> = self
+            .particles
+            .iter()
+            .filter(|(_, entry)| entry.count > 0)
+            .map(|(id, _)| *id)
+            .collect();
+        ids.sort_unstable();
+        for id in ids {
+            if self.instance_scratch.len() as u32 >= MAX_INSTANCES {
+                break;
+            }
+            let entry = &self.particles[&id];
+            let (mask, flags) = match entry.blend {
+                RayTracedParticleBlend::Opaque => (MASK_PARTICLES_OPAQUE, INSTANCE_PARTICLES),
+                RayTracedParticleBlend::AlphaBlend => {
+                    (MASK_PARTICLES_BLENDED, INSTANCE_PARTICLES)
+                }
+                RayTracedParticleBlend::Additive => (
+                    MASK_PARTICLES_BLENDED,
+                    INSTANCE_PARTICLES | INSTANCE_ADDITIVE,
+                ),
+            };
+            self.instance_scratch.push(RtInstance {
+                vertex_base: entry.vertex_base,
+                index_base: entry.index_base,
+                material_index: self.particle_material_scratch.len() as u32,
+                flags,
+            });
+            self.particle_material_scratch.push(entry.material);
+            self.instance_transforms.push((
+                GeometryKey::Particles(id),
+                affine_rows(Mat4::IDENTITY),
+                mask,
+            ));
+            particle_count += entry.count;
+        }
+        let particle_systems = self.particle_material_scratch.len() as u32;
+        if particle_systems as u64 > self.particle_material_capacity {
+            let capacity = (particle_systems as u64).next_power_of_two();
+            self.particle_materials = Self::create_particle_materials(device, capacity);
+            self.particle_material_capacity = capacity;
+            buffers_changed = true;
+        }
+        if particle_systems > 0 {
+            queue.write_buffer(
+                &self.particle_materials,
+                0,
+                bytemuck::cast_slice(&self.particle_material_scratch),
+            );
         }
         let count = self.instance_scratch.len() as u32;
 
@@ -331,7 +568,10 @@ impl RayTracingScene {
         }
         // The custom data finds the instance's entry in `instances`.
         for (slot, (key, transform, mask)) in self.instance_transforms.iter().enumerate() {
-            let blas = &self.meshes[key].blas;
+            let blas = match key {
+                GeometryKey::Particles(id) => &self.particles[id].blas,
+                _ => &self.meshes[key].blas,
+            };
             self.tlas[slot] = Some(wgpu::TlasInstance::new(
                 blas,
                 *transform,
@@ -364,6 +604,27 @@ impl RayTracingScene {
                 .values()
                 .filter(|entry| entry.needs_build)
                 .collect();
+            let particle_sizes: Vec<(&ParticleEntry, wgpu::BlasTriangleGeometrySizeDescriptor)> =
+                self.particles
+                    .values()
+                    .filter(|entry| entry.count > 0)
+                    .map(|entry| (entry, entry.build_size()))
+                    .collect();
+            let particle_builds = particle_sizes.iter().map(|(entry, size)| wgpu::BlasBuildEntry {
+                blas: &entry.blas,
+                geometry: wgpu::BlasGeometries::TriangleGeometries(vec![
+                    wgpu::BlasTriangleGeometry {
+                        size,
+                        vertex_buffer: &self.vertices.buffer,
+                        first_vertex: entry.vertex_base,
+                        vertex_stride: VERTEX_STRIDE,
+                        index_buffer: Some(&self.indices.buffer),
+                        first_index: Some(entry.index_base),
+                        transform_buffer: None,
+                        transform_buffer_offset: None,
+                    },
+                ]),
+            });
             let entries: Vec<wgpu::BlasBuildEntry<'_>> = pending
                 .iter()
                 .map(|entry| wgpu::BlasBuildEntry {
@@ -381,6 +642,7 @@ impl RayTracingScene {
                         },
                     ]),
                 })
+                .chain(particle_builds)
                 .collect();
             encoder.build_acceleration_structures(entries.iter(), std::iter::once(&self.tlas));
             entries.len() as u32
@@ -404,7 +666,227 @@ impl RayTracingScene {
             meshes: self.meshes.len() as u32,
             blas_builds,
             pool_vertices: self.vertices.len as u32,
+            particle_systems,
+            particles: particle_count,
         };
+    }
+
+    /// Make sure `system` has its template, output range and BLAS in the pool (creating
+    /// them when new, or when its mesh, capacity or blend changed), and note how many of
+    /// its slots to expand this frame. Returns whether a pool buffer was replaced.
+    fn ensure_particles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &Assets,
+        system: &RayTracedParticles,
+    ) -> bool {
+        if system.count == 0 || system.capacity == 0 {
+            return false;
+        }
+        let mesh = if assets.meshes.is_released(system.mesh) {
+            None
+        } else {
+            assets.meshes.get(system.mesh)
+        };
+        let Some(mesh) = mesh else {
+            return false;
+        };
+        let source = mesh.shared_data();
+        let frame = self.frame;
+        let material = MaterialData::from_material(&system.material);
+        let billboarded = system.material.is_billboarded();
+        if let Some(entry) = self.particles.get_mut(&system.id) {
+            if Arc::ptr_eq(&entry.source, source)
+                && entry.capacity == system.capacity
+                && entry.blend == system.blend
+            {
+                entry.count = system.count.min(entry.capacity);
+                entry.material = material;
+                entry.billboarded = billboarded;
+                entry.last_used = frame;
+                if entry.particles != system.particles {
+                    entry.particles = system.particles.clone();
+                    entry.bind_group = None;
+                }
+                return false;
+            }
+        }
+        if let Some(stale) = self.particles.remove(&system.id) {
+            self.live_vertices -= stale.pool_vertices();
+        }
+
+        let data: &MeshData = source;
+        let triangles = data.indices.len() / 3;
+        let template_vertices = data.vertices.len() as u64;
+        let capacity = system.capacity as u64;
+        if template_vertices == 0
+            || triangles == 0
+            || triangles as u64 * capacity > self.max_primitives as u64
+            || template_vertices * capacity > MAX_PARTICLE_VERTICES
+        {
+            log::debug!(
+                "Ray tracing skips particle system {}: {} slots of a {}-triangle mesh",
+                system.id,
+                capacity,
+                triangles
+            );
+            return false;
+        }
+        let mesh_indices = &data.indices[..triangles * 3];
+        if mesh_indices
+            .iter()
+            .any(|&index| index as u64 >= template_vertices)
+        {
+            log::warn!("Ray tracing skips particle system {}: index out of range", system.id);
+            return false;
+        }
+
+        let (template_base, template_grew) = self.vertices.append(
+            device,
+            queue,
+            encoder,
+            bytemuck::cast_slice(&data.vertices),
+        );
+        // The output starts out zeroed; the expansion fills the slots in use each frame.
+        let output = vec![0u8; (template_vertices * capacity * VERTEX_STRIDE) as usize];
+        let (vertex_base, output_grew) = self.vertices.append(device, queue, encoder, &output);
+        // Slot p's copy of the mesh is p * template_vertices further into the output.
+        let indices: Vec<u32> = (0..system.capacity)
+            .flat_map(|slot| {
+                let offset = slot * template_vertices as u32;
+                mesh_indices.iter().map(move |&index| offset + index)
+            })
+            .collect();
+        let (index_base, indices_grew) =
+            self.indices
+                .append(device, queue, encoder, bytemuck::cast_slice(&indices));
+
+        let geometry_flags = match system.blend {
+            RayTracedParticleBlend::Opaque => wgpu::AccelerationStructureGeometryFlags::OPAQUE,
+            // Blended particles come up as candidates, which the shader gathers.
+            _ => wgpu::AccelerationStructureGeometryFlags::NO_DUPLICATE_ANY_HIT_INVOCATION,
+        };
+        let full_size = wgpu::BlasTriangleGeometrySizeDescriptor {
+            vertex_format: wgpu::VertexFormat::Float32x3,
+            vertex_count: (template_vertices * capacity) as u32,
+            index_format: Some(wgpu::IndexFormat::Uint32),
+            index_count: Some(indices.len() as u32),
+            flags: geometry_flags,
+        };
+        let blas = device.create_blas(
+            &wgpu::CreateBlasDescriptor {
+                label: Some("ParticleBlas"),
+                flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                update_mode: wgpu::AccelerationStructureUpdateMode::Build,
+            },
+            wgpu::BlasGeometrySizeDescriptors::Triangles {
+                descriptors: vec![full_size],
+            },
+        );
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("RtParticleExpandParams"),
+            size: std::mem::size_of::<ExpandParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let entry = ParticleEntry {
+            source: Arc::clone(source),
+            capacity: system.capacity,
+            blend: system.blend,
+            blas,
+            geometry_flags,
+            template_base: template_base as u32,
+            template_vertices: template_vertices as u32,
+            template_indices: mesh_indices.len() as u32,
+            vertex_base: vertex_base as u32,
+            index_base: index_base as u32,
+            count: system.count.min(system.capacity),
+            billboarded,
+            material,
+            particles: system.particles.clone(),
+            params,
+            bind_group: None,
+            last_used: frame,
+        };
+        self.live_vertices += entry.pool_vertices();
+        self.particles.insert(system.id, entry);
+        template_grew || output_grew || indices_grew
+    }
+
+    /// Place this frame's particles into their systems' output ranges (one compute pass).
+    fn expand_particles(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        camera: RtCamera,
+    ) {
+        let frame = self.frame;
+        if !self
+            .particles
+            .values()
+            .any(|entry| entry.last_used == frame && entry.count > 0)
+        {
+            return;
+        }
+        let expand = self
+            .expand_pipeline
+            .get_or_insert_with(|| ExpandPipeline::new(device));
+        let pool = &self.vertices.buffer;
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("RtParticleExpandPass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&expand.pipeline);
+        for entry in self.particles.values_mut() {
+            if entry.last_used != frame || entry.count == 0 {
+                continue;
+            }
+            let params = ExpandParams {
+                camera_forward: camera.forward.extend(0.0).to_array(),
+                camera_up: camera.up.extend(0.0).to_array(),
+                template_base: entry.template_base,
+                template_count: entry.template_vertices,
+                output_base: entry.vertex_base,
+                particle_count: entry.count,
+                billboarded: entry.billboarded as u32,
+                _padding: [0; 3],
+            };
+            queue.write_buffer(&entry.params, 0, bytemuck::bytes_of(&params));
+            if entry
+                .bind_group
+                .as_ref()
+                .is_none_or(|(_, bound_pool)| bound_pool != pool)
+            {
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RtParticleExpandBindGroup"),
+                    layout: &expand.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: entry.particles.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: pool.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: entry.params.as_entire_binding(),
+                        },
+                    ],
+                });
+                entry.bind_group = Some((bind_group, pool.clone()));
+            }
+            let Some((bind_group, _)) = entry.bind_group.as_ref() else {
+                continue;
+            };
+            pass.set_bind_group(0, bind_group, &[]);
+            let threads = entry.count * entry.template_vertices;
+            pass.dispatch_workgroups(threads.div_ceil(EXPAND_WORKGROUP_SIZE), 1, 1);
+        }
     }
 
     fn geometry_key(batch: &crate::renderer::internal::OrderedBatch) -> GeometryKey {
@@ -534,6 +1016,15 @@ impl RayTracingScene {
             }
             keep
         });
+        // A particle system that did not draw this frame may be gone for good, and its
+        // output range is large: let it go now (it comes back as new if it returns).
+        self.particles.retain(|_, entry| {
+            let keep = entry.last_used == frame;
+            if !keep {
+                freed += entry.pool_vertices();
+            }
+            keep
+        });
         self.live_vertices -= freed;
     }
 
@@ -550,6 +1041,7 @@ impl RayTracingScene {
             used
         );
         self.meshes.clear();
+        self.particles.clear();
         self.live_vertices = 0;
         self.vertices.len = 0;
         self.indices.len = 0;
@@ -584,6 +1076,10 @@ impl RayTracingScene {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: materials.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.particle_materials.as_entire_binding(),
                 },
             ],
         })
@@ -622,11 +1118,26 @@ mod tests {
     }
 
     #[test]
+    fn particle_expansion_shader_validates() {
+        let source = include_str!("../../shader/rt_particles.wgsl");
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
+    }
+
+    #[test]
     fn gpu_structs_match_the_shader_layout() {
         // RtVertex in rt_reflections.wgsl: scalar position, normal and uv, then two vec4s.
         assert_eq!(std::mem::size_of::<Vertex>(), 64);
         assert_eq!(std::mem::offset_of!(Vertex, tangent), 32);
         assert_eq!(std::mem::offset_of!(Vertex, color), 48);
         assert_eq!(std::mem::size_of::<RtInstance>(), 16);
+        // ExpandParams in rt_particles.wgsl: two vec4s, then eight u32s.
+        assert_eq!(std::mem::size_of::<ExpandParams>(), 64);
     }
 }
