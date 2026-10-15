@@ -1,0 +1,1416 @@
+{
+  "name": "CesiumMan (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "leg_joint_L_5",
+      "transform": {
+        "translation": [
+          -0.06558381,
+          0.001090653,
+          0.02929146
+        ],
+        "rotation": [
+          0.0,
+          0.3130459,
+          0.0,
+          -0.949738
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 12,
+      "children": [],
+      "gltf_node": 11,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_R_5",
+      "transform": {
+        "translation": [
+          -0.06681963,
+          -0.001072265,
+          0.02635131
+        ],
+        "rotation": [
+          0.0,
+          0.32691476,
+          0.0,
+          -0.9450538
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 15,
+      "children": [],
+      "gltf_node": 7,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_L__2_",
+      "transform": {
+        "translation": [
+          -0.09332462,
+          0.1430001,
+          0.07814791
+        ],
+        "rotation": [
+          0.0,
+          -0.022542227,
+          0.0,
+          -0.9997459
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 6,
+      "children": [],
+      "gltf_node": 19,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_R__3_",
+      "transform": {
+        "translation": [
+          0.03137022,
+          -0.143001,
+          -0.1176117
+        ],
+        "rotation": [
+          0.0,
+          0.37921712,
+          0.0,
+          -0.9253078
+        ],
+        "scale": [
+          1.0000001,
+          1.0,
+          1.0000001
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 8,
+      "children": [],
+      "gltf_node": 16,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_neck_joint_2",
+      "transform": {
+        "translation": [
+          -0.05204017,
+          -3.39933e-8,
+          -0.00000266079
+        ],
+        "rotation": [
+          0.0,
+          0.9996905,
+          0.0,
+          0.02487923
+        ],
+        "scale": [
+          1.0000001,
+          1.0,
+          1.0000001
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 5,
+      "children": [],
+      "gltf_node": 21,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_neck_joint_1",
+      "transform": {
+        "translation": [
+          -0.00000236603,
+          0.00000241399,
+          0.06483621
+        ],
+        "rotation": [
+          0.0,
+          -0.66063446,
+          0.0,
+          -0.75070775
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 10,
+      "children": [
+        4
+      ],
+      "gltf_node": 20,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_L__3_",
+      "transform": {
+        "translation": [
+          0.01322162,
+          0.2154995,
+          0.1093321
+        ],
+        "rotation": [
+          0.0,
+          -0.07116943,
+          0.0,
+          -0.99746424
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 7,
+      "children": [
+        2
+      ],
+      "gltf_node": 18,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_L__4_",
+      "transform": {
+        "translation": [
+          -0.0000383747,
+          0.0910136,
+          -0.0000614334
+        ],
+        "rotation": [
+          0.0,
+          0.99597687,
+          0.0,
+          0.08961082
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 10,
+      "children": [
+        6
+      ],
+      "gltf_node": 17,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_R__2_",
+      "transform": {
+        "translation": [
+          -0.03554634,
+          -0.215499,
+          0.1042329
+        ],
+        "rotation": [
+          0.0,
+          0.89614797,
+          0.0,
+          0.44375533
+        ],
+        "scale": [
+          0.99999994,
+          1.0,
+          0.99999994
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 9,
+      "children": [
+        3
+      ],
+      "gltf_node": 15,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_arm_joint_R",
+      "transform": {
+        "translation": [
+          -0.0000383025,
+          -0.09098775,
+          -0.000062032304
+        ],
+        "rotation": [
+          0.0,
+          0.9909319,
+          0.0,
+          -0.13436489
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 10,
+      "children": [
+        8
+      ],
+      "gltf_node": 14,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "torso_joint_3",
+      "transform": {
+        "translation": [
+          -0.2505169,
+          6.07222e-7,
+          -0.0000729081
+        ],
+        "rotation": [
+          0.0,
+          0.6227029,
+          0.0,
+          -0.78245836
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 11,
+      "children": [
+        5,
+        7,
+        9
+      ],
+      "gltf_node": 13,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_torso_joint_2",
+      "transform": {
+        "translation": [
+          0.0000133617,
+          -0.0000133738,
+          0.1454169
+        ],
+        "rotation": [
+          0.0,
+          -0.65739644,
+          0.0,
+          -0.75354487
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 18,
+      "children": [
+        10
+      ],
+      "gltf_node": 12,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_L_3",
+      "transform": {
+        "translation": [
+          0.2757901,
+          0.001397252,
+          0.00412248
+        ],
+        "rotation": [
+          0.0,
+          -0.83776474,
+          0.0,
+          -0.5460315
+        ],
+        "scale": [
+          1.0,
+          0.99999994,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 13,
+      "children": [
+        0
+      ],
+      "gltf_node": 10,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_L_2",
+      "transform": {
+        "translation": [
+          0.2091639,
+          0.009055503,
+          -0.1642695
+        ],
+        "rotation": [
+          0.0,
+          -0.52943695,
+          0.0,
+          -0.84834933
+        ],
+        "scale": [
+          1.0000001,
+          1.0,
+          1.0000001
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 14,
+      "children": [
+        12
+      ],
+      "gltf_node": 9,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_L_1",
+      "transform": {
+        "translation": [
+          0.02852,
+          0.06803945,
+          -0.06295936
+        ],
+        "rotation": [
+          0.0,
+          -0.32463354,
+          0.0,
+          -0.9458399
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 18,
+      "children": [
+        13
+      ],
+      "gltf_node": 8,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_R_3",
+      "transform": {
+        "translation": [
+          0.2754603,
+          -0.0014317259,
+          -0.01410483
+        ],
+        "rotation": [
+          0.0,
+          0.8666408,
+          0.0,
+          0.49893257
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 16,
+      "children": [
+        1
+      ],
+      "gltf_node": 6,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_R_2",
+      "transform": {
+        "translation": [
+          0.2608908,
+          -0.009026051,
+          0.05167089
+        ],
+        "rotation": [
+          0.0,
+          -0.094113775,
+          0.0,
+          -0.9955615
+        ],
+        "scale": [
+          1.0000001,
+          1.0,
+          1.0000001
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 17,
+      "children": [
+        15
+      ],
+      "gltf_node": 5,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "leg_joint_R_1",
+      "transform": {
+        "translation": [
+          0.02855719,
+          -0.06803914,
+          -0.06295864
+        ],
+        "rotation": [
+          0.0,
+          -0.6898292,
+          0.0,
+          -0.7239722
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 18,
+      "children": [
+        16
+      ],
+      "gltf_node": 4,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Skeleton_torso_joint_1",
+      "transform": {
+        "translation": [
+          1.57554e-8,
+          0.004999837,
+          0.6789999
+        ],
+        "rotation": [
+          0.0,
+          -0.037803534,
+          0.0,
+          -0.9992852
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 19,
+      "children": [
+        11,
+        14,
+        17
+      ],
+      "gltf_node": 3,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Armature",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          -0.70710677,
+          0.70710677
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": 21,
+      "children": [
+        18,
+        20
+      ],
+      "gltf_node": 1,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Cesium_Man",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.13100001,
+          -0.5691371,
+          0.0
+        ],
+        "max": [
+          0.180954,
+          0.5691369,
+          1.50655
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/web/assets/skinned/CesiumMan/CesiumMan.glb#material0",
+      "parent": 19,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null,
+      "skin": {
+        "joints": [
+          18,
+          11,
+          10,
+          5,
+          4,
+          7,
+          9,
+          6,
+          8,
+          2,
+          3,
+          14,
+          17,
+          13,
+          16,
+          12,
+          15,
+          0,
+          1
+        ],
+        "inverse_bind": [
+          [
+            0.99714184,
+            -4.37114e-8,
+            0.07555299,
+            0.0,
+            4.3586464e-8,
+            1.0,
+            3.302527e-9,
+            0.0,
+            -0.07555299,
+            0.0,
+            0.99714184,
+            0.0,
+            0.05130046,
+            -0.004999816,
+            -0.67705923,
+            1.0
+          ],
+          [
+            0.06041747,
+            -4.37114e-8,
+            0.9981733,
+            0.0,
+            2.6409321e-9,
+            1.0,
+            4.363155e-8,
+            0.0,
+            -0.9981733,
+            0.0,
+            0.06041747,
+            0.0,
+            0.8218304,
+            -0.004986405,
+            -0.060763888,
+            1.0
+          ],
+          [
+            0.9862607,
+            -4.37114e-8,
+            0.1651966,
+            0.0,
+            4.3110834e-8,
+            1.0,
+            7.2209745e-9,
+            0.0,
+            -0.1651966,
+            0.0,
+            0.9862607,
+            0.0,
+            0.1815807,
+            -0.004987061,
+            -1.058603,
+            1.0
+          ],
+          [
+            -0.03847855,
+            -4.37114e-8,
+            0.9992596,
+            0.0,
+            -1.6819512e-9,
+            1.0,
+            4.3679034e-8,
+            0.0,
+            -0.9992596,
+            0.0,
+            -0.03847855,
+            0.0,
+            1.137408,
+            -0.0049894447,
+            0.03729343,
+            1.0
+          ],
+          [
+            -0.01127523,
+            -4.37114e-8,
+            -0.99993664,
+            0.0,
+            -4.928561e-10,
+            1.0,
+            -4.3708628e-8,
+            0.0,
+            0.99993664,
+            0.0,
+            -0.01127523,
+            0.0,
+            -1.189831,
+            -0.0049894447,
+            0.021916801,
+            1.0
+          ],
+          [
+            -0.9999089,
+            -4.37114e-8,
+            0.01350456,
+            0.0,
+            -4.3707416e-8,
+            1.0,
+            5.903032e-10,
+            0.0,
+            -0.01350456,
+            0.0,
+            -0.9999089,
+            0.0,
+            0.01024794,
+            -0.09600067,
+            1.07396,
+            1.0
+          ],
+          [
+            -0.9066583,
+            -4.37114e-8,
+            -0.4218659,
+            0.0,
+            -3.9631303e-8,
+            1.0,
+            -1.844035e-8,
+            0.0,
+            0.4218659,
+            0.0,
+            -0.9066583,
+            0.0,
+            -0.4569431,
+            0.08600062,
+            0.9719554,
+            1.0
+          ],
+          [
+            -0.9916969,
+            -4.37114e-8,
+            -0.1285971,
+            0.0,
+            -4.3348457e-8,
+            1.0,
+            -5.621159e-9,
+            0.0,
+            0.1285971,
+            0.0,
+            -0.9916969,
+            0.0,
+            -0.1398994,
+            -0.3115001,
+            0.9544339,
+            1.0
+          ],
+          [
+            0.8851096,
+            -4.37114e-8,
+            -0.4653831,
+            0.0,
+            3.868938e-8,
+            1.0,
+            -2.0342547e-8,
+            0.0,
+            0.4653831,
+            0.0,
+            0.8851096,
+            0.0,
+            -0.4347002,
+            0.3014997,
+            -0.8611349,
+            1.0
+          ],
+          [
+            -0.9848928,
+            -4.37114e-8,
+            -0.1731653,
+            0.0,
+            -4.3051042e-8,
+            1.0,
+            -7.569298e-9,
+            0.0,
+            0.1731653,
+            0.0,
+            -0.9848928,
+            0.0,
+            -0.08602434,
+            -0.45450032,
+            0.8732962,
+            1.0
+          ],
+          [
+            0.30394322,
+            -4.37114e-8,
+            -0.9526903,
+            0.0,
+            1.3285783e-8,
+            1.0,
+            -4.1643425e-8,
+            0.0,
+            0.9526903,
+            0.0,
+            0.30394322,
+            0.0,
+            -0.8538168,
+            0.4445008,
+            -0.2025963,
+            1.0
+          ],
+          [
+            0.7405731,
+            -4.37114e-8,
+            0.671976,
+            0.0,
+            3.2371485e-8,
+            1.0,
+            2.9373009e-8,
+            0.0,
+            -0.671976,
+            0.0,
+            0.7405731,
+            0.0,
+            0.3950994,
+            -0.073039286,
+            -0.470674,
+            1.0
+          ],
+          [
+            -0.02733147,
+            -4.37114e-8,
+            0.9996265,
+            0.0,
+            -1.1946968e-9,
+            1.0,
+            4.3695074e-8,
+            0.0,
+            -0.9996265,
+            0.0,
+            -0.02733147,
+            0.0,
+            0.6144825,
+            0.0630393,
+            -0.006926715,
+            1.0
+          ],
+          [
+            -0.2782297,
+            -4.37114e-8,
+            0.9605147,
+            0.0,
+            -1.216181e-8,
+            1.0,
+            4.198544e-8,
+            0.0,
+            -0.9605147,
+            0.0,
+            -0.2782297,
+            0.0,
+            0.35694042,
+            -0.08209478,
+            0.03239268,
+            1.0
+          ],
+          [
+            -0.2141694,
+            -4.37114e-8,
+            0.9767965,
+            0.0,
+            -9.361644e-9,
+            1.0,
+            4.2697142e-8,
+            0.0,
+            -0.9767965,
+            0.0,
+            -0.2141694,
+            0.0,
+            0.3583086,
+            0.072065346,
+            0.0087007275,
+            1.0
+          ],
+          [
+            -0.7664458,
+            -4.37114e-8,
+            -0.642309,
+            0.0,
+            -3.350242e-8,
+            1.0,
+            -2.8076226e-8,
+            0.0,
+            0.642309,
+            0.0,
+            -0.7664458,
+            0.0,
+            -0.058624502,
+            -0.08349204,
+            0.062831104,
+            1.0
+          ],
+          [
+            -0.737183,
+            -4.37114e-8,
+            -0.6756932,
+            0.0,
+            -3.2223298e-8,
+            1.0,
+            -2.9535496e-8,
+            0.0,
+            0.6756932,
+            0.0,
+            -0.737183,
+            0.0,
+            -0.06132286,
+            0.07349705,
+            0.06019502,
+            1.0
+          ],
+          [
+            -0.99815774,
+            -4.37114e-8,
+            -0.06067293,
+            0.0,
+            -4.363087e-8,
+            1.0,
+            -2.6520988e-9,
+            0.0,
+            0.06067293,
+            0.0,
+            -0.99815774,
+            0.0,
+            0.02553868,
+            -0.08458268,
+            0.02282786,
+            1.0
+          ],
+          [
+            -0.9971264,
+            -4.37114e-8,
+            -0.07575774,
+            0.0,
+            -4.358579e-8,
+            1.0,
+            -3.3114769e-9,
+            0.0,
+            0.07575774,
+            0.0,
+            -0.9971264,
+            0.0,
+            0.02523398,
+            0.07456934,
+            0.02321326,
+            1.0
+          ]
+        ]
+      }
+    },
+    {
+      "name": "Z_UP",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          -0.70710677,
+          0.0,
+          0.0,
+          0.70710677
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        19
+      ],
+      "gltf_node": 0,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/CesiumMan/CesiumMan.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null,
+      "animator": {
+        "libraries": [
+          "content/gltf/CesiumMan/CesiumMan.glb"
+        ],
+        "default_clip": "Animation_0"
+      }
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

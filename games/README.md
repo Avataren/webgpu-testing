@@ -11,6 +11,7 @@ repository root, or open a saved project directory in the editor and press Play.
 | [Robotron](robotron/README.md) | `cargo run --all-features --bin player -- games/robotron` |
 | [Breakout](breakout/project.json) | `cargo run --all-features --bin player -- games/breakout` |
 | [Neon Rift](neon-rift/project.json) | `cargo run --all-features --bin player -- games/neon-rift` |
+| [RT Lab](rt-lab/README.md) — test room for ray-traced reflections | `cargo run --release --all-features --bin player -- games/rt-lab` |
 
 Package a saved project for the web using
 `./build_web.sh --project games/<demo-name>`. Chess uses its own native spectator

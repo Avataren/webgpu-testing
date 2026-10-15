@@ -1,0 +1,23 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 1,
+  "base_color_texture": {
+    "path": "content/gltf/CesiumMan/textures/embedded_0000.jpg",
+    "name": "EmbeddedTexture_0"
+  },
+  "metallic_roughness_texture": 10,
+  "normal_texture": 10,
+  "emissive_texture": 10,
+  "occlusion_texture": 10,
+  "metallic_factor": 0,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

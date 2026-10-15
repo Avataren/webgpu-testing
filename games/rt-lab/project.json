@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "rt-lab",
+    "description": ""
+  },
+  "scenes": [
+    {
+      "id": "WyIDZuXWcBVF",
+      "name": "rt-lab",
+      "relative_path": "content/scenes/WyIDZuXWcBVF.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    },
+    {
+      "id": "suzanne.scene",
+      "name": "suzanne (Imported)",
+      "relative_path": "content/scenes/suzanne.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    },
+    {
+      "id": "torus_knot.scene",
+      "name": "torus_knot (Imported)",
+      "relative_path": "content/scenes/torus_knot.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    },
+    {
+      "id": "CesiumMan.scene",
+      "name": "CesiumMan (Imported)",
+      "relative_path": "content/scenes/CesiumMan.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.0235294122248888,
+      0.0313725508749485,
+      0.0470588244497776,
+      1.0
+    ],
+    "ambient_intensity": 0.2,
+    "hdr": null
+  },
+  "engine_camera": {
+    "eye": [
+      0.0,
+      2.6,
+      10.5
+    ],
+    "target": [
+      0.0,
+      2.4771285,
+      9.507577
+    ],
+    "up": [
+      0.0,
+      0.9924227,
+      -0.12287138
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 0.9599311,
+      "near": 0.3,
+      "far": 300.0
+    }
+  },
+  "imports": [
+    {
+      "package": "content/gltf/CesiumMan",
+      "metadata": [
+        "content/gltf/CesiumMan/meshes/mesh_0000.json",
+        "content/gltf/CesiumMan/meta.json",
+        "content/gltf/CesiumMan/scene.asset.json"
+      ]
+    },
+    {
+      "package": "content/gltf/suzanne",
+      "metadata": [
+        "content/gltf/suzanne/meshes/mesh_0000.json",
+        "content/gltf/suzanne/meta.json",
+        "content/gltf/suzanne/scene.asset.json"
+      ]
+    },
+    {
+      "package": "content/gltf/torus_knot",
+      "metadata": [
+        "content/gltf/torus_knot/meshes/mesh_0000.json",
+        "content/gltf/torus_knot/meta.json",
+        "content/gltf/torus_knot/scene.asset.json"
+      ]
+    }
+  ]
+}

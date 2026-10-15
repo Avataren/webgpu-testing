@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/textures/marble_base_color.png",
+    "name": "marble_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/marble_metallic_roughness.png",
+    "name": "marble_metallic_roughness.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/marble_normal.png",
+    "name": "marble_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 0,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

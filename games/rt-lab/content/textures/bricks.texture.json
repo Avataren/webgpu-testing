@@ -1,0 +1,19 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#3a1a12",
+      "#b5523a"
+    ],
+    "image": false,
+    "name": "bricks",
+    "pattern": "bricks",
+    "roughness": 0.8,
+    "scale": 6,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

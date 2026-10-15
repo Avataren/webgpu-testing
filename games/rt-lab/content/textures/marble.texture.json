@@ -1,0 +1,22 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#0c0d10",
+      "#4a4a50"
+    ],
+    "image": false,
+    "name": "marble",
+    "normal_strength": 0,
+    "overwrite": true,
+    "pattern": "marble",
+    "roughness": 0.08,
+    "roughness_variation": 0.1,
+    "scale": 10,
+    "size": [
+      1024,
+      1024
+    ]
+  },
+  "version": 1
+}

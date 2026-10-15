@@ -1,0 +1,82 @@
+{
+  "name": "torus_knot (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "TorusKnot",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -1.3238552,
+          -0.61830246,
+          -1.53859
+        ],
+        "max": [
+          1.619993,
+          0.618714,
+          1.5381218
+        ]
+      },
+      "material": "/tmp/claude-1000/-home-avataren-src-rust-webgpu-testing/30822038-66b9-4b2c-84f3-2bcea4dcecef/scratchpad/assets/torus_knot.glb#material0",
+      "parent": null,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/torus_knot/torus_knot.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

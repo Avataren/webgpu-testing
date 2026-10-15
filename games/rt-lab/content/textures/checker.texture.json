@@ -1,0 +1,23 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#101418",
+      "#e8e2d0"
+    ],
+    "image": false,
+    "maps": [
+      "base_color"
+    ],
+    "name": "checker",
+    "normal_strength": 0,
+    "pattern": "checker",
+    "roughness": 0.35,
+    "scale": 8,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

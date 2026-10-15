@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "source": null,
+  "scene": {
+    "json": "scene.asset.json",
+    "meshes": [
+      {
+        "index": 0,
+        "path": "meshes/mesh_0000.json"
+      }
+    ],
+    "textures": [
+      {
+        "index": 0,
+        "path": "textures/embedded_0000.jpg"
+      }
+    ]
+  }
+}
