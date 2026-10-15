@@ -6,7 +6,7 @@ and wrong.
 
 | Object | What it tests |
 | --- | --- |
-| Mirror panel (back wall, metallic, roughness 0) | Off-screen reflections: it reflects the room behind the camera, which screen-space reflections cannot see |
+| Mirror panel (back wall, metallic, roughness 0) | Off-screen reflections: it reflects the room behind the camera, which screen-space reflections cannot see. The scene traces at full resolution (`ssr.full_resolution`) so it stays sharp |
 | Brick wall and neon strips behind the camera | Material textures and emissive surfaces at ray hits (only visible through the mirror and the mirror sphere) |
 | Mirror sphere, chrome torus knot, copper Suzanne | Metal reflections in the surface's own colour (F0); the knot spins in play mode |
 | Gold spheres, roughness 0 / 0.15 / 0.3 / 0.5 / 0.8 | Roughness-dependent reflection blur |
