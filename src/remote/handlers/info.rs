@@ -117,7 +117,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),
                 "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
-                "note": "GPU time per stage from timestamp queries, a frame or two old; post_process excludes reflections, which are their own stage when on",
+                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: reflections, temporal (TAA, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
             })),
         },
         "assets": {

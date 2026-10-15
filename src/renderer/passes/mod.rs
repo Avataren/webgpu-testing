@@ -293,6 +293,7 @@ pub(crate) fn shadow_pass(
     custom_render: Option<&mut CustomRenderRequest<'_>>,
     custom_shadow_enabled: bool,
     shadow_invocations: &mut Vec<ShadowInvocation>,
+    skip: u32,
 ) {
     shadow_invocations.clear();
     let geometry = BatchGeometry {
@@ -309,6 +310,7 @@ pub(crate) fn shadow_pass(
         prepared_batches.materials(),
         custom_shadow_enabled,
         shadow_invocations,
+        skip,
     );
 
     if custom_shadow_enabled {

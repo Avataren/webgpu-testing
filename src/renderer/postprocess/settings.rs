@@ -132,6 +132,8 @@ impl PostProcessSettings {
         ssr.thickness = finite_or(ssr.thickness, 0.4).clamp(0.01, 100.0);
         ssr.blur = finite_or(ssr.blur, 0.5).clamp(0.0, 1.0);
         self.rt_shadows.softness = finite_or(self.rt_shadows.softness, 0.5).clamp(0.0, 10.0);
+        self.rt_shadows.light_radius =
+            finite_or(self.rt_shadows.light_radius, 0.05).clamp(0.0, 10.0);
         let blur = &mut self.motion_blur;
         blur.intensity = finite_or(blur.intensity, 0.0).clamp(0.0, 1.0);
         blur.max_blur = finite_or(blur.max_blur, 0.0).clamp(0.0, 128.0);
@@ -549,6 +551,10 @@ pub struct SsaoSettings {
     pub intensity: f32,
     /// Exponent applied to the occlusion; higher gives darker, tighter contact shadows.
     pub power: f32,
+    /// Trace occlusion against the scene with hardware ray tracing when the GPU has it
+    /// (sees occluders off screen and behind other surfaces; `radius` is the ray length);
+    /// falls back to screen space otherwise. `bias` only applies to screen space.
+    pub ray_traced: bool,
 }
 
 impl Default for SsaoSettings {
@@ -559,6 +565,7 @@ impl Default for SsaoSettings {
             bias: 0.05,
             intensity: 0.75,
             power: 1.25,
+            ray_traced: false,
         }
     }
 }
@@ -576,6 +583,7 @@ impl SsaoSettings {
             bias: lerp(from.bias, to.bias, t),
             intensity: lerp(from.intensity, to.intensity, t),
             power: lerp(from.power, to.power, t),
+            ray_traced: pick(from.ray_traced, to.ray_traced, t),
         }
     }
 }
@@ -717,18 +725,20 @@ impl ReflectionSettings {
     }
 }
 
-/// Shadows of directional lights (the sun) traced per pixel with hardware ray tracing
-/// instead of read from shadow maps: exact at any distance and resolution, with no acne or
-/// light leaking. Needs a GPU with ray queries and no MSAA; otherwise (and for transparent
-/// surfaces and particles) shadow maps are used. Point and spot lights keep shadow maps.
+/// Shadows traced per pixel with hardware ray tracing instead of read from shadow maps
+/// (up to 4 directional, 4 point and 4 spot lights that cast shadows): exact at any
+/// distance and resolution, with no acne or light leaking. Needs a GPU with ray queries and
+/// no MSAA; otherwise (and for transparent surfaces and particles) shadow maps are used.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RayTracedShadowSettings {
     pub enabled: bool,
-    /// The light's apparent size in degrees: 0 casts hard shadows; the sun is about 0.5,
-    /// edges that soften with distance from the caster (one ray per pixel, smoothed by
-    /// TAA).
+    /// Directional lights' apparent size in degrees: 0 casts hard shadows; the sun is
+    /// about 0.5, edges that soften with distance from the caster (one ray per pixel,
+    /// smoothed by TAA).
     pub softness: f32,
+    /// Point and spot lights' radius in meters, for their soft shadows (0: hard).
+    pub light_radius: f32,
 }
 
 impl Default for RayTracedShadowSettings {
@@ -736,6 +746,7 @@ impl Default for RayTracedShadowSettings {
         Self {
             enabled: false,
             softness: 0.5,
+            light_radius: 0.05,
         }
     }
 }
@@ -745,6 +756,7 @@ impl RayTracedShadowSettings {
         Self {
             enabled: pick(self.enabled, other.enabled, t),
             softness: lerp(self.softness, other.softness, t),
+            light_radius: lerp(self.light_radius, other.light_radius, t),
         }
     }
 }
@@ -1051,6 +1063,7 @@ impl PostProcessSettings {
                 bias: effects.ssao_settings.bias,
                 intensity: effects.ssao_settings.intensity,
                 power: effects.ssao_settings.power,
+                ray_traced: false,
             };
             settings.bloom = BloomSettings::from_legacy(effects.bloom, &effects.bloom_settings);
             settings.anti_aliasing = if effects.fxaa {

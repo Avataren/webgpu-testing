@@ -3129,6 +3129,12 @@ fn show_post_process_volume_section(
                     0.5..=4.0,
                     0.01,
                 );
+                rows.checkbox(
+                    ui,
+                    "ssao.ray_traced",
+                    "Ray traced (hardware)",
+                    &mut settings.ssao.ray_traced,
+                );
             },
         );
 
@@ -3254,11 +3260,20 @@ fn show_post_process_volume_section(
                 rows.slider_with(
                     ui,
                     "rt_shadows.softness",
-                    "Light size",
+                    "Sun size",
                     &mut settings.rt_shadows.softness,
                     0.0..=5.0,
                     0.05,
                     " deg",
+                );
+                rows.slider_with(
+                    ui,
+                    "rt_shadows.light_radius",
+                    "Lamp radius",
+                    &mut settings.rt_shadows.light_radius,
+                    0.0..=1.0,
+                    0.01,
+                    " m",
                 );
             },
         );

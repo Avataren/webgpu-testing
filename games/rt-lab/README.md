@@ -15,7 +15,8 @@ and wrong.
 | Red and green side walls | Colour bleeding into floor and mirror reflections, and screen-edge fade with SSR |
 | Polished marble floor (textured roughness) | Per-pixel smoothness from a metallic-roughness map |
 | CesiumMan (skinned, walks in play mode) | Skinned meshes in the TLAS: his reflection follows the animation |
-| Sun with ray-traced shadows (`rt_shadows`) | Per-pixel shadow rays: the side walls shadow the room (shadow maps let the sun through them), contact shadows under the props |
+| Sun and two lamps with ray-traced shadows (`rt_shadows`) | Per-pixel shadow rays: the side walls shadow the room (shadow maps let the sun through them), the lamps cast soft shadows (5 cm radius), including CesiumMan's |
+| Ray-traced ambient occlusion (`ssao.ray_traced`, 0.5 m) | Contact darkening at the pedestal bases, wall corners and inside the knot, from geometry on or off screen |
 
 The torus knot and Suzanne were modelled in Blender (through the Blender MCP server) and
 imported as GLB; the textures come from `texture_generate`.

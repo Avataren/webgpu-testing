@@ -42,7 +42,7 @@ fn calculate_scene_lighting_at(
         let light_color = light.color_intensity.xyz;
         let light_intensity = light.color_intensity.w;
         let map_shadow = sample_directional_shadow(i, world_pos, N, light_dir);
-        let traced = rt_directional_shadow(i, pixel);
+        let traced = rt_shadow_bit(i, pixel);
         let shadow = select(map_shadow, traced, traced >= 0.0);
         Lo += shadow * calculate_light_contribution(
             N, V, light_dir, base_color, metallic, roughness,
@@ -58,12 +58,14 @@ fn calculate_scene_lighting_at(
         let distance = length(to_light);
         
         // ALWAYS sample shadow in uniform control flow
-        let shadow = sample_point_shadow(
+        let map_shadow = sample_point_shadow(
             i, 
             world_pos, 
             light.position_range.xyz, 
             light.position_range.w
         );
+        let traced = rt_shadow_bit(4u + i, pixel);
+        let shadow = select(map_shadow, traced, traced >= 0.0);
         
         // Then conditionally use the result
         if (distance > 0.0001) {
@@ -91,13 +93,15 @@ fn calculate_scene_lighting_at(
         let distance = length(to_light);
         
         // ALWAYS sample shadow in uniform control flow
-        let shadow = sample_spot_shadow_advanced(
+        let map_shadow = sample_spot_shadow_advanced(
             i, 
             world_pos, 
             N,
             light.position_range.xyz,
             light.direction.xyz
         );
+        let traced = rt_shadow_bit(8u + i, pixel);
+        let shadow = select(map_shadow, traced, traced >= 0.0);
         
         // Then conditionally use the result
         if (distance > 0.0001) {

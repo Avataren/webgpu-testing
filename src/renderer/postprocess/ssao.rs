@@ -13,6 +13,7 @@ pub struct SsaoStage {
     blur_vertical_bind_group: Option<wgpu::BindGroup>,
 }
 
+#[derive(Clone, Copy)]
 pub struct SsaoTargets<'a> {
     pub output: &'a wgpu::TextureView,
     pub ping: &'a wgpu::TextureView,
@@ -250,7 +251,16 @@ impl SsaoStage {
             pass.set_bind_group(1, ssao_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        self.blur(encoder, uniform_bind_group, targets);
+    }
 
+    /// Blur the occlusion in `targets.output` (screen-space or ray-traced) in place.
+    pub fn blur(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        uniform_bind_group: &wgpu::BindGroup,
+        targets: SsaoTargets<'_>,
+    ) {
         let blur_horizontal = self
             .blur_horizontal_bind_group
             .as_ref()

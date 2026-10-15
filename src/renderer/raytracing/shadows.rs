@@ -1,5 +1,5 @@
-//! Ray-traced shadows of directional lights: a screen-space mask traced between the
-//! depth prepass and the main pass (`shader/rt_shadows.wgsl`), which the main pass reads
+//! Ray-traced shadows: a screen-space mask traced between the depth prepass and the main
+//! pass (`shader/rt_shadows.wgsl`), one bit per shadowed light, which the main pass reads
 //! instead of the shadow maps for those lights.
 
 use bytemuck::{Pod, Zeroable};
@@ -7,15 +7,20 @@ use bytemuck::{Pod, Zeroable};
 use crate::renderer::lights::LightsData;
 use crate::renderer::{PipelineBuilder, RenderRegion};
 
-/// Directional lights the mask has a channel for.
+/// Lights of each kind the mask has bits for: bits 0-3 directional, 4-7 point, 8-11 spot.
 pub(crate) const RT_SHADOW_LIGHTS: usize = 4;
-const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const POINT_BIT: usize = 4;
+const SPOT_BIT: usize = 8;
+/// One bit per light: a ray traced this frame either reaches the light or not.
+pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 /// Mirrors `RtShadowParams` in rt_shadows.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 struct RtShadowUniform {
-    lights: [[f32; 4]; RT_SHADOW_LIGHTS],
+    directionals: [[f32; 4]; RT_SHADOW_LIGHTS],
+    points: [[f32; 4]; RT_SHADOW_LIGHTS],
+    spots: [[f32; 4]; RT_SHADOW_LIGHTS],
     params: [f32; 4],
     region: [f32; 4],
 }
@@ -80,7 +85,7 @@ impl RtShadowStage {
             .with_label("RtShadowPipeline")
             .with_vertex_entry("vs_fullscreen")
             .with_fragment_entry("fs_rt_shadows")
-            .with_color_target(MASK_FORMAT, Some(wgpu::BlendState::REPLACE))
+            .with_color_target(MASK_FORMAT, None)
             .with_no_culling()
             .build();
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -161,8 +166,13 @@ impl RtShadowStage {
         mask_changed
     }
 
-    /// Trace the mask for `lights`' shadow-casting directional lights. Returns the lights
-    /// traced as a bit set (bit i = directional light i), or 0 when nothing ran.
+    /// The lights [`Self::trace`] would trace for `lights`, as its bit set.
+    pub(crate) fn traced_bits(&self, lights: &LightsData) -> u32 {
+        traced_lights(lights).1
+    }
+
+    /// Trace the mask for `lights`' shadow-casting lights. Returns the lights traced as a
+    /// bit set (see [`RT_SHADOW_LIGHTS`]), or 0 when nothing ran.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn trace(
         &mut self,
@@ -172,6 +182,7 @@ impl RtShadowStage {
         scene: &wgpu::BindGroup,
         lights: &LightsData,
         softness_degrees: f32,
+        light_radius: f32,
         frame: u32,
         region: Option<RenderRegion>,
     ) -> u32 {
@@ -179,7 +190,7 @@ impl RtShadowStage {
         else {
             return 0;
         };
-        let (directions, bits) = traced_lights(lights);
+        let (mut uniform, bits) = traced_lights(lights);
         if bits == 0 {
             return 0;
         }
@@ -195,16 +206,13 @@ impl RtShadowStage {
                 ]
             },
         );
-        let uniform = RtShadowUniform {
-            lights: directions,
-            params: [
-                (0.5 * softness_degrees).to_radians().tan(),
-                (frame % 1024) as f32,
-                0.0,
-                0.0,
-            ],
-            region: region_rect,
-        };
+        uniform.params = [
+            (0.5 * softness_degrees).to_radians().tan(),
+            (frame % 1024) as f32,
+            light_radius,
+            0.0,
+        ];
+        uniform.region = region_rect;
         if self.last_uniform != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.last_uniform = Some(uniform);
@@ -217,7 +225,13 @@ impl RtShadowStage {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                    // Every light reaches pixels outside the traced region.
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: u32::MAX as f64,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -238,30 +252,61 @@ impl RtShadowStage {
     }
 }
 
-/// Toward-light directions of the shadow-casting directional lights the mask covers
-/// (w = 1 when traced), and their bits.
-fn traced_lights(lights: &LightsData) -> ([[f32; 4]; RT_SHADOW_LIGHTS], u32) {
-    let mut directions = [[0.0; 4]; RT_SHADOW_LIGHTS];
+/// The shadow-casting lights the mask covers (w = 1 when traced: toward-light directions
+/// for directional lights, positions for point and spot lights) and their bits.
+fn traced_lights(lights: &LightsData) -> (RtShadowUniform, u32) {
+    let mut uniform = RtShadowUniform::default();
     let mut bits = 0u32;
-    let shadows = lights.directional_shadows();
+    let directional_shadows = lights.directional_shadows();
     for (index, light) in lights
         .directional_lights()
         .iter()
         .enumerate()
         .take(RT_SHADOW_LIGHTS)
     {
-        let casts = shadows
+        let casts = directional_shadows
             .get(index)
             .is_some_and(|shadow| shadow.params[0] > 0.5);
         let [x, y, z, _] = light.direction;
         let length = (x * x + y * y + z * z).sqrt();
-        if !casts || length < 1e-6 {
-            continue;
+        if casts && length > 1e-6 {
+            uniform.directionals[index] = [-x / length, -y / length, -z / length, 1.0];
+            bits |= 1 << index;
         }
-        directions[index] = [-x / length, -y / length, -z / length, 1.0];
-        bits |= 1 << index;
     }
-    (directions, bits)
+    let point_shadows = lights.point_shadows();
+    for (index, light) in lights
+        .point_lights()
+        .iter()
+        .enumerate()
+        .take(RT_SHADOW_LIGHTS)
+    {
+        if point_shadows
+            .get(index)
+            .is_some_and(|shadow| shadow.params[0] > 0.5)
+        {
+            let [x, y, z, _] = light.position_range;
+            uniform.points[index] = [x, y, z, 1.0];
+            bits |= 1 << (POINT_BIT + index);
+        }
+    }
+    let spot_shadows = lights.spot_shadows();
+    for (index, light) in lights
+        .spot_lights()
+        .iter()
+        .enumerate()
+        .take(RT_SHADOW_LIGHTS)
+    {
+        if spot_shadows
+            .get(index)
+            .is_some_and(|shadow| shadow.params[0] > 0.5)
+        {
+            let [x, y, z, _] = light.position_range;
+            uniform.spots[index] = [x, y, z, 1.0];
+            bits |= 1 << (SPOT_BIT + index);
+        }
+    }
+    (uniform, bits)
 }
 
 pub(crate) fn rt_shadows_shader_source() -> String {
@@ -277,7 +322,7 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<RtShadowUniform>(), 96);
+        assert_eq!(std::mem::size_of::<RtShadowUniform>(), 224);
     }
 
     #[test]

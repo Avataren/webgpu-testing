@@ -153,19 +153,34 @@ pass takes off the flat ambient light the main pass added there, so mirrors no l
 hazy; with an HDR environment the main pass's environment specular is still added under
 the reflection. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
 
-**RT shadows (2026-10-15): directional lights.** `rt_shadows.enabled` traces one shadow ray
-per pixel and shadow-casting directional light (up to 4) between the depth prepass and the
-main pass, into a screen-space mask (`renderer/raytracing/shadows.rs`,
+**RT shadows (2026-10-15).** `rt_shadows.enabled` traces one shadow ray per pixel and
+shadow-casting light (up to 4 directional, 4 point and 4 spot) between the depth prepass
+and the main pass, into a screen-space R32Uint mask with one bit per light (0-3
+directional, 4-7 point, 8-11 spot; `renderer/raytracing/shadows.rs`,
 `shader/rt_shadows.wgsl`): the surface comes from depth through the jittered camera, its
 geometric normal from neighbouring depths. The main pass reads the mask (lights group
 binding 11; `lights.counts.w` says which lights) instead of the shadow maps for opaque
-surfaces. `rt_shadows.softness` is the light's apparent size in degrees (0.5 like the sun):
-each pixel and frame aims at another point of its disc and TAA averages them, so large
-values look grainy. Unlike shadow maps, one-sided walls block the sun too (rt-lab's side
-walls leaked light before). About 0.08 ms in the rt-lab editor view. Falls back to shadow
-maps without ray queries, with MSAA, and for transparent surfaces and particles. Not yet:
-point and spot lights, skipping the directional shadow maps when nothing needs them, a
-denoiser for large lights, ray-traced AO.
+surfaces. `rt_shadows.softness` is the directional lights' apparent size in degrees (0.5
+like the sun) and `rt_shadows.light_radius` the point and spot lights' radius (0.05 m):
+each pixel and frame aims at another point of the light and TAA averages them, so large
+lights look grainy. Unlike shadow maps, one-sided walls block light too (rt-lab's side walls
+leaked the sun before). The shadow maps the mask replaces are not rendered unless
+something else reads them (transparent batches, custom shadow passes, or lit GPU particles,
+which took the lights group the frame before). Falls back to shadow maps without ray
+queries, with MSAA, and for transparent surfaces and particles. In the rt-lab editor view
+(sun and two lamps) the mask costs about 0.13 ms and the shadow-map pass drops from about
+0.16 to 0.01 ms.
+
+**RT ambient occlusion (2026-10-15).** `ssao.ray_traced` replaces the screen-space estimate
+with 8 cosine-weighted rays per pixel up to `ssao.radius` (`postprocess/rt_ao.rs`,
+`shader/postprocess/rt_ao.wgsl`), written into the SSAO texture so SSAO's blur and the
+composite finish it. The ray pattern is fixed per pixel (rotated by interleaved gradient
+noise), because the pass runs after TAA. About 0.41 ms against SSAO's 0.15 ms in the rt-lab
+editor view at a 0.5 m radius. `engine_stats` `renderer.gpu` now splits `temporal` and
+`ambient_occlusion` out of post-processing.
+
+Not yet: a denoiser for large lights' soft shadows, temporal accumulation for RT AO (it
+would allow fewer rays), shadow rays for alpha-tested geometry.
 
 ### What wgpu 30 provides
 

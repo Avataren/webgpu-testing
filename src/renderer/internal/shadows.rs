@@ -283,10 +283,14 @@ impl ShadowResources {
         materials: &[Material],
         record_custom_passes: bool,
         custom_invocations: &mut Vec<ShadowInvocation>,
+        skip: u32,
     ) {
         if batches.is_empty() && !record_custom_passes {
             return;
         }
+        // Lights whose map nothing reads this frame (bits as the ray-traced shadow mask:
+        // 0-3 directional, 4-7 point, 8-11 spot).
+        let skipped = |bit: usize| skip & (1 << bit) != 0;
 
         let queue = &context.queue;
         let uniform_size = mem::size_of::<ShadowViewUniform>() as u64;
@@ -360,6 +364,10 @@ impl ShadowResources {
                 continue;
             }
 
+            if skipped(index) {
+                staging_offset += uniform_size;
+                continue;
+            }
             encoder.copy_buffer_to_buffer(
                 &self.staging_buffer,
                 staging_offset,
@@ -401,6 +409,10 @@ impl ShadowResources {
                 continue;
             }
 
+            if skipped(8 + index) {
+                spot_staging_offset += uniform_size;
+                continue;
+            }
             encoder.copy_buffer_to_buffer(
                 &self.staging_buffer,
                 spot_staging_offset,
@@ -443,6 +455,10 @@ impl ShadowResources {
                 continue;
             }
 
+            if skipped(4 + index) {
+                point_staging_offset += uniform_size * POINT_SHADOW_FACE_COUNT as u64;
+                continue;
+            }
             for face in 0..POINT_SHADOW_FACE_COUNT {
                 let layer_index = index * POINT_SHADOW_FACE_COUNT + face;
 

@@ -1,12 +1,13 @@
-// Ray-traced shadow mask: for every pixel of the depth prepass, whether each directional
-// light (the sun) reaches the surface, one channel per light. Runs between the depth
-// prepass and the main pass, which reads the mask instead of the shadow maps for the
-// lights whose bit is set in lights.counts.w (shadows.wgsl, rt_directional_shadow).
+// Ray-traced shadow mask: for every pixel of the depth prepass, whether each shadowed
+// light reaches the surface, one bit per light (bits 0-3 directional, 4-7 point, 8-11
+// spot lights). Runs between the depth prepass and the main pass, which reads the mask
+// instead of the shadow maps for the lights whose bit is set in lights.counts.w
+// (shadows.wgsl, rt_shadow_bit).
 //
 // The surface is rebuilt from depth with the same (jittered) camera the prepass drew
-// with; its geometric normal comes from neighbouring depths. A light with an apparent
-// size casts soft shadows: each pixel and frame aims its ray at a different point of the
-// light's disc, and TAA averages them.
+// with; its geometric normal comes from neighbouring depths. Lights with a size cast soft
+// shadows: each pixel and frame aims its ray at a different point of the light (a disc
+// across the sun, a sphere around a point or spot light), and TAA averages the results.
 //
 // Needs `enable wgpu_ray_query;` (prepended by the Rust side).
 
@@ -24,11 +25,17 @@ struct Globals {
 };
 @group(0) @binding(0) var<uniform> globals : Globals;
 
-// Mirrors `RtShadowUniform` in src/renderer/raytracing/shadows.rs.
+// Mirrors `RtShadowUniform` in src/renderer/raytracing/shadows.rs. w = 1 marks a light
+// that is traced.
 struct RtShadowParams {
-    // xyz: direction toward light i, w: 1 when its channel is traced.
-    lights : array<vec4<f32>, 4>,
-    // x: tan of the light's angular radius, y: frame index.
+    // xyz: direction toward directional light i.
+    directionals : array<vec4<f32>, 4>,
+    // xyz: position of point light i.
+    points : array<vec4<f32>, 4>,
+    // xyz: position of spot light i.
+    spots : array<vec4<f32>, 4>,
+    // x: tan of the directional lights' angular radius, y: frame index, z: point and spot
+    // light radius in meters.
     params : vec4<f32>,
     // The region the prepass drew into, in pixels: x, y, width, height.
     region : vec4<f32>,
@@ -78,7 +85,7 @@ fn rt_surface_step(center : vec3<f32>, before : vec4<f32>, after : vec4<f32>) ->
     return select(backward, forward, dot(forward, forward) < dot(backward, backward));
 }
 
-fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>) -> bool {
+fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> bool {
     var query : ray_query;
     rayQueryInitialize(
         &query,
@@ -87,7 +94,7 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>) -> bool {
             RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
             0xffu,
             0.0,
-            1.0e4,
+            distance,
             origin,
             direction,
         ),
@@ -106,12 +113,41 @@ fn rt_noise(pixel : vec2<f32>, frame : f32, salt : f32) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
+// Two directions across `axis`, for offsetting a ray within a light's extent.
+fn rt_basis(axis : vec3<f32>) -> mat2x3<f32> {
+    let helper = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(axis.y) > 0.9);
+    let side = normalize(cross(axis, helper));
+    return mat2x3<f32>(side, cross(side, axis));
+}
+
+// Whether a light at `light_position` (radius `radius`) reaches `origin`, whose surface
+// faces `n`; `disc` picks the point on the light (unit disc).
+fn rt_local_light_visible(
+    origin : vec3<f32>,
+    n : vec3<f32>,
+    light_position : vec3<f32>,
+    radius : f32,
+    disc : vec2<f32>,
+) -> bool {
+    let to_light = light_position - origin;
+    let distance = length(to_light);
+    if distance < 1e-4 || dot(n, to_light) <= 0.0 {
+        return false;
+    }
+    let basis = rt_basis(to_light / distance);
+    let aim = light_position + (basis[0] * disc.x + basis[1] * disc.y) * radius;
+    let to_aim = aim - origin;
+    let length_to_aim = length(to_aim);
+    // Stop short of the light, which may sit inside geometry it lights (a lamp shade).
+    return rt_unoccluded(origin, to_aim / length_to_aim, max(length_to_aim - radius - 0.01, 0.0));
+}
+
 @fragment
-fn fs_rt_shadows(in : VertexOutput) -> @location(0) vec4<f32> {
+fn fs_rt_shadows(in : VertexOutput) -> @location(0) u32 {
     let pixel = vec2<i32>(in.position.xy);
     let center = rt_surface_at(pixel);
     if center.w < 0.5 {
-        return vec4<f32>(1.0);
+        return 0xffffffffu;
     }
     let dx = rt_surface_step(
         center.xyz,
@@ -133,26 +169,35 @@ fn fs_rt_shadows(in : VertexOutput) -> @location(0) vec4<f32> {
     // Off the surface by more further away, where depth (and so the position) is coarser.
     let origin = center.xyz + n * (0.005 + 0.0015 * length(to_camera));
 
-    // A random point on the light's disc, the same for every light this pixel and frame.
+    // A random point on a light's disc, the same for every light this pixel and frame.
     let angle = 6.2831853 * rt_noise(in.position.xy, rt_shadow.params.y, 0.0);
-    let radius = sqrt(rt_noise(in.position.xy, rt_shadow.params.y, 1.0)) * rt_shadow.params.x;
-    let disc = vec2<f32>(cos(angle), sin(angle)) * radius;
+    let disc = vec2<f32>(cos(angle), sin(angle)) * sqrt(rt_noise(in.position.xy, rt_shadow.params.y, 1.0));
 
-    var visibility = vec4<f32>(1.0);
-    for (var i = 0; i < 4; i = i + 1) {
-        let light = rt_shadow.lights[i];
-        if light.w < 0.5 {
-            continue;
+    var lit = 0xffffffffu;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let light = rt_shadow.directionals[i];
+        if light.w > 0.5 {
+            let l = light.xyz;
+            var visible = false;
+            if dot(n, l) > 0.0 {
+                let basis = rt_basis(l);
+                let offset = (basis[0] * disc.x + basis[1] * disc.y) * rt_shadow.params.x;
+                visible = rt_unoccluded(origin, normalize(l + offset), 1.0e4);
+            }
+            if !visible {
+                lit &= ~(1u << i);
+            }
         }
-        let l = light.xyz;
-        if dot(n, l) <= 0.0 {
-            visibility[i] = 0.0;
-            continue;
+        let point = rt_shadow.points[i];
+        if point.w > 0.5
+            && !rt_local_light_visible(origin, n, point.xyz, rt_shadow.params.z, disc) {
+            lit &= ~(1u << (4u + i));
         }
-        let side = normalize(cross(l, select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(l.y) > 0.9)));
-        let up = cross(side, l);
-        let direction = normalize(l + side * disc.x + up * disc.y);
-        visibility[i] = select(0.0, 1.0, rt_unoccluded(origin, direction));
+        let spot = rt_shadow.spots[i];
+        if spot.w > 0.5
+            && !rt_local_light_visible(origin, n, spot.xyz, rt_shadow.params.z, disc) {
+            lit &= ~(1u << (8u + i));
+        }
     }
-    return visibility;
+    return lit;
 }

@@ -214,6 +214,9 @@ pub struct Renderer {
     /// Ray-traced directional shadows; `None` without hardware ray tracing (or when the
     /// pass failed to build).
     rt_shadows: Option<crate::renderer::raytracing::RtShadowStage>,
+    /// Whether something outside the renderer took the lights group (and so may read the
+    /// shadow maps) since the last frame started.
+    lights_group_shared: std::cell::Cell<bool>,
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
     gpu_timer: crate::renderer::gpu_timer::GpuTimer,
@@ -321,6 +324,11 @@ impl Renderer {
         } else {
             None
         };
+        if let Some(scene) = ray_tracing.as_ref() {
+            if let Err(error) = postprocess.enable_ray_traced_ao(&context.device, scene.layout()) {
+                log::warn!("Ray-traced ambient occlusion unavailable, using screen space: {error}");
+            }
+        }
         let rt_shadows = ray_tracing.as_ref().and_then(|scene| {
             crate::renderer::raytracing::RtShadowStage::new(
                 &context.device,
@@ -347,6 +355,7 @@ impl Renderer {
             skinning,
             ray_tracing,
             rt_shadows,
+            lights_group_shared: std::cell::Cell::new(false),
             gpu_timer,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
@@ -538,7 +547,11 @@ impl Renderer {
         &self.lights_buffer.bind_layout
     }
 
+    /// The lights group (lights, shadow maps, environment) for passes outside the
+    /// renderer, such as lit GPU particles. Taking it keeps next frame's shadow maps
+    /// rendered even where ray-traced shadows replace them for the main pass.
     pub fn lights_bind_group(&self) -> &wgpu::BindGroup {
+        self.lights_group_shared.set(true);
         &self.lights_buffer.bind_group
     }
 
@@ -791,11 +804,27 @@ impl Renderer {
         let ray_traced = self.update_ray_tracing(
             &mut frame_state,
             assets,
-            self.postprocess.wants_ray_traced_reflections() || rt_shadows_wanted,
+            self.postprocess.wants_ray_tracing() || rt_shadows_wanted,
         );
         self.gpu_timer
             .mark(&mut frame_state.encoder, "acceleration_structures");
 
+        // Shadow maps the ray-traced mask replaces, unless something else reads them:
+        // transparent surfaces, custom shadow passes, or lit GPU particles (which took the
+        // lights group last frame).
+        let particles_lit = self.lights_group_shared.replace(false);
+        let skip_maps = match self.rt_shadows.as_ref() {
+            Some(stage)
+                if ray_traced
+                    && rt_shadows_wanted
+                    && !custom_shadow_enabled
+                    && !particles_lit
+                    && frame_state.prepared_batches.transparent_range.is_empty() =>
+            {
+                stage.traced_bits(&lights)
+            }
+            _ => 0,
+        };
         self.run_shadow_pass(
             &mut frame_state,
             scene,
@@ -803,6 +832,7 @@ impl Renderer {
             &lights,
             custom_render.as_deref_mut(),
             custom_shadow_enabled,
+            skip_maps,
         );
         self.gpu_timer.mark(&mut frame_state.encoder, "shadows");
         self.run_depth_prepass(&mut frame_state, assets);
@@ -1101,6 +1131,9 @@ impl Renderer {
         })
     }
 
+    /// Render the shadow maps, except those of lights in `skip` (bits as the ray-traced
+    /// shadow mask), whose maps nothing reads this frame.
+    #[allow(clippy::too_many_arguments)]
     fn run_shadow_pass(
         &mut self,
         frame: &mut FrameState,
@@ -1109,6 +1142,7 @@ impl Renderer {
         lights: &LightsData,
         custom_render: Option<&mut CustomRenderRequest<'_>>,
         custom_shadow_enabled: bool,
+        skip: u32,
     ) {
         passes::shadow_pass(
             self,
@@ -1120,6 +1154,7 @@ impl Renderer {
             custom_render,
             custom_shadow_enabled,
             &mut frame.shadow_invocations,
+            skip,
         );
     }
 
@@ -1249,6 +1284,7 @@ impl Renderer {
                 scene,
                 lights,
                 self.postprocess.settings().rt_shadows.softness,
+                self.postprocess.settings().rt_shadows.light_radius,
                 self.jitter_index,
                 frame.render_region,
             );

@@ -12,6 +12,7 @@ mod exposure;
 mod lut;
 mod pipelines;
 mod resources;
+mod rt_ao;
 mod rt_reflections;
 mod settings;
 mod ssao;
@@ -36,6 +37,7 @@ use pipelines::{
     FinalPipeline,
 };
 use resources::{BloomMip, LazyPickTarget, MsaaTarget, TextureBundle};
+use rt_ao::RtAoStage;
 use rt_reflections::{RtReflectionInputs, RtReflectionStage};
 use ssao::{SsaoBindGroupInputs, SsaoStage, SsaoTargets};
 use ssr::{SsrInputs, SsrStage, SsrTargets};
@@ -163,6 +165,8 @@ pub struct PostProcess {
     ssr_stage: SsrStage,
     /// Ray-traced reflections, when the device has ray queries and the pass built.
     rt_reflection_stage: Option<RtReflectionStage>,
+    /// Ray-traced ambient occlusion, likewise.
+    rt_ao_stage: Option<RtAoStage>,
     /// Kept to build stages added after construction (ray-traced reflections).
     uniform_layout: wgpu::BindGroupLayout,
     bloom_stage: BloomStage,
@@ -515,6 +519,7 @@ impl PostProcess {
             ssao_stage,
             ssr_stage,
             rt_reflection_stage: None,
+            rt_ao_stage: None,
             uniform_layout,
             bloom_stage,
             exposure_stage,
@@ -734,6 +739,27 @@ impl PostProcess {
         Ok(())
     }
 
+    /// Build the ray-traced ambient occlusion pass (`scene_layout` is the ray tracing
+    /// scene's). On error occlusion stays screen-space.
+    pub(crate) fn enable_ray_traced_ao(
+        &mut self,
+        device: &wgpu::Device,
+        scene_layout: &wgpu::BindGroupLayout,
+    ) -> Result<(), String> {
+        self.rt_ao_stage = Some(RtAoStage::new(device, &self.uniform_layout, scene_layout)?);
+        self.mark_bind_groups_dirty();
+        Ok(())
+    }
+
+    /// Whether this frame's post-processing would trace rays (reflections or occlusion)
+    /// if the scene is ready.
+    pub(crate) fn wants_ray_tracing(&self) -> bool {
+        self.wants_ray_traced_reflections()
+            || (self.rt_ao_stage.is_some()
+                && self.settings.ssao_active()
+                && self.settings.ssao.ray_traced)
+    }
+
     /// Whether this frame's reflections would be ray traced if the scene is ready.
     pub(crate) fn wants_ray_traced_reflections(&self) -> bool {
         self.rt_reflection_stage.is_some()
@@ -868,13 +894,29 @@ impl PostProcess {
             );
         }
 
+        timer.mark(encoder, "temporal");
         let ssao_targets = SsaoTargets {
             output: &self.ssao.view,
             ping: &self.ssao_ping.view,
         };
         if self.settings.ssao_active() {
-            self.ssao_stage
-                .render(encoder, &self.uniform_bind_group, ssao_targets);
+            let traced = match (self.rt_ao_stage.as_ref(), ray_tracing.as_ref()) {
+                (Some(stage), Some(frame)) if self.settings.ssao.ray_traced => stage.trace(
+                    encoder,
+                    &self.uniform_bind_group,
+                    frame.scene,
+                    ssao_targets.output,
+                ),
+                _ => false,
+            };
+            if traced {
+                self.ssao_stage
+                    .blur(encoder, &self.uniform_bind_group, ssao_targets);
+            } else {
+                self.ssao_stage
+                    .render(encoder, &self.uniform_bind_group, ssao_targets);
+            }
+            timer.mark(encoder, "ambient_occlusion");
         } else {
             self.ssao_stage.clear(encoder, ssao_targets);
         }
@@ -952,6 +994,9 @@ impl PostProcess {
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
             stage.invalidate();
         }
+        if let Some(stage) = self.rt_ao_stage.as_mut() {
+            stage.invalidate();
+        }
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
         self.dof_stage.invalidate();
@@ -1020,6 +1065,9 @@ impl PostProcess {
                 history: &self.reflection.history.view,
             },
         );
+        if let Some(stage) = self.rt_ao_stage.as_mut() {
+            stage.ensure_bind_groups(device, &self.normal_source.view, &self.position_source.view);
+        }
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
             stage.ensure_bind_groups(
                 device,
@@ -1674,6 +1722,19 @@ mod tests {
             &camera(Vec3::new(5.0, 0.0, 0.0), Vec3::NEG_Z)
         ));
         assert!(is_camera_cut(&start, &camera(Vec3::ZERO, Vec3::X)));
+    }
+
+    #[test]
+    fn rt_ao_shader_validates() {
+        let source = rt_ao::rt_ao_shader_source();
+        let module = naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::RAY_QUERY,
+        )
+        .validate(&module)
+        .unwrap_or_else(|err| panic!("{}", err.emit_to_string(&source)));
     }
 
     #[test]

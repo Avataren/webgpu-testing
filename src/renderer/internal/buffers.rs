@@ -528,7 +528,7 @@ impl LightsBuffer {
                     binding: 11,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        sample_type: wgpu::TextureSampleType::Uint,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -551,7 +551,8 @@ impl LightsBuffer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Fully lit: what the main pass reads when no frame traced shadows.
+        // Every light reaches every pixel: what the main pass reads when no frame traced
+        // shadows.
         let fallback_mask = device.create_texture_with_data(
             queue,
             &wgpu::TextureDescriptor {
@@ -564,7 +565,7 @@ impl LightsBuffer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: crate::renderer::raytracing::RT_SHADOW_MASK_FORMAT,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
@@ -690,8 +691,8 @@ impl LightsBuffer {
         }
     }
 
-    /// Which directional lights (bit i = light i) take their shadow from the ray-traced
-    /// mask this frame (`lights.counts.w`).
+    /// Which lights (bits 0-3 directional, 4-7 point, 8-11 spot) take their shadow from the
+    /// ray-traced mask this frame (`lights.counts.w`).
     pub(crate) fn set_rt_shadow_bits(&mut self, queue: &wgpu::Queue, bits: u32) {
         if bits != self.rt_shadow_bits {
             queue.write_buffer(&self.buffer, 12, bytemuck::bytes_of(&bits));

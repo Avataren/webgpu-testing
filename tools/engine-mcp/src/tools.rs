@@ -758,7 +758,8 @@ pub fn tools() -> Vec<Tool> {
                     "tint": { "type": "array" }
                 }},
                 "ssao": { "type": "object", "properties": {
-                    "enabled": { "type": "boolean" }, "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" }
+                    "enabled": { "type": "boolean" }, "radius": { "type": "number" }, "bias": { "type": "number" }, "intensity": { "type": "number" }, "power": { "type": "number" },
+                    "ray_traced": { "type": "boolean", "description": "Trace occlusion with hardware ray tracing (sees occluders off screen; radius is the ray length); falls back to screen space when engine_info surface.ray_tracing is unavailable" }
                 }},
                 "depth_of_field": { "type": "object", "description": "Bokeh depth of field", "properties": {
                     "enabled": { "type": "boolean" },
@@ -776,9 +777,10 @@ pub fn tools() -> Vec<Tool> {
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
-                "rt_shadows": { "type": "object", "description": "Directional light (sun) shadows traced per pixel with hardware ray tracing instead of shadow maps: exact at any distance, no acne. Needs engine_info surface.ray_tracing and no MSAA; otherwise shadow maps", "properties": {
+                "rt_shadows": { "type": "object", "description": "Shadows of shadow-casting lights (up to 4 directional, 4 point, 4 spot) traced per pixel with hardware ray tracing instead of shadow maps: exact at any distance, no acne or leaks. Needs engine_info surface.ray_tracing and no MSAA; otherwise shadow maps", "properties": {
                     "enabled": { "type": "boolean" },
-                    "softness": { "type": "number", "description": "Light's apparent size in degrees: 0 hard shadows, 0.5 like the sun (soft edges smoothed by TAA)" }
+                    "softness": { "type": "number", "description": "Directional lights' apparent size in degrees: 0 hard shadows, 0.5 like the sun (soft edges smoothed by TAA)" },
+                    "light_radius": { "type": "number", "description": "Point and spot lights' radius in meters for soft shadows (default 0.05, 0 hard)" }
                 }},
                 "ssr": { "type": "object", "description": "Reflections: smooth surfaces (low material roughness) reflect their surroundings as a blurred, glossy sheen. Screen-space (only what is on screen) unless ray_traced", "properties": {
                     "enabled": { "type": "boolean" },
