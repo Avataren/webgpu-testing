@@ -447,6 +447,53 @@ impl Renderer {
         &self.ray_tracing_support
     }
 
+    /// Every render target that can be read back by name, with what its channels hold
+    /// (see [`crate::renderer::readback`]). Targets hold what the last frame left in them.
+    pub fn fetchable_textures(&self) -> Vec<crate::renderer::readback::FetchableTexture<'_>> {
+        use crate::renderer::readback::FetchableTexture;
+        let mut out = Vec::new();
+        if self.context.depth.texture.sample_count() == 1 {
+            out.push(FetchableTexture::new(
+                "depth",
+                "Depth buffer (0 near to 1 far; perspective, so not linear in distance)",
+                &self.context.depth.texture,
+            ));
+        }
+        if let Some(mask) = self
+            .rt_shadows
+            .as_ref()
+            .and_then(|stage| stage.mask_texture())
+        {
+            out.push(FetchableTexture::new(
+                "rt_shadows.mask",
+                "Ray-traced shadow mask: one bit per light a pixel's shadow ray reached (bits 0-3 \
+                 directional, 4-7 point, 8-11 spot lights); only lights traced this frame count",
+                mask,
+            ));
+        }
+        self.shadows.fetchable_textures(&mut out);
+        self.postprocess.fetchable_textures(&mut out);
+        out
+    }
+
+    /// Copy `rect` ([x, y, width, height]) of array layer `layer` of `target` to the CPU,
+    /// waiting for the GPU (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_texture(
+        &self,
+        target: &crate::renderer::readback::FetchableTexture<'_>,
+        rect: [u32; 4],
+        layer: u32,
+    ) -> Result<crate::renderer::readback::Readback, String> {
+        crate::renderer::readback::read(
+            &self.context.device,
+            &self.context.queue,
+            target,
+            rect,
+            layer,
+        )
+    }
+
     /// Whether lighting can be path traced (hardware ray tracing, no MSAA).
     pub fn path_tracing_available(&self) -> bool {
         self.ray_tracing.is_some() && self.postprocess.path_tracing_available()

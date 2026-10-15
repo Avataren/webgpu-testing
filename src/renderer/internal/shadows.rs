@@ -47,7 +47,9 @@ impl ShadowArray {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
@@ -116,6 +118,30 @@ pub(crate) struct ShadowResources {
 }
 
 impl ShadowResources {
+    /// The shadow maps, for reading back (see [`crate::renderer::readback`]).
+    pub(crate) fn fetchable_textures<'a>(
+        &'a self,
+        out: &mut Vec<crate::renderer::readback::FetchableTexture<'a>>,
+    ) {
+        use crate::renderer::readback::FetchableTexture;
+        out.push(FetchableTexture::new(
+            "shadows.directional",
+            "Directional shadow maps (light-space depth, 0 near to 1 far): one array layer per \
+             directional light; layers are unused while ray-traced shadows replace them",
+            &self.directional._texture,
+        ));
+        out.push(FetchableTexture::new(
+            "shadows.spot",
+            "Spot light shadow maps (light-space depth): one array layer per spot light",
+            &self.spot._texture,
+        ));
+        out.push(FetchableTexture::new(
+            "shadows.point",
+            "Point light shadow maps (light-space depth): six array layers (cube faces) per point light",
+            &self.point._texture,
+        ));
+    }
+
     pub(crate) fn new(
         device: &wgpu::Device,
         objects: &DynamicObjectsBuffer,

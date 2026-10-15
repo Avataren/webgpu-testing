@@ -270,7 +270,9 @@ impl Target {
         label: &str,
         render: bool,
     ) -> Self {
-        let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING;
+        let mut usage = wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC;
         if render {
             usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
         }
@@ -372,12 +374,16 @@ impl Targets {
                 size,
                 crate::renderer::postprocess::HDR_FORMAT,
                 "PtRadianceCache",
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
             ),
             caustic_sums: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("PtCausticSums"),
                 size: (size.0 as u64 * size.1 as u64 * 3 * 4).max(16),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
         }
@@ -814,6 +820,97 @@ impl PathTracingStage {
             last_region: None,
             frame: 0,
         })
+    }
+
+    /// The path tracer's targets, for reading back (see [`crate::renderer::readback`]).
+    /// They are the scene region's size (pixel (0, 0) is its corner).
+    pub(crate) fn fetchable_textures<'a>(
+        &'a self,
+        out: &mut Vec<crate::renderer::readback::FetchableTexture<'a>>,
+    ) {
+        use crate::renderer::readback::{FetchSource, FetchableTexture};
+        let Some(targets) = self.targets.as_ref() else {
+            return;
+        };
+        // The history last written: `frame` has moved on since.
+        let last = &targets.history[(self.frame.wrapping_sub(1) & 1) as usize];
+        let mut add = |name: &str, description, target: &'a Target| {
+            out.push(FetchableTexture::new(
+                format!("pt.{name}"),
+                description,
+                &target.texture,
+            ));
+        };
+        add(
+            "diffuse",
+            "Path tracing, final diffuse light (demodulated: before the base colour multiplies \
+             it). With the denoiser: rgb filtered, a its variance; without: the raw trace with \
+             caustics added, a the rays' mean hit distance",
+            &targets.diffuse_a,
+        );
+        add(
+            "specular",
+            "Path tracing, final specular light (demodulated: divided by the specular albedo); \
+             a as for pt.diffuse",
+            &targets.specular_a,
+        );
+        add(
+            "material",
+            "Path tracing, the primary surface: rgb base colour, a roughness (0 where nothing \
+             was path traced)",
+            &targets.material,
+        );
+        add(
+            "emission",
+            "Path tracing, the primary surface: rgb emitted light, a metallic (-1 where nothing \
+             was path traced and the main pass's colour is kept)",
+            &targets.emission,
+        );
+        add(
+            "history.diffuse",
+            "Denoiser history, diffuse: rgb accumulated light (after anti-lag and history fix), \
+             a the frames accumulated",
+            &last.diffuse,
+        );
+        add(
+            "history.specular",
+            "Denoiser history, specular: rgb accumulated light, a the frames accumulated",
+            &last.specular,
+        );
+        add(
+            "history.moments",
+            "Denoiser history: diffuse luminance^2, specular luminance^2, diffuse fast-history \
+             luminance, specular fast-history luminance",
+            &last.moments,
+        );
+        add(
+            "history.geometry",
+            "Denoiser history: xy octahedral normal, z view depth (m), w roughness (0: not path traced)",
+            &last.geometry,
+        );
+        add(
+            "history.hit",
+            "Denoiser history: accumulated hit distance of diffuse (r) and specular (g) rays (m)",
+            &last.hit,
+        );
+        add(
+            "radiance_cache",
+            "Last frame's composited path-traced light (HDR), which bounce rays reuse where it \
+             shows what they hit",
+            &targets.radiance,
+        );
+        out.push(FetchableTexture {
+            name: "pt.caustic_sums".into(),
+            description: "Caustic photons' splats this frame: red, green, blue sums per pixel in \
+                          fixed point (divide by 256 for demodulated diffuse light), before the \
+                          resolve gathers them",
+            source: FetchSource::Buffer {
+                buffer: &targets.caustic_sums,
+                width: targets.size.0,
+                height: targets.size.1,
+                channels: 3,
+            },
+        });
     }
 
     /// The scene targets were recreated: bind them anew.

@@ -43,6 +43,7 @@ pub mod preview;
 mod profile;
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
+mod texture_fetch;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod validation;
 mod visual;

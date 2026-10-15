@@ -797,7 +797,7 @@ How to read the sections:
   stayed grainy (residual variance, not a failed history test) needed visualizations of history
   length, reprojection distance and which validity test failed. Each one was a temporary
   `PT_DEBUG` environment-variable switch in WGSL plus a rebuild and relaunch, seven times in all.
-  **Open:** see the render debug view wish.
+  **Open:** see the offscreen texture fetch wish.
 - **Every shader edit is a rebuild, and a restart loses unsaved scene edits.** The WGSL is built
   into the binary with `include_str!`, so even a one-constant change is `engine_launch
   {restart: true}`: 30 to 40 s of build plus reopening the project. Edits made through the MCP
@@ -816,7 +816,7 @@ How to read the sections:
   temporal noise) was checked by capturing the engine window with `xdotool` + `import` and comparing
   crops with ImageMagick (`compare -metric AE`). `visual_capture`'s comparison covers this
   between variants, but there is no way to read a pixel's or a region's HDR value from one frame.
-  **Open:** see the pixel probe wish.
+  **Open:** see the offscreen texture fetch and pixel probe wishes.
 
 ## Wish list
 
@@ -993,12 +993,35 @@ How to read the sections:
   `discarded_on_stop` reported. Scripts cannot read the blended result back; they keep their
   own values.)
 
-- ⬜ **Render debug views:** `render_debug {view}` showing an intermediate buffer in place of
-  the final image (G-buffer normal, position and motion, the path tracer's raw diffuse and
-  specular, history length, variance, caustic sums, reprojection validity), with `null` to go
-  back. The renderer would register named views per pass, so new passes add their own instead of
-  temporary debug switches.
-- ⬜ **Shader hot reload in development builds:** load WGSL from `src/shader` on disk when it
+- ✅ **Fetch offscreen textures:** `texture_fetch {texture, rect, channels, points}` reading any
+  named render target back from the last frame: the HDR scene before tonemapping, G-buffer
+  normal/motion and position, depth, shadow maps, the ray-traced shadow mask, reflection
+  textures, the path tracer's raw and denoised signals, history, moments and caustic sums. It
+  returns an image (float formats mapped into view by min/max or a false-colour ramp, alpha as
+  its own channel), per-channel min, max, mean and NaN/infinity counts, and raw values at
+  `points`. Today the only readbacks are the presented 8-bit frame (`capture_surface` in
+  `src/remote/capture.rs`, behind `screenshot` and `visual_capture`) and the editor's one-pixel
+  pick id, and no remote method reads a GPU texture. Needs the renderer to register its targets
+  by name (each pass adds its own) and `COPY_SRC` on them (the path tracer's targets lack it);
+  `capture_surface`'s copy generalizes to rgba16f/32f, r32uint and depth. Unlike a debug view it
+  leaves the displayed frame alone and gives numbers. This covers the pixel probe below, and
+  would have replaced the seven `PT_DEBUG` rebuilds and the ImageMagick comparisons of this round.
+  **Done** (2026-10-15): `texture_fetch` (engine method `texture.fetch`). The renderer lists 25
+  targets by name with what each channel holds (`Renderer::fetchable_textures`, each pass adding
+  its own; `src/renderer/readback.rs`), `COPY_SRC` was added where it was missing, and the
+  readback decodes f16/f32, u32, unorm8 (RGBA/BGRA), `Depth32Float` and storage buffers laid out
+  as pixels (the caustic sums). Modes: `range` (default 0.5th to 99.5th percentile), `tonemap`,
+  `false_color` (Turbo); NaN/inf pixels magenta; nearest-neighbour shrinking keeps values exact.
+  Verified in the release editor on RT Lab: the path tracer's specular history length as false
+  colour (full 32 frames except jitter-disoccluded edges, 0 on glass: the visualization that took
+  seven rebuilds before), the HDR scene tonemapped with exact values at points (and negative
+  colour values in it, min -0.18, which no screenshot shows), depth sub-rectangles, a point
+  shadow map's layer 23, the R32Uint shadow mask and the caustic buffer. Two things the checking
+  turned up, both fixed: depth formats can only be copied whole (the first sub-rectangle read
+  panicked the editor with a wgpu validation error; depth is now copied whole and cropped), and a
+  rejected copy must not end the process (the readback now runs in a validation error scope and
+  returns the error). Not covered: multisampled targets (listed by their resolved copies) and the
+  web (the readback waits on the GPU).- ⬜ **Shader hot reload in development builds:** load WGSL from `src/shader` on disk when it
   exists and rebuild the affected pipelines on change (falling back to the built-in source, and
   keeping the old pipeline when the new one fails validation, with the error in `logs`). Most
   renderer iteration is shader-only and would no longer need a restart.
@@ -1007,9 +1030,10 @@ How to read the sections:
   B24) untouched.
 - ⬜ **Lathe shells:** `mesh_lathe {thickness}` (or allowing a profile that comes back down) for
   cups, glasses, bowls and vases with an inner wall.
-- ⬜ **Pixel probe:** `pixel_probe {points | rect, buffer}` returning linear HDR values (and the
-  displayed 8-bit values) at viewport pixels from the last frame, for checking brightness and
-  noise with numbers instead of by eye.
+- ⬜ **Pixel probe:** linear HDR values at viewport pixels from the last frame, for checking
+  brightness and noise with numbers instead of by eye. **Partly done:** `texture_fetch {texture:
+  "scene", points}` (and `display` for the tonemapped image) gives them; still open: the final
+  8-bit values as displayed (after anti-aliasing, grain and dither).
 - ⬜ **A held view for `screenshot`:** `screenshot {camera, settle_frames}` that keeps the pose
   for that many frames before capturing, without touching the scene's camera entity, for quick
   looks at temporal effects (`visual_capture` does this for comparisons; a single look should not

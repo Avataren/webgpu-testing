@@ -540,11 +540,13 @@ impl Server {
             }
             "project_save" => self.save_project(args).map(Output::Json),
             "playtest" => self.playtest(args),
-            "sound_inspect" | "sound_generate" | "texture_generate" | "texture_maps" => {
+            "sound_inspect" | "sound_generate" | "texture_generate" | "texture_maps"
+            | "texture_fetch" => {
                 let method = match name {
                     "sound_generate" => "audio.generate",
                     "texture_generate" => "texture.generate",
                     "texture_maps" => "texture.maps",
+                    "texture_fetch" => "texture.fetch",
                     _ => "audio.inspect",
                 };
                 let mut report = self

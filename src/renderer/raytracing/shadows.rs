@@ -111,6 +111,11 @@ impl RtShadowStage {
         })
     }
 
+    /// The mask texture, for reading back.
+    pub(crate) fn mask_texture(&self) -> Option<&wgpu::Texture> {
+        self.mask.as_ref().map(|(texture, _)| texture)
+    }
+
     /// The mask the main pass reads, once [`Self::ensure_targets`] made one.
     pub(crate) fn mask_view(&self) -> Option<&wgpu::TextureView> {
         self.mask.as_ref().map(|(_, view)| view)
@@ -139,7 +144,8 @@ impl RtShadowStage {
                 dimension: wgpu::TextureDimension::D2,
                 format: MASK_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

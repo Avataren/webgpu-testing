@@ -105,6 +105,14 @@ engine you launched; save first).
   <= 0.2) onto diffuse surfaces; they show best on light, matte receivers. Glass casts a
   shadow while they are on. Bounce rays reuse last frame's finished image where it shows
   what they hit (a radiance cache), so look at a still view for a second before judging.
+- Debugging rendering: `texture_fetch` (no arguments) lists every render target (G-buffer
+  normal/motion and position, depth, the HDR scene before tonemapping, shadow-map layers, the
+  ray-traced shadow mask, SSAO, reflections, TAA, the path tracer's signals, history and caustic
+  sums) with what each channel holds; `texture_fetch {texture, rect, points, channels, mode}`
+  returns per-channel min/max/mean and NaN/inf counts, raw values at points and an image
+  (`mode: "tonemap"` for HDR colour, `"false_color"` for one channel such as depth or a history
+  length). It reads what the last frame left and changes nothing on screen; prefer it to adding
+  debug code. Native builds only.
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`

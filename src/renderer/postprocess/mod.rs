@@ -999,6 +999,86 @@ impl PostProcess {
             && self.settings.ssr.ray_traced
     }
 
+    /// The post-processing targets (and the path tracer's), for reading back (see
+    /// [`crate::renderer::readback`]). MSAA targets are listed by their resolved copies.
+    pub(crate) fn fetchable_textures<'a>(
+        &'a self,
+        out: &mut Vec<crate::renderer::readback::FetchableTexture<'a>>,
+    ) {
+        use crate::renderer::readback::FetchableTexture;
+        out.push(FetchableTexture::new(
+            "scene",
+            "The lit HDR scene (linear, before exposure and tonemapping) as post-processing left \
+             it: main pass or path tracing, particles, transparent surfaces, refraction and \
+             reflections. Alpha: the surface's alpha, or -transmission on transmissive surfaces. \
+             While upscaling the scene fills only the scene region",
+            self.scene_source.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "gbuffer.normal",
+            "G-buffer normal and motion: xy the octahedral-encoded world normal (shading normal, \
+             normal maps included), zw the screen motion since last frame in viewport uv (+y down)",
+            self.normal_source.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "gbuffer.position",
+            "G-buffer world position (xyz, metres, half precision). w: below 0.5 no surface; \
+             otherwise a code for smoothness and specular colour (encode_surface_w in common.wgsl)",
+            self.position_source.texture(),
+        ));
+        if let Some(pick) = self.pick_target.texture() {
+            out.push(FetchableTexture::new(
+                "gbuffer.pick",
+                "Pick ids (the two halves of each pixel's entity pick id; 0 where nothing pickable)",
+                pick,
+            ));
+        }
+        out.push(FetchableTexture::new(
+            "ssao",
+            "Ambient occlusion (r: 1 open, 0 occluded), screen-space or ray-traced, after the blur",
+            self.ssao.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "reflections.trace",
+            "Reflections (half or full resolution): rgb the traced reflection after the blur, \
+             compressed as c / (1 + luminance), a its weight",
+            self.reflection.trace.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "reflections.accumulated",
+            "Reflections accumulated over frames (same encoding as reflections.trace)",
+            self.reflection.accumulated.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "taa.output",
+            "Temporal anti-aliasing (or upscaling) output: HDR colour at output resolution",
+            self.taa_output.texture(),
+        ));
+        out.push(FetchableTexture::new(
+            "display",
+            "The tonemapped image before the final pass (anti-aliasing, sharpening, grain)",
+            self.display.texture(),
+        ));
+        if let Some(copy) = self.opaque_copy.as_ref() {
+            out.push(FetchableTexture::new(
+                "scene.opaque",
+                "The HDR scene as the opaque pass left it, before particles and transparent \
+                 surfaces (kept while FSR upscales or particles are ray traced)",
+                copy.texture(),
+            ));
+        }
+        if let Some(depth) = self.resolved_depth.as_ref() {
+            out.push(FetchableTexture::new(
+                "depth.resolved",
+                "Depth resolved from the MSAA depth buffer (0 near to 1 far)",
+                depth.texture(),
+            ));
+        }
+        if let Some(stage) = self.path_tracing_stage.as_ref() {
+            stage.fetchable_textures(out);
+        }
+    }
+
     pub fn settings(&self) -> &PostProcessSettings {
         &self.settings
     }

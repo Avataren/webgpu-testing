@@ -15,6 +15,7 @@ pub mod pipeline_builder;
 pub mod postprocess;
 pub mod primitives;
 pub mod raytracing;
+pub mod readback;
 pub mod render_context;
 pub mod render_region;
 mod renderer_core;

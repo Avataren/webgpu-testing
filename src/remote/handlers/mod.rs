@@ -171,6 +171,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     ("screenshot", "PNG of the window or the scene viewport"),
     (
+        "texture.fetch",
+        "Read a render target back (G-buffer, depth, HDR scene, shadow maps, path tracing buffers): per-channel statistics, values at points and an image; no texture lists them",
+    ),
+    (
         "visual.capture",
         "Capture consecutive frames of one frozen view under several render-only post-process variants",
     ),
@@ -281,6 +285,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "environment.get" => rendering::environment_get(ctx),
         "environment.set" => rendering::environment_set(params, ctx),
         "postprocess.get" => rendering::postprocess_get(ctx),
+        "texture.fetch" => crate::remote::texture_fetch::fetch(params, ctx.gpu.renderer),
         "graphics.get" => graphics::get(),
         "graphics.set" => graphics::set(params),
         "postprocess.set" => rendering::postprocess_set(params, ctx),

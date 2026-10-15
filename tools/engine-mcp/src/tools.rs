@@ -71,6 +71,7 @@ impl Tool {
                 | "camera_get"
                 | "environment_get"
                 | "postprocess_get"
+                | "texture_fetch"
                 | "logs"
                 | "editor_state"
                 | "audio_status"
@@ -874,6 +875,23 @@ pub fn tools() -> Vec<Tool> {
                 "max_size": { "type": "integer", "minimum": 16, "maximum": 8192, "default": 8192, "description": "Longest side in pixels; larger frames are scaled down" }
             }), &[]),
             action: Action::Engine("visual.capture"),
+        },
+        Tool {
+            name: "texture_fetch",
+            description: "Read a render target back from the GPU and look at it with numbers: the G-buffer (normals, motion, world position, pick ids), depth, the HDR scene before tonemapping, shadow maps (array layers), the ray-traced shadow mask, SSAO, reflections, TAA, and the path tracer's buffers (raw and denoised diffuse/specular, denoiser history and moments, radiance cache, caustic photon sums). Without texture it lists every target with its size, format and what each channel holds. With one it reads a rectangle (default all) and returns per-channel min, max, mean and NaN/infinity counts, the values at `points`, and an image of up to three channels. Targets hold what the last frame left in them; nothing on screen changes. Use it to debug rendering (is the normal right, did the history reset, where are the NaNs, how bright is that pixel before tonemapping) instead of adding debug code. Native builds only.",
+            schema: object(json!({
+                "texture": { "type": "string", "description": "Target name, e.g. gbuffer.normal, scene, depth, pt.history.specular; omit to list them" },
+                "rect": { "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4, "description": "[x, y, width, height] in the texture's pixels (default the whole texture). Path tracing targets are the scene region's size" },
+                "layer": { "type": "integer", "description": "Array layer (shadow maps: one per light, six per point light)" },
+                "points": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } }, "description": "[[x, y], ...] pixels (inside rect) whose raw values to return" },
+                "channels": { "type": "string", "description": "One to three of r, g, b, a for the image (default rgb, or the texture's own channels when fewer)" },
+                "mode": { "type": "string", "enum": ["range", "tonemap", "false_color"], "description": "range (default): linear from range low to high; tonemap: HDR colour through Reinhard and sRGB; false_color: one channel through a Turbo colour map" },
+                "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[low, high] values mapped to black and white (default the 0.5th to 99.5th percentile)" },
+                "image": { "type": "boolean", "description": "Return the image (default true); false for numbers only" },
+                "max_size": { "type": "integer", "description": "Longest image side in pixels (default 1024; shrunk nearest-neighbour so values are not blended)" },
+                "save_path": { "type": "string", "description": "Also write the PNG here" }
+            }), &[]),
+            action: Action::Local,
         },
         Tool {
             name: "logs",
