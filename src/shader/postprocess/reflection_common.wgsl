@@ -50,6 +50,18 @@ fn ssr_specular_color(position : vec4<f32>) -> vec3<f32> {
     return vec3<f32>(0.04) + 0.96 * encoded * encoded;
 }
 
+// Full-resolution pixels per reflection texel: 2 for the default half-resolution trace,
+// 1 with ssr.full_resolution.
+fn ssr_texel_scale() -> f32 {
+    return post_uniform.reflection.x;
+}
+
+// The full-resolution G-buffer pixel a reflection texel at fragment position `texel`
+// traces from.
+fn ssr_source_pixel(texel : vec2<f32>, dims : vec2<i32>) -> vec2<i32> {
+    return min(vec2<i32>(texel * ssr_texel_scale()), dims - vec2<i32>(1));
+}
+
 fn ssr_view_depth(world : vec3<f32>) -> f32 {
     return -(post_uniform.view * vec4<f32>(world, 1.0)).z;
 }

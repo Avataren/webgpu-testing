@@ -140,10 +140,13 @@ reflection paths accumulate the half-resolution trace over frames before the blu
 removes the shimmer TAA's jitter caused on curved and detailed mirrors (in `games/rt-lab`,
 pixels changing between frames went from 0.47% to 0.15%, the same as with reflections
 off). Test scene: `games/rt-lab`. Not yet: alpha-blended and billboarded geometry, normal
-maps at hits, GPU timing. Known issues: the
-trace is half resolution, so mirrors look soft; the main pass's ambient (and environment
-specular) is not taken away where a reflection replaces it, which leaves a grey haze on
-mirrors. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
+maps at hits, GPU timing, a second bounce (metals seen in a
+reflection show only their ambient). `ssr.full_resolution` traces one ray per pixel instead
+of per 2x2 for sharp mirrors (in rt-lab about 0.2 ms more than half resolution on an
+RX 7900 XTX, judged from frame times). Where a reflection is found on a metal, the apply
+pass takes off the flat ambient light the main pass added there, so mirrors no longer look
+hazy; with an HDR environment the main pass's environment specular is still added under
+the reflection. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
 
 ### What wgpu 30 provides
 

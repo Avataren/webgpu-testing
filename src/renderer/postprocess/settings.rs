@@ -675,6 +675,9 @@ pub struct ReflectionSettings {
     /// Trace reflections against the scene with hardware ray tracing when the GPU has it;
     /// falls back to screen space otherwise. `thickness` only applies to screen space.
     pub ray_traced: bool,
+    /// Trace one ray per pixel instead of one per 2x2 pixels: sharp mirrors, at four
+    /// times the trace cost.
+    pub full_resolution: bool,
 }
 
 impl Default for ReflectionSettings {
@@ -686,6 +689,7 @@ impl Default for ReflectionSettings {
             thickness: 0.4,
             blur: 0.5,
             ray_traced: false,
+            full_resolution: false,
         }
     }
 }
@@ -705,6 +709,7 @@ impl ReflectionSettings {
             thickness: lerp(from.thickness, to.thickness, t),
             blur: lerp(from.blur, to.blur, t),
             ray_traced: pick(from.ray_traced, to.ray_traced, t),
+            full_resolution: pick(from.full_resolution, to.full_resolution, t),
         }
     }
 }

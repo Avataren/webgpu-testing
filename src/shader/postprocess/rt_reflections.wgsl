@@ -1,5 +1,6 @@
 // Ray-traced reflections: the hardware counterpart of fs_ssr_trace (ssr.wgsl). It writes
-// the same half-resolution reflection texture, so SSR's blur and apply passes finish it.
+// the same reflection texture (half or full resolution), so SSR's temporal, blur and
+// apply passes finish it.
 //
 // Each smooth pixel's reflected ray is traced against the scene's acceleration structure,
 // so it finds what it hits even when that is off screen or hidden. Where the hit point is
@@ -320,7 +321,7 @@ fn rt_screen_radiance(position : vec3<f32>) -> vec4<f32> {
 @fragment
 fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     let dims = vec2<i32>(textureDimensions(rt_gbuffer_position));
-    let pixel = min(vec2<i32>(in.position.xy * 2.0), dims - vec2<i32>(1));
+    let pixel = ssr_source_pixel(in.position.xy, dims);
     let position = textureLoad(rt_gbuffer_position, pixel, 0);
     let smoothness = ssr_smoothness(position);
     if position.w < 0.5 || smoothness < SSR_MIN_SMOOTHNESS {
@@ -349,8 +350,8 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if screen.w > 0.5 {
         color = screen.rgb;
     } else {
-        // Angle one trace pixel (two screen pixels) covers, from the projection.
-        let pixel_angle = 4.0 / (post_uniform.proj[1][1] * f32(dims.y));
+        // Angle one trace texel covers, from the projection.
+        let pixel_angle = 2.0 * ssr_texel_scale() / (post_uniform.proj[1][1] * f32(dims.y));
         let travelled = distance(post_uniform.camera_position.xyz, origin) + hit.t;
         color = rt_shade(hit, hit_position, r, pixel_angle * travelled);
     }

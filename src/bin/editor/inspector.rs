@@ -3282,6 +3282,12 @@ fn show_post_process_volume_section(
                     "Ray traced (hardware)",
                     &mut settings.ssr.ray_traced,
                 );
+                rows.checkbox(
+                    ui,
+                    "ssr.full_resolution",
+                    "Full resolution",
+                    &mut settings.ssr.full_resolution,
+                );
                 rows.slider_with(
                     ui,
                     "ssr.thickness",

@@ -1,6 +1,6 @@
 // Shared by every post-processing pass. Mirrors `PostProcessUniform` in
 // src/renderer/postprocess/mod.rs: matrices, then vec2 pairs, then vec4 blocks, all
-// 16-byte aligned (800 bytes).
+// 16-byte aligned (816 bytes).
 struct PostUniform {
     view_proj : mat4x4<f32>,
     view_proj_inv : mat4x4<f32>,
@@ -65,6 +65,9 @@ struct PostUniform {
     display : vec4<f32>,
     // screen-space reflections: intensity (0 = off), max distance (m), thickness (m), blur
     ssr : vec4<f32>,
+    // reflections: full-resolution pixels per reflection texel (1 or 2), then the flat
+    // ambient light the main pass adds to every lit surface (rgb)
+    reflection : vec4<f32>,
 };
 
 @group(0) @binding(0)

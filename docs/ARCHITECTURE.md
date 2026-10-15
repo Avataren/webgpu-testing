@@ -89,9 +89,10 @@ holds the octahedral normal and motion (`GBUFFER_NORMAL_FORMAT`) and the world p
 whose `w` is 0 for background and on a surface at least 1, with the smoothness
 (1 − roughness, 0 when unlit) and specular colour F0 packed into the half float's bits
 (`encode_surface_w` in `common.wgsl`). Post-processing (`src/renderer/postprocess/`)
-runs: MSAA depth resolve → reflections (half-res trace through the G-buffer positions, or
-ray traced with `ssr.ray_traced`, accumulated over frames, separable blur, added to the
-HDR scene weighted by smoothness² and Fresnel from F0) → TAA (Halton-jittered camera,
+runs: MSAA depth resolve → reflections (half-res, or full with `ssr.full_resolution`,
+trace through the G-buffer positions, or ray traced with `ssr.ray_traced`, accumulated
+over frames, separable blur, added to the HDR scene weighted by smoothness² and Fresnel
+from F0, minus the flat ambient a found reflection replaces on metals) → TAA (Halton-jittered camera,
 closest-depth motion vector, Catmull-Rom history, YCoCg variance clipping) → motion blur
 → SSAO → bloom (13-tap Karis downsample chain, tent upsample blended by scatter) → depth
 of field (half-res CoC prefilter, golden-angle bokeh gather) → auto exposure (compute:

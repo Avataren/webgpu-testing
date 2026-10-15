@@ -147,6 +147,18 @@ impl EnvironmentResources {
         }
     }
 
+    /// The flat ambient light the main pass adds to every lit surface (the environment's
+    /// `ambient_tint * ambient_intensity` in environment.wgsl), linear RGB.
+    pub(crate) fn flat_ambient(&self) -> [f32; 3] {
+        let intensity = self.uniform.ambient_color[3];
+        if self.uniform.flags_intensity[0] > 0.5 {
+            let [r, g, b, _] = self.uniform.ambient_color;
+            [r * intensity, g * intensity, b * intensity]
+        } else {
+            [intensity; 3]
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn debug_uniform(&self) -> &EnvironmentUniform {
         &self.uniform

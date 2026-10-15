@@ -779,6 +779,7 @@ pub fn tools() -> Vec<Tool> {
                 "ssr": { "type": "object", "description": "Reflections: smooth surfaces (low material roughness) reflect their surroundings as a blurred, glossy sheen. Screen-space (only what is on screen) unless ray_traced", "properties": {
                     "enabled": { "type": "boolean" },
                     "ray_traced": { "type": "boolean", "description": "Trace against the scene with hardware ray tracing (sees off-screen and hidden objects); falls back to screen space when engine_info surface.ray_tracing is unavailable" },
+                    "full_resolution": { "type": "boolean", "description": "One ray per pixel instead of per 2x2 pixels: sharp mirrors at 4x the trace cost (default false)" },
                     "intensity": { "type": "number", "description": "1 = physically based for the material (0-4)" },
                     "max_distance": { "type": "number", "description": "How far a reflected ray travels, meters" },
                     "thickness": { "type": "number", "description": "Screen space only: how far behind a surface a ray may pass and still hit it, meters" },

@@ -1001,6 +1001,8 @@ impl Renderer {
         let env_texture_changed =
             self.environment
                 .update(&self.context.device, &self.context.queue, environment);
+        self.postprocess
+            .set_ambient(&self.context.queue, self.environment.flat_ambient());
 
         if env_texture_changed {
             self.lights_buffer.rebuild_bind_group(

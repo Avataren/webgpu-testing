@@ -139,10 +139,8 @@ pub struct PostProcess {
     pick_target: LazyPickTarget,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
-    ssr_half: TextureBundle,
-    ssr_ping: TextureBundle,
-    ssr_accumulated: TextureBundle,
-    ssr_history: TextureBundle,
+    /// Reflection textures, at half or full resolution (`ssr.full_resolution`).
+    reflection: ReflectionTargets,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -150,6 +148,8 @@ pub struct PostProcess {
     taa_history: TextureBundle,
     motion_output: TextureBundle,
     display: TextureBundle,
+    /// The flat ambient light the main pass adds (reflections replace it on metals).
+    ambient: [f32; 3],
     sampler_linear: wgpu::Sampler,
     sampler_noise: wgpu::Sampler,
     _noise_texture: wgpu::Texture,
@@ -494,10 +494,7 @@ impl PostProcess {
             pick_target: LazyPickTarget::new(),
             ssao: targets.ssao,
             ssao_ping: targets.ssao_ping,
-            ssr_half: targets.ssr_half,
-            ssr_ping: targets.ssr_ping,
-            ssr_accumulated: targets.ssr_accumulated,
-            ssr_history: targets.ssr_history,
+            reflection: ReflectionTargets::new(device, &size, false),
             bloom_chain: targets.bloom_chain,
             dof_half: targets.dof_half,
             dof_blur: targets.dof_blur,
@@ -505,6 +502,7 @@ impl PostProcess {
             taa_history: targets.taa_history,
             motion_output: targets.motion_output,
             display: targets.display,
+            ambient: [0.0; 3],
             sampler_linear,
             sampler_noise,
             _noise_texture: noise_texture,
@@ -567,10 +565,7 @@ impl PostProcess {
         self.position_msaa = targets.position_msaa;
         self.ssao = targets.ssao;
         self.ssao_ping = targets.ssao_ping;
-        self.ssr_half = targets.ssr_half;
-        self.ssr_ping = targets.ssr_ping;
-        self.ssr_accumulated = targets.ssr_accumulated;
-        self.ssr_history = targets.ssr_history;
+        self.reflection = ReflectionTargets::new(device, &self.size, self.reflection.full);
         self.bloom_chain = targets.bloom_chain;
         self.dof_half = targets.dof_half;
         self.dof_blur = targets.dof_blur;
@@ -683,6 +678,14 @@ impl PostProcess {
             self.bind_groups_dirty = true;
             self.upload_uniform(queue);
         }
+        if settings.ssr.full_resolution != self.reflection.full {
+            self.reflection =
+                ReflectionTargets::new(device, &self.size, settings.ssr.full_resolution);
+            self.reflection_history = None;
+            self.mark_bind_groups_dirty();
+            // The uniform's reflection texel scale changes with it.
+            self.upload_uniform(queue);
+        }
         let routing = (settings.taa_active(), settings.motion_blur_active());
         if routing != self.temporal_routing {
             if routing.0 && !self.temporal_routing.0 {
@@ -735,6 +738,15 @@ impl PostProcess {
 
     pub fn settings(&self) -> &PostProcessSettings {
         &self.settings
+    }
+
+    /// The flat ambient light the main pass adds to every lit surface this frame (linear
+    /// RGB); where a reflection is found on a metal it replaces that light.
+    pub fn set_ambient(&mut self, queue: &wgpu::Queue, ambient: [f32; 3]) {
+        if self.ambient != ambient {
+            self.ambient = ambient;
+            self.upload_uniform(queue);
+        }
     }
 
     /// The display's headroom above paper white (HDR output); tonemapping uses it.
@@ -798,15 +810,15 @@ impl PostProcess {
                     encoder,
                     &self.uniform_bind_group,
                     frame,
-                    &self.ssr_half.view,
+                    &self.reflection.trace.view,
                 ),
                 _ => false,
             };
             let targets = SsrTargets {
-                reflection: &self.ssr_half,
-                ping: &self.ssr_ping.view,
-                accumulated: &self.ssr_accumulated,
-                history: &self.ssr_history,
+                reflection: &self.reflection.trace,
+                ping: &self.reflection.ping.view,
+                accumulated: &self.reflection.accumulated,
+                history: &self.reflection.history,
                 history_valid: self.reflection_history == Some(traced),
             };
             if traced {
@@ -995,10 +1007,10 @@ impl PostProcess {
                 normal: &self.normal_source.view,
                 position: &self.position_source.view,
                 sampler: &self.sampler_linear,
-                reflection: &self.ssr_half.view,
-                ping: &self.ssr_ping.view,
-                accumulated: &self.ssr_accumulated.view,
-                history: &self.ssr_history.view,
+                reflection: &self.reflection.trace.view,
+                ping: &self.reflection.ping.view,
+                accumulated: &self.reflection.accumulated.view,
+                history: &self.reflection.history.view,
             },
         );
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
@@ -1122,8 +1134,46 @@ impl PostProcess {
             seconds: self.clock.seconds,
             delta: self.clock.delta,
             frame: self.clock.frame,
+            reflection_scale: self.reflection.scale(),
+            ambient: self.ambient,
         });
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+}
+
+/// The textures reflections go through, at half or full resolution.
+struct ReflectionTargets {
+    /// The trace, then the blurred result.
+    trace: TextureBundle,
+    /// The horizontal blur's output.
+    ping: TextureBundle,
+    /// The trace accumulated over frames.
+    accumulated: TextureBundle,
+    /// Last frame's `accumulated`.
+    history: TextureBundle,
+    full: bool,
+}
+
+impl ReflectionTargets {
+    fn new(device: &wgpu::Device, size: &wgpu::Extent3d, full: bool) -> Self {
+        let size = if full { *size } else { half_size(size) };
+        let copyable = |label| TextureBundle::copyable(device, &size, HDR_FORMAT, label);
+        Self {
+            trace: copyable("ReflectionTrace"),
+            ping: TextureBundle::color(device, &size, HDR_FORMAT, "ReflectionPing"),
+            accumulated: copyable("ReflectionAccumulated"),
+            history: copyable("ReflectionHistory"),
+            full,
+        }
+    }
+
+    /// Full-resolution pixels per reflection texel.
+    fn scale(&self) -> f32 {
+        if self.full {
+            1.0
+        } else {
+            2.0
+        }
     }
 }
 
@@ -1137,10 +1187,6 @@ struct SizedTargets {
     position_msaa: Option<MsaaTarget>,
     ssao: TextureBundle,
     ssao_ping: TextureBundle,
-    ssr_half: TextureBundle,
-    ssr_ping: TextureBundle,
-    ssr_accumulated: TextureBundle,
-    ssr_history: TextureBundle,
     bloom_chain: Vec<BloomMip>,
     dof_half: TextureBundle,
     dof_blur: TextureBundle,
@@ -1178,20 +1224,6 @@ impl SizedTargets {
             position_msaa,
             ssao: TextureBundle::ssao(device, size),
             ssao_ping: TextureBundle::ssao(device, size),
-            ssr_half: TextureBundle::copyable(device, &half_size(size), HDR_FORMAT, "SsrHalf"),
-            ssr_ping: TextureBundle::color(device, &half_size(size), HDR_FORMAT, "SsrPing"),
-            ssr_accumulated: TextureBundle::copyable(
-                device,
-                &half_size(size),
-                HDR_FORMAT,
-                "SsrAccumulated",
-            ),
-            ssr_history: TextureBundle::copyable(
-                device,
-                &half_size(size),
-                HDR_FORMAT,
-                "SsrHistory",
-            ),
             bloom_chain: create_bloom_chain(device, size),
             dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
             dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
@@ -1308,6 +1340,9 @@ struct UniformInputs<'a> {
     seconds: f32,
     delta: f32,
     frame: u32,
+    /// Full-resolution pixels per reflection texel.
+    reflection_scale: f32,
+    ambient: [f32; 3],
 }
 
 /// Mirrors `PostUniform` in shader/postprocess/common.wgsl.
@@ -1350,6 +1385,7 @@ struct PostProcessUniform {
     misc: [f32; 4],
     display: [f32; 4],
     ssr: [f32; 4],
+    reflection: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -1492,6 +1528,10 @@ impl PostProcessUniform {
                     ssr.blur,
                 ]
             },
+            reflection: {
+                let [r, g, b] = inputs.ambient;
+                [inputs.reflection_scale, r, g, b]
+            },
             output: [
                 flag(inputs.encode_srgb),
                 1.0,
@@ -1553,7 +1593,7 @@ mod tests {
     #[test]
     fn uniform_matches_the_shader_layout() {
         // 6 matrices, camera position, 8 vec2 pairs and 21 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 800);
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 816);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 
