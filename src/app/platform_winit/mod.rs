@@ -604,6 +604,11 @@ where
                     self.handle_runtime_transition(transition);
                 }
 
+                // Wait for the GPU before the frame reads the clock (see the method).
+                if let Some(renderer) = self.platform.renderer_mut() {
+                    frame_timings::time("gpu_wait", || renderer.wait_for_frame_slot());
+                }
+
                 let Some(frame) = self.core.begin_frame() else {
                     return;
                 };

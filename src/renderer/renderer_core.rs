@@ -225,7 +225,14 @@ pub struct Renderer {
     jitter_index: u32,
     /// Whether ray-traced effects can run, or why not.
     ray_tracing_support: crate::renderer::raytracing::RayTracingSupport,
+    /// The last frames' scene submissions, oldest first, for [`Self::wait_for_frame_slot`].
+    frames_in_flight: std::collections::VecDeque<wgpu::SubmissionIndex>,
 }
+
+/// Frames the CPU may have submitted that the GPU has not finished, when a new one starts.
+/// Two keeps the GPU busy (it draws one frame while the CPU prepares the next) without
+/// letting the CPU run further ahead.
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 impl Renderer {
     pub async fn new(window: Arc<Window>, settings: RenderSettings) -> Self {
@@ -374,6 +381,31 @@ impl Renderer {
             pending_view_proj: None,
             jitter_index: 0,
             ray_tracing_support,
+            frames_in_flight: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Call before a frame samples the clock and runs its update: waits until the GPU has
+    /// finished all but the last frame. When the GPU is the bottleneck, the CPU then
+    /// waits here, at the start of the frame, instead of for a swapchain image in the
+    /// middle of it, after the game has already advanced to the time the frame shows. A
+    /// wait there varies from frame to frame, so frames reached the display at uneven
+    /// delays after the moment they show: judder that the frame rate did not reveal.
+    pub fn wait_for_frame_slot(&mut self) {
+        while self.frames_in_flight.len() >= MAX_FRAMES_IN_FLIGHT {
+            let Some(index) = self.frames_in_flight.pop_front() else {
+                break;
+            };
+            // WebGPU cannot block; the browser paces frames itself.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Err(err) = self.context.device.poll(wgpu::PollType::Wait {
+                submission_index: Some(index),
+                timeout: Some(std::time::Duration::from_secs(1)),
+            }) {
+                log::warn!("Waiting for the GPU to finish a frame failed: {err}");
+            }
+            #[cfg(target_arch = "wasm32")]
+            let _ = index;
         }
     }
 

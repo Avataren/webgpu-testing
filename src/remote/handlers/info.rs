@@ -97,7 +97,7 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "frame_breakdown": breakdown,
         "script_timings": scene.lua_scripting().script_timings(),
         "frame_breakdown_note": format!(
-            "Time per stage of the engine's frame loop (avg is a running average). The stages sum to {:.1} ms; the rest of frame_time_ms is waiting for the display (vsync) and window events. scripts = Lua update/on_created; render_collect = gathering visible meshes; render_gpu = batching, uploads and recording/submitting GPU passes; present may block on vsync; ui_build/ui_render = egui; gpu_systems = editor systems, particles and remote commands. Measure game performance in the player: the editor's UI and systems add their own cost.",
+            "Time per stage of the engine's frame loop (avg is a running average). The stages sum to {:.1} ms; the rest of frame_time_ms is waiting for the display (vsync) and window events. scripts = Lua update/on_created; render_collect = gathering visible meshes; render_gpu = batching, uploads and recording/submitting GPU passes; present may block on vsync; gpu_wait = waiting, before the frame starts, for the GPU to finish the frame before last (large when the GPU is the bottleneck); ui_build/ui_render = egui; gpu_systems = editor systems, particles and remote commands. Measure game performance in the player: the editor's UI and systems add their own cost.",
             accounted
         ),
         "entities": scene.main_world().len(),

@@ -833,7 +833,8 @@ pub(crate) fn finish_frame(
     encoder: wgpu::CommandEncoder,
     frame: wgpu::SurfaceTexture,
 ) -> RenderFrame {
-    renderer.context.queue.submit(Some(encoder.finish()));
+    let index = renderer.context.queue.submit(Some(encoder.finish()));
+    renderer.frames_in_flight.push_back(index);
     renderer.gpu_timer.after_submit();
     renderer.pick_state.after_submit();
 
