@@ -120,6 +120,15 @@ pixel, with TAA on or off), which led to the block-averaged "smooth" difference;
 for the numbers. Checked with Rust tests (34 new), strict Clippy, a wasm32 library check and a native
 editor driven through the MCP, TAA on against off with an orbiting block frozen in play mode.
 
+Path tracing round (2026-10-15, commits `c1d9ce4` and `b331fe0`): engine work rather than a game.
+Path tracing with a denoiser and caustic photons went into the renderer, and RT Lab gained a caustics
+table built through the MCP (`mesh_lathe`, `entity_spawn`, spot lights, a camera-tour shot). Most of
+the MCP friction came from debugging the renderer: seven rebuild-and-relaunch cycles (30 to 40 s of
+build each) only to look at intermediate buffers, and every shader edit needing a rebuild. Findings:
+B24, the pain points from "Judging temporal effects needs a still view" onward, and the wish-list
+items after the visual comparison tool. Not verified: whether `visual_capture` alone would have
+covered the still-view comparisons (it was not tried; see that pain point).
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -457,6 +466,17 @@ How to read the sections:
   Two additional tests reject stale hints. Native before/after captures show the clipped
   ring shadow becoming complete without enlarging the light's shadow extent.
 
+### B24. `project_save` repoints an imported model's material at a duplicate file (observed, engine)
+
+- Repro: open `games/rt-lab` (committed at `f420623`), add entities that do not touch the gem,
+  `project_save {compact: true}`. `content/gltf/gem/meta.json` now maps material 0 (and both
+  `node:0/primitive:0` keys) to `content/materials/gem_glb_000_1.mat.json` instead of
+  `gem_glb_000.mat.json`. Both files are tracked and exist; nothing about the gem was edited.
+- Cause not investigated. It looks like the save picks whichever of two equivalent material
+  files it meets first. Harmless while the two files match, but it is churn in every commit,
+  and the scene silently stops using the file a person may be editing.
+- Workaround: `git checkout content/gltf/gem/meta.json` after saving.
+
 ## Pain points
 
 - **No bulk creation.** A grid of 72 bricks costs 72 `entity_spawn`/`entity_duplicate`
@@ -759,6 +779,45 @@ How to read the sections:
   `web_playtest`, which is how B23 was found. Run over the six game projects it raised no false
   positives.
 
+- **Judging temporal effects needs a still view, and the view moves the game camera.** A path
+  tracer's denoiser (like TAA, but over 32 frames) only shows its real output after the view has
+  stayed put. `screenshot {camera: pose}` renders one frame from the new pose, which the
+  renderer treats as a camera cut, so every such capture showed one-frame, unaccumulated noise
+  and looked like a denoiser bug. The alternative, `camera_set`, moves the scene's active camera
+  entity in the editor ("the view camera drives the active camera entity"), so before each of
+  four `project_save` calls I had to write the GameCamera's transform and field of view back
+  by hand. **Open.** `visual_capture {camera: pose, settle_frames, variants}` already locks a pose,
+  settles and applies variants last (so `{postprocess: {path_tracing: {enabled: true,
+  denoiser: false}}}` would override the player's graphics settings). It was not tried here
+  because it reads as a post-processing comparison tool. Suggestion: say in the skill and the
+  `screenshot` description that `screenshot {camera}` is a camera cut, and point at
+  `visual_capture` for anything temporal.
+- **Looking at intermediate render buffers means adding debug code.** Finding why denoised
+  reflections faded (the virtual-motion reprojection was off by the TAA jitter) and why a steel ring
+  stayed grainy (residual variance, not a failed history test) needed visualizations of history
+  length, reprojection distance and which validity test failed. Each one was a temporary
+  `PT_DEBUG` environment-variable switch in WGSL plus a rebuild and relaunch, seven times in all.
+  **Open:** see the render debug view wish.
+- **Every shader edit is a rebuild, and a restart loses unsaved scene edits.** The WGSL is built
+  into the binary with `include_str!`, so even a one-constant change is `engine_launch
+  {restart: true}`: 30 to 40 s of build plus reopening the project. Edits made through the MCP
+  since the last save are lost, so building the caustics table needed saves partway through, each
+  with the camera put back first. **Open:** see the shader reload wish.
+- **`project_save` pretty-prints files that were compact.** On RT Lab, whose scene files were
+  committed compact, a plain `project_save` produced a diff of 1,288,356 lines (the imported
+  model scenes rewritten indented). `project_save {compact: true}` brought it back to the real
+  change. **Open:** keep each file's existing formatting, or default to compact when the file on
+  disk is compact.
+- **`mesh_lathe` cannot make a hollow vessel.** A tumbler (outer wall up, inner wall down) is
+  rejected with `profile must rise bottom to top, with distinct points and no axis-only edge`, so
+  the caustics table got a solid glass rod instead of a glass. A two-point profile with
+  `caps: false` and a double-sided material did make a thin ring. **Open:** see the lathe wish.
+- **Comparing brightness meant leaving the MCP.** Whether two captures differed (fixed grain or
+  temporal noise) was checked by capturing the engine window with `xdotool` + `import` and comparing
+  crops with ImageMagick (`compare -metric AE`). `visual_capture`'s comparison covers this
+  between variants, but there is no way to read a pixel's or a region's HDR value from one frame.
+  **Open:** see the pixel probe wish.
+
 ## Wish list
 
 - ✅ `entity_duplicate {count, step}` for a linear/grid array, or a generic `batch` tool that
@@ -933,6 +992,28 @@ How to read the sections:
   nothing; a play-mode call to `tonemapping = "agx"` took effect and was undone on stop, with
   `discarded_on_stop` reported. Scripts cannot read the blended result back; they keep their
   own values.)
+
+- ⬜ **Render debug views:** `render_debug {view}` showing an intermediate buffer in place of
+  the final image (G-buffer normal, position and motion, the path tracer's raw diffuse and
+  specular, history length, variance, caustic sums, reprojection validity), with `null` to go
+  back. The renderer would register named views per pass, so new passes add their own instead of
+  temporary debug switches.
+- ⬜ **Shader hot reload in development builds:** load WGSL from `src/shader` on disk when it
+  exists and rebuild the affected pipelines on change (falling back to the built-in source, and
+  keeping the old pipeline when the new one fails validation, with the error in `logs`). Most
+  renderer iteration is shader-only and would no longer need a restart.
+- ⬜ **Format-preserving saves:** `project_save` keeps each file compact or indented as it found
+  it, and leaves files whose content did not change (including import `meta.json` mappings, see
+  B24) untouched.
+- ⬜ **Lathe shells:** `mesh_lathe {thickness}` (or allowing a profile that comes back down) for
+  cups, glasses, bowls and vases with an inner wall.
+- ⬜ **Pixel probe:** `pixel_probe {points | rect, buffer}` returning linear HDR values (and the
+  displayed 8-bit values) at viewport pixels from the last frame, for checking brightness and
+  noise with numbers instead of by eye.
+- ⬜ **A held view for `screenshot`:** `screenshot {camera, settle_frames}` that keeps the pose
+  for that many frames before capturing, without touching the scene's camera entity, for quick
+  looks at temporal effects (`visual_capture` does this for comparisons; a single look should not
+  need a variant list).
 
 ## Tide Observatory: what worked well
 
