@@ -123,6 +123,11 @@ impl EditorApplication {
 
                     ui.menu_button("Window", |ui| {
                         self.shared.windows.window_menu(ui);
+                        ui.separator();
+                        if ui.button("Graphics settings").clicked() {
+                            wgpu_cube::graphics_settings::graphics_settings().open = true;
+                            ui.close();
+                        }
                     });
 
                     let project_name = self

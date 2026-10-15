@@ -709,6 +709,33 @@ pub fn tools() -> Vec<Tool> {
             action: Action::Engine("environment.set"),
         },
         Tool {
+            name: "graphics_get",
+            description: "The player's graphics settings (what the engine's settings page shows: display mode, window size, vsync, anti-aliasing, render scale and upscaler, ray-traced shadows/reflections/AO/refraction, FPS readout), whether the page is open, and what the GPU supports. Saved per game and user; they replace the scene volumes' anti_aliasing, upscaling and ray-tracing choices.",
+            schema: empty(),
+            action: Action::Engine("graphics.get"),
+        },
+        Tool {
+            name: "graphics_set",
+            description: "Change the player's graphics settings (saved per game and user, like a player using the settings page) and open or close the settings page. Only the given fields change. They win over post-process volumes for anti-aliasing, upscaling and ray-traced effects; use visual_capture variants to compare those without changing the player's choice.",
+            schema: object(json!({
+                "display_mode": { "type": "string", "enum": ["windowed", "fullscreen"], "description": "fullscreen: borderless on the window's monitor (not in the editor, whose window is not the game's)" },
+                "window_size": { "type": ["array", "null"], "items": { "type": "integer" }, "description": "[width, height] in pixels while windowed; null keeps the size the app opened with" },
+                "vsync": { "type": "boolean" },
+                "anti_aliasing": { "type": "string", "enum": ["none", "fxaa", "taa"] },
+                "render_scale": { "type": "number", "description": "0.25-1: 1 native, 0.67 FSR quality, 0.5 performance" },
+                "upscaler": { "type": "string", "enum": ["fsr", "taau"] },
+                "sharpness": { "type": "number", "description": "FSR sharpening 0-1" },
+                "ray_traced_shadows": { "type": "boolean" },
+                "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
+                "ambient_occlusion": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
+                "ray_traced_refraction": { "type": "boolean" },
+                "show_fps": { "type": "boolean", "description": "Yellow frame rate in the corner of the view" },
+                "open": { "type": "boolean", "description": "Show or hide the settings page" },
+                "reset": { "type": "boolean", "description": "Restore the defaults first" }
+            }), &[]),
+            action: Action::Engine("graphics.set"),
+        },
+        Tool {
             name: "postprocess_get",
             description: "Post-processing in effect at the view camera (exposure, tonemapping, color grading, bloom, SSAO, vignette, chromatic aberration, film grain, sharpening, anti-aliasing) and the post-process volumes it is blended from, with each volume's influence at the camera. The scene renders in HDR; these turn it into the displayed image.",
             schema: empty(),

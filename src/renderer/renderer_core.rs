@@ -948,6 +948,17 @@ impl Renderer {
         }
     }
 
+    /// Wait for the display's refresh, or present as soon as a frame is ready (the
+    /// configured present mode, see [`RenderSettings`]).
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.context.set_vsync(vsync);
+    }
+
+    /// Whether frames can be presented without waiting for the display.
+    pub fn vsync_optional(&self) -> bool {
+        self.context.unsynced_present_mode != wgpu::PresentMode::Fifo
+    }
+
     pub fn surface_size(&self) -> PhysicalSize<u32> {
         self.context.size
     }

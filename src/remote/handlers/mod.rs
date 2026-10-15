@@ -7,6 +7,7 @@ mod animation;
 mod diff;
 mod entity;
 mod geometry;
+mod graphics;
 mod info;
 mod input;
 mod procedural;
@@ -123,6 +124,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     (
         "postprocess.get",
         "Post-processing at the view camera and the volumes it is blended from",
+    ),
+    (
+        "graphics.get",
+        "The player's graphics settings (display, AA, upscaling, ray tracing, FPS readout)",
+    ),
+    (
+        "graphics.set",
+        "Change the player's graphics settings or open/close the settings page",
     ),
     (
         "postprocess.set",
@@ -272,6 +281,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "environment.get" => rendering::environment_get(ctx),
         "environment.set" => rendering::environment_set(params, ctx),
         "postprocess.get" => rendering::postprocess_get(ctx),
+        "graphics.get" => graphics::get(),
+        "graphics.set" => graphics::set(params),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
         "asset.reload" => rendering::asset_reload(params, ctx),
         "audio.play" => audio_play(params),

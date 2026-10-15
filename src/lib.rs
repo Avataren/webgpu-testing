@@ -5,6 +5,7 @@ pub mod audio;
 pub mod audio_inspect;
 pub mod environment;
 pub mod gpu_particles;
+pub mod graphics_settings;
 pub mod io;
 pub mod procgen;
 pub mod profiler;
@@ -24,7 +25,7 @@ pub use ui::*;
 
 #[cfg(feature = "egui")]
 pub use render_application::DefaultUI;
-pub use render_application::{run_application, RenderApplication};
+pub use render_application::{run_application, GraphicsSettingsOptions, RenderApplication};
 
 pub use environment::{Environment, HdrBackground};
 

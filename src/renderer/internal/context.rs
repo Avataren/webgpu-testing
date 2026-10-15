@@ -27,6 +27,9 @@ pub(crate) struct RenderContext {
     pub(crate) sample_count: u32,
     /// How frames reach the display (SDR, or one of the HDR modes).
     pub(crate) hdr_display: crate::renderer::hdr_output::HdrDisplay,
+    /// The present mode used without vsync (the configured one, unless that waits for
+    /// the display): Fifo when the surface offers nothing else.
+    pub(crate) unsynced_present_mode: wgpu::PresentMode,
 
     // GPU resources (must drop first)
     pub(crate) depth: Depth,
@@ -266,6 +269,15 @@ impl RenderContext {
         }
 
         let present_mode = settings.present_mode(&surface_caps.present_modes);
+        let unsynced_present_mode = match present_mode {
+            wgpu::PresentMode::Mailbox
+            | wgpu::PresentMode::Immediate
+            | wgpu::PresentMode::AutoNoVsync => present_mode,
+            _ => [wgpu::PresentMode::Mailbox, wgpu::PresentMode::Immediate]
+                .into_iter()
+                .find(|mode| surface_caps.present_modes.contains(mode))
+                .unwrap_or(wgpu::PresentMode::Fifo),
+        };
 
         // COPY_SRC lets remote control read frames back for screenshots.
         let usage = if surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC) {
@@ -309,6 +321,20 @@ impl RenderContext {
             ray_tracing,
             sample_count,
             hdr_display,
+            unsynced_present_mode,
+        }
+    }
+
+    /// Wait for the display's refresh (Fifo), or present as soon as a frame is ready.
+    pub(crate) fn set_vsync(&mut self, vsync: bool) {
+        let mode = if vsync {
+            wgpu::PresentMode::Fifo
+        } else {
+            self.unsynced_present_mode
+        };
+        if self.config.present_mode != mode {
+            self.config.present_mode = mode;
+            self.surface.configure(&self.device, &self.config);
         }
     }
 

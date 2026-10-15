@@ -8,7 +8,7 @@
 --   Arrow keys   fire (8 directions; hold two for diagonals)   -or-   hold the left mouse button to fire at the cursor
 --   B            toggle the autopilot while playing
 --   P            pause
---   Escape       back to the demo
+--   Escape       back to the demo (in the demo: the engine's settings page)
 --
 -- Every actor is a voxel model of its 1982 sprite (sprites.lua), meshed by the engine into one
 -- mesh per colour, standing on a lit floor so it casts a real shadow. The same pixels drive
@@ -67,7 +67,11 @@ local max = math.max
 
 GAME = g -- global so lua_eval can inspect and poke the game state while testing
 
+-- Whether Escape opened the settings page before the game took it over (flow.meta_input).
+local settings_hotkey_before = nil
+
 function on_created(self_entity)
+    settings_hotkey_before = settings_hotkey()
     local ok, t = pcall(os.time)
     math.randomseed(ok and t or 2084)
     g.cam = find_entity_by_name("GameCamera")
@@ -97,6 +101,7 @@ function on_created(self_entity)
 end
 
 function on_destroyed(self_entity, reason)
+    if settings_hotkey_before ~= nil then set_settings_hotkey(settings_hotkey_before) end
     if g.music then stop_sound(g.music) end
     for i = #entities, 1, -1 do
         despawn_entity(entities[i])

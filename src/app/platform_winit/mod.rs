@@ -196,6 +196,8 @@ pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
     core: AppCore,
     platform: PlatformState<D::WindowHandle>,
     driver: D,
+    /// The graphics settings revision the window and surface last applied.
+    applied_graphics: Option<u64>,
 }
 
 impl<D> WinitApp<D>
@@ -286,7 +288,12 @@ where
         }
 
         match event.logical_key {
-            Key::Named(NamedKey::Escape) if self.core.exit_on_escape() => {
+            // With a UI, Escape opens the settings page instead (it has an Exit button).
+            Key::Named(NamedKey::Escape)
+                if self.core.exit_on_escape()
+                    && !(cfg!(feature = "egui")
+                        && crate::graphics_settings::graphics_settings().hotkey_enabled) =>
+            {
                 event_loop.exit();
             }
             Key::Character(ref c) if c.as_str().eq_ignore_ascii_case("g") => {
@@ -297,6 +304,47 @@ where
                 EditorState::debug_print_hierarchy(self.core.workspace());
             }
             _ => {}
+        }
+    }
+
+    /// Bring the window (display mode, size) and the surface (vsync) in line with the
+    /// player's graphics settings when they changed.
+    fn apply_graphics_settings(&mut self) {
+        let (revision, settings) = {
+            let graphics = crate::graphics_settings::graphics_settings();
+            (graphics.revision(), graphics.settings.clone())
+        };
+        if self.applied_graphics == Some(revision) || !self.platform.renderer_initialized() {
+            return;
+        }
+        self.applied_graphics = Some(revision);
+        if let Some(renderer) = self.platform.renderer_mut() {
+            renderer.set_vsync(settings.vsync);
+        }
+        let manage_window = crate::graphics_settings::graphics_settings().manage_window;
+        // The browser decides the canvas size.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(window) = self.platform.window().filter(|_| manage_window) {
+            use crate::graphics_settings::DisplayMode;
+            let window = window.as_ref();
+            match settings.display_mode {
+                DisplayMode::Fullscreen => {
+                    if window.fullscreen().is_none() {
+                        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                    }
+                }
+                DisplayMode::Windowed => {
+                    if window.fullscreen().is_some() {
+                        window.set_fullscreen(None);
+                    }
+                    if let Some([width, height]) = settings.window_size {
+                        let size = winit::dpi::PhysicalSize::new(width, height);
+                        if window.inner_size() != size {
+                            let _ = window.request_inner_size(size);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -354,6 +402,7 @@ where
             core,
             platform: PlatformState::default(),
             driver,
+            applied_graphics: None,
         }
     }
 
@@ -538,6 +587,7 @@ where
                 }
 
                 self.ensure_renderer_ready();
+                self.apply_graphics_settings();
 
                 if let Some(transition) = self.core.sync_runtime_state() {
                     self.handle_runtime_transition(transition);

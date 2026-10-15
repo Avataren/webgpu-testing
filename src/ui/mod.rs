@@ -55,3 +55,9 @@ pub use scene_hierarchy_window::{
 
 #[cfg(feature = "egui")]
 pub use scene_tabs::{SceneTabDescriptor, SceneTabsHandle, SceneTabsState};
+
+#[cfg(feature = "egui")]
+mod settings_page;
+
+#[cfg(feature = "egui")]
+pub use settings_page::{show_engine_overlays, FpsCounter};

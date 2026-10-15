@@ -89,6 +89,13 @@ pub trait RenderApplication: Sized + 'static {
         UiStyle::default()
     }
 
+    /// How the engine's graphics settings page (see [`crate::graphics_settings`])
+    /// behaves in this app: whether Escape opens it and whether the settings may change
+    /// the window. Games keep the defaults; an editor turns both off.
+    fn graphics_settings_options(&self) -> GraphicsSettingsOptions {
+        GraphicsSettingsOptions::default()
+    }
+
     /// Port for the remote-control server (see [`crate::remote`]).
     ///
     /// `None` leaves it off unless the `ENGINE_REMOTE_PORT` environment variable is set;
@@ -117,6 +124,27 @@ pub trait RenderApplication: Sized + 'static {
     /// Called once per frame after remote requests changed the active scene.
     fn remote_scene_modified(&mut self, ctx: &mut GpuUpdateContext) {
         let _ = ctx;
+    }
+}
+
+/// See [`RenderApplication::graphics_settings_options`].
+#[derive(Clone, Copy, Debug)]
+pub struct GraphicsSettingsOptions {
+    /// Escape opens and closes the settings page (scripts can change it later).
+    pub hotkey: bool,
+    /// The display mode and window size settings apply to the window.
+    pub manage_window: bool,
+    /// The page has an Exit button that closes the app (Escape no longer does).
+    pub exit_button: bool,
+}
+
+impl Default for GraphicsSettingsOptions {
+    fn default() -> Self {
+        Self {
+            hotkey: true,
+            manage_window: true,
+            exit_button: true,
+        }
     }
 }
 
@@ -265,6 +293,13 @@ where
     T: RenderApplication,
 {
     app_rc.borrow().configure(&mut builder);
+    {
+        let options = app_rc.borrow().graphics_settings_options();
+        let mut graphics = crate::graphics_settings::graphics_settings();
+        graphics.hotkey_enabled = options.hotkey;
+        graphics.manage_window = options.manage_window;
+        graphics.exit_button = options.exit_button;
+    }
 
     {
         let app = app_rc.clone();
@@ -365,10 +400,13 @@ where
             );
             let app_ref = app_rc.clone();
 
+            let mut fps = crate::ui::FpsCounter::new();
             app.set_egui_ui(move |ui| {
                 ui_style.apply(ui.ctx());
                 default_ui.show(ui);
                 app_ref.borrow_mut().ui(ui, &mut default_ui);
+                let view = rendered_view_rect(ui.ctx(), app_ref.borrow().render_region());
+                crate::ui::show_engine_overlays(ui.ctx(), view, &mut fps);
             });
         } else {
             let mut default_ui = DefaultUI::new(
@@ -381,14 +419,36 @@ where
             );
             let app_ref = app_rc.clone();
 
+            let mut fps = crate::ui::FpsCounter::new();
             app.set_egui_ui(move |ui| {
                 ui_style.apply(ui.ctx());
                 app_ref.borrow_mut().ui(ui, &mut default_ui);
+                let view = rendered_view_rect(ui.ctx(), app_ref.borrow().render_region());
+                crate::ui::show_engine_overlays(ui.ctx(), view, &mut fps);
             });
         }
     }
 
     app
+}
+
+/// The part of the window the scene is drawn into, in egui points: the app's render
+/// region (an editor viewport), or the whole window.
+#[cfg(feature = "egui")]
+fn rendered_view_rect(ctx: &egui::Context, region: Option<RenderRegion>) -> egui::Rect {
+    match region {
+        Some(region) => {
+            let scale = ctx.pixels_per_point();
+            egui::Rect::from_min_size(
+                egui::pos2(region.x() as f32 / scale, region.y() as f32 / scale),
+                egui::vec2(
+                    region.width() as f32 / scale,
+                    region.height() as f32 / scale,
+                ),
+            )
+        }
+        None => ctx.viewport_rect(),
+    }
 }
 
 fn build_winit_app<T>(app_rc: Rc<RefCell<T>>) -> WinitApp

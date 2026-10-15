@@ -165,6 +165,16 @@ impl RenderApplication for EditorApplication {
         self.render_region_for_mode(self.shared.runtime_state.active_mode())
     }
 
+    /// The settings page opens from the Window menu (Escape is the editor's), the game's
+    /// display settings leave the editor window alone, and quitting goes through File.
+    fn graphics_settings_options(&self) -> wgpu_cube::GraphicsSettingsOptions {
+        wgpu_cube::GraphicsSettingsOptions {
+            hotkey: false,
+            manage_window: false,
+            exit_button: false,
+        }
+    }
+
     fn remote_control_port(&self) -> Option<u16> {
         Some(wgpu_cube::remote::DEFAULT_EDITOR_PORT)
     }

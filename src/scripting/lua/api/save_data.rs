@@ -38,7 +38,9 @@ pub fn set_save_namespace(name: &str) {
     *NAMESPACE.lock().unwrap_or_else(PoisonError::into_inner) = (!name.is_empty()).then_some(name);
 }
 
-fn namespace() -> String {
+/// The project's namespace (`default` before one is set): engine files kept per user
+/// and project, such as graphics settings, use it too.
+pub(crate) fn namespace() -> String {
     NAMESPACE
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
@@ -83,16 +85,17 @@ mod store {
             .or_else(|| env("HOME").map(|home| PathBuf::from(home).join(".local/share")))
     }
 
-    fn path(namespace: &str, key: &str) -> Result<PathBuf, String> {
+    fn path(area: &str, namespace: &str, key: &str) -> Result<PathBuf, String> {
         let dir = data_dir().ok_or("no user data directory (HOME is not set)")?;
         Ok(dir
-            .join("wgpu-cube/saves")
+            .join("wgpu-cube")
+            .join(area)
             .join(namespace)
             .join(format!("{key}.txt")))
     }
 
-    pub fn save(namespace: &str, key: &str, value: Option<&str>) -> Result<(), String> {
-        let path = path(namespace, key)?;
+    pub fn save(area: &str, namespace: &str, key: &str, value: Option<&str>) -> Result<(), String> {
+        let path = path(area, namespace, key)?;
         match value {
             Some(value) => {
                 if let Some(parent) = path.parent() {
@@ -113,8 +116,8 @@ mod store {
         }
     }
 
-    pub fn load(namespace: &str, key: &str) -> Result<Option<String>, String> {
-        let path = path(namespace, key)?;
+    pub fn load(area: &str, namespace: &str, key: &str) -> Result<Option<String>, String> {
+        let path = path(area, namespace, key)?;
         match std::fs::read_to_string(&path) {
             Ok(text) => Ok(Some(text)),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -131,13 +134,18 @@ mod store {
             .ok_or_else(|| "localStorage is not available".to_owned())
     }
 
-    fn item(namespace: &str, key: &str) -> String {
-        format!("wgpu-cube/{namespace}/{key}")
+    // Save data keeps its original item names.
+    fn item(area: &str, namespace: &str, key: &str) -> String {
+        if area == super::SAVES {
+            format!("wgpu-cube/{namespace}/{key}")
+        } else {
+            format!("wgpu-cube/{area}/{namespace}/{key}")
+        }
     }
 
-    pub fn save(namespace: &str, key: &str, value: Option<&str>) -> Result<(), String> {
+    pub fn save(area: &str, namespace: &str, key: &str, value: Option<&str>) -> Result<(), String> {
         let storage = storage()?;
-        let item = item(namespace, key);
+        let item = item(area, namespace, key);
         match value {
             Some(value) => storage.set_item(&item, value),
             None => storage.remove_item(&item),
@@ -145,11 +153,26 @@ mod store {
         .map_err(|err| format!("localStorage refused {item}: {err:?}"))
     }
 
-    pub fn load(namespace: &str, key: &str) -> Result<Option<String>, String> {
+    pub fn load(area: &str, namespace: &str, key: &str) -> Result<Option<String>, String> {
         storage()?
-            .get_item(&item(namespace, key))
+            .get_item(&item(area, namespace, key))
             .map_err(|err| format!("localStorage read failed: {err:?}"))
     }
+}
+
+/// Where scripts' save data lives (`<user data dir>/wgpu-cube/saves`).
+const SAVES: &str = "saves";
+
+/// A per-user, per-project file the engine keeps outside the save data scripts see,
+/// in `area` (`<user data dir>/wgpu-cube/<area>/<project>/<key>.txt`, or `localStorage`
+/// on the web). `None` deletes it.
+pub(crate) fn save_user_file(area: &str, key: &str, value: Option<&str>) -> Result<(), String> {
+    store::save(area, &namespace(), key, value)
+}
+
+/// Read a file written by [`save_user_file`]; `None` when there is none.
+pub(crate) fn load_user_file(area: &str, key: &str) -> Result<Option<String>, String> {
+    store::load(area, &namespace(), key)
 }
 
 pub(crate) fn register_save_data_api(lua: &Lua) -> LuaResult<()> {
@@ -166,7 +189,8 @@ pub(crate) fn register_save_data_api(lua: &Lua) -> LuaResult<()> {
                     "save_data values are limited to {MAX_VALUE_BYTES} bytes"
                 )));
             }
-            store::save(&namespace(), &key, value.as_deref()).map_err(mlua::Error::RuntimeError)?;
+            store::save(SAVES, &namespace(), &key, value.as_deref())
+                .map_err(mlua::Error::RuntimeError)?;
             Ok(true)
         })?,
     )?;
@@ -174,7 +198,7 @@ pub(crate) fn register_save_data_api(lua: &Lua) -> LuaResult<()> {
         "load_data",
         lua.create_function(|_, key: String| {
             check_key(&key)?;
-            store::load(&namespace(), &key).map_err(mlua::Error::RuntimeError)
+            store::load(SAVES, &namespace(), &key).map_err(mlua::Error::RuntimeError)
         })?,
     )?;
     Ok(())
@@ -196,13 +220,13 @@ mod tests {
     #[test]
     fn values_round_trip_and_delete() {
         let namespace = format!("test-{}", std::process::id());
-        store::save(&namespace, "score", Some("1234")).unwrap();
+        store::save(SAVES, &namespace, "score", Some("1234")).unwrap();
         assert_eq!(
-            store::load(&namespace, "score").unwrap().as_deref(),
+            store::load(SAVES, &namespace, "score").unwrap().as_deref(),
             Some("1234")
         );
-        store::save(&namespace, "score", None).unwrap();
-        assert_eq!(store::load(&namespace, "score").unwrap(), None);
-        store::save(&namespace, "score", None).unwrap();
+        store::save(SAVES, &namespace, "score", None).unwrap();
+        assert_eq!(store::load(SAVES, &namespace, "score").unwrap(), None);
+        store::save(SAVES, &namespace, "score", None).unwrap();
     }
 }

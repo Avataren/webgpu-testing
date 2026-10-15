@@ -444,6 +444,29 @@ local best = tonumber(load_data("highscore") or "0")
 if score > best then save_data("highscore", tostring(score)) end
 ```
 
+### Settings page
+
+Every game gets the engine's graphics settings page (display mode and window size, vsync,
+anti-aliasing, render resolution and FSR upscaling, ray-traced effects, FPS readout). The
+player's choices are saved per game and win over the scene's post-process volumes.
+Escape opens and closes it.
+
+- `open_settings()` / `close_settings()` - show or hide it, e.g. from a pause menu
+- `settings_open()` → `bool` - true while it shows (pause the game then if it should)
+- `set_settings_hotkey(enabled)` - turn Escape's toggle off for a game that uses Escape
+  itself (the page stays available through `open_settings()`)
+- `settings_hotkey()` → `bool` - whether Escape toggles it; save it in `on_created` and
+  restore it in `on_destroyed`, so the editor gets its Escape back when play stops
+
+```lua
+function update(self, dt)
+    if settings_open() then
+        return -- the game waits while the player is in the settings
+    end
+    -- ...
+end
+```
+
 ### Modules
 - `require(name)` - Load a module from another file and return what it returns (usually a
   table). It runs once per script; later calls return the same value. The module sees the

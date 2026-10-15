@@ -390,6 +390,17 @@ impl AppCore {
             renderer.camera_position(),
         )
         .unwrap_or_default();
+        // The player's graphics settings win over the volumes.
+        let post_settings = {
+            let mut graphics = crate::graphics_settings::graphics_settings();
+            graphics.sync_namespace();
+            graphics.capabilities = crate::graphics_settings::GraphicsCapabilities {
+                ray_tracing: renderer.ray_tracing_support().is_available(),
+                upscaling: renderer.sample_count() == 1,
+                vsync_optional: renderer.vsync_optional(),
+            };
+            graphics.settings.apply(post_settings)
+        };
         let post_settings = match &params.post_process_override {
             Some(over) => over.apply(post_settings),
             None => post_settings,

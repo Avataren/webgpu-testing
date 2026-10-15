@@ -224,17 +224,26 @@ pub(super) fn postprocess_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         }));
     }
     let effective = blend_post_process_volumes(world, camera);
+    // The player's graphics settings replace some of the volumes' choices.
+    let player = crate::graphics_settings::graphics_settings()
+        .settings
+        .apply(effective.clone().unwrap_or_default());
     let mut result = json!({
         "effective": serde_json::to_value(effective.clone().unwrap_or_default())
             .map_err(|err| err.to_string())?,
         "volumes": volumes,
+        "rendered": serde_json::to_value(&player).map_err(|err| err.to_string())?,
+        "graphics_settings_note": format!(
+            "`effective` is what the volumes blend to; `rendered` is what the renderer uses: \
+             the player's graphics settings (graphics_get / graphics_set) replace {}.",
+            crate::graphics_settings::GraphicsSettings::CONTROLLED_PATHS.join(", ")
+        ),
     });
     if let Some(over) = ctx.hub.post_process_override() {
-        // Only a visual capture sets one, and only while it runs.
+        // Only a visual capture sets one, and only while it runs; it applies last.
         result["render_override"] = over.describe();
         result["rendered"] =
-            serde_json::to_value(over.apply(effective.clone().unwrap_or_default()))
-                .map_err(|err| err.to_string())?;
+            serde_json::to_value(over.apply(player)).map_err(|err| err.to_string())?;
     }
     if effective.is_none() {
         result["note"] = json!(
@@ -394,7 +403,28 @@ pub(super) fn postprocess_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
         result["note"] =
             json!("Created an infinite Post Process Volume entity for these settings.");
     }
+    let replaced = replaced_by_graphics_settings(params);
+    if !replaced.is_empty() {
+        result["replaced_by_graphics_settings"] = json!(replaced);
+        result["warning"] = json!(
+            "These were saved on the volume, but the player's graphics settings decide them: \
+             change them with graphics_set, or compare them with visual_capture variants."
+        );
+    }
     Ok(result)
+}
+
+/// Setting paths in a postprocess.set patch that the player's graphics settings decide.
+fn replaced_by_graphics_settings(params: &Value) -> Vec<String> {
+    let patch = settings_patch(params);
+    let mut paths = Vec::new();
+    for controlled in crate::graphics_settings::GraphicsSettings::CONTROLLED_PATHS {
+        let pointer = format!("/{}", controlled.replace('.', "/"));
+        if patch.pointer(&pointer).is_some() {
+            paths.push(controlled.to_string());
+        }
+    }
+    paths
 }
 
 /// Re-read textures (and scripts) from disk: everything, or what lives under `path`.

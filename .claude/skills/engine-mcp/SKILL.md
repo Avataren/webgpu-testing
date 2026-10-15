@@ -88,6 +88,13 @@ engine you launched; save first).
   for an area with its own look, spawn a `post_process_volume` with a box or sphere
   shape, higher `priority` and a `blend_distance`. `postprocess_get` shows the blended
   result at the camera and each volume's influence.
+- The player's graphics settings (the engine's settings page: Escape in games, Window >
+  Graphics settings in the editor) decide anti-aliasing, upscaling and the ray-traced
+  effects over any volume: `graphics_get` / `graphics_set {anti_aliasing, render_scale,
+  upscaler, reflections, ...}` read and change them (saved per game and user, so set
+  them back after testing), and `postprocess_get`'s `rendered` shows the result. To
+  compare those effects without changing the player's choice, use `visual_capture`
+  variants, which apply last. `show_fps` draws the yellow FPS readout (on by default).
 - `asset_import {path}` brings in a glTF model (samples are under `web/assets/`), or copies
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`

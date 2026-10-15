@@ -128,6 +128,9 @@ local function step_game(dt)
 end
 
 local function meta_input()
+    -- Escape opens the engine's settings page in the demo; in a game it returns to the demo.
+    -- Set before the state changes, so the Escape that ends a game does not also open it.
+    set_settings_hotkey(g.demo)
     if g.demo then
         if is_key_just_pressed("Return") or is_key_just_pressed("Space") or is_mouse_button_just_pressed(0) then
             new_game(false)
