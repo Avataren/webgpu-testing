@@ -1,6 +1,6 @@
 # Chess spectator game
 
-A native chess exhibition in a path-traced study. XavChess plays both sides with classical evaluation and a one-second UCI search budget per
+A native chess exhibition in a path-traced study. XavChess plays both sides with classical evaluation and a 2.5-second UCI search budget per
 move. Finished games pause briefly, then restart automatically.
 
 Both colors share the same full-strength settings: sixteen search threads (capped
@@ -77,7 +77,7 @@ engine MCP's `asset_import` and place them as in the saved scene.
 
 The side panel shows recent moves, the evaluation from Ivory's perspective, and
 session results in win/draw/loss order. Pace changes the animation and viewing
-delay; AI thinking remains one second per move.
+delay; AI thinking remains 2.5 seconds per move.
 
 Chess logic lives in `src/rules.rs`, asynchronous UCI transport in `src/uci.rs`, and
 scene animation and the spectator interface in `src/main.rs`. Rules state is

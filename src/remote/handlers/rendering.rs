@@ -72,6 +72,12 @@ pub(crate) fn adjust_camera(camera: &mut Camera, params: &Value) -> Result<(), S
     if (camera.target - camera.eye).length_squared() < 1e-8 {
         return Err("camera position and target are the same point".into());
     }
+    if ["target", "position", "eye", "focus"]
+        .iter()
+        .any(|key| params.get(*key).is_some())
+    {
+        camera.up = level_up(camera.target - camera.eye, camera.up);
+    }
 
     let fov = opt_f64(params, "fov_deg").map(|fov| (fov as f32).clamp(1.0, 170.0).to_radians());
     let near = opt_f64(params, "near").map(|v| v as f32);
@@ -91,6 +97,20 @@ pub(crate) fn adjust_camera(camera: &mut Camera, params: &Value) -> Result<(), S
         }
     }
     Ok(())
+}
+
+/// An up vector for looking along `forward` with a level horizon (world +Y tilted to be
+/// square to the view). Looking straight up or down there is no horizon: keep `current`
+/// (squared to the view) so the picture does not spin.
+fn level_up(forward: Vec3, current: Vec3) -> Vec3 {
+    let forward = forward.normalize_or_zero();
+    let level = Vec3::Y - forward * forward.dot(Vec3::Y);
+    if level.length_squared() > 1e-6 {
+        return level.normalize();
+    }
+    (current - forward * forward.dot(current))
+        .try_normalize()
+        .unwrap_or(Vec3::NEG_Z)
 }
 
 pub(super) fn camera_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
@@ -497,4 +517,41 @@ pub(super) fn asset_reload(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> R
         "textures_failed": failed,
         "scripts_reloaded": scripts,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_posed_camera_has_a_level_horizon_whatever_the_view_was() {
+        // The view had just looked straight down: its up vector lies in the floor plane.
+        let mut camera = Camera::default();
+        camera.eye = Vec3::new(0.0, 2.0, 0.0);
+        camera.target = Vec3::ZERO;
+        camera.up = Vec3::NEG_Z;
+        adjust_camera(
+            &mut camera,
+            &json!({ "position": [0.74, 1.2, 0.86], "target": [-0.03, 0.77, -0.06] }),
+        )
+        .unwrap();
+        let forward = (camera.target - camera.eye).normalize();
+        assert!(camera.up.dot(forward).abs() < 1e-5);
+        // Level: the camera's right vector has no vertical component.
+        assert!(forward.cross(camera.up).y.abs() < 1e-5);
+        assert!(camera.up.y > 0.0);
+
+        // Looking straight down keeps the previous up (squared to the view).
+        adjust_camera(
+            &mut camera,
+            &json!({ "position": [0, 3, 0], "target": [0, 0, 0] }),
+        )
+        .unwrap();
+        assert!(camera.up.y.abs() < 1e-5 && camera.up.length() > 0.99);
+
+        // Only changing the lens leaves the orientation alone.
+        let before = camera.up;
+        adjust_camera(&mut camera, &json!({ "fov_deg": 30 })).unwrap();
+        assert_eq!(camera.up, before);
+    }
 }

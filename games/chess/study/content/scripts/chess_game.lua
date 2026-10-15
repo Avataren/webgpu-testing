@@ -18,6 +18,7 @@ local AFTER_MOVE = 0.55
 local AFTER_GAME = 7.0
 local PLY_LIMIT = 400
 local SOUND_VOLUME = 0.28
+local THINK_MILLIS = 2500   -- the engine's search time per move
 
 GAME = nil
 
@@ -343,7 +344,7 @@ end
 function on_created(self)
     local frame, err = map_scene()
     GAME = {
-        frame = frame, error = err, number = 0, score = { 0, 0, 0 }, speed = 1, millis = 1000,
+        frame = frame, error = err, number = 0, score = { 0, 0, 0 }, speed = 1, millis = THINK_MILLIS,
         sound = true, paused = err ~= nil, promoted = {}, status = "Starting the engine",
         uci = uci.new(),
     }

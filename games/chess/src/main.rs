@@ -224,7 +224,7 @@ impl Spectator {
             orbit: true,
             orbit_time: 0.0,
             speed: 1.0,
-            search_millis: 1000,
+            search_millis: 2500,
             delay: 1.4,
             ended: None,
             error: None,

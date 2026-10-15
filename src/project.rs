@@ -833,7 +833,14 @@ impl SerializedEnvironment {
             };
 
             if !source.is_absolute() {
-                source = std::env::current_dir()?.join(source);
+                // Relative to the working directory, or to the project (as scenes store
+                // their sky, e.g. content/environment/sky.hdr).
+                let from_cwd = std::env::current_dir()?.join(&source);
+                source = if from_cwd.exists() {
+                    from_cwd
+                } else {
+                    project_dir.join(source)
+                };
             }
 
             if !source.exists() {
@@ -1187,6 +1194,26 @@ mod tests {
                 .iter()
                 .any(|entity| entity.name.as_deref() == Some(marker)));
         }
+    }
+
+    #[test]
+    fn environment_saves_a_sky_named_relative_to_the_project() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let env_dir = tmp_dir.path().join(CONTENT_DIR).join("environment");
+        fs::create_dir_all(&env_dir).unwrap();
+        writeln!(fs::File::create(env_dir.join("sky.hdr")).unwrap(), "dummy").unwrap();
+
+        let mut environment = Environment::default();
+        environment.enable_hdr_background(PathBuf::from("content/environment/sky.hdr"));
+        let mut serialized = SerializedEnvironment::from_environment(&environment);
+        serialized.prepare_for_save(tmp_dir.path()).unwrap();
+        assert_eq!(
+            serialized
+                .hdr
+                .as_ref()
+                .and_then(|hdr| hdr.image_path.clone()),
+            Some(PathBuf::from("content/environment/sky.hdr"))
+        );
     }
 
     #[test]

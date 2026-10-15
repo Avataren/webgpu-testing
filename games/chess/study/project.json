@@ -65,7 +65,7 @@
     "hdr": {
       "enabled": true,
       "image_path": "content/environment/kloppenheim_06_puresky_4k.hdr",
-      "intensity": 1.6,
+      "intensity": 0.7,
       "background": true
     }
   },
