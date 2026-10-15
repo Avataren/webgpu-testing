@@ -2,7 +2,8 @@
 //! (`shader/postprocess/fsr3_upscaler.wgsl`, which lists what differs from the original).
 //! It replaces the TAA pass while the scene renders below the output resolution: nine
 //! compute passes from the jittered scene colour, depth and motion vectors to the
-//! upscaled image in the output region of the TAA target.
+//! upscaled image in the output region of the TAA target, after a tenth that marks what
+//! was blended over the opaque scene (particles, transparent surfaces) as reactive.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2};
@@ -39,6 +40,27 @@ struct FsrConstants {
     _pad: [u32; 3],
 }
 
+/// Mirrors `ReactiveConstants` in fsr3_upscaler.wgsl.
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ReactiveConstants {
+    origin: [i32; 2],
+    render_size: [i32; 2],
+    scale: f32,
+    threshold: f32,
+    binary_value: f32,
+    flags: u32,
+}
+
+/// The autogen-reactive settings AMD's samples use: tonemapped colours, the largest
+/// channel's change, and a binary mask (0.9 where it changes by 0.2 or more).
+const AUTOREACTIVE_APPLY_TONEMAP: u32 = 1;
+const AUTOREACTIVE_APPLY_THRESHOLD: u32 = 4;
+const AUTOREACTIVE_USE_COMPONENTS_MAX: u32 = 8;
+const AUTOREACTIVE_SCALE: f32 = 1.0;
+const AUTOREACTIVE_THRESHOLD: f32 = 0.2;
+const AUTOREACTIVE_BINARY_VALUE: f32 = 0.9;
+
 const LUMA_GROUP_SIZE: u32 = 16;
 const GROUP_SIZE: u32 = 8;
 
@@ -67,7 +89,17 @@ pub(super) struct FsrFrame<'a> {
     pub sharpness: f32,
 }
 
+/// The scene before and after what is blended over the opaque surfaces, for the reactive
+/// mask; the render region starts at `origin` in both.
+pub(super) struct ReactiveFrame<'a> {
+    pub opaque: &'a wgpu::TextureView,
+    pub color: &'a wgpu::TextureView,
+    pub origin: [i32; 2],
+    pub render_size: [i32; 2],
+}
+
 struct Pipelines {
+    autogen_reactive: wgpu::ComputePipeline,
     prepare_inputs: wgpu::ComputePipeline,
     luma_pyramid: wgpu::ComputePipeline,
     luma_finalize: wgpu::ComputePipeline,
@@ -132,6 +164,8 @@ struct Targets {
     spd_mips: [Target; 3],
     shading_change: Target,
     new_locks: Target,
+    /// This frame's reactive mask (autogen reactive).
+    reactive: Target,
     reconstructed_depth: wgpu::Buffer,
     luma_partials: wgpu::Buffer,
     frame_info: wgpu::Buffer,
@@ -191,6 +225,7 @@ impl Targets {
             ],
             shading_change: Target::new(device, half(size, 1), R32Float, "FsrShadingChange"),
             new_locks: Target::new(device, size, R32Float, "FsrNewLocks"),
+            reactive: Target::new(device, size, R32Float, "FsrReactive"),
             reconstructed_depth: buffer(
                 "FsrReconstructedDepth",
                 u64::from(size[0]) * u64::from(size[1]) * 4,
@@ -232,8 +267,10 @@ struct FrameState {
 pub(super) struct FsrUpscaler {
     pipelines: Pipelines,
     constants: wgpu::Buffer,
+    reactive_constants: wgpu::Buffer,
     targets: Option<Targets>,
     bind_groups: Option<[BindGroups; 2]>,
+    reactive_bind_group: Option<wgpu::BindGroup>,
     state: FrameState,
 }
 
@@ -275,6 +312,7 @@ impl FsrUpscaler {
             })
         };
         let pipelines = Pipelines {
+            autogen_reactive: pipeline("cs_autogen_reactive"),
             prepare_inputs: pipeline("cs_prepare_inputs"),
             luma_pyramid: pipeline("cs_luma_pyramid"),
             luma_finalize: pipeline("cs_luma_finalize"),
@@ -291,11 +329,19 @@ impl FsrUpscaler {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let reactive_constants = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("FsrReactiveConstants"),
+            size: std::mem::size_of::<ReactiveConstants>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             pipelines,
             constants,
+            reactive_constants,
             targets: None,
             bind_groups: None,
+            reactive_bind_group: None,
             state: FrameState::default(),
         }
     }
@@ -304,12 +350,77 @@ impl FsrUpscaler {
     pub fn resize(&mut self) {
         self.targets = None;
         self.bind_groups = None;
+        self.reactive_bind_group = None;
         self.state = FrameState::default();
     }
 
     /// Rebuild the bind groups before the next frame (an input view changed).
     pub fn invalidate_bind_groups(&mut self) {
         self.bind_groups = None;
+        self.reactive_bind_group = None;
+    }
+
+    fn ensure_targets(&mut self, device: &wgpu::Device, size: [u32; 2]) {
+        if self
+            .targets
+            .as_ref()
+            .is_none_or(|targets| targets.size != size)
+        {
+            self.targets = Some(Targets::new(device, size));
+            self.bind_groups = None;
+            self.reactive_bind_group = None;
+            self.state = FrameState::default();
+        }
+    }
+
+    /// Mark what was blended over the opaque scene this frame as reactive: FSR trusts
+    /// history less there, so particles and transparent surfaces do not smear. Runs
+    /// before anything else is added to the scene (reflections, refraction), which must
+    /// keep accumulating.
+    pub fn generate_reactive(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        size: [u32; 2],
+        frame: ReactiveFrame<'_>,
+    ) {
+        self.ensure_targets(device, size);
+        let targets = self.targets.as_ref().expect("targets were just made");
+        let group = self.reactive_bind_group.get_or_insert_with(|| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("FsrAutogenReactive"),
+                layout: &self.pipelines.autogen_reactive.get_bind_group_layout(0),
+                entries: &[
+                    view(1, frame.color),
+                    buffer(80, &self.reactive_constants),
+                    view(81, frame.opaque),
+                    view(82, &targets.reactive.view),
+                ],
+            })
+        });
+        let constants = ReactiveConstants {
+            origin: frame.origin,
+            render_size: frame.render_size,
+            scale: AUTOREACTIVE_SCALE,
+            threshold: AUTOREACTIVE_THRESHOLD,
+            binary_value: AUTOREACTIVE_BINARY_VALUE,
+            flags: AUTOREACTIVE_APPLY_TONEMAP
+                | AUTOREACTIVE_APPLY_THRESHOLD
+                | AUTOREACTIVE_USE_COMPONENTS_MAX,
+        };
+        queue.write_buffer(&self.reactive_constants, 0, bytemuck::bytes_of(&constants));
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("FsrAutogenReactive"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipelines.autogen_reactive);
+        pass.set_bind_group(0, &*group, &[]);
+        pass.dispatch_workgroups(
+            (frame.render_size[0].max(1) as u32).div_ceil(GROUP_SIZE),
+            (frame.render_size[1].max(1) as u32).div_ceil(GROUP_SIZE),
+            1,
+        );
     }
 
     pub fn dispatch(
@@ -320,15 +431,7 @@ impl FsrUpscaler {
         size: [u32; 2],
         frame: FsrFrame<'_>,
     ) {
-        if self
-            .targets
-            .as_ref()
-            .is_none_or(|targets| targets.size != size)
-        {
-            self.targets = Some(Targets::new(device, size));
-            self.bind_groups = None;
-            self.state = FrameState::default();
-        }
+        self.ensure_targets(device, size);
         if self.bind_groups.is_none() {
             let targets = self.targets.as_ref().expect("targets were just made");
             self.bind_groups = Some([
@@ -575,6 +678,7 @@ impl FsrUpscaler {
                     view(44, &t.accumulation[current].view),
                     view(45, &t.dilated_reactive.view),
                     view(46, &t.new_locks.view),
+                    view(83, &t.reactive.view),
                 ],
             ),
             luma_instability: group(
@@ -629,6 +733,7 @@ mod tests {
     #[test]
     fn constants_match_the_shader_layout() {
         assert_eq!(std::mem::size_of::<super::FsrConstants>(), 160);
+        assert_eq!(std::mem::size_of::<super::ReactiveConstants>(), 32);
     }
 
     #[test]

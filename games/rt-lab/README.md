@@ -22,6 +22,7 @@ fixed camera for comparisons.
 | Glass sphere (transmission 1, ior 1.5, dispersion 0.5) on the left pedestal | Ray-traced refraction: an inverted, magnified view of the room, rainbow fringes at the rim; no solid shadow |
 | Round brilliant gem (Blender, 81 facets, ior 2.42, pale blue, dispersion 1.0, about three times diamond's) on the right pedestal, turning in play mode | Total internal reflection across many facets, absorption tint, fire (dispersion), sparkle from the emissive light bar overhead |
 | Ray-traced ambient occlusion (`ssao.ray_traced`, 0.5 m) | Contact darkening at the pedestal bases, wall corners and inside the knot, from geometry on or off screen |
+| Spark fountain (GPU particles, in front of the mirror sphere) | Upscaling (`upscaling.render_scale` below 1): fast, small, bright particles over the scene are what FSR's reactive mask keeps from smearing. In the player they render before post-processing and go through the upscaler; the editor draws them afterwards at output resolution |
 
 The torus knot, Suzanne and the gem were modelled in Blender (through the Blender MCP server) and
 imported as GLB; the textures come from `texture_generate`.
@@ -37,6 +38,15 @@ Compare the paths with the engine MCP, from the game camera:
 visual_capture {camera: "game", variants: [
   {name: "ssr", postprocess: {ssr: {ray_traced: false}}},
   {name: "off", postprocess: {ssr: {enabled: false}}}]}
+```
+
+Upscaling, as the scene renders at two thirds and half the resolution with FSR and TAAU:
+
+```
+visual_capture {camera: "game", variants: [
+  {name: "fsr067", postprocess: {upscaling: {render_scale: 0.67}}},
+  {name: "fsr050", postprocess: {upscaling: {render_scale: 0.5}}},
+  {name: "taau050", postprocess: {upscaling: {render_scale: 0.5, method: "taau"}}}]}
 ```
 
 `engine_info` reports whether hardware ray tracing is available

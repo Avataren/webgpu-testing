@@ -354,7 +354,12 @@ simpler TAAU; frame generation is not.
   accumulation with variance clipping, RCAS. The shader header lists what differs from the
   original (multi-pass pyramids instead of the single-pass downsampler, a buffer with
   atomicMax for the reconstructed depth, WebGPU storage formats, resets in the shaders).
-  It jitters the camera itself; orthographic cameras fall back to TAAU.
+  It jitters the camera itself; orthographic cameras fall back to TAAU. The reactive mask
+  comes from FSR's autogen-reactive pass: the scene is copied after the opaque pass
+  (`capture_opaque_scene`) and compared with the scene before reflections and refraction
+  are added, so particles and transparent surfaces are reactive and reflections keep
+  accumulating. Editor particles draw after post-processing at output resolution and do
+  not go through it.
 - **TAAU** (`fs_taau` in `temporal.wgsl`): the TAA pass gathering jittered scene samples
   into an output-resolution history; without TAA it filters one frame.
 - Jitter period 8 x (output/scene pixels), max 64 (`jitter_period`). Material textures get
@@ -378,10 +383,7 @@ keeps textures and thin features sharper than TAAU and is more stable frame to f
 
 ### Next steps
 
-1. Reactive mask for FSR: particles and other transparent surfaces have none yet, so they
-   can smear. FSR's autogen-reactive pass compares the opaque-only and final colour; the
-   engine would copy the scene before the transparent pass.
-2. Frame generation: AFMF is a Windows driver feature; FSR 4 ships as prebuilt DLLs.
+1. Frame generation: AFMF is a Windows driver feature; FSR 4 ships as prebuilt DLLs.
    An in-engine port of FSR 3.1 frame interpolation needs optical flow, a hudless
    composite and present pacing, which wgpu does not expose (no present-wait/timing).
    For trying the feel on Linux, lsfg-vk (Vulkan layer, needs Lossless Scaling) works

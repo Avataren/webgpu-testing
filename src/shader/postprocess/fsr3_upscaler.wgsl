@@ -25,8 +25,9 @@
 //
 // The permutation ported: HDR colour input, low-resolution (render size) motion vectors
 // without jitter, standard (not inverted) depth, the reference Lanczos history reprojection,
-// the approximate Lanczos upsample, FSR's own auto exposure, no reactive or
-// transparency-and-composition masks, 32-bit math. Differences from the original, all
+// the approximate Lanczos upsample, FSR's own auto exposure, a reactive mask from the
+// autogen-reactive pass (ffx_fsr3upscaler_autogen_reactive_pass.hlsl) and no
+// transparency-and-composition mask, 32-bit math. Differences from the original, all
 // for portability to WebGPU:
 // - The single-pass downsamplers (luma and shading-change pyramids) are separate passes:
 //   WebGPU cannot make one workgroup's texture writes visible to another within a
@@ -139,6 +140,26 @@ struct FsrConstants {
 
 // RCAS.
 @group(0) @binding(70) var r_rcas_input : texture_2d<f32>;
+
+// Autogen reactive: the scene before and after what is blended over the opaque surfaces
+// (particles, transparent surfaces) gives the reactive mask.
+struct ReactiveConstants {
+    origin : vec2<i32>,
+    render_size : vec2<i32>,
+    scale : f32,
+    threshold : f32,
+    binary_value : f32,
+    flags : u32,
+};
+@group(0) @binding(80) var<uniform> reactive_params : ReactiveConstants;
+@group(0) @binding(81) var input_opaque : texture_2d<f32>;
+@group(0) @binding(82) var w_reactive : texture_storage_2d<r32float, write>;
+@group(0) @binding(83) var r_reactive : texture_2d<f32>;
+
+const AUTOREACTIVE_APPLY_TONEMAP : u32 = 1u;
+const AUTOREACTIVE_APPLY_INVERSETONEMAP : u32 = 2u;
+const AUTOREACTIVE_APPLY_THRESHOLD : u32 = 4u;
+const AUTOREACTIVE_USE_COMPONENTS_MAX : u32 = 8u;
 
 // ============================================================================
 // ffx_fsr3upscaler_common.h
@@ -922,6 +943,20 @@ fn update_accumulation(
     return accumulation;
 }
 
+fn load_reactive_mask(pos : vec2<i32>) -> f32 {
+    return textureLoad(r_reactive, pos, 0).x * fsr.reactiveness_scale;
+}
+
+fn dilate_reactive_masks(pos : vec2<i32>) -> f32 {
+    var dilated = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            dilated = max(dilated, load_reactive_mask(clamp_load(pos, vec2<i32>(x, y), render_size())));
+        }
+    }
+    return dilated;
+}
+
 fn compute_shading_change(uv : vec2<f32>) -> f32 {
     // Jitter is applied here and taken off again when the accumulation pass samples it.
     let shading_uv = clamp_uv(uv - jitter() / vec2<f32>(render_size()), shading_change_render_size(), shading_change_max_render_size());
@@ -938,8 +973,7 @@ fn cs_prepare_reactivity(@builtin(global_invocation_id) id : vec3<u32>) {
     let motion_vector = load_dilated_motion_vector(pos);
     let dilated_depth = load_dilated_depth(pos);
     let disocclusion = compute_disocclusions(uv, motion_vector, get_view_space_depth(dilated_depth));
-    // No reactive mask is given (it would be max-dilated over 3x3 here).
-    let shading_change = max(0.0, compute_shading_change(uv));
+    let shading_change = max(dilate_reactive_masks(pos), compute_shading_change(uv));
     let motion_divergence = compute_motion_divergence(uv, motion_vector, dilated_depth);
     // No transparency-and-composition mask either.
     let final_reactiveness = max(motion_divergence, 0.0);
@@ -1407,4 +1441,39 @@ fn cs_rcas(@builtin(global_invocation_id) id : vec3<u32>) {
     let rcp_l = 1.0 / (4.0 * lobe + 1.0);
     let color = (lobe * b + lobe * d + lobe * h + lobe * f + e) * rcp_l;
     textureStore(w_output, sp + fsr.output_offset, vec4<f32>(max(color / exposure(), vec3<f32>(0.0)), 1.0));
+}
+
+// ============================================================================
+// Autogen reactive (ffx_fsr3upscaler_autogen_reactive_pass.hlsl)
+// ============================================================================
+
+@compute @workgroup_size(8, 8, 1)
+fn cs_autogen_reactive(@builtin(global_invocation_id) id : vec3<u32>) {
+    let pos = vec2<i32>(id.xy);
+    if !is_on_screen(pos, reactive_params.render_size) {
+        return;
+    }
+    let source = clamp(
+        pos + reactive_params.origin,
+        vec2<i32>(0),
+        vec2<i32>(textureDimensions(input_color)) - vec2<i32>(1),
+    );
+    var pre_alpha = textureLoad(input_opaque, source, 0).rgb;
+    var post_alpha = textureLoad(input_color, source, 0).rgb;
+    let flags = reactive_params.flags;
+    if (flags & AUTOREACTIVE_APPLY_TONEMAP) != 0u {
+        pre_alpha = tonemap(pre_alpha);
+        post_alpha = tonemap(post_alpha);
+    }
+    if (flags & AUTOREACTIVE_APPLY_INVERSETONEMAP) != 0u {
+        pre_alpha = inverse_tonemap(pre_alpha);
+        post_alpha = inverse_tonemap(post_alpha);
+    }
+    let delta = abs(post_alpha - pre_alpha);
+    var reactive = select(length(delta), max(delta.x, max(delta.y, delta.z)), (flags & AUTOREACTIVE_USE_COMPONENTS_MAX) != 0u);
+    reactive *= reactive_params.scale;
+    if (flags & AUTOREACTIVE_APPLY_THRESHOLD) != 0u {
+        reactive = select(reactive_params.binary_value, 0.0, reactive < reactive_params.threshold);
+    }
+    textureStore(w_reactive, pos, vec4<f32>(reactive, 0.0, 0.0, 0.0));
 }

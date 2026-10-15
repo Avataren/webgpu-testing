@@ -40,7 +40,7 @@ pub use settings::{
 use bloom::{BloomBindGroupInputs, BloomStage};
 use dof::DofStage;
 use exposure::ExposureStage;
-use fsr::{FsrFrame, FsrUpscaler};
+use fsr::{FsrFrame, FsrUpscaler, ReactiveFrame};
 use lut::LutTexture;
 use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
@@ -194,6 +194,9 @@ pub struct PostProcess {
     temporal_stage: TemporalStage,
     /// FSR 3.1 upscaling, built the first time it runs.
     fsr: Option<FsrUpscaler>,
+    /// The scene as the opaque pass left it, before particles and transparent surfaces:
+    /// FSR's reactive mask compares it with the finished scene.
+    opaque_copy: Option<TextureBundle>,
     /// The history holds last frame's TAA result (false after a resize or turning TAA on).
     taa_history_valid: bool,
     /// How last frame's reflections were traced (Some(true) = ray traced), None when
@@ -574,6 +577,7 @@ impl PostProcess {
             dof_stage,
             temporal_stage,
             fsr: None,
+            opaque_copy: None,
             taa_history_valid: false,
             reflection_history: None,
             temporal_routing: (false, false),
@@ -634,6 +638,7 @@ impl PostProcess {
         if let Some(fsr) = self.fsr.as_mut() {
             fsr.resize();
         }
+        self.opaque_copy = None;
         self.reflection_history = None;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
@@ -954,6 +959,10 @@ impl PostProcess {
     ) {
         self.ensure_cached_bind_groups(device);
         let scene_uniform = &self.scene_uniform_bind_group.clone();
+        // Before reflections and refraction change the scene.
+        if self.temporal_routing.0 && self.fsr_active() {
+            self.run_fsr_reactive(encoder, device, queue);
+        }
 
         if let (Some(depth_pipeline), Some(bind_group), Some(resolved)) = (
             self.depth_resolve_pipeline.as_ref(),
@@ -1148,6 +1157,97 @@ impl PostProcess {
                 );
             }
         }
+    }
+
+    /// Keep the scene as the opaque pass left it (call before particles and transparent
+    /// surfaces are drawn), when FSR upscales this frame: its reactive mask comes from
+    /// what changes after.
+    pub(crate) fn capture_opaque_scene(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        scene_region: Option<RenderRegion>,
+    ) {
+        if !self.fsr_active() {
+            return;
+        }
+        if self.opaque_copy.is_none() {
+            self.opaque_copy = Some(TextureBundle::copyable(
+                device,
+                &self.size,
+                HDR_FORMAT,
+                "SceneOpaqueCopy",
+            ));
+            if let Some(fsr) = self.fsr.as_mut() {
+                fsr.invalidate_bind_groups();
+            }
+        }
+        let Some(copy) = self.opaque_copy.as_ref() else {
+            return;
+        };
+        let (origin, extent) = match scene_region {
+            Some(region) => (
+                wgpu::Origin3d {
+                    x: region.x(),
+                    y: region.y(),
+                    z: 0,
+                },
+                wgpu::Extent3d {
+                    width: region.width(),
+                    height: region.height(),
+                    depth_or_array_layers: 1,
+                },
+            ),
+            None => (wgpu::Origin3d::ZERO, self.size),
+        };
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: self.scene_source.texture(),
+                mip_level: 0,
+                origin,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: copy.texture(),
+                mip_level: 0,
+                origin,
+                aspect: wgpu::TextureAspect::All,
+            },
+            extent,
+        );
+    }
+
+    /// FSR's reactive mask: what was blended over the opaque scene, before reflections and
+    /// refraction are added to it.
+    fn run_fsr_reactive(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let Some(opaque) = self.opaque_copy.as_ref() else {
+            return;
+        };
+        let full = Vec2::new(self.size.width as f32, self.size.height as f32);
+        let origin = (self.viewport_offset * full).round();
+        let frame = ReactiveFrame {
+            opaque: &opaque.view,
+            color: &self.scene_source.view,
+            origin: [origin.x as i32, origin.y as i32],
+            render_size: [
+                self.scene_resolution.x as i32,
+                self.scene_resolution.y as i32,
+            ],
+        };
+        self.fsr
+            .get_or_insert_with(|| FsrUpscaler::new(device))
+            .generate_reactive(
+                device,
+                queue,
+                encoder,
+                [self.size.width, self.size.height],
+                frame,
+            );
     }
 
     /// Upscale the scene region into the output region of the TAA target with FSR.

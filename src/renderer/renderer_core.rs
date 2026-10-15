@@ -871,6 +871,12 @@ impl Renderer {
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, ray_traced && rt_shadows_wanted);
         self.run_main_color_pass(&mut frame_state, environment, assets);
+        // What particles and transparent surfaces change is reactive for FSR.
+        self.postprocess.capture_opaque_scene(
+            &self.context.device,
+            &mut frame_state.encoder,
+            frame_state.scene_region,
+        );
         self.gpu_timer.mark(&mut frame_state.encoder, "main");
         self.run_custom_stage(
             &mut frame_state,
