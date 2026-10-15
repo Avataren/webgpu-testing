@@ -158,7 +158,7 @@ fn vs_main(
 // ============================================================================
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     // Sample base color texture if enabled
     var base_color = material_data.color * in.particle_color;
 
@@ -173,7 +173,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let roughness = max(material_data.roughness_factor, 0.01);
     
     // Normal mapping (if needed, particles usually don't use it but support it)
+    // Particles are drawn two-sided: a back face is lit from its own side.
     var N = normalize(in.world_normal);
+    if (!front_facing) {
+        N = -N;
+    }
     if ((material_data.material_flags & FLAG_USE_NORMAL_TEXTURE) != 0u) {
         let normal_sample =
             sample_normal_texture(material_data.normal_texture, in.uv);

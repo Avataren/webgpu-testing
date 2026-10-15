@@ -77,6 +77,8 @@ impl ParticleShadowResources {
                 2,
                 2.0,
             )
+            // Two-sided, as the particles are drawn.
+            .with_no_culling()
             .build();
 
         Self {

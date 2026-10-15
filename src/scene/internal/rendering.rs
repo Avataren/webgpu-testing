@@ -6,7 +6,7 @@ use crate::renderer::{
 };
 use crate::scene::components::{
     Billboard, BillboardOrientation, BillboardSpace, CanCastShadow, DepthState, EditorEntityId,
-    GpuParticleInstance, MaterialComponent, MeshComponent, Name, Parent, SelectedInEditor,
+    MaterialComponent, MeshComponent, Name, Parent, ParticleSystemComponent, SelectedInEditor,
     TransformComponent, Visible, WorldTransform,
 };
 use crate::scene::skeletal::SkinnedMesh;
@@ -88,7 +88,6 @@ struct RenderEntity {
     name: Option<String>,
     billboard: Option<Billboard>,
     depth_state: Option<DepthState>,
-    gpu_instance: Option<GpuParticleInstance>,
     selected: bool,
     casts_shadow: bool,
     pick_id: PickId,
@@ -137,12 +136,14 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
             Option<&Name>,
             Option<&Billboard>,
             Option<&DepthState>,
-            Option<&GpuParticleInstance>,
             Option<&SelectedInEditor>,
             Option<&EditorEntityId>,
             Option<&CanCastShadow>,
             Option<&SkinnedMesh>,
         )>()
+        // A particle system draws its particles itself: its mesh is only their template,
+        // not something to draw at the entity.
+        .without::<&ParticleSystemComponent>()
         .iter()
         // Skip hidden entities before doing any work for them; pools of hidden objects
         // are common in games.
@@ -161,7 +162,6 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
                     name,
                     billboard,
                     depth_state,
-                    gpu_instance,
                     selected_marker,
                     editor_id,
                     cast_shadow,
@@ -184,7 +184,6 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
                     name: name.map(|n| n.0.clone()),
                     billboard: billboard.copied(),
                     depth_state: depth_state.copied(),
-                    gpu_instance: gpu_instance.copied(),
                     selected: selected_marker.is_some(),
                     casts_shadow: cast_shadow.is_none_or(|flag| flag.0),
                     pick_id: encode_pick_id(editor_id.copied()),
@@ -217,13 +216,6 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
     let mut override_material = None;
     let billboard = entity.billboard;
 
-    let instance_source = if entity.gpu_instance.is_some() {
-        InstanceSource::Gpu
-    } else {
-        InstanceSource::Cpu
-    };
-    let gpu_index = entity.gpu_instance.map(|inst| inst.index);
-
     if let Some(billboard) = billboard {
         transform = apply_billboard_transform(
             transform,
@@ -249,13 +241,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
     let depth_state = entity.depth_state.unwrap_or_default();
     let force_overlay = billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
 
-    let mut objects = Vec::with_capacity(
-        if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
-            2
-        } else {
-            1
-        },
-    );
+    let mut objects = Vec::with_capacity(if entity.selected { 2 } else { 1 });
 
     objects.push(RenderObject {
         mesh: entity.mesh,
@@ -265,14 +251,14 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         depth_state,
         force_overlay,
         render_pass: None,
-        instance_source,
-        gpu_index,
+        instance_source: InstanceSource::Cpu,
+        gpu_index: None,
         cull_mode: CullMode::Back,
         pick_id: entity.pick_id,
         skin: entity.skin.clone(),
     });
 
-    if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
+    if entity.selected {
         let mut outline_transform = transform;
         outline_transform.scale *= Vec3::splat(1.03);
 

@@ -46,5 +46,8 @@ pub(crate) fn create_render_pipeline(
             wgpu::CompareFunction::LessEqual,
         )
         .with_multisample(sample_count)
+        // Particles are seen from every side (a flat quad that is not billboarded would
+        // vanish from behind), as ray tracing sees them.
+        .with_no_culling()
         .build()
 }
