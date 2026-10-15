@@ -138,7 +138,9 @@ impl Default for EnvironmentState {
 #[derive(Clone)]
 pub struct GizmoState {
     gizmo_resources: Option<gizmos::GizmoResources>,
-    transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
+    /// Height in pixels of the view the gizmos were last drawn into: transform
+    /// gizmos keep a constant on-screen size, and picking has to agree with it.
+    viewport_height: f32,
     mode: TransformGizmoMode,
     space: TransformGizmoSpace,
     hover: Option<TransformGizmoHandle>,
@@ -148,7 +150,7 @@ impl GizmoState {
     pub fn new() -> Self {
         Self {
             gizmo_resources: None,
-            transform_gizmo_resources: None,
+            viewport_height: transform_gizmos::DEFAULT_VIEWPORT_HEIGHT,
             mode: TransformGizmoMode::Translate,
             space: TransformGizmoSpace::Local,
             hover: None,
@@ -187,17 +189,14 @@ impl GizmoState {
         self.gizmo_resources = resources;
     }
 
-    pub(crate) fn transform_gizmo_resources(
-        &self,
-    ) -> Option<transform_gizmos::TransformGizmoResources> {
-        self.transform_gizmo_resources
+    pub fn viewport_height(&self) -> f32 {
+        self.viewport_height
     }
 
-    pub(crate) fn set_transform_gizmo_resources(
-        &mut self,
-        resources: Option<transform_gizmos::TransformGizmoResources>,
-    ) {
-        self.transform_gizmo_resources = resources;
+    pub fn set_viewport_height(&mut self, height: f32) {
+        if height.is_finite() && height >= 1.0 {
+            self.viewport_height = height;
+        }
     }
 
     pub(crate) fn ensure_gizmo_resources(
@@ -213,22 +212,8 @@ impl GizmoState {
             .expect("gizmo resources must be initialised")
     }
 
-    pub(crate) fn ensure_transform_gizmo_resources(
-        &mut self,
-        renderer: &mut Renderer,
-        assets: &mut Assets,
-    ) -> transform_gizmos::TransformGizmoResources {
-        if self.transform_gizmo_resources.is_none() {
-            let resources = transform_gizmos::create_resources(renderer, assets);
-            self.transform_gizmo_resources = Some(resources);
-        }
-        self.transform_gizmo_resources
-            .expect("transform gizmo resources must be initialised")
-    }
-
     pub(crate) fn clear_resources(&mut self) {
         self.gizmo_resources = None;
-        self.transform_gizmo_resources = None;
     }
 }
 

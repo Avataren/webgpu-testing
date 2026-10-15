@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use wgpu_cube::app::{GpuUpdateContext, RuntimeMode};
 use wgpu_cube::io::JsonLayout;
 use wgpu_cube::remote::{entity_from_json, entity_id, RemoteContext, RemoteResult};
+use wgpu_cube::scene::{TransformGizmoMode, TransformGizmoSpace};
 use wgpu_cube::SceneCreationAction;
 
 use super::core::EditorApplication;
@@ -33,6 +34,21 @@ pub(super) const EDITOR_METHODS: &[&str] = &[
     "prefab.inspect",
     "prefab.update",
 ];
+
+fn gizmo_mode_name(mode: TransformGizmoMode) -> &'static str {
+    match mode {
+        TransformGizmoMode::Translate => "translate",
+        TransformGizmoMode::Rotate => "rotate",
+        TransformGizmoMode::Scale => "scale",
+    }
+}
+
+fn gizmo_space_name(space: TransformGizmoSpace) -> &'static str {
+    match space {
+        TransformGizmoSpace::Local => "local",
+        TransformGizmoSpace::World => "world",
+    }
+}
 
 fn str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
     params
@@ -580,6 +596,7 @@ impl EditorApplication {
             })
         });
         let history = self.history();
+        let tool = self.history_system().transform_tool();
 
         json!({
             "project": project_dir.as_ref().map(|dir| json!({
@@ -602,6 +619,8 @@ impl EditorApplication {
             "open_scenes": tabs,
             "active_scene": ctx.gpu.scene.document_id(),
             "selected": selected,
+            "gizmo": gizmo_mode_name(tool.gizmo_mode),
+            "gizmo_space": gizmo_space_name(tool.gizmo_space),
             "can_undo": history.can_undo(),
             "can_redo": history.can_redo(),
             "hints": [
@@ -614,6 +633,36 @@ impl EditorApplication {
     }
 
     fn remote_select(&mut self, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+        // The transform tool, as the W/E/R shortcuts and the toolbar set it.
+        let mode = match params.get("gizmo").and_then(Value::as_str) {
+            None => None,
+            Some("translate") => Some(TransformGizmoMode::Translate),
+            Some("rotate") => Some(TransformGizmoMode::Rotate),
+            Some("scale") => Some(TransformGizmoMode::Scale),
+            Some(other) => return Err(format!("unknown gizmo \"{other}\" (translate, rotate or scale)")),
+        };
+        let space = match params.get("gizmo_space").and_then(Value::as_str) {
+            None => None,
+            Some("local") => Some(TransformGizmoSpace::Local),
+            Some("world") => Some(TransformGizmoSpace::World),
+            Some(other) => return Err(format!("unknown gizmo_space \"{other}\" (local or world)")),
+        };
+        if mode.is_some() || space.is_some() {
+            let tool = self.history_system_mut().transform_tool_mut();
+            if let Some(mode) = mode {
+                tool.gizmo_mode = mode;
+            }
+            if let Some(space) = space {
+                tool.gizmo_space = space;
+            }
+            if params.get("entity").is_none() && params.get("uv").is_none() {
+                let tool = self.history_system().transform_tool();
+                return Ok(json!({
+                    "gizmo": gizmo_mode_name(tool.gizmo_mode),
+                    "gizmo_space": gizmo_space_name(tool.gizmo_space),
+                }));
+            }
+        }
         // A click in the Scene view: the GPU pick a mouse click makes.
         if let Some(uv) = params.get("uv").and_then(Value::as_array) {
             let coordinate = |index: usize| {

@@ -36,6 +36,10 @@ impl HistorySystem {
         &mut self.history
     }
 
+    pub(crate) fn transform_tool(&self) -> &TransformToolSystem {
+        &self.transform_tool
+    }
+
     pub(crate) fn transform_tool_mut(&mut self) -> &mut TransformToolSystem {
         &mut self.transform_tool
     }
@@ -562,7 +566,7 @@ impl HistorySystem {
                         u.normalize()
                     }
                 };
-                let base_scale = Self::gizmo_screen_scale(&camera, origin_point);
+                let base_scale = ctx.scene.transform_gizmo_size(origin_point);
                 GizmoDragKind::ScaleUniform {
                     plane_normal,
                     origin: origin_point,
@@ -858,16 +862,6 @@ impl HistorySystem {
             e
         };
         t.is_finite().then_some(t)
-    }
-
-    fn gizmo_screen_scale(camera: &wgpu_cube::scene::Camera, position: Vec3) -> f32 {
-        let distance = (camera.eye - position).length().max(0.1);
-        let half_fov = (camera.fov_y_radians() * 0.5).max(1e-4);
-        if half_fov <= 1e-3 {
-            1.0
-        } else {
-            2.0 * distance * half_fov.tan() * 0.16
-        }
     }
 
     fn signed_angle(start: Vec3, current: Vec3, axis: Vec3) -> Option<f32> {

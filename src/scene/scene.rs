@@ -264,22 +264,28 @@ impl Scene {
         ray_dir: Vec3,
     ) -> Option<TransformGizmoHandle> {
         let transform = self.selected_gizmo_transform()?;
-        let camera = self.camera();
-        let camera_vectors = rendering::CameraVectors {
-            position: camera.eye,
-            target: camera.target,
-            up: camera.up,
-            fov_y: camera.fov_y_radians(),
-        };
-
         transform_gizmos::hit_test(
-            camera_vectors,
+            self.gizmo_camera(),
             transform,
             self.transform_gizmo_mode(),
             self.transform_gizmo_space(),
             ray_origin,
             ray_dir,
         )
+    }
+
+    /// World length of a transform gizmo axis drawn at `position`: gizmos keep a
+    /// constant size on screen, so this grows with distance from the camera.
+    pub fn transform_gizmo_size(&self, position: Vec3) -> f32 {
+        transform_gizmos::gizmo_world_size(self.gizmo_camera(), position)
+    }
+
+    pub(crate) fn set_gizmo_viewport_height(&mut self, height: f32) {
+        self.gizmos.set_viewport_height(height);
+    }
+
+    fn gizmo_camera(&self) -> rendering::CameraVectors {
+        rendering::CameraVectors::from_camera(self.camera(), self.gizmos.viewport_height())
     }
 
     pub fn node_name(&self, node: SceneNodeId) -> &str {
@@ -653,26 +659,6 @@ impl Scene {
             .ensure_gizmo_resources(renderer, &mut self.assets)
     }
 
-    pub(crate) fn transform_gizmo_resources(
-        &self,
-    ) -> Option<transform_gizmos::TransformGizmoResources> {
-        self.gizmos.transform_gizmo_resources()
-    }
-
-    pub(crate) fn set_transform_gizmo_resources(
-        &mut self,
-        resources: Option<transform_gizmos::TransformGizmoResources>,
-    ) {
-        self.gizmos.set_transform_gizmo_resources(resources);
-    }
-
-    pub(super) fn ensure_transform_gizmo_resources(
-        &mut self,
-        renderer: &mut Renderer,
-    ) -> transform_gizmos::TransformGizmoResources {
-        self.gizmos
-            .ensure_transform_gizmo_resources(renderer, &mut self.assets)
-    }
 
     pub fn world(&self) -> &World {
         self.main_world()

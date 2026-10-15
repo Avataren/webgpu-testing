@@ -87,23 +87,19 @@ impl RenderBridge {
             selected_transform = scene.selected_gizmo_transform();
         }
 
-        if gizmos_enabled {
-            if let Some(selection_transform) = selected_transform {
-                let transform_resources = scene.ensure_transform_gizmo_resources(renderer);
-                for gizmo in transform_gizmos::build_transform_gizmos(
-                    camera_vectors,
-                    selection_transform,
-                    scene.transform_gizmo_mode(),
-                    scene.transform_gizmo_space(),
-                    transform_resources,
-                    scene.transform_gizmo_hover(),
-                ) {
-                    if let Err(err) = batcher.add(gizmo, &scene.assets) {
-                        error!("failed to enqueue transform gizmo: {err}");
-                    }
-                }
-            }
-        }
+        // Picking between frames must see the gizmo at the size it was drawn.
+        scene.set_gizmo_viewport_height(camera_vectors.viewport_height);
+        let gizmo_shapes = match selected_transform.filter(|_| gizmos_enabled) {
+            Some(selection_transform) => transform_gizmos::build_transform_gizmos(
+                camera_vectors,
+                selection_transform,
+                scene.transform_gizmo_mode(),
+                scene.transform_gizmo_space(),
+                scene.transform_gizmo_hover(),
+            ),
+            None => Vec::new(),
+        };
+        renderer.set_gizmo_shapes(gizmo_shapes);
 
         let mut lights_data = LightsData::default();
 

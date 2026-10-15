@@ -1013,9 +1013,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "editor_select",
-            description: "Editor only: select an entity (shows it in the inspector), or null to clear. With uv instead, click the Scene view there: the same GPU pick a mouse click makes (what is visible under that point, cut-out holes and gizmos included); the selection follows a few frames later in editor_state.selected.",
+            description: "Editor only: select an entity (shows it in the inspector), or null to clear. With uv instead, click the Scene view there: the same GPU pick a mouse click makes (what is visible under that point, cut-out holes and gizmos included); the selection follows a few frames later in editor_state.selected. gizmo / gizmo_space switch the transform tool (the W/E/R shortcuts), alone or together with a selection.",
             schema: object(json!({
                 "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }] },
+                "gizmo": { "type": "string", "enum": ["translate", "rotate", "scale"], "description": "Transform tool shown on the selection" },
+                "gizmo_space": { "type": "string", "enum": ["local", "world"], "description": "Whether the gizmo follows the entity's rotation" },
                 "uv": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 1 }, "minItems": 2, "maxItems": 2, "description": "[u, v] across the Scene view, 0..1 from its top-left corner" }
             }), &[]),
             action: Action::Engine("editor.select"),

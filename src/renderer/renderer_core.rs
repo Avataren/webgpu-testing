@@ -197,6 +197,8 @@ pub struct Renderer {
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
     gpu_timer: crate::renderer::gpu_timer::GpuTimer,
+    /// Screen-space gizmo shapes drawn over the editor overlays.
+    gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer,
 
     // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
@@ -354,6 +356,7 @@ impl Renderer {
             rt_shadows,
             lights_group_shared: std::cell::Cell::new(false),
             gpu_timer,
+            gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer::new(),
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -876,6 +879,12 @@ impl Renderer {
         self.camera_aspect
     }
 
+    /// Screen-space shapes (transform gizmos) drawn on top of the next frame, after
+    /// the gizmo meshes. Each frame replaces the last frame's.
+    pub fn set_gizmo_shapes(&mut self, shapes: Vec<crate::renderer::gizmo_shapes::GizmoShape>) {
+        self.gizmo_shapes.set_shapes(shapes);
+    }
+
     pub fn editor_overlays(&self) -> bool {
         self.editor_overlays
     }
@@ -1151,6 +1160,15 @@ impl Renderer {
     }
 
     /// The part of the surface the frame fills: the render region, or all of it.
+    /// Height in pixels of the view the scene is drawn into: the render region, or
+    /// the whole surface.
+    pub fn viewport_height(&self) -> u32 {
+        self.display_region()
+            .map(|region| region.height())
+            .unwrap_or(self.context.config.height)
+            .max(1)
+    }
+
     fn display_region(&self) -> Option<RenderRegion> {
         self.render_region
             .or_else(|| RenderRegion::full(self.context.config.width, self.context.config.height))
@@ -1632,7 +1650,31 @@ impl Renderer {
             surface_format,
             "GizmoSolidPass",
         );
-        frame.stats.gizmo_draw_calls += gizmo_draws + gizmo_solid_draws;
+        let viewport = match render_region {
+            Some(region) => (
+                region.x() as f32,
+                region.y() as f32,
+                region.width() as f32,
+                region.height() as f32,
+            ),
+            None => (
+                0.0,
+                0.0,
+                self.context.config.width as f32,
+                self.context.config.height as f32,
+            ),
+        };
+        let shape_draws = self.gizmo_shapes.render(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            &surface_view,
+            surface_format,
+            &self.camera_buffer.bind_layout,
+            &self.camera_buffer.stable_bind_group,
+            viewport,
+        );
+        frame.stats.gizmo_draw_calls += gizmo_draws + gizmo_solid_draws + shape_draws;
     }
 
     /// Entity ids for a pending pick request (nothing otherwise).

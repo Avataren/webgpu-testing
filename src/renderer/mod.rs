@@ -5,6 +5,7 @@ pub mod compute_pass;
 pub mod compute_resources;
 pub mod depth;
 pub mod frame_graph;
+pub mod gizmo_shapes;
 mod gpu_timer;
 pub mod hdr_output;
 pub(crate) mod internal;

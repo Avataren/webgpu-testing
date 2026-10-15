@@ -1,4 +1,4 @@
-use super::internal::{gizmos, transform_gizmos};
+use super::internal::gizmos;
 use super::state::{TransformGizmoHandle, TransformGizmoMode, TransformGizmoSpace};
 use super::{Scene, SceneLibrary, SceneTreeAsset};
 use crate::asset::Assets;
@@ -14,7 +14,6 @@ pub(crate) struct SceneSnapshot {
     pub(crate) tree: SceneTreeAsset,
     pub(crate) main_scene_path: Vec<usize>,
     pub(crate) gizmo_resources: Option<gizmos::GizmoResources>,
-    pub(crate) transform_gizmo_resources: Option<transform_gizmos::TransformGizmoResources>,
     pub(crate) gizmo_mode: TransformGizmoMode,
     pub(crate) gizmo_space: TransformGizmoSpace,
     pub(crate) gizmo_hover: Option<TransformGizmoHandle>,
@@ -30,7 +29,6 @@ impl SceneSnapshot {
         let tree = scene.export_tree_asset("SceneSnapshot");
         let main_scene_path = scene.path_from_root(scene.main_scene());
         let gizmo_resources = scene.gizmo_resources();
-        let transform_gizmo_resources = scene.transform_gizmo_resources();
         let gizmo_mode = scene.transform_gizmo_mode();
         let gizmo_space = scene.transform_gizmo_space();
         let gizmo_hover = scene.transform_gizmo_hover();
@@ -92,7 +90,6 @@ impl SceneSnapshot {
             tree,
             main_scene_path,
             gizmo_resources,
-            transform_gizmo_resources,
             gizmo_mode,
             gizmo_space,
             gizmo_hover,
@@ -147,7 +144,6 @@ impl SceneSnapshot {
         scene.propagate_transforms();
 
         scene.set_gizmo_resources(self.gizmo_resources);
-        scene.set_transform_gizmo_resources(self.transform_gizmo_resources);
         scene.set_transform_gizmo_mode(self.gizmo_mode);
         scene.set_transform_gizmo_space(self.gizmo_space);
         scene.set_transform_gizmo_hover(self.gizmo_hover);
@@ -191,7 +187,6 @@ impl SceneSnapshot {
 
         // Restore gizmo state
         scene.set_gizmo_resources(self.gizmo_resources);
-        scene.set_transform_gizmo_resources(self.transform_gizmo_resources);
         scene.set_transform_gizmo_mode(self.gizmo_mode);
         scene.set_transform_gizmo_space(self.gizmo_space);
         scene.set_transform_gizmo_hover(self.gizmo_hover);

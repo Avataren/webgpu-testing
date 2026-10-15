@@ -22,6 +22,10 @@ pub(crate) struct CameraVectors {
     pub(crate) target: Vec3,
     pub(crate) up: Vec3,
     pub(crate) fov_y: f32,
+    /// Height in pixels of the view drawn into.
+    pub(crate) viewport_height: f32,
+    /// World height the view covers, for orthographic cameras.
+    pub(crate) ortho_height: Option<f32>,
 }
 
 impl CameraVectors {
@@ -31,7 +35,29 @@ impl CameraVectors {
             target: renderer.camera_target(),
             up: renderer.camera_up(),
             fov_y: renderer.camera_fov_y(),
+            viewport_height: renderer.viewport_height() as f32,
+            ortho_height: ortho_height(renderer.camera_projection()),
         }
+    }
+
+    pub(crate) fn from_camera(camera: &crate::scene::Camera, viewport_height: f32) -> Self {
+        Self {
+            position: camera.eye,
+            target: camera.target,
+            up: camera.up,
+            fov_y: camera.fov_y_radians(),
+            viewport_height,
+            ortho_height: ortho_height(camera.projection()),
+        }
+    }
+}
+
+fn ortho_height(projection: crate::scene::CameraProjection) -> Option<f32> {
+    match projection {
+        crate::scene::CameraProjection::Orthographic { bottom, top, .. } => {
+            Some((top - bottom).abs())
+        }
+        crate::scene::CameraProjection::Perspective { .. } => None,
     }
 }
 
