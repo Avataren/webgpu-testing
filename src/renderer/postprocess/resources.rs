@@ -91,6 +91,31 @@ impl TextureBundle {
         Self { view, texture }
     }
 
+    /// A [`Self::copyable`] target compute passes can also write.
+    pub fn storage(
+        device: &wgpu::Device,
+        size: &wgpu::Extent3d,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: *size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::STORAGE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { view, texture }
+    }
+
     /// Copy the whole texture into `other`, which must match it in size and format (both
     /// made with [`Self::copyable`]).
     pub fn copy_to(&self, encoder: &mut wgpu::CommandEncoder, other: &TextureBundle) {

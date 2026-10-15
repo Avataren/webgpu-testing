@@ -803,8 +803,10 @@ pub fn tools() -> Vec<Tool> {
                     "max_blur": { "type": "number", "description": "Longest streak in pixels at 1080p" }
                 }},
                 "anti_aliasing": { "type": "string", "enum": ["none", "fxaa", "taa"], "description": "taa: temporal (jittered, accumulated over frames): smoothest and most stable, can trail on fast motion" },
-                "upscaling": { "type": "object", "description": "Render the scene below the output resolution and upscale it (like FSR/DLSS): 3D and ray-traced passes cost less, post effects run at output resolution. With anti_aliasing taa it reconstructs detail over the jittered frames (temporal upscaling), otherwise it filters each frame. Ignored with MSAA", "properties": {
-                    "render_scale": { "type": "number", "description": "Share of the output resolution per axis, 0.25-1 (1 = native, 0.67 FSR quality, 0.5 performance)" }
+                "upscaling": { "type": "object", "description": "Render the scene below the output resolution and upscale it: 3D and ray-traced passes cost less, post effects run at output resolution. Ignored with MSAA", "properties": {
+                    "render_scale": { "type": "number", "description": "Share of the output resolution per axis, 0.25-1 (1 = native, 0.67 FSR quality, 0.5 performance)" },
+                    "method": { "type": "string", "enum": ["fsr", "taau"], "description": "fsr (default): AMD FSR 3.1 temporal upscaling ported to WGSL, sharpest and most stable (jitters the camera itself); taau: the engine's cheaper TAA upsampling, accumulating only with anti_aliasing taa" },
+                    "sharpness": { "type": "number", "description": "FSR's RCAS sharpening, 0 (off) to 1 (default 0.5)" }
                 }}
             }), &[]),
             action: Action::Engine("postprocess.set"),

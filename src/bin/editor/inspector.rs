@@ -20,7 +20,7 @@ use wgpu_cube::asset::{
 };
 use wgpu_cube::renderer::postprocess::{
     setting_overridden, AntiAliasing, ExposureMode, FocusMode, PostProcessSettings, Tonemapper,
-    UpscalingSettings, TRACKBALL_NEUTRAL,
+    Upscaler, UpscalingSettings, TRACKBALL_NEUTRAL,
 };
 use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
@@ -3589,6 +3589,22 @@ fn show_post_process_volume_section(
                     UpscalingSettings::MIN_RENDER_SCALE..=1.0,
                     0.01,
                     "x",
+                );
+                rows.choice(
+                    ui,
+                    egui::Id::new(("post_upscaler", entity)),
+                    "upscaling.method",
+                    "Upscaler",
+                    &mut settings.upscaling.method,
+                    &[(Upscaler::Fsr, "FSR 3.1"), (Upscaler::Taau, "TAAU")],
+                );
+                rows.slider(
+                    ui,
+                    "upscaling.sharpness",
+                    "FSR sharpness",
+                    &mut settings.upscaling.sharpness,
+                    0.0..=1.0,
+                    0.01,
                 );
             },
         );

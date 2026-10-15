@@ -333,41 +333,54 @@ the hit-shading and geometry-access parts so they do not assume hardware RT.
 
 ## Part 3: upscaling and frame generation
 
-Status (2026-10-15): temporal upscaling is implemented; FSR-quality reconstruction and
-frame generation are not.
+Status (2026-10-15): upscaling is implemented, with AMD FSR 3.1 (the default) and a
+simpler TAAU; frame generation is not.
 
 ### What exists
 
-- `PostProcessSettings::upscaling.render_scale` (0.25-1, inspector "Upscaling",
-  `postprocess_set {upscaling: {render_scale}}`). The scene draws into a smaller
-  rectangle of the same targets (`RenderRegion::scaled`, same origin), so a new scale
-  reallocates nothing. Ignored with MSAA.
-- The passes before the TAA read a second post uniform describing that rectangle
-  (`scene_uniform_bind_group`); `fs_taau` in `temporal.wgsl` upscales into the output
-  region; later passes map into the scene region where they read the G-buffer or AO
-  (`display_to_scene_pixel` / `_uv` in `postprocess/common.wgsl`). Depth and pick ids
-  are upscaled for overlays, gizmos, the editor grid and editor particles
-  (`postprocess/upscale.rs`).
-- Jitter period 8 x (output/scene pixels), max 64 (`jitter_period`). Material textures
-  get a mip bias of log2(render scale) (`material_mip_bias()`, zero for particles and
-  shader materials); ray hits size texture footprints by output pixels.
-- Without TAA the upscale pass filters one frame bilinearly (blurry, no accumulation).
+- `PostProcessSettings::upscaling` (inspector "Upscaling", `postprocess_set {upscaling:
+  {render_scale, method, sharpness}}`): `render_scale` 0.25-1, `method` `fsr` | `taau`,
+  `sharpness` (FSR's RCAS, 0 = off). Ignored with MSAA.
+- The scene draws into a smaller rectangle of the same targets (`RenderRegion::scaled`,
+  same origin), so a new scale reallocates nothing. The passes before the upscale read a
+  second post uniform describing that rectangle (`scene_uniform_bind_group`); later passes
+  map into it where they read the G-buffer or AO (`display_to_scene_pixel` / `_uv` in
+  `postprocess/common.wgsl`). Depth and pick ids are upscaled for overlays, gizmos, the
+  editor grid and editor particles (`postprocess/upscale.rs`).
+- **FSR 3.1** (`postprocess/fsr.rs`, `shader/postprocess/fsr3_upscaler.wgsl`): the FSR
+  3.1.5 upscaler from FidelityFX SDK v2.3.0 (MIT) ported to WGSL compute: prepare inputs,
+  luma pyramid and auto exposure, shading-change pyramid and detection, reactivity
+  (disocclusion, motion divergence, thin-feature locks), luma instability, Lanczos
+  accumulation with variance clipping, RCAS. The shader header lists what differs from the
+  original (multi-pass pyramids instead of the single-pass downsampler, a buffer with
+  atomicMax for the reconstructed depth, WebGPU storage formats, resets in the shaders).
+  It jitters the camera itself; orthographic cameras fall back to TAAU.
+- **TAAU** (`fs_taau` in `temporal.wgsl`): the TAA pass gathering jittered scene samples
+  into an output-resolution history; without TAA it filters one frame.
+- Jitter period 8 x (output/scene pixels), max 64 (`jitter_period`). Material textures get
+  a mip bias of log2(render scale) (`material_mip_bias()`, zero for particles and shader
+  materials); ray hits size texture footprints by output pixels.
 
 ### Measured (rt-lab, RX 7900 XTX, 1824x1080, GPU shared with a game)
 
-GPU ms per frame, median of 45 timestamp samples: native 4.37, 0.75: 3.53, 0.67: 3.32,
-0.5: 2.92. Raster passes, RT shadows and AO scale with the pixel count; RT reflections
-and AO traces less than linearly (sparser pixels give less coherent rays).
-Ray-traced refraction does not scale (about 1.3-1.6 ms at any scale with the gem in view,
-0.05 ms without): it is latency bound, 4 samples x 2 wavelengths x up to 8 events of
-serial ray queries on the few waves that cover glass. Spreading those samples over frames
-(TAA averages them) would cut it more than any resolution change.
+GPU ms per frame, median of 45 timestamp samples, FSR: native 4.51, 0.75: 3.52, 0.67:
+3.30, 0.5: 3.05. FSR itself costs 0.23-0.28 ms (TAA at native 0.12). Raster passes, RT
+shadows and AO scale with the pixel count; RT reflection and AO traces less than linearly
+(sparser pixels give less coherent rays). Ray-traced refraction does not scale (about
+1.3-1.6 ms at any scale with the gem in view, 0.05 ms without): it is latency bound, 4
+samples x 2 wavelengths x up to 8 events of serial ray queries on the few waves that cover
+glass. Spreading those samples over frames (TAA averages them) would cut it more than any
+resolution change.
+
+Quality (visual_capture against native TAA): FSR at 0.67 is close to native; at 0.5 it
+keeps textures and thin features sharper than TAAU and is more stable frame to frame
+(0.04% of pixels change between frames, TAAU 0.21%, native TAA 0.23%).
 
 ### Next steps
 
-1. Port the FSR 2/3.1 upscaler (MIT) to WGSL compute, replacing `fs_taau`: depth-based
-   disocclusion, luma stability/locks, reactive mask for particles and glass, RCAS in
-   place of the current sharpen. pmndrs/upscaler (three.js) has done this in WGSL.
+1. Reactive mask for FSR: particles and other transparent surfaces have none yet, so they
+   can smear. FSR's autogen-reactive pass compares the opaque-only and final colour; the
+   engine would copy the scene before the transparent pass.
 2. Frame generation: AFMF is a Windows driver feature; FSR 4 ships as prebuilt DLLs.
    An in-engine port of FSR 3.1 frame interpolation needs optical flow, a hudless
    composite and present pacing, which wgpu does not expose (no present-wait/timing).

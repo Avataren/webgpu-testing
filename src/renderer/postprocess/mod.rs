@@ -16,6 +16,7 @@
 mod bloom;
 mod dof;
 mod exposure;
+mod fsr;
 mod lut;
 mod pipelines;
 mod resources;
@@ -33,12 +34,13 @@ pub use settings::{
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
     LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings, LutSettings, MotionBlurSettings,
     PostProcessEffects, PostProcessSettings, ReflectionSettings, SharpenSettings, SsaoSettings,
-    Tonemapper, UpscalingSettings, VignetteSettings, TRACKBALL_NEUTRAL,
+    Tonemapper, Upscaler, UpscalingSettings, VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use bloom::{BloomBindGroupInputs, BloomStage};
 use dof::DofStage;
 use exposure::ExposureStage;
+use fsr::{FsrFrame, FsrUpscaler};
 use lut::LutTexture;
 use pipelines::{
     build_composite, build_depth_resolve, build_final, CompositePipeline, DepthResolvePipeline,
@@ -190,6 +192,8 @@ pub struct PostProcess {
     exposure_stage: ExposureStage,
     dof_stage: DofStage,
     temporal_stage: TemporalStage,
+    /// FSR 3.1 upscaling, built the first time it runs.
+    fsr: Option<FsrUpscaler>,
     /// The history holds last frame's TAA result (false after a resize or turning TAA on).
     taa_history_valid: bool,
     /// How last frame's reflections were traced (Some(true) = ray traced), None when
@@ -569,6 +573,7 @@ impl PostProcess {
             exposure_stage,
             dof_stage,
             temporal_stage,
+            fsr: None,
             taa_history_valid: false,
             reflection_history: None,
             temporal_routing: (false, false),
@@ -626,6 +631,9 @@ impl PostProcess {
         self.taa_history = targets.taa_history;
         self.motion_output = targets.motion_output;
         self.taa_history_valid = false;
+        if let Some(fsr) = self.fsr.as_mut() {
+            fsr.resize();
+        }
         self.reflection_history = None;
         self.display = targets.display;
         self.resolved_depth = targets.resolved_depth;
@@ -760,6 +768,14 @@ impl PostProcess {
         self.upscaling
     }
 
+    /// Whether this frame upscales with FSR: it is chosen, and the camera is a perspective
+    /// one (FSR derives view depth from a perspective projection; TAAU handles the rest).
+    fn fsr_active(&self) -> bool {
+        self.upscaling
+            && self.settings.upscaling.method == Upscaler::Fsr
+            && self.camera.proj.w_axis.w == 0.0
+    }
+
     /// Apply new settings; values outside the supported ranges are clamped. A changed
     /// LUT file is loaded here.
     pub fn set_settings(
@@ -789,14 +805,19 @@ impl PostProcess {
         if self.settings != *settings {
             let was_auto = self.settings.auto_exposure_active();
             let was_taa = self.settings.taa_active();
+            let previous_upscaler = self.settings.upscaling.method;
             self.settings = settings.clone().sanitized();
             if self.settings.auto_exposure_active() && !was_auto {
                 // Start from a fresh measurement instead of whatever was adapted to
                 // when auto exposure was last on.
                 self.exposure_stage.reset(queue);
             }
-            if self.settings.taa_active() != was_taa {
-                // The upscale pass starts (or stops) accumulating.
+            let was_upscaler = previous_upscaler;
+            if self.settings.taa_active() != was_taa
+                || self.settings.upscaling.method != was_upscaler
+            {
+                // The upscale pass starts (or stops) accumulating, or another one takes
+                // over the history.
                 self.taa_history_valid = false;
             }
             self.upload_uniform(queue);
@@ -924,6 +945,7 @@ impl PostProcess {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         target: &wgpu::TextureView,
         region: Option<RenderRegion>,
         scene_region: Option<RenderRegion>,
@@ -931,7 +953,7 @@ impl PostProcess {
         timer: &mut crate::renderer::gpu_timer::GpuTimer,
     ) {
         self.ensure_cached_bind_groups(device);
-        let scene_uniform = &self.scene_uniform_bind_group;
+        let scene_uniform = &self.scene_uniform_bind_group.clone();
 
         if let (Some(depth_pipeline), Some(bind_group), Some(resolved)) = (
             self.depth_resolve_pipeline.as_ref(),
@@ -1005,7 +1027,10 @@ impl PostProcess {
         }
 
         let (taa, motion_blur) = self.temporal_routing;
-        if taa {
+        if taa && self.fsr_active() {
+            self.run_fsr(encoder, device, queue);
+            self.taa_history_valid = true;
+        } else if taa {
             self.temporal_stage.render_taa(
                 encoder,
                 &self.uniform_bind_group,
@@ -1125,6 +1150,50 @@ impl PostProcess {
         }
     }
 
+    /// Upscale the scene region into the output region of the TAA target with FSR.
+    fn run_fsr(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        let Some(depth) = self.cached_depth_view.as_ref() else {
+            return;
+        };
+        let full = Vec2::new(self.size.width as f32, self.size.height as f32);
+        let origin = (self.viewport_offset * full).round();
+        let frame = FsrFrame {
+            color: &self.scene_source.view,
+            depth,
+            motion: &self.normal_source.view,
+            output: &self.taa_output.view,
+            sampler: &self.sampler_linear,
+            origin: [origin.x as i32, origin.y as i32],
+            render_size: [
+                self.scene_resolution.x as i32,
+                self.scene_resolution.y as i32,
+            ],
+            upscale_size: [
+                self.viewport_resolution.x as i32,
+                self.viewport_resolution.y as i32,
+            ],
+            projection: self.camera.proj,
+            jitter: self.camera.jitter_pixels,
+            delta_time: self.clock.delta,
+            reset: !self.taa_history_valid,
+            sharpness: self.settings.upscaling.sharpness,
+        };
+        self.fsr
+            .get_or_insert_with(|| FsrUpscaler::new(device))
+            .dispatch(
+                device,
+                queue,
+                encoder,
+                [self.size.width, self.size.height],
+                frame,
+            );
+    }
+
     fn mark_bind_groups_dirty(&mut self) {
         self.depth_resolve_bind_group = None;
         self.composite_bind_group = None;
@@ -1142,6 +1211,9 @@ impl PostProcess {
         self.dof_stage.invalidate();
         self.temporal_stage.invalidate();
         self.upscaled.invalidate_bind_group();
+        if let Some(fsr) = self.fsr.as_mut() {
+            fsr.invalidate_bind_groups();
+        }
         self.bind_groups_dirty = true;
     }
 
@@ -1448,7 +1520,8 @@ impl SizedTargets {
             bloom_chain: create_bloom_chain(device, size),
             dof_half: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofHalf"),
             dof_blur: TextureBundle::color(device, &half_size(size), DOF_FORMAT, "DofBlur"),
-            taa_output: TextureBundle::copyable(device, size, HDR_FORMAT, "TaaOutput"),
+            // Storage too: FSR writes the upscaled image from a compute pass.
+            taa_output: TextureBundle::storage(device, size, HDR_FORMAT, "TaaOutput"),
             taa_history: TextureBundle::copyable(device, size, HDR_FORMAT, "TaaHistory"),
             motion_output: TextureBundle::color(device, size, HDR_FORMAT, "MotionBlurOutput"),
             display: TextureBundle::color(device, size, DISPLAY_FORMAT, "PostDisplay"),
@@ -1776,7 +1849,9 @@ impl PostProcessUniform {
             upscale_source: [
                 inputs.scene_resolution.x,
                 inputs.scene_resolution.y,
-                flag(settings.taa_active()),
+                // TAAU accumulates whenever the camera jitters: TAA, or FSR chosen (the
+                // fallback for orthographic cameras).
+                flag(settings.taa_active() || settings.upscaling.method == Upscaler::Fsr),
                 inputs.scene_resolution.y / inputs.output_resolution.y.max(1.0),
             ],
             output: [

@@ -647,9 +647,7 @@ impl Renderer {
             .map(|region| region.scaled(self.render_scale()))
             .map(|region| (region.width(), region.height()))
             .unwrap_or((1, 1));
-        let jitter = if self.postprocess.settings().anti_aliasing
-            == crate::renderer::postprocess::AntiAliasing::Taa
-        {
+        let jitter = if self.jitters() {
             self.jitter_index = self.jitter_index.wrapping_add(1);
             taa_jitter(
                 self.jitter_index,
@@ -988,6 +986,14 @@ impl Renderer {
         } else {
             1.0
         }
+    }
+
+    /// Whether the camera jitters: for TAA, or for FSR upscaling (its own anti-aliasing).
+    fn jitters(&self) -> bool {
+        let settings = self.postprocess.settings();
+        settings.taa_active()
+            || (self.render_scale() < 1.0
+                && settings.upscaling.method == crate::renderer::postprocess::Upscaler::Fsr)
     }
 
     /// The part of the surface the frame fills: the render region, or all of it.
@@ -1370,6 +1376,7 @@ impl Renderer {
         self.postprocess.execute(
             &mut frame.encoder,
             &self.context.device,
+            &self.context.queue,
             &frame.surface_view,
             frame.render_region,
             frame.scene_region,

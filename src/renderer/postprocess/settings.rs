@@ -147,6 +147,7 @@ impl PostProcessSettings {
         self.lut.path = self.lut.path.trim().to_string();
         self.upscaling.render_scale = finite_or(self.upscaling.render_scale, 1.0)
             .clamp(UpscalingSettings::MIN_RENDER_SCALE, 1.0);
+        self.upscaling.sharpness = finite_or(self.upscaling.sharpness, 0.0).clamp(0.0, 1.0);
         self
     }
 
@@ -981,16 +982,19 @@ impl SharpenSettings {
 
 /// Rendering the scene below the output resolution and upscaling it, the way FSR and
 /// DLSS do: the 3D passes (and ray tracing, whose cost follows the pixel count) run on
-/// fewer pixels; the upscale reconstructs output-resolution detail from the jittered
-/// frames when TAA is on (temporal upscaling), otherwise it filters the one frame.
-/// Post effects after it (bloom, depth of field, tonemapping) run at output resolution.
-/// Needs no MSAA; with MSAA the scene renders at full resolution.
+/// fewer pixels and the upscaler reconstructs output-resolution detail from the jittered
+/// frames. Post effects after it (bloom, depth of field, tonemapping) run at output
+/// resolution. Needs no MSAA; with MSAA the scene renders at full resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpscalingSettings {
     /// Share of the output resolution the scene renders at, per axis: 1 renders natively,
     /// 0.67 is FSR's "quality" preset (44% of the pixels), 0.5 "performance" (25%).
     pub render_scale: f32,
+    pub method: Upscaler,
+    /// FSR's contrast-adaptive sharpening (RCAS) of the upscaled image: 0 is off, 1 the
+    /// strongest.
+    pub sharpness: f32,
 }
 
 impl UpscalingSettings {
@@ -1004,8 +1008,26 @@ impl UpscalingSettings {
 
 impl Default for UpscalingSettings {
     fn default() -> Self {
-        Self { render_scale: 1.0 }
+        Self {
+            render_scale: 1.0,
+            method: Upscaler::default(),
+            sharpness: 0.5,
+        }
     }
+}
+
+/// How the scene is upscaled to the output resolution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Upscaler {
+    /// AMD FidelityFX Super Resolution 3.1 (temporal, ported to WGSL): detects
+    /// disocclusions, shading changes and thin features to keep detail without
+    /// ghosting. Always jitters the camera; with an orthographic camera TAAU is used.
+    #[default]
+    Fsr,
+    /// The engine's TAA upsampling: cheaper and softer; accumulates over frames only when
+    /// anti-aliasing is TAA (otherwise it filters each frame).
+    Taau,
 }
 
 /// Post-process anti-aliasing.
