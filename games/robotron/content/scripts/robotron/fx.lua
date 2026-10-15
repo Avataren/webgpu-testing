@@ -4,7 +4,7 @@
 
 local C = require("robotron.config")
 local COLORS, HW, HD, VOX, SPREAD, TRANS_T = C.COLORS, C.HW, C.HD, C.VOX, C.SPREAD, C.TRANS_T
-local CL, SL, FLASH, LOOK = C.CL, C.SL, C.FLASH, C.LOOK
+local FLASH, LOOK = C.FLASH, C.LOOK
 local U = require("robotron.util")
 local frand = U.frand
 local S = require("robotron.state")
@@ -16,7 +16,7 @@ local abs, floor, min, max = math.abs, math.floor, math.min, math.max
 
 -- model-space point (x, height) of an upright, leaning, camera-facing actor at (wx, wy, wz) -> world
 local function lean_pt(wx, wy, wz, x, h)
-    return wx + x, wy + h * CL, wz - h * SL
+    return wx + x, wy + h * g.lean_c, wz - h * g.lean_s
 end
 
 -- one pixel as a GPU particle: no drag, so it travels in a straight line for `life` seconds

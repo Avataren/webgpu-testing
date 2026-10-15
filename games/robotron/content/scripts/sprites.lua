@@ -5,7 +5,9 @@
 --
 -- Rows run top to bottom; '.' is empty. `legend` maps a character to a colour in COLORS. Frames of
 -- one sprite must have the same size. `bulge` (default config.BULGE) caps how many voxels a side
--- the sprite swells; 0 keeps it a flat slab.
+-- the sprite swells; 0 keeps it a flat slab. `finish = "metal"` draws the robots' colours as
+-- polished metal (models.lua), so they mirror the neon and the floor; glowing colours stay as
+-- they are.
 
 local M = {}
 
@@ -84,6 +86,7 @@ M.player = {
 
 M.grunt = {
     depth = 4,
+    finish = "metal",
     legend = { R = "red", D = "dred", Y = "yellow", E = "eye_green" },
     frames = walker({
         "...RRRRR...",
@@ -114,6 +117,7 @@ M.grunt = {
 
 M.hulk = {
     depth = 6,
+    finish = "metal",
     legend = { G = "green", D = "dgreen", L = "lgreen", E = "eye_red", Y = "yellow" },
     frames = walker({
         ".....DDDDD.....",
@@ -302,6 +306,7 @@ M.prog = {
 
 M.enforcer = {
     depth = 3,
+    finish = "metal",
     legend = { W = "white", E = "eye_red", G = "green", Y = "yellow" },
     frames = {
         {
@@ -408,6 +413,7 @@ M.quark = {
 
 M.tank = {
     depth = 8,
+    finish = "metal",
     legend = { B = "blue", D = "dblue", W = "eye_cyan", Y = "yellow", R = "red", K = "dred" },
     frames = {
         {

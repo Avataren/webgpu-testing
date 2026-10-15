@@ -23,6 +23,7 @@ local FOV = 26.0
 local MAT_T = 0.75                       -- materialize time
 local SPREAD = 10.0                      -- how far apart the pixel lines start
 local TRANS_T = 0.95                     -- rectangle zoom
+local TITLE_T = 8.0                      -- seconds the attract mode shows its title
 
 -- Arcade units. The 1982 game runs 60 frames a second and its player covers one pixel a frame, so
 -- one pixel is PXM here; x positions there are bytes of two pixels (BYM). Enemy speeds, step sizes
@@ -60,8 +61,8 @@ local LOOK = {
             base_color_texture = "content/textures/floor_base.png" },
     },
     pt = {
-        sun = 0.65, fill_cool = 0.0, fill_warm = 0.0, spills = false, ambient = 0.03,
-        wall_glow = 8.0, body_emissive = 0.0, grid = 0.6,
+        sun = 1.4, fill_cool = 0.0, fill_warm = 0.0, spills = false, ambient = 0.03,
+        wall_glow = 10.0, body_emissive = 0.0, grid = 0.6,
         floor = { color = { 1.0, 1.0, 1.0 }, roughness = 0.12, metallic = 0.0,
             base_color_texture = "content/textures/floor_base_pt.png" },
     },
@@ -73,7 +74,7 @@ return {
     LX = LX, LZ = LZ, P_SPEED = P_SPEED, FIRE_INT = FIRE_INT, B_SPEED = B_SPEED,
     B_R = B_R, N_PBULLETS = N_PBULLETS, START_LIVES = START_LIVES, EXTRA_LIFE = EXTRA_LIFE, SFX_VOLUME = SFX_VOLUME,
     PLAY_MUSIC = PLAY_MUSIC, MUSIC_VOLUME = MUSIC_VOLUME, VOX = VOX, BULGE = BULGE, LEAN = LEAN, CAM_PITCH = CAM_PITCH,
-    FOV = FOV, MAT_T = MAT_T, SPREAD = SPREAD, TRANS_T = TRANS_T, FR = FR,
+    FOV = FOV, MAT_T = MAT_T, SPREAD = SPREAD, TRANS_T = TRANS_T, TITLE_T = TITLE_T, FR = FR,
     PXM = PXM, BYM = BYM, GRUNT_STEP = GRUNT_STEP, PROG_SPEED = PROG_SPEED, CL = CL,
     SL = SL, FLASH = FLASH,
 }

@@ -27,8 +27,16 @@ the sky darkens, and the brighter tube throws real coloured light across a light
 floor that mirrors it and the actors. The switch follows the setting live (`config.LOOK`,
 `fx.update_look`).
 
+The robots (grunts, hulks, enforcers, tanks) are clear-coated metal, so they pick up the neon
+and the floor in their gloss; the humans and the rest are painted.
+
 The game boots into an attract mode where an autopilot plays a demo game under the title, a
 voxel ROBOTRON 2084 logo whose letters cycle through the colours; press Enter to take over.
+After the title, a camera director cuts every 7 s between the game's view and cinematic shots:
+an orbit above the rail, a chase behind the player, a low skim along a wall, a crane rising out
+of a corner and a close shot over the player's shoulder. The actors' lean toward the camera
+follows its pitch, so they stand upright in the low shots. `RT.shot("skim")` picks a shot for
+testing.
 
 ## Run
 

@@ -58,7 +58,7 @@ local electrode_key, start_wave = Waves.electrode_key, Waves.start_wave
 local Flow = require("robotron.flow")
 local new_game, step_game, meta_input = Flow.new_game, Flow.step_game, Flow.meta_input
 local Camera = require("robotron.camera")
-local update_camera = Camera.update_camera
+local update_camera, force_shot = Camera.update_camera, Camera.force_shot
 local Hud = require("robotron.hud")
 local draw_hud = Hud.draw_hud
 local Logo = require("robotron.logo")
@@ -169,6 +169,11 @@ RT = {
     end,
     spawn = function(kind, x, z) return spawn_unit(kind, x, z, 0.0, nil, nil, kind == "electrode" and electrode_key(max(1, g.wave)) or nil) end,
     god = function(on) g.god = on end,
+    -- the attract mode's camera director: RT.shot("skim") (orbit, chase, skim, crane, close, overview)
+    shot = function(kind)
+        g.demo_t = max(g.demo_t, C.TITLE_T + 0.01)
+        force_shot(kind)
+    end,
     kill = function() g.invuln, g.god, g.p_spawn = 0, false, 0 kill_player() end,
     lives = function(n) g.lives = n end,
     bot = function(on) g.bot = on end,

@@ -2,7 +2,7 @@
 -- and the autopilot share, and drawing them each frame.
 
 local C = require("robotron.config")
-local HW, HD, EXTRA_LIFE, LEAN, MAT_T, FR = C.HW, C.HD, C.EXTRA_LIFE, C.LEAN, C.MAT_T, C.FR
+local HW, HD, EXTRA_LIFE, MAT_T, FR = C.HW, C.HD, C.EXTRA_LIFE, C.MAT_T, C.FR
 local U = require("robotron.util")
 local frand, randu = U.frand, U.randu
 local S = require("robotron.state")
@@ -314,7 +314,7 @@ local function render_units(dt)
                 u.yaw = u.yaw + (want - u.yaw) * min(1, dt * 8)
             end
             set_translation(u.e, u.x, y, u.z)
-            set_rotation(u.e, u.yaw, -LEAN, 0)
+            set_rotation(u.e, u.yaw, -g.lean, 0)
         end
     end
 end

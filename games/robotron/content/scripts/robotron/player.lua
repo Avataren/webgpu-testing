@@ -2,7 +2,7 @@
 
 local C = require("robotron.config")
 local LX, LZ, P_SPEED, FIRE_INT, B_SPEED = C.LX, C.LZ, C.P_SPEED, C.FIRE_INT, C.B_SPEED
-local N_PBULLETS, LEAN, MAT_T = C.N_PBULLETS, C.LEAN, C.MAT_T
+local N_PBULLETS, MAT_T = C.N_PBULLETS, C.MAT_T
 local U = require("robotron.util")
 local clamp, frand = U.clamp, U.frand
 local S = require("robotron.state")
@@ -135,7 +135,7 @@ local function draw_player(mx, mz, dt)
     if hx ~= 0 then want = 0.55 * hx end
     g.p_yaw = g.p_yaw + (want - g.p_yaw) * min(1, dt * 12)
     set_translation(player.e, g.px, 0, g.pz)
-    set_rotation(player.e, g.p_yaw, -LEAN, 0)
+    set_rotation(player.e, g.p_yaw, -g.lean, 0)
 end
 
 local function update_player(dt)

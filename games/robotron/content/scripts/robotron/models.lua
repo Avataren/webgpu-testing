@@ -6,18 +6,31 @@ local SPR, COLORS, VOX, BULGE = C.SPR, C.COLORS, C.VOX, C.BULGE
 local S = require("robotron.state")
 local reg = S.reg
 
--- one hidden template entity per colour; every part of that colour draws with its material
+-- Surface finishes: painted (the default) and polished metal for the robots. Glowing colours
+-- (emissive 1 or more, or unlit) look the same in both.
+local FINISH = {
+    paint = { roughness = 0.55, metallic = 0.05, glow = 1.0 },
+    -- clear-coated rather than bare: bare metal in this dark arena mirrors only black
+    metal = { roughness = 0.12, metallic = 0.45, glow = 0.8 },
+}
+
+-- one hidden template entity per colour and finish; every part of that colour draws with its
+-- material
 local mats = {}
-local function mat_of(name)
-    local m = mats[name]
-    if m then return m end
+local function mat_of(name, finish)
     local c = COLORS[name]
-    local e = reg(spawn_primitive("cube", "RT_mat_" .. name))
-    set_material(e, { color = { c[1], c[2], c[3] }, emissive = c[4], unlit = c[5] or false, roughness = 0.55, metallic = 0.05 })
+    local f = FINISH[finish or "paint"]
+    if c[5] or c[4] >= 1.0 then f = FINISH.paint end
+    local key = f == FINISH.paint and name or name .. ":" .. finish
+    local m = mats[key]
+    if m then return m end
+    local e = reg(spawn_primitive("cube", "RT_mat_" .. key))
+    set_material(e, { color = { c[1], c[2], c[3] }, emissive = c[4] * f.glow, unlit = c[5] or false,
+        roughness = f.roughness, metallic = f.metallic })
     set_component(e, "Visible", false)
     set_component(e, "CanCastShadow", false)
     set_translation(e, 0, -80, 0)
-    mats[name] = e
+    mats[key] = e
     return e
 end
 
@@ -106,7 +119,7 @@ local function prep_model(key, def)
     end
     -- each frame becomes a voxel model the engine meshes: one mesh per colour, hidden faces
     -- dropped and flat runs merged, shared by every actor of this kind
-    local m = { key = key, W = W, H = H, depth = def.depth or 3, nf = #frames, vox = {}, px = {} }
+    local m = { key = key, W = W, H = H, depth = def.depth or 3, finish = def.finish, nf = #frames, vox = {}, px = {} }
     for f, rows in ipairs(frames) do
         local cells, size = inflate(rows, def.legend, m.depth, def.bulge or BULGE)
         m.vox[f] = voxel_model { voxels = cells, size = size, voxel = VOX, pivot = { 0.5, 0, 0.5 } }
@@ -140,7 +153,7 @@ local function build_model(root, m, cast)
     local parts, fnodes = {}, {}
     local mats = {}
     for f = 1, m.nf do
-        for _, p in ipairs(m.vox[f].parts) do mats[p.key] = mat_of(p.key) end
+        for _, p in ipairs(m.vox[f].parts) do mats[p.key] = mat_of(p.key, m.finish) end
     end
     for f = 1, m.nf do
         local node, ents = spawn_voxels(m.vox[f], "RT_frame", { parent = root, materials = mats, cast_shadow = cast })

@@ -5,7 +5,7 @@
 -- before play shows through.
 
 local C = require("robotron.config")
-local FOV = C.FOV
+local FOV, TITLE_T = C.FOV, C.TITLE_T
 local S = require("robotron.state")
 local g, reg, set_vis = S.g, S.reg, S.set_vis
 
@@ -27,7 +27,7 @@ local GW, GH, GAP = 7, 9, 2
 local FACE, BACK = 2, 3            -- voxels of letter face and of backing
 local VOXEL = 0.1
 local DIST = 12.0                  -- metres in front of the camera
-local SHOW_T = 8.0                 -- seconds the title shows when the demo starts (as the HUD's subtitle)
+local SHOW_T = TITLE_T             -- seconds the title shows when the demo starts (as the HUD's subtitle)
 
 local logo = nil
 
