@@ -6,6 +6,8 @@
 
 local GEM = { 2.8, 1.5, 0.0 }
 local GLASS = { -2.8, 1.62, 0.0 }
+-- The caustics table: a glass ball, a glass rod and a steel ring under two spotlights.
+local CAUSTICS = { 5.15, 0.95, 7.55 }
 
 -- Seconds the shots overlap while the camera glides from one into the next.
 local GLIDE = 6.0
@@ -63,6 +65,15 @@ local SHOTS = {
         pose = function(u)
             local eye = orbit(GLASS, lerp(1.6, 1.35, u), lerp(1.95, 1.7, u), lerp(200, 345, u))
             return eye, GLASS, 45
+        end,
+    },
+    {
+        title = "Caustics",
+        caption = "Glass and a steel ring focus lamplight onto the table, traced from the lamps (path tracing)",
+        seconds = 20,
+        pose = function(u)
+            local eye = orbit(CAUSTICS, lerp(2.0, 1.45, u), lerp(2.35, 1.8, u), lerp(-25, 25, u))
+            return eye, CAUSTICS, 45
         end,
     },
     {

@@ -22,6 +22,7 @@ fixed camera for comparisons.
 | Glass sphere (transmission 1, ior 1.5, dispersion 0.5) on the left pedestal | Ray-traced refraction: an inverted, magnified view of the room, rainbow fringes at the rim; no solid shadow |
 | Round brilliant gem (Blender, 81 facets, ior 2.42, pale blue, dispersion 1.0, about three times diamond's) on the right pedestal, turning in play mode | Total internal reflection across many facets, absorption tint, fire (dispersion), sparkle from the emissive light bar overhead |
 | Ray-traced ambient occlusion (`ssao.ray_traced`, 0.5 m) | Contact darkening at the pedestal bases, wall corners and inside the knot, from geometry on or off screen |
+| Caustics table (front right): glass ball, glass rod and a polished steel ring on a white plinth, under two spotlights (one raking low across the ring) | Caustics with path tracing on (`path_tracing.caustics`): photons traced from the lights through glass and off mirrors. The ball focuses a bright spot inside its shadow, the rod a bright line, and the ring reflects the textbook cardioid (nephroid) with its cusp inside it. Glass casts a real shadow around the focused light |
 | Spark fountain (GPU particles, in front of the mirror sphere) | Upscaling (`upscaling.render_scale` below 1): fast, small, bright particles over the scene are what FSR's reactive mask keeps from smearing. In the player they render before post-processing and go through the upscaler; the editor draws them afterwards at output resolution |
 
 The torus knot, Suzanne and the gem were modelled in Blender (through the Blender MCP server) and
@@ -48,6 +49,10 @@ visual_capture {camera: "game", variants: [
   {name: "fsr050", postprocess: {upscaling: {render_scale: 0.5}}},
   {name: "taau050", postprocess: {upscaling: {render_scale: 0.5, method: "taau"}}}]}
 ```
+
+Path tracing (with its denoiser and caustics) is a player graphics setting, off by default:
+turn it on from the settings page (Window > Graphics settings in the editor, Escape in the
+player) or with `graphics_set {path_tracing: true}`.
 
 `engine_info` reports whether hardware ray tracing is available
 (`surface.ray_tracing`); without it `ray_traced` falls back to screen space.
