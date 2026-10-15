@@ -119,6 +119,9 @@ pub(crate) struct SceneInstance {
     active_camera: Option<Entity>,
     prefab_overrides: PrefabOverrideState,
     asset_entity_map: Vec<Option<Entity>>,
+    /// Whether animators run (play mode); off while editing so bones keep their rest
+    /// pose and that is what gets saved.
+    skeletal_playback: bool,
 }
 
 impl SceneInstance {
@@ -131,6 +134,7 @@ impl SceneInstance {
             active_camera: None,
             prefab_overrides: PrefabOverrideState::default(),
             asset_entity_map: Vec::new(),
+            skeletal_playback: true,
         }
     }
 
@@ -140,8 +144,25 @@ impl SceneInstance {
         let animation_states = &mut self.animation_states;
 
         animations::advance_animations(world, assets, animations, animation_states, dt);
+        if self.skeletal_playback {
+            crate::scene::skeletal::update_animators(world, assets, dt as f32);
+        }
         animations::update_rotate_animations(world, dt);
         animations::update_orbit_animations(world, absolute_time);
+    }
+
+    /// Start or stop animators. Stopping forgets their playback, so the next start
+    /// begins with each default clip again.
+    pub(crate) fn set_skeletal_playback(&mut self, playing: bool) {
+        if !playing {
+            for (_, animator) in self
+                .world
+                .query_mut::<&mut crate::scene::skeletal::Animator>()
+            {
+                animator.state = Default::default();
+            }
+        }
+        self.skeletal_playback = playing;
     }
 
     pub(crate) fn propagate_transforms(&mut self) {

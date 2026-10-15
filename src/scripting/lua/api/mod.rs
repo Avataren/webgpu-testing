@@ -2,6 +2,7 @@
 //
 // This module contains all the API functions exposed to Lua scripts.
 
+mod animation;
 mod audio;
 mod clipboard;
 mod component;
@@ -62,6 +63,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     light_camera::register_light_camera_api(lua)?;
     postprocess::register_postprocess_api(lua)?;
     audio::register_audio_api(lua)?;
+    animation::register_animation_api(lua)?;
     save_data::register_save_data_api(lua)?;
     particles::register_particles_api(lua)?;
     view::register_view_api(lua)?;

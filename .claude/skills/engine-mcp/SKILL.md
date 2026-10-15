@@ -105,6 +105,19 @@ engine you launched; save first).
   mesh while keeping its material. Identical geometry shares a GPU mesh; `project_save`
   embeds it for reopening and export. Chess example: `examples/projects/procedural-chess`;
   regenerate with `tools/engine-mcp/examples/procedural_chess.py`.
+- Characters: skinned glTF files (Khronos samples in `web/assets/skinned/`: CesiumMan,
+  Fox, RiggedFigure) import with an `animator` on their root that plays the file's first
+  clip in play mode (scale the `(Instance)` root of centimetre models such as the Fox,
+  e.g. 0.012). `entity_get` on the root lists clips with bone coverage and what plays.
+  `entity_update {entity, animator: {play: {clip, fade}}}` cross-fades during play (while
+  editing it sets `default_clip`); `root_motion: "apply"` moves the entity by the walk
+  instead of sliding the hips. Animation-only GLBs import with `asset_import {path, kind:
+  "animation"}` into `content/animations` and attach with `animator: {add_clips: path}`;
+  clips bind by bone name (`mixamorig:Hips` matches `Hips`). Layers: `animator: {layer:
+  {index: 1, weight, mask: "Spine"}}` then play with `layer: 1`. `debug_skeleton {enabled:
+  true}` draws bones over the mesh in screenshots. Lua: `animator_play`, `animator_state`,
+  `find_bone` (attach props to hands). Verify motion with `runtime_set {mode: "play",
+  manual: true}` + `runtime_step` + `screenshot`.
 - Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`
   writes tileable PNGs (noise, bricks, checker, wood, marble, voronoi) and matching
   normal, height, metallic/roughness and occlusion maps into `content/textures`.

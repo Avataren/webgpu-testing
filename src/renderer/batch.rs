@@ -7,7 +7,9 @@ use crate::{
     scene::components::DepthState,
     scene::transform::Transform,
 };
+use glam::Mat4;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RenderPass {
@@ -69,6 +71,30 @@ pub struct RenderObject {
     pub gpu_index: Option<u32>,
     pub cull_mode: CullMode,
     pub pick_id: PickId,
+    /// Joint matrices for a skinned mesh: the renderer skins the mesh into a vertex
+    /// buffer of this instance's own before drawing.
+    pub skin: Option<SkinBinding>,
+}
+
+/// The pose of one skinned mesh instance for this frame.
+#[derive(Debug, Clone)]
+pub struct SkinBinding {
+    /// Identifies the instance across frames (entity and scene), so its skinned vertex
+    /// buffer is reused. Objects drawn from one instance (e.g. a selection outline)
+    /// share it.
+    pub key: SkinKey,
+    /// `inverse(mesh_world) * joint_world * inverse_bind` per joint.
+    pub palette: Arc<[Mat4]>,
+}
+
+/// See [`SkinBinding::key`].
+pub type SkinKey = u64;
+
+/// A skinning job for the frame: skin `mesh` with `palette` into the instance's buffer.
+#[derive(Debug, Clone)]
+pub struct SkinJob {
+    pub mesh: Handle<Mesh>,
+    pub palette: Arc<[Mat4]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +115,8 @@ pub enum InstanceSource {
 
 pub struct Batch<'a> {
     pub mesh: Handle<Mesh>,
+    /// Draw from this skinned instance's vertex buffer instead of the mesh's own.
+    pub skin: Option<SkinKey>,
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: &'a [InstanceData],
@@ -100,6 +128,8 @@ pub struct Batch<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct BatchKey {
     mesh: Handle<Mesh>,
+    /// Each skinned instance has its own vertex buffer, so its own draw.
+    skin: Option<SkinKey>,
     pass: RenderPass, // Only split if different pipeline needed
     depth_state: DepthState,
     source: InstanceSource,
@@ -115,6 +145,7 @@ pub struct RenderBatcher {
     resolved_materials: Vec<Material>,
     material_pipeline_keys: Vec<MaterialPipelineKey>,
     material_lookup: HashMap<MaterialCacheKey, u32>,
+    skins: HashMap<SkinKey, SkinJob>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -138,6 +169,7 @@ impl RenderBatcher {
             resolved_materials: Vec::new(),
             material_pipeline_keys: Vec::new(),
             material_lookup: HashMap::new(),
+            skins: HashMap::new(),
         }
     }
 
@@ -175,8 +207,17 @@ impl RenderBatcher {
             }
         });
 
+        let skin = obj.skin.map(|binding| {
+            self.skins.entry(binding.key).or_insert(SkinJob {
+                mesh: obj.mesh,
+                palette: binding.palette,
+            });
+            binding.key
+        });
+
         let key = BatchKey {
             mesh: obj.mesh,
+            skin,
             pass,
             depth_state: obj.depth_state,
             source: obj.instance_source,
@@ -222,11 +263,18 @@ impl RenderBatcher {
         self.resolved_materials.clear();
         self.material_pipeline_keys.clear();
         self.material_lookup.clear();
+        self.skins.clear();
+    }
+
+    /// This frame's skinned instances.
+    pub fn skin_jobs(&self) -> &HashMap<SkinKey, SkinJob> {
+        &self.skins
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Batch<'_>> {
         self.batches.iter().map(|(key, instances)| Batch {
             mesh: key.mesh,
+            skin: key.skin,
             pass: key.pass,
             depth_state: key.depth_state,
             instances: instances.as_slice(),
@@ -240,6 +288,7 @@ impl RenderBatcher {
             if key.pass == pass {
                 Some(Batch {
                     mesh: key.mesh,
+                    skin: key.skin,
                     pass: key.pass,
                     depth_state: key.depth_state,
                     instances: instances.as_slice(),
@@ -316,6 +365,7 @@ mod tests {
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id: 0,
+            skin: None,
         };
 
         batcher

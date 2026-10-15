@@ -695,10 +695,7 @@ impl VoxelModel {
                         .collect(),
                     mesh: GeneratedMesh::new(
                         hasher.finish(),
-                        MeshData {
-                            vertices: part.vertices,
-                            indices: part.indices,
-                        },
+                        MeshData::new(part.vertices, part.indices),
                     ),
                     quads: part.quads,
                     voxels: values.iter().map(|&value| voxel_counts[value]).sum(),

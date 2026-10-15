@@ -232,8 +232,9 @@ pub(super) fn postprocess_get(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     if let Some(over) = ctx.hub.post_process_override() {
         // Only a visual capture sets one, and only while it runs.
         result["render_override"] = over.describe();
-        result["rendered"] = serde_json::to_value(over.apply(effective.clone().unwrap_or_default()))
-            .map_err(|err| err.to_string())?;
+        result["rendered"] =
+            serde_json::to_value(over.apply(effective.clone().unwrap_or_default()))
+                .map_err(|err| err.to_string())?;
     }
     if effective.is_none() {
         result["note"] = json!(

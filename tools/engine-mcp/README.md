@@ -65,6 +65,7 @@ Options and environment:
 | Runtime | `runtime_set` (play/stop, time_scale), `wait`, `playtest` |
 | Audio | `sound_play`, `sound_stop`, `audio_status` |
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
+| Animation | `entity_update {animator}`, `animation_inspect`, `debug_skeleton` (skinned characters; `entity_get` shows `skinned_mesh` and `animator`) |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot`, `visual_capture`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
@@ -75,6 +76,13 @@ Options and environment:
 Value conventions: meters, Y up, -Z forward; rotations as Euler degrees `[x, y, z]`
 applied yaw, pitch, roll (like Lua's `set_rotation`); colors as `[r, g, b(, a)]` in 0..1
 or `"#rrggbb"`; entities by id (the same 64-bit handle Lua uses) or unique name.
+
+Skinned glTF characters (samples in `web/assets/skinned/`) import with an animator on
+their root. Clips bind to bones by name, so `asset_import {path, kind: "animation"}` of an
+animation-only GLB followed by `entity_update {entity, animator: {add_clips: path}}` gives
+a character new moves. Animators play in play mode and under `runtime_step`; while
+editing, `animator.play` sets `default_clip` instead. `debug_skeleton {enabled: true}`
+draws the bones in screenshots.
 
 `engine_info.limits` reports renderer and procedural geometry capacities. The renderer
 uses at most four lights of each type, in scene/world iteration order, shared across

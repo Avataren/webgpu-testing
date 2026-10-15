@@ -158,6 +158,9 @@ pub struct RendererStats {
     pub overlay_draw_calls: u32,
     pub gizmo_draw_calls: u32,
     pub shadow_draw_calls: u32,
+    /// Skinned mesh instances deformed this frame, and their vertices.
+    pub skinned_instances: u32,
+    pub skinned_vertices: u32,
 }
 
 impl RendererStats {
@@ -202,6 +205,7 @@ pub struct Renderer {
     shadows: ShadowResources,
     postprocess: PostProcess,
     pipeline: RenderPipeline,
+    skinning: crate::renderer::skinning::SkinningStage,
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
 
@@ -268,6 +272,7 @@ impl Renderer {
         if present_stage.is_some() {
             post_config.format = crate::renderer::hdr_output::PRESENT_SOURCE_FORMAT;
         }
+        let skinning = crate::renderer::skinning::SkinningStage::new(&context.device);
         let mut postprocess =
             PostProcess::new(&context.device, &context.queue, &post_config, sample_count);
         postprocess.set_display_peak(&context.queue, hdr_display.peak_ratio());
@@ -284,6 +289,7 @@ impl Renderer {
             environment,
             shadows,
             postprocess,
+            skinning,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -318,6 +324,11 @@ impl Renderer {
         let clamped =
             region.and_then(|r| r.clamp(self.context.config.width, self.context.config.height));
         self.render_region = clamped;
+    }
+
+    /// How skinned meshes are deformed on this device.
+    pub fn skinning_backend(&self) -> crate::renderer::skinning::SkinningBackend {
+        self.skinning.backend()
     }
 
     pub fn supports_bindless_textures(&self) -> bool {
@@ -690,6 +701,17 @@ impl Renderer {
         if let Some(stage) = self.present_stage.as_ref() {
             stage.clear_ui(&mut frame_state.encoder);
         }
+
+        // Skinned vertices must exist before the first pass draws them.
+        self.skinning.run(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame_state.encoder,
+            assets,
+            batcher.skin_jobs(),
+        );
+        frame_state.stats.skinned_instances = self.skinning.instance_count;
+        frame_state.stats.skinned_vertices = self.skinning.vertex_count;
 
         self.run_shadow_pass(
             &mut frame_state,

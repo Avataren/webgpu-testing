@@ -19,8 +19,10 @@ use crate::renderer::texture::{
 };
 use crate::renderer::Texture;
 use crate::scene::loader::SceneImportDevice;
+use crate::scene::skeletal::ClipLibrary;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Assets {
@@ -36,6 +38,9 @@ pub struct Assets {
     /// Whether each texture loaded by path was sampled as sRGB, for reloading it.
     texture_srgb: HashMap<PathBuf, bool>,
     default_material: Handle<MaterialAsset>,
+    /// Skeletal clip libraries by path, loaded on first use. Failures are cached too, so
+    /// a missing file is reported once rather than read every frame.
+    clip_libraries: HashMap<PathBuf, Result<Arc<ClipLibrary>, String>>,
 }
 
 impl Assets {
@@ -58,7 +63,38 @@ impl Assets {
             texture_paths: HashMap::new(),
             texture_srgb: HashMap::new(),
             default_material,
+            clip_libraries: HashMap::new(),
         }
+    }
+
+    /// The clip library (animations) of a glTF/GLB file, loaded on first use.
+    pub fn clip_library(&mut self, path: &Path) -> Result<Arc<ClipLibrary>, String> {
+        self.clip_libraries
+            .entry(path.to_path_buf())
+            .or_insert_with(|| {
+                let result = ClipLibrary::load(path).map(Arc::new);
+                match &result {
+                    Ok(library) => log::info!(
+                        "Loaded {} animation clip(s) from {}",
+                        library.clips.len(),
+                        path.display()
+                    ),
+                    Err(err) => log::warn!("Animation library: {err}"),
+                }
+                result
+            })
+            .clone()
+    }
+
+    /// Forget a cached clip library (after the file changed); the next use reloads it.
+    pub fn invalidate_clip_library(&mut self, path: &Path) {
+        self.clip_libraries.remove(path);
+    }
+
+    /// Insert an already loaded library under `path` (tests, generated clips).
+    pub fn insert_clip_library(&mut self, path: impl Into<PathBuf>, library: ClipLibrary) {
+        self.clip_libraries
+            .insert(path.into(), Ok(Arc::new(library)));
     }
 
     /// Creates a new shader material asset using the default WGSL template and inserts it.

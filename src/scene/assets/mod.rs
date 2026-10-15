@@ -11,7 +11,7 @@ mod tree;
 pub use serialization::{
     ImportedGltfMeta, SerializedAnimationClip, SerializedLuaScript, SerializedLuaScriptSource,
     SerializedMaterial, SerializedMaterialKind, SerializedParticleBehavior,
-    SerializedParticleEmitter, SerializedParticleSystem, SerializedTransform,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedSkin, SerializedTransform,
 };
 
 // Re-export from core
@@ -503,6 +503,8 @@ mod tests {
                 post_process_volume: None,
                 camera: None,
                 scene_ref: None,
+                skin: None,
+                animator: None,
                 source_entity: None,
             }],
             animations: Vec::new(),
@@ -571,6 +573,8 @@ mod tests {
                 post_process_volume: None,
                 camera: None,
                 scene_ref: None,
+                skin: None,
+                animator: None,
                 source_entity: None,
             }],
             animations: Vec::new(),
@@ -684,6 +688,8 @@ mod tests {
                 post_process_volume: None,
                 camera: None,
                 scene_ref: None,
+                skin: None,
+                animator: None,
                 source_entity: None,
             }],
             animations: Vec::new(),
@@ -786,6 +792,8 @@ mod tests {
                     post_process_volume: None,
                     camera: None,
                     scene_ref: None,
+                    skin: None,
+                    animator: None,
                     source_entity: None,
                 },
                 SceneAssetEntity {
@@ -817,6 +825,8 @@ mod tests {
                     post_process_volume: None,
                     camera: None,
                     scene_ref: None,
+                    skin: None,
+                    animator: None,
                     source_entity: None,
                 },
             ],
@@ -893,6 +903,8 @@ mod tests {
                     post_process_volume: None,
                     camera: None,
                     scene_ref: None,
+                    skin: None,
+                    animator: None,
                     source_entity: None,
                 },
                 SceneAssetEntity {
@@ -924,6 +936,8 @@ mod tests {
                     post_process_volume: None,
                     camera: None,
                     scene_ref: None,
+                    skin: None,
+                    animator: None,
                     source_entity: None,
                 },
             ],

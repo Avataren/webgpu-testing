@@ -249,6 +249,8 @@ impl SceneAssetEntityBuilder {
             post_process_volume: self.post_process_volume,
             camera: self.camera,
             scene_ref: self.scene_ref,
+            skin: None,
+            animator: None,
             source_entity: None,
         }
     }

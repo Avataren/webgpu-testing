@@ -47,6 +47,10 @@ pub struct Scene {
     stepped_time: f64,
     /// Set by [`Scene::reset_script_runtime`]; see [`Scene::take_script_effects_reset`].
     script_effects_reset: bool,
+    /// Draw skinned meshes' bones (`debug.skeleton`).
+    show_skeletons: bool,
+    /// Last [`Scene::set_animation_playback`] state.
+    animation_playback: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -74,6 +78,8 @@ impl Scene {
             imports: SceneImportsManager::new(),
             stepped_time: 0.0,
             script_effects_reset: false,
+            show_skeletons: false,
+            animation_playback: true,
         }
     }
 
@@ -98,6 +104,22 @@ impl Scene {
 
     pub(super) fn nodes_iter(&self) -> impl Iterator<Item = &SceneNode> {
         self.nodes.values()
+    }
+
+    /// Whether skinned meshes' bones are drawn on top of the scene.
+    pub fn show_skeletons(&self) -> bool {
+        self.show_skeletons
+    }
+
+    pub fn set_show_skeletons(&mut self, show: bool) {
+        self.show_skeletons = show;
+    }
+
+    /// Nodes with a stable key each (for per-node GPU state such as skinned buffers).
+    pub(super) fn nodes_with_keys(&self) -> impl Iterator<Item = (u64, &SceneNode)> {
+        self.nodes
+            .iter()
+            .map(|(id, node)| (slotmap::Key::data(&id).as_ffi(), node))
     }
 
     pub(super) fn nodes_iter_mut(&mut self) -> impl Iterator<Item = &mut SceneNode> {
@@ -410,6 +432,7 @@ impl Scene {
     }
 
     pub fn set_animation_playback(&mut self, playing: bool) {
+        self.animation_playback = playing;
         for node in self.nodes_iter_mut() {
             let instance = node.instance_mut();
 
@@ -418,6 +441,7 @@ impl Scene {
             } else {
                 instance.restore_rest_pose();
             }
+            instance.set_skeletal_playback(playing);
 
             let states = instance.animation_states_mut();
             for state in states {
@@ -1062,8 +1086,7 @@ impl Scene {
                 warn!(target: "script", "set_postprocess: {entity:?} no longer exists");
                 continue;
             }
-            match crate::remote::handlers::patch_post_process(world, change.target, &change.patch)
-            {
+            match crate::remote::handlers::patch_post_process(world, change.target, &change.patch) {
                 Ok((_, spawned)) => created |= spawned,
                 Err(err) => warn!(target: "script", "set_postprocess failed: {err}"),
             }
@@ -1572,7 +1595,14 @@ impl Scene {
         })
     }
 
-    pub(super) fn allocate_node(&mut self, name: String, instance: SceneInstance) -> SceneNodeId {
+    pub(super) fn allocate_node(
+        &mut self,
+        name: String,
+        mut instance: SceneInstance,
+    ) -> SceneNodeId {
+        // Instances added later (prefabs spawned in play, imports while editing) follow
+        // the scene's playback state.
+        instance.set_skeletal_playback(self.animation_playback);
         self.nodes.insert(SceneNode::new(name, instance))
     }
 }
@@ -1669,13 +1699,17 @@ mod tests {
         scene.apply_script_post_process();
 
         let world = scene.main_world();
-        let edited = world.get::<&crate::scene::PostProcessVolume>(volume).unwrap();
+        let edited = world
+            .get::<&crate::scene::PostProcessVolume>(volume)
+            .unwrap();
         assert!(edited.settings.vignette.enabled);
         assert_eq!(edited.settings.vignette.intensity, 0.7);
         assert_eq!(edited.weight, 0.5);
         assert!(edited.overrides_setting("vignette.intensity"));
         assert!(!edited.overrides_setting("bloom.intensity"));
-        let untouched = world.get::<&crate::scene::PostProcessVolume>(other).unwrap();
+        let untouched = world
+            .get::<&crate::scene::PostProcessVolume>(other)
+            .unwrap();
         assert!(!untouched.settings.vignette.enabled);
     }
 

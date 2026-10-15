@@ -98,12 +98,15 @@ pub(super) fn load_textures<D: SceneImportDevice>(
                     img_data.height
                 );
 
+                // Decoders keep the file's channel layout (JPEGs are RGB); textures
+                // are uploaded as RGBA8.
+                let pixels = rgba8_pixels(img_data);
                 let texture = {
                     let renderer_ref = &*ctx.renderer;
                     Texture::from_bytes(
                         renderer_ref.device(),
                         renderer_ref.queue(),
-                        &img_data.pixels,
+                        &pixels,
                         img_data.width,
                         img_data.height,
                         Some(&format!("EmbeddedTexture_{}", source.index())),
@@ -232,4 +235,72 @@ fn decode_image(bytes: &[u8]) -> Result<gltf::image::Data, String> {
         width,
         height,
     })
+}
+
+/// An embedded image's pixels as RGBA8, whatever layout the decoder produced.
+pub(super) fn rgba8_pixels(image: &gltf::image::Data) -> std::borrow::Cow<'_, [u8]> {
+    use gltf::image::Format;
+    let pixels = &image.pixels;
+    let expand = |channels: usize, bytes_per_channel: usize| -> Vec<u8> {
+        let stride = channels * bytes_per_channel;
+        pixels
+            .chunks_exact(stride)
+            .flat_map(|texel| {
+                // 16-bit channels are little-endian; keep the high byte.
+                let channel = |c: usize| texel[c * bytes_per_channel + bytes_per_channel - 1];
+                match channels {
+                    1 => [channel(0), channel(0), channel(0), 255],
+                    2 => [channel(0), channel(1), 0, 255],
+                    3 => [channel(0), channel(1), channel(2), 255],
+                    _ => [channel(0), channel(1), channel(2), channel(3)],
+                }
+            })
+            .collect()
+    };
+    let floats = |channels: usize| -> Vec<u8> {
+        pixels
+            .chunks_exact(channels * 4)
+            .flat_map(|texel| {
+                let value = |c: usize| {
+                    let bytes = [
+                        texel[c * 4],
+                        texel[c * 4 + 1],
+                        texel[c * 4 + 2],
+                        texel[c * 4 + 3],
+                    ];
+                    (f32::from_le_bytes(bytes).clamp(0.0, 1.0) * 255.0).round() as u8
+                };
+                let alpha = if channels == 4 { value(3) } else { 255 };
+                [value(0), value(1), value(2), alpha]
+            })
+            .collect()
+    };
+    match image.format {
+        Format::R8G8B8A8 => std::borrow::Cow::Borrowed(pixels),
+        Format::R8 => expand(1, 1).into(),
+        Format::R8G8 => expand(2, 1).into(),
+        Format::R8G8B8 => expand(3, 1).into(),
+        Format::R16 => expand(1, 2).into(),
+        Format::R16G16 => expand(2, 2).into(),
+        Format::R16G16B16 => expand(3, 2).into(),
+        Format::R16G16B16A16 => expand(4, 2).into(),
+        Format::R32G32B32FLOAT => floats(3).into(),
+        Format::R32G32B32A32FLOAT => floats(4).into(),
+    }
+}
+
+#[cfg(test)]
+mod rgba_tests {
+    use super::*;
+
+    #[test]
+    fn rgb_images_expand_to_rgba() {
+        let image = gltf::image::Data {
+            pixels: vec![10, 20, 30, 40, 50, 60],
+            format: gltf::image::Format::R8G8B8,
+            width: 2,
+            height: 1,
+        };
+        assert_eq!(&*rgba8_pixels(&image), &[10, 20, 30, 255, 40, 50, 60, 255]);
+    }
 }

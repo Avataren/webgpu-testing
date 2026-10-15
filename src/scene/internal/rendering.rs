@@ -1,7 +1,7 @@
 use super::lights::safe_normalize;
 use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::renderer::{
-    batch::{CullMode, InstanceSource},
+    batch::{CullMode, InstanceSource, SkinBinding},
     Material, PickId, RenderObject, Renderer,
 };
 use crate::scene::components::{
@@ -9,6 +9,7 @@ use crate::scene::components::{
     GpuParticleInstance, MaterialComponent, MeshComponent, Name, Parent, SelectedInEditor,
     TransformComponent, Visible, WorldTransform,
 };
+use crate::scene::skeletal::SkinnedMesh;
 use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
 use hecs::{Entity, World};
@@ -34,12 +35,15 @@ impl CameraVectors {
     }
 }
 
+/// `scene_key` identifies the scene node `world` belongs to, so skinned instances in
+/// different nodes get different skinning buffers.
 pub(crate) fn build_render_objects(
     world: &World,
     assets: &Assets,
     camera: CameraVectors,
+    scene_key: u64,
 ) -> Vec<RenderObject> {
-    let render_entities = collect_render_entities(world, assets);
+    let render_entities = collect_render_entities(world, assets, scene_key);
 
     render_entities
         .into_par_iter()
@@ -62,6 +66,7 @@ struct RenderEntity {
     selected: bool,
     casts_shadow: bool,
     pick_id: PickId,
+    skin: Option<SkinBinding>,
 }
 
 /// Entities with `Visible(false)`. Visibility is inherited: an entity is drawn only if
@@ -92,7 +97,7 @@ fn has_hidden_ancestor(world: &World, hidden: &HashSet<Entity>, entity: Entity) 
     false
 }
 
-fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> {
+fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Vec<RenderEntity> {
     let default_material = assets.default_material_handle();
     let hidden = hidden_entities(world);
 
@@ -110,6 +115,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
             Option<&SelectedInEditor>,
             Option<&EditorEntityId>,
             Option<&CanCastShadow>,
+            Option<&SkinnedMesh>,
         )>()
         .iter()
         // Skip hidden entities before doing any work for them; pools of hidden objects
@@ -119,7 +125,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
         })
         .map(
             |(
-                _entity,
+                entity,
                 (
                     mesh,
                     material,
@@ -133,6 +139,7 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                     selected_marker,
                     editor_id,
                     cast_shadow,
+                    skinned,
                 ),
             )| {
                 let (material_handle, base_material) = assets
@@ -155,6 +162,19 @@ fn collect_render_entities(world: &World, assets: &Assets) -> Vec<RenderEntity> 
                     selected: selected_marker.is_some(),
                     casts_shadow: cast_shadow.is_none_or(|flag| flag.0),
                     pick_id: encode_pick_id(editor_id.copied()),
+                    skin: skinned
+                        .filter(|_| assets.meshes.get(mesh.0).is_some_and(|m| m.is_skinned()))
+                        .map(|skinned| {
+                            // The same matrix the renderer will draw it with.
+                            let mesh_world = world_transform
+                                .map(|t| t.0)
+                                .or(local_transform.map(|t| t.0))
+                                .map_or(glam::Mat4::IDENTITY, |t| t.matrix());
+                            SkinBinding {
+                                key: skin_key(scene_key, entity),
+                                palette: skinned.palette(world, mesh_world).into(),
+                            }
+                        }),
                 }
             },
         )
@@ -223,6 +243,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         gpu_index,
         cull_mode: CullMode::Back,
         pick_id: entity.pick_id,
+        skin: entity.skin.clone(),
     });
 
     if entity.selected && matches!(instance_source, InstanceSource::Cpu) {
@@ -244,10 +265,19 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
             gpu_index: None,
             cull_mode: CullMode::Front,
             pick_id: entity.pick_id,
+            skin: entity.skin.clone(),
         });
     }
 
     objects
+}
+
+/// A stable identity for one skinned entity in one scene node.
+fn skin_key(scene_key: u64, entity: Entity) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (scene_key, entity.to_bits()).hash(&mut hasher);
+    hasher.finish()
 }
 
 fn encode_pick_id(editor_id: Option<EditorEntityId>) -> PickId {

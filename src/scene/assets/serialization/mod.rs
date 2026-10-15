@@ -14,7 +14,7 @@ pub use animation::SerializedAnimationClip;
 pub use components::{
     SerializedBillboard, SerializedDirectionalLight, SerializedMeshBounds,
     SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
-    SerializedPointLight, SerializedSpotLight,
+    SerializedPointLight, SerializedSkin, SerializedSpotLight,
 };
 
 #[allow(unused_imports)]

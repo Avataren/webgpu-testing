@@ -12,6 +12,7 @@ use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{Billboard, BillboardOrientation, DepthState};
+use crate::scene::skeletal::{Animator, SkinnedMesh};
 use crate::scene::{
     CameraComponent, CameraProjection, CanCastShadow, Children, DirectionalLight,
     EnvironmentComponent, GltfSource, MaterialComponent, MeshBounds, MeshComponent, Name,
@@ -53,6 +54,8 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "rotate_animation",
     "orbit_animation",
     "gltf",
+    "skinned_mesh",
+    "animator",
 ];
 
 pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
@@ -79,6 +82,8 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "rotate_animation" => has::<RotateAnimation>(world, entity),
         "orbit_animation" => has::<OrbitAnimation>(world, entity),
         "gltf" => has::<GltfSource>(world, entity),
+        "skinned_mesh" => has::<SkinnedMesh>(world, entity),
+        "animator" => has::<Animator>(world, entity),
         _ => false,
     }
 }
@@ -256,9 +261,11 @@ fn camera_json(camera: &CameraComponent) -> Value {
 }
 
 pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let entity = req_entity(ctx.gpu.scene.main_world(), params)?;
+    // Binding clips may load their files, which needs the scene mutably.
+    let animator = super::animation::animator_json(&mut ctx.gpu.scene, entity);
     let scene: &Scene = &ctx.gpu.scene;
     let world = scene.main_world();
-    let entity = req_entity(world, params)?;
 
     let mut out = entity_summary(world, entity);
     out["children"] = json!(world
@@ -377,6 +384,12 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     }
     if let Ok(source) = world.get::<&GltfSource>(entity) {
         out["gltf"] = json!({ "source": source.0.display().to_string() });
+    }
+    if let Some(skin) = super::animation::skinned_mesh_json(scene, entity) {
+        out["skinned_mesh"] = skin;
+    }
+    if let Some(animator) = animator {
+        out["animator"] = animator;
     }
     Ok(out)
 }
@@ -821,6 +834,11 @@ pub(super) fn apply_patch(
                 }
             }
             "script" => set_script(ctx, entity, value)?,
+            "animator" => {
+                for note in super::animation::patch_animator(ctx, entity, value)? {
+                    changed.push(format!("animator ({note})"));
+                }
+            }
             "particle_system" => patch_particle_system(ctx, entity, value)?,
             "particle_emitter" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
@@ -1681,6 +1699,8 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         "rotate_animation" => remove::<RotateAnimation>(world, entity),
         "orbit_animation" => remove::<OrbitAnimation>(world, entity),
         "gltf" => remove::<GltfSource>(world, entity),
+        "skinned_mesh" => remove::<SkinnedMesh>(world, entity),
+        "animator" => remove::<Animator>(world, entity),
         _ => unreachable!("validated against COMPONENT_NAMES"),
     }
     if component == "camera" && ctx.gpu.scene.active_camera_entity() == Some(entity) {
@@ -1774,6 +1794,8 @@ fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
     copy::<RotateAnimation>(world, source, &mut builder);
     copy::<OrbitAnimation>(world, source, &mut builder);
     copy::<GltfSource>(world, source, &mut builder);
+    copy::<SkinnedMesh>(world, source, &mut builder);
+    copy::<Animator>(world, source, &mut builder);
 
     let material = world.get::<&MaterialComponent>(source).ok().map(|m| m.0);
     if let Some(handle) = material {
@@ -1931,6 +1953,13 @@ fn duplicate_once(
                 .and_then(|p| mapped(p.0))
         };
         set_parent(world, *copy, parent)?;
+    }
+
+    // A copied character deforms with its copied skeleton, not the original's.
+    for (_, copy) in &copies {
+        if let Ok(mut skin) = world.get::<&mut SkinnedMesh>(*copy) {
+            skin.remap(mapped);
+        }
     }
 
     let root = copies[0].1;

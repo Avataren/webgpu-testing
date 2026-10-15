@@ -359,3 +359,54 @@ impl From<SerializedSpotLight> for SpotLight {
         }
     }
 }
+
+/// A [`SkinnedMesh`](crate::scene::SkinnedMesh) in a scene file: joints as entity indices
+/// within the scene asset, and the inverse bind matrices (column-major).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SerializedSkin {
+    pub joints: Vec<usize>,
+    pub inverse_bind: Vec<[f32; 16]>,
+}
+
+impl SerializedSkin {
+    /// `None` if a joint is not part of the serialized entities.
+    pub(crate) fn from_component(
+        skin: &crate::scene::SkinnedMesh,
+        index_map: &std::collections::HashMap<hecs::Entity, usize>,
+    ) -> Option<Self> {
+        let joints = skin
+            .joints
+            .iter()
+            .map(|joint| index_map.get(joint).copied())
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            joints,
+            inverse_bind: skin
+                .inverse_bind
+                .iter()
+                .map(glam::Mat4::to_cols_array)
+                .collect(),
+        })
+    }
+
+    /// The component with joints resolved through `entities` (index -> entity).
+    pub(crate) fn to_component(
+        &self,
+        entities: &[hecs::Entity],
+    ) -> Option<crate::scene::SkinnedMesh> {
+        let joints = self
+            .joints
+            .iter()
+            .map(|&index| entities.get(index).copied())
+            .collect::<Option<Vec<_>>>()?;
+        if joints.len() != self.inverse_bind.len() {
+            return None;
+        }
+        let inverse_bind: Vec<glam::Mat4> = self
+            .inverse_bind
+            .iter()
+            .map(glam::Mat4::from_cols_array)
+            .collect();
+        Some(crate::scene::SkinnedMesh::new(joints, inverse_bind.into()))
+    }
+}

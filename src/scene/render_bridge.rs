@@ -30,19 +30,33 @@ impl RenderBridge {
         } else {
             None
         };
+        // Skeletons are a debugging aid: drawn whenever asked, gizmos or not.
+        let skeleton_resources = if scene.show_skeletons() {
+            Some(gizmo_resources.unwrap_or_else(|| scene.ensure_gizmo_resources(renderer)))
+        } else {
+            None
+        };
         let mut selected_transform: Option<Transform> = None;
 
-        for node in scene.nodes_iter() {
+        for (node_key, node) in scene.nodes_with_keys() {
             let world = node.instance().world();
             let world_transform = *node.world_transform();
 
             let objects = crate::app::core::frame_timings::time("render_collect", || {
-                rendering::build_render_objects(world, &scene.assets, camera_vectors)
+                rendering::build_render_objects(world, &scene.assets, camera_vectors, node_key)
             });
             for mut object in objects {
                 object.transform = world_transform.mul_transform(&object.transform);
                 if let Err(err) = batcher.add(object, &scene.assets) {
                     error!("failed to enqueue render object: {err}");
+                }
+            }
+
+            if let Some(resources) = skeleton_resources {
+                for bone in gizmos::build_skeleton_gizmos(world, world_transform, resources) {
+                    if let Err(err) = batcher.add(bone, &scene.assets) {
+                        error!("failed to enqueue skeleton gizmo: {err}");
+                    }
                 }
             }
 

@@ -17,6 +17,7 @@ pub mod render_context;
 pub mod render_region;
 mod renderer_core;
 pub mod shader_builder;
+pub mod skinning;
 pub mod texture;
 pub mod uniforms;
 pub mod vertex;
@@ -25,7 +26,9 @@ pub const MAX_TEXTURES: usize = 256;
 
 pub type PickId = u64;
 
-pub use batch::{Batch, InstanceData, RenderBatcher, RenderObject, RenderPass};
+pub use batch::{
+    Batch, InstanceData, RenderBatcher, RenderObject, RenderPass, SkinBinding, SkinJob, SkinKey,
+};
 pub use compute_builder::ComputePipelineBuilder;
 pub use compute_pass::{dispatch_compute, ComputePass};
 pub use compute_resources::{
@@ -49,4 +52,4 @@ pub use renderer_core::{RenderFrame, Renderer, RendererStats, SurfaceError, TAA_
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;
 pub use uniforms::CameraUniform;
-pub use vertex::Vertex;
+pub use vertex::{SkinVertex, Vertex};

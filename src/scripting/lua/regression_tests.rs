@@ -1020,3 +1020,51 @@ fn voxel_model_errors_name_the_problem() {
         assert!(err.contains(expected), "{source}: {err}");
     }
 }
+
+#[test]
+fn animator_functions_queue_playback_and_find_bones() {
+    use crate::scene::components::{Children, Name};
+    use crate::scene::skeletal::Animator;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let character = spawn_script(
+        &mut world,
+        "animated",
+        r#"
+            function on_created(self_entity)
+                animator_play(self_entity, "Walk", { fade = 0.5, speed = 2 })
+                animator_set_layer(self_entity, 1, { weight = 0.5, mask = "Spine" })
+                animator_set_root_motion(self_entity, "apply")
+                hand = find_bone(self_entity, "LeftHand")
+                missing = find_bone(self_entity, "Tail")
+            end
+        "#,
+    );
+    let hand = world.spawn((
+        Name::new("mixamorig:LeftHand"),
+        TransformComponent(Transform::default()),
+        Parent(character),
+    ));
+    world.insert_one(character, Children(vec![hand])).unwrap();
+    world
+        .insert_one(character, Animator::with_library("walk.glb"))
+        .unwrap();
+
+    state.process_scripts(&mut world, DT, false).unwrap();
+
+    let animator = world.get::<&Animator>(character).unwrap();
+    let layer = &animator.state.layers[0];
+    assert_eq!(layer.clips[0].name, "Walk");
+    assert_eq!(layer.clips[0].speed, 2.0);
+    assert_eq!(animator.state.layers[1].mask.as_deref(), Some("spine"));
+    assert_eq!(animator.root_motion, crate::scene::RootMotion::Apply);
+    assert_eq!(
+        global_i64(&state, &world, character, "hand"),
+        Some(hand.to_bits().get() as i64)
+    );
+    assert!(matches!(
+        state.script_global(&world, character, "missing"),
+        None | Some(mlua::Value::Nil)
+    ));
+}

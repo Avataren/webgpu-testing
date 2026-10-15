@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::assets::{ImportedGltfMeta, SceneMaterialHandle};
-use crate::asset::Mesh;
+use crate::asset::{Mesh, MeshData};
 use crate::renderer::{material::MaterialFlags, Renderer, Texture, Vertex};
 use crate::scene::{Scene, SceneAssetBundle, SceneAssetResources};
 
@@ -22,6 +22,11 @@ pub trait SceneImportDevice {
     fn device(&self) -> &wgpu::Device;
     fn queue(&self) -> &wgpu::Queue;
     fn create_mesh(&mut self, vertices: &[Vertex], indices: &[u32]) -> Mesh;
+
+    /// Create a mesh from complete data, including a skin stream.
+    fn create_mesh_from_data(&mut self, data: MeshData) -> Mesh {
+        Mesh::from_data(self.device(), data)
+    }
 }
 
 impl SceneImportDevice for Renderer {
@@ -123,18 +128,27 @@ impl SceneLoader {
         let node_entities = nodes::instantiate_nodes(
             &mut ctx,
             &document,
+            &buffers,
             &mesh_data.mesh_primitives,
             &material_result.material_handles,
             material_result.default_material,
         )?;
 
-        let animation_clips = animations::load_animation_clips(
-            ctx.scale,
-            ctx.source_path(),
-            &document,
-            &buffers,
-            &node_entities,
-        )?;
+        // Skinned files play their animations through an Animator, by bone name; the
+        // entity-bound clips would drive the same joints a second time.
+        let animated_by_name =
+            nodes::attach_animators(&mut ctx, &document, &buffers, &node_entities);
+        let animation_clips = if animated_by_name {
+            Vec::new()
+        } else {
+            animations::load_animation_clips(
+                ctx.scale,
+                ctx.source_path(),
+                &document,
+                &buffers,
+                &node_entities,
+            )?
+        };
 
         for clip in animation_clips {
             let clip_index = ctx.scene.add_animation_clip(clip);
@@ -209,6 +223,15 @@ impl SceneLoader {
         for entity in &mut asset.entities {
             if entity.gltf_source.is_some() {
                 entity.gltf_source = Some(source_path.clone());
+            }
+            // The file's own animations stay addressable by the path it was asked for
+            // (usually project-relative), like `gltf_source`.
+            if let Some(animator) = entity.animator.as_mut() {
+                for library in &mut animator.libraries {
+                    if *library == resolved_path {
+                        *library = source_path.clone();
+                    }
+                }
             }
         }
 
@@ -405,6 +428,16 @@ impl SceneLoader {
 
         Ok(buffers)
     }
+}
+
+/// [`nodes::primitive_mesh_data`] for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn primitive_mesh_data_for_tests(
+    primitive: &gltf::Primitive,
+    buffers: &[gltf::buffer::Data],
+    scale: f32,
+) -> Result<MeshData, String> {
+    nodes::primitive_mesh_data(primitive, buffers, scale)
 }
 
 #[cfg(test)]

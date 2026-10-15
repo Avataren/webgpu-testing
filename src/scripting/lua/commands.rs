@@ -361,6 +361,20 @@ impl ScriptCommands {
 
     /// Queue the removal of an entity and its descendants. An entity spawned earlier in
     /// the same chunk is simply never created.
+    /// Queue an animator change (`animator_play` and friends).
+    pub fn animator(
+        &mut self,
+        handle: i64,
+        command: crate::scene::skeletal::AnimatorCommand,
+    ) -> Result<(), mlua::Error> {
+        let entity_bits = self.resolve_entity_bits(handle)?;
+        self.existing.push(ExistingCommand::Animator {
+            entity_bits,
+            command,
+        });
+        Ok(())
+    }
+
     pub fn despawn(&mut self, handle: i64) -> Result<(), mlua::Error> {
         if self.pending.remove(&handle).is_some() {
             self.assets.retain(|(target, _)| *target != handle);
@@ -571,6 +585,35 @@ impl ScriptCommands {
         result: &mut ScriptApplyResult,
     ) -> Result<(), LuaScriptingError> {
         match command {
+            ExistingCommand::Animator {
+                entity_bits,
+                command,
+            } => {
+                use crate::scene::skeletal::{animator_entity, Animator, AnimatorCommand};
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+                if !world.contains(entity) {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+                match animator_entity(world, entity) {
+                    Some(owner) => {
+                        if let Ok(mut animator) = world.get::<&mut Animator>(owner) {
+                            animator.apply(command);
+                        }
+                    }
+                    // Adding clips to an entity without an animator gives it one.
+                    None if matches!(command, AnimatorCommand::AddLibrary(_)) => {
+                        let mut animator = Animator::default();
+                        animator.apply(command);
+                        world.insert_one(entity, animator)?;
+                    }
+                    None => warn!(
+                        target: "script",
+                        "{command:?}: entity {entity:?} has no Animator (nor does any parent)"
+                    ),
+                }
+            }
             ExistingCommand::SetName { entity_bits, name } => {
                 let Some(entity) = Entity::from_bits(entity_bits) else {
                     return Ok(());

@@ -150,3 +150,60 @@ fn translation_animation_channels_match_document() {
             .abs_diff_eq(expected_final, 1e-5));
     }
 }
+
+#[test]
+fn skinned_primitives_carry_normalized_weights_and_computed_normals() {
+    let path = Path::new("web/assets/skinned/Fox/Fox.glb");
+    let (document, buffers, _) = SceneLoader::import_gltf_native(path).expect("Fox import");
+    let primitive = document
+        .meshes()
+        .next()
+        .unwrap()
+        .primitives()
+        .next()
+        .unwrap();
+
+    let data = super::nodes::primitive_mesh_data(&primitive, &buffers, 0.01).unwrap();
+    assert!(data.is_skinned());
+    let skin = data.skin.as_ref().unwrap();
+    assert!(skin
+        .iter()
+        .all(|v| v.weights.iter().map(|&w| w as u32).sum::<u32>() == 65535));
+    assert!(data.max_joint_index().unwrap() < 24, "Fox has 24 joints");
+
+    // Fox ships without normals; they are computed, so not all point up.
+    assert!(data.vertices.iter().all(|v| {
+        let n = Vec3::from(v.normal);
+        (n.length() - 1.0).abs() < 1e-3
+    }));
+    assert!(data.vertices.iter().any(|v| v.normal[1] < 0.5));
+    // Positions honour the import scale (the fox is ~1.3 m long in centimetres).
+    let max_extent = data
+        .vertices
+        .iter()
+        .map(|v| Vec3::from(v.pos).abs().max_element())
+        .fold(0.0, f32::max);
+    assert!(max_extent < 2.0, "{max_extent}");
+}
+
+#[test]
+fn scaled_inverse_bind_matrices_keep_the_bind_pose() {
+    use glam::{Mat4, Quat};
+    // A joint at (0, 2, 1) turned about X, with a vertex near it, imported at 0.01.
+    let joint =
+        Mat4::from_rotation_translation(Quat::from_rotation_x(0.7), Vec3::new(0.0, 2.0, 1.0));
+    let inverse_bind = joint.inverse();
+    let vertex = Vec3::new(0.3, 2.5, 1.0);
+    let scale = 0.01;
+    let scaled_joint = Mat4::from_rotation_translation(
+        Quat::from_rotation_x(0.7),
+        Vec3::new(0.0, 2.0, 1.0) * scale,
+    );
+    let scaled_inverse = super::nodes::scale_inverse_bind(inverse_bind, scale);
+    // In the bind pose the skinning matrix must be identity at any scale.
+    let skinned = scaled_joint * scaled_inverse * (vertex * scale).extend(1.0);
+    assert!(
+        skinned.truncate().abs_diff_eq(vertex * scale, 1e-6),
+        "{skinned}"
+    );
+}

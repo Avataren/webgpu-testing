@@ -181,7 +181,30 @@ to flicker, especially at a distant horizon.
   `resolve_project_path` resolves relative asset paths against it.
 - **glTF**: `SceneLoader` / `src/scene/loader/` import glTF. Animation (`scene/animation.rs`)
   drives node transforms and material properties with step, linear or cubic-spline
-  keyframes. There is no skinning.
+  keyframes, bound to the entities a file was imported with.
+- **Skeletal animation** (`src/scene/skeletal/`):
+  - Skinned glTF primitives keep `JOINTS_0`/`WEIGHTS_0` as a second stream on `MeshData`
+    (`skin: Vec<SkinVertex>`, 16 bytes per vertex, four influences, weights quantized to
+    sum exactly to 65535). Joints are ordinary entities; `SkinnedMesh` on the mesh entity
+    lists them with their inverse bind matrices (scaled with the import scale).
+  - Each frame `build_render_objects` computes a joint palette per skinned entity
+    (`inverse(mesh_world) * joint_world * inverse_bind`) and hands it to the batcher as a
+    `SkinBinding`. Before the shadow pass, `renderer/skinning.rs` deforms every skinned
+    instance into a vertex buffer of its own (compute shader `shader/skinning.wgsl`, or
+    the identical CPU `skin_vertices` on devices without compute/storage buffers;
+    `WGPU_CUBE_FORCE_CPU_SKINNING=1` forces it). Each instance is its own batch, and all
+    passes draw it like a rigid mesh, so no vertex shader knows about skinning. The same
+    buffers can feed ray-tracing BLAS refits later. Motion vectors use the model matrix
+    only (limb motion is not in them yet).
+  - Skinned imports get an `Animator` on their root. It plays `SkeletalClip`s read from
+    glTF/GLB files (`ClipLibrary`, cached in `Assets::clip_library`), bound to bones by
+    normalized name, so animation-only files drive any rig with matching names.
+    Layers with bone masks, cross-fades, per-bone translation retargeting by rest-length
+    ratio and root motion (`keep`/`in_place`/`apply`). Animators run only while
+    `Scene::set_animation_playback(true)` (play mode), so the editor saves rest poses.
+  - Copy paths remap joints: `SceneAsset::instantiate` (entity indices),
+    `merge_world_as_child` and the remote duplicate. Lua: `animator_*`, `find_bone`.
+    MCP: `entity_get`/`entity_update {animator}`, `animation_inspect`, `debug_skeleton`.
 
 ## Scripting (Lua)
 

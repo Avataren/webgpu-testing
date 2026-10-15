@@ -124,6 +124,11 @@ pub(crate) enum ExistingCommand {
         entity_bits: u64,
         component_name: String,
     },
+    /// Change the animator driving the entity (its own or an ancestor's).
+    Animator {
+        entity_bits: u64,
+        command: crate::scene::skeletal::AnimatorCommand,
+    },
     /// Remove the entity and everything below it in the hierarchy.
     Despawn {
         entity_bits: u64,

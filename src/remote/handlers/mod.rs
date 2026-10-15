@@ -3,6 +3,7 @@
 //! Every method takes a JSON object of parameters and returns a JSON value. See
 //! [`CORE_METHODS`] for the list and [`super::json`] for value conventions.
 
+mod animation;
 mod diff;
 mod entity;
 mod geometry;
@@ -76,6 +77,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Build a voxel model (text art, voxels or a fill expression) as optimized meshes",
     ),
     ("entity.duplicate", "Copy an entity and its children"),
+    (
+        "animation.inspect",
+        "List the skeletal clips of a glTF/GLB file (names, durations, bones)",
+    ),
+    (
+        "debug.skeleton",
+        "Draw the bones of skinned meshes on top of the scene ({enabled})",
+    ),
     ("mesh.lathe", "Revolve a radius/height profile into a UV-mapped mesh"),
     ("mesh.extrude", "Extrude a concave XY polygon with bevel, twist and taper"),
     ("mesh.compose", "Combine transformed procedural shapes into one reusable mesh"),
@@ -238,6 +247,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "entity.remove_component" => entity::remove_component(params, ctx),
         "entity.delete" => entity::delete(params, ctx),
         "entity.duplicate" => entity::duplicate(params, ctx),
+        "animation.inspect" => animation::inspect(params, ctx),
+        "debug.skeleton" => animation::debug_skeleton(params, ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
         "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {
             geometry::generate(method, params, ctx)

@@ -554,6 +554,14 @@ impl ProjectManifest {
         manifest.scene_assets.clear();
 
         let mut documents: Vec<SceneDocument> = Vec::new();
+        // project.json lists the main scene first; keep its order so reopening a project
+        // activates the same scene, not whichever id sorts first.
+        let saved_order: HashMap<String, usize> = manifest
+            .scenes
+            .iter()
+            .enumerate()
+            .map(|(index, doc)| (doc.id.clone(), index))
+            .collect();
         let mut existing: BTreeMap<String, SceneDocument> = manifest
             .scenes
             .iter()
@@ -651,7 +659,11 @@ impl ProjectManifest {
             }
         }
 
-        documents.sort_by(|a, b| a.id.cmp(&b.id));
+        documents.sort_by(|a, b| {
+            let rank =
+                |doc: &SceneDocument| saved_order.get(&doc.id).copied().unwrap_or(usize::MAX);
+            rank(a).cmp(&rank(b)).then_with(|| a.id.cmp(&b.id))
+        });
         manifest.scenes = documents;
         Ok(manifest)
     }
@@ -934,7 +946,7 @@ mod tests {
             let (vertices, indices) = crate::renderer::primitives::cylinder_mesh(16);
             asset
                 .mesh_data
-                .push(crate::asset::MeshData { vertices, indices });
+                .push(crate::asset::MeshData::new(vertices, indices));
             asset
         };
         let mut manifest = ProjectManifest::new_empty(ProjectMetadata::default());
@@ -1083,6 +1095,8 @@ mod tests {
         manifest.save_to_dir(directory.path()).unwrap();
         let restored = ProjectManifest::load_from_dir(directory.path()).unwrap();
         assert_eq!(restored.scenes().len(), 2);
+        // The saved order (main scene first) survives, although "board" sorts first.
+        assert_eq!(restored.scenes()[0].id, study_doc.id);
         for (doc, marker) in [(&board_doc, "Board marker"), (&study_doc, "Study marker")] {
             let asset = restored.scene_asset(&doc.id).unwrap();
             assert_eq!(asset.name, doc.name);

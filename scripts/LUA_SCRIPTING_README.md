@@ -383,6 +383,52 @@ emit_particles(x, 0.2, z, { count = 48, shape = "ring", speed = 8, life = 0.35, 
 emit_particles(x, 1, z, { count = 30, gravity = -9.8, drag = 0.2, color = "#999999", blend = "alpha" })
 ```
 
+### Skeletal animation
+Skinned glTF characters (imported with `asset_import`, or `import_gltf`) get an
+`Animator` on their root entity. It plays clips from glTF/GLB files, binding them to bones
+by name, so a clip file made for one character drives any character with the same bone
+names (Mixamo-style packs). Bone names match without case or a namespace prefix:
+`"Hips"` finds `mixamorig:Hips`. Translations are rescaled to the skeleton's proportions.
+Every function takes the character root or any entity below it (its mesh, a bone).
+Animators run in play mode only; while editing, characters keep their rest pose.
+
+- `animator_play(entity, clip[, options])` - Cross-fade to `clip`. Options: `fade` (seconds,
+  default 0.2), `loop` (default true), `speed` (default 1; negative plays backwards),
+  `layer` (default 0), `start` (time in seconds). Calling it every frame with the same
+  clip keeps it playing; a non-looping clip that ran to its end plays again.
+- `animator_stop(entity[, { layer, fade }])` - Fade out a layer (default all) to the rest pose.
+- `animator_set_speed(entity, speed)` - Scales every clip; 0 pauses.
+- `animator_set_layer(entity, layer, { weight, fade, mask })` - Layers above 0 override
+  the ones below: `weight` 0..1 (faded over `fade` seconds); `mask` a bone name so only it
+  and the bones below it move (`"Spine"` = upper body), `false` clears it.
+- `animator_add_clips(entity, path)` - Make the clips of a glTF/GLB file playable
+  (project-relative path). A file holding one clip plays under its file name
+  (`walk.glb` -> `"walk"`).
+- `animator_set_root_motion(entity, mode)` - `"keep"` (default), `"in_place"` (remove the
+  hips' horizontal travel) or `"apply"` (move the entity by it: walks without foot sliding).
+- `animator_state(entity[, layer])` → `{clip, time, duration, playing, looping, finished,
+  fading, speed}` or `nil`
+- `animator_clips(entity)` → `{ {name, duration, tracks, bound, missing}, ... }` (after the
+  animator's first frame)
+- `find_bone(entity, name)` → the bone entity below `entity`, or `nil`. Parent a sword to
+  the hand bone to hold it; it follows the animation.
+
+```lua
+function update(self, dt)
+    local moving = is_key_pressed("W")
+    animator_play(self, moving and "Run" or "Idle", { fade = 0.25 })
+    if is_key_just_pressed("Space") then
+        animator_play(self, "Wave", { layer = 1, loop = false })
+    end
+end
+
+function on_created(self)
+    animator_set_layer(self, 1, { weight = 1, mask = "Spine" })
+    animator_set_root_motion(self, "apply")
+    set_parent(find_entity_by_name("Sword"), find_bone(self, "RightHand"))
+end
+```
+
 ### Saving data
 - `save_data(key, text)` - Keep a small text value between runs (a high score, settings);
   `nil` deletes it. Store tables as JSON or a Lua literal.

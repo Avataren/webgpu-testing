@@ -92,12 +92,7 @@ fn read_packaged_meshes(scene: &PackagedScene, base_dir: &Path) -> Result<Vec<Me
 
     Ok(slots
         .into_iter()
-        .map(|entry| {
-            entry.unwrap_or_else(|| MeshData {
-                vertices: Vec::new(),
-                indices: Vec::new(),
-            })
-        })
+        .map(|entry| entry.unwrap_or_else(|| MeshData::new(Vec::new(), Vec::new())))
         .collect())
 }
 

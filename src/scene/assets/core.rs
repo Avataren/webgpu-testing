@@ -524,6 +524,24 @@ impl SceneAsset {
             }
         }
 
+        for (index, entity) in self.entities.iter().enumerate() {
+            let entity_id = entity_map[index];
+            if let Some(skin) = &entity.skin {
+                match skin.to_component(&entity_map) {
+                    Some(component) => {
+                        let _ = instance.world_mut().insert_one(entity_id, component);
+                    }
+                    None => log::warn!(
+                        "Entity {:?} has a skin with invalid joints; drawing it rigid",
+                        entity.name
+                    ),
+                }
+            }
+            if let Some(animator) = &entity.animator {
+                let _ = instance.world_mut().insert_one(entity_id, animator.clone());
+            }
+        }
+
         let active_camera = self
             .active_camera
             .and_then(|index| entity_map.get(index).copied());

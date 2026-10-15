@@ -64,6 +64,7 @@ impl Tool {
                 | "scene_list_entities"
                 | "scene_tree"
                 | "entity_get"
+                | "animation_inspect"
                 | "assets_list"
                 | "script_status"
                 | "input_state"
@@ -155,6 +156,29 @@ fn entity_fields() -> serde_json::Map<String, Value> {
     directional["shadow_size"] =
         json!({ "type": "number", "description": "Half-size of the shadow map area in meters" });
 
+    let animator = json!({
+        "libraries": { "type": "array", "items": { "type": "string" }, "description": "Replace the clip library files (project-relative glTF/GLB paths)" },
+        "add_clips": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "Add clip library file(s); a file with one clip plays under its file name" },
+        "default_clip": { "type": ["string", "null"], "description": "Clip that starts (looping) when play begins" },
+        "play": { "anyOf": [{ "type": "string" }, { "type": "object", "properties": {
+            "clip": { "type": "string" },
+            "fade": { "type": "number", "description": "Cross-fade seconds (default 0.2)" },
+            "loop": { "type": "boolean", "description": "Default true" },
+            "speed": { "type": "number", "description": "Rate of this clip; negative plays backwards" },
+            "layer": { "type": "integer", "description": "0 = base pose; higher layers override (see layer)" },
+            "start": { "type": "number", "description": "Start time in seconds" }
+        }, "required": ["clip"] }], "description": "Cross-fade to a clip (play mode)" },
+        "stop": { "anyOf": [{ "type": "boolean" }, { "type": "object", "properties": { "layer": { "type": "integer" }, "fade": { "type": "number" } } }], "description": "Fade out a layer (default all) back to the rest pose" },
+        "speed": { "type": "number", "description": "Multiplies every clip's speed; 0 pauses" },
+        "root_motion": { "type": "string", "enum": ["keep", "in_place", "apply"], "description": "Horizontal travel of the root bone: keep it, remove it (walk on the spot), or apply it to the animator entity so the character moves without foot sliding" },
+        "layer": { "type": "object", "description": "Set a layer's weight and bone mask", "properties": {
+            "index": { "type": "integer" },
+            "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+            "fade": { "type": "number" },
+            "mask": { "type": ["string", "null"], "description": "Only this bone and the bones below it (e.g. \"Spine\" for the upper body); null clears" }
+        }, "required": ["index"] }
+    });
+
     let fields = json!({
         "name": { "type": "string" },
         "translation": vec3("Local position [x, y, z] in meters (alias: position)"),
@@ -199,7 +223,8 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "billboard": nullable_object("Make the entity face the camera, or null", json!({
             "orientation": { "type": "string", "enum": ["face_camera", "face_camera_y_axis"] },
             "lit": { "type": "boolean" }
-        }))
+        })),
+        "animator": nullable_object("Skeletal animation on a character (skinned glTF imports get one on their root; entity may be the root or any part of it, the nearest animator up the hierarchy is used), or null to remove. Clips come from glTF/GLB files (libraries) and bind to bones by name, so animation-only files (asset_import with kind animation) drive any rig with matching bone names; translations are rescaled to the skeleton's proportions. Playback runs in play mode and under runtime_step; while editing, play sets default_clip (what starts when play begins). entity_get lists the clips, their bone coverage and what is playing.", animator)
     });
     fields.as_object().cloned().unwrap_or_default()
 }
@@ -383,7 +408,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "entity_get",
-            description: "Everything about one entity: local and world transform (translation, Euler rotation, quaternion, scale), mesh and bounds, material, lights, camera, script (source, mode, last error), particles, environment, animations, parent/children.",
+            description: "Everything about one entity: local and world transform (translation, Euler rotation, quaternion, scale), mesh and bounds, material, lights, camera, script (source, mode, last error), particles, environment, animations, parent/children. Skinned meshes show joint and vertex counts and their animator; animators show libraries, every playable clip with duration and bone coverage (bound/missing bones), and what each layer is playing.",
             schema: object(json!({ "entity": entity_ref() }), &["entity"]),
             action: Action::Engine("entity.get"),
         },
@@ -411,7 +436,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -871,13 +896,26 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "asset_import",
-            description: "Editor only: bring a file into the project. A glTF/GLB model is copied in, saved as a scene document and instanced into the active scene (example models are under web/assets/). Images, audio, fonts, .lua and .wgsl files are copied into content/textures, audio, fonts, scripts or shaders (or dest) and the result gives the project-relative path to reference. Replacing a texture the scene uses reloads it.",
+            description: "Editor only: bring a file into the project. A glTF/GLB model is copied in, saved as a scene document and instanced into the active scene (example models are under web/assets/; skinned characters are under web/assets/skinned/ and get an animator playing their first clip in play mode; scale the '(Instance)' root for models authored in centimetres). A glTF/GLB with animations but no meshes (or kind: animation) is a clip library instead: it is copied to content/animations and its clips are listed, ready for entity_update {animator: {add_clips}}. Images, audio, fonts, .lua and .wgsl files are copied into content/textures, audio, fonts, scripts or shaders (or dest) and the result gives the project-relative path to reference. Replacing a texture the scene uses reloads it.",
             schema: object(json!({
                 "path": { "type": "string", "description": "Source file" },
                 "dest": { "type": "string", "description": "Non-model files: target path relative to the project's content folder, e.g. textures/ui/logo.png" },
-                "overwrite": { "type": "boolean", "description": "Replace an existing file at the target (default false)" }
+                "overwrite": { "type": "boolean", "description": "Replace an existing file at the target (default false)" },
+                "kind": { "type": "string", "enum": ["model", "animation"], "description": "glTF/GLB only: import as a model (instanced) or as an animation clip library. Default: animation when the file has animations and no meshes" }
             }), &["path"]),
             action: Action::Engine("asset.import"),
+        },
+        Tool {
+            name: "animation_inspect",
+            description: "List the skeletal animation clips in a glTF/GLB file (name, duration, animated bones) without importing or attaching it. Paths are absolute or project-relative.",
+            schema: object(json!({ "path": { "type": "string" } }), &["path"]),
+            action: Action::Engine("animation.inspect"),
+        },
+        Tool {
+            name: "debug_skeleton",
+            description: "Draw the bones of every skinned mesh as orange overlays (in the viewport and in screenshots), to check that a rig sits inside its mesh and follows the animation. Returns the bone count.",
+            schema: object(json!({ "enabled": { "type": "boolean" } }), &[]),
+            action: Action::Engine("debug.skeleton"),
         },
         Tool {
             name: "asset_reload",

@@ -3,8 +3,8 @@ use super::prefabs::ScenePrefabRef;
 use super::serialization::{
     path_serde, SerializedBillboard, SerializedDirectionalLight, SerializedLuaScript,
     SerializedMaterial, SerializedMeshBounds, SerializedParticleBehavior,
-    SerializedParticleEmitter, SerializedParticleSystem, SerializedPointLight, SerializedSpotLight,
-    SerializedTransform,
+    SerializedParticleEmitter, SerializedParticleSystem, SerializedPointLight, SerializedSkin,
+    SerializedSpotLight, SerializedTransform,
 };
 use crate::asset::{Assets, MaterialAsset, MaterialTextureSlot};
 use crate::project::relativize_path_to_project;
@@ -16,6 +16,7 @@ use crate::scene::components::{
     MeshBounds, MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
     PointLight, PostProcessVolume, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
 };
+use crate::scene::skeletal::{Animator, SkinnedMesh};
 use crate::scene::transform::Transform;
 use crate::scripting::LuaScriptComponent;
 use hecs::{Entity, World};
@@ -75,6 +76,11 @@ pub struct SceneAssetEntity {
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene_ref: Option<ScenePrefabRef>,
+    /// Joints (entity indices) and bind matrices of a skinned mesh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<SerializedSkin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animator: Option<Animator>,
     /// The entity this was captured from. Only set by in-memory scene snapshots, so a
     /// restore respawns the entity with the same id; never saved.
     #[serde(skip)]
@@ -158,6 +164,10 @@ struct SceneAssetEntityData {
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scene_ref: Option<ScenePrefabRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    skin: Option<SerializedSkin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    animator: Option<Animator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +214,8 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             post_process_volume: data.post_process_volume,
             camera: data.camera,
             scene_ref: data.scene_ref,
+            skin: data.skin,
+            animator: data.animator,
             source_entity: None,
         }
     }
@@ -250,6 +262,8 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             post_process_volume: entity.post_process_volume,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
+            skin: entity.skin,
+            animator: entity.animator,
         }
     }
 }
@@ -552,6 +566,19 @@ impl SceneAssetEntity {
             .get::<&CameraComponent>(entity)
             .ok()
             .map(|component| *component);
+        let skin = world.get::<&SkinnedMesh>(entity).ok().and_then(|skin| {
+            let serialized = SerializedSkin::from_component(&skin, index_map);
+            if serialized.is_none() {
+                log::warn!(
+                    "Skinned mesh {entity:?} has joints outside the saved entities; saved rigid"
+                );
+            }
+            serialized
+        });
+        let animator = world
+            .get::<&Animator>(entity)
+            .ok()
+            .map(|component| (*component).clone());
 
         Self {
             name,
@@ -582,6 +609,8 @@ impl SceneAssetEntity {
             post_process_volume,
             camera,
             scene_ref: None,
+            skin,
+            animator,
             source_entity: None,
         }
     }

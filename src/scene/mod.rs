@@ -25,6 +25,7 @@ mod runtime_control;
 mod runtime_state;
 #[allow(clippy::module_inception)]
 mod scene;
+pub mod skeletal;
 mod snapshot;
 pub mod state;
 pub mod transform;
@@ -41,7 +42,7 @@ pub use assets::{
     ScenePrefabRef, SceneTreeAsset, SceneTreeAssetNode, SceneTreeAssetNodeBuilder,
     SerializedLuaScript, SerializedLuaScriptSource, SerializedMaterial, SerializedMaterialKind,
     SerializedParticleBehavior, SerializedParticleEmitter, SerializedParticleSystem,
-    SerializedTransform,
+    SerializedSkin, SerializedTransform,
 };
 pub use builder::EntityBuilder;
 pub use camera::{Camera, CameraProjection};
@@ -52,6 +53,7 @@ pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub use post_process::{blend_post_process_volumes, volume_influence};
 pub use scene::{Scene, ScenePrefabEntityMetadata};
+pub use skeletal::{Animator, RootMotion, SkinnedMesh};
 pub(crate) use snapshot::SceneSnapshot;
 pub use snapshot::SceneStateSnapshot;
 pub use state::{

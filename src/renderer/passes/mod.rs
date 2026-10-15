@@ -67,7 +67,7 @@ impl<'a> BatchRecorder<'a> {
         let mut draw_calls = 0u32;
 
         for batch in batches {
-            let Some(mesh) = mesh_for_batch(self.assets, batch) else {
+            let Some(mesh) = mesh_for_batch(self.assets, &self.renderer.skinning, batch) else {
                 continue;
             };
 
@@ -295,10 +295,14 @@ pub(crate) fn shadow_pass(
     shadow_invocations: &mut Vec<ShadowInvocation>,
 ) {
     shadow_invocations.clear();
+    let geometry = BatchGeometry {
+        assets,
+        skinning: &renderer.skinning,
+    };
     renderer.shadows.render(
         &renderer.context,
         encoder,
-        assets,
+        &geometry,
         prepared_batches.all(),
         lights,
         &renderer.objects_buffer,
@@ -354,11 +358,11 @@ pub(crate) fn depth_prepass(
                 continue;
             }
 
-            let Some(mesh) = mesh_for_batch(assets, batch) else {
+            let Some(mesh) = mesh_for_batch(assets, &renderer.skinning, batch) else {
                 continue;
             };
 
-            renderer.draw_full_batch(pass, mesh, batch);
+            renderer.draw_full_batch(pass, &mesh, batch);
             draw_calls += 1;
             batch.depth_state.depth_write = false;
         }
@@ -710,12 +714,33 @@ pub(crate) fn finish_frame(
     }
 }
 
-pub(crate) fn mesh_for_batch<'a>(assets: &'a Assets, batch: &OrderedBatch) -> Option<&'a Mesh> {
+/// Where batches get their geometry: the mesh assets plus this frame's skinned copies.
+pub(crate) struct BatchGeometry<'a> {
+    pub(crate) assets: &'a Assets,
+    pub(crate) skinning: &'a crate::renderer::skinning::SkinningStage,
+}
+
+impl BatchGeometry<'_> {
+    pub(crate) fn mesh(&self, batch: &OrderedBatch) -> Option<Mesh> {
+        mesh_for_batch(self.assets, self.skinning, batch)
+    }
+}
+
+/// The geometry a batch draws: a skinned instance's deformed copy, or the mesh itself
+/// (also the fallback when skinning was skipped, which draws the bind pose).
+pub(crate) fn mesh_for_batch(
+    assets: &Assets,
+    skinning: &crate::renderer::skinning::SkinningStage,
+    batch: &OrderedBatch,
+) -> Option<Mesh> {
+    if let Some(skinned) = batch.skin.and_then(|key| skinning.mesh(key)) {
+        return Some(skinned.clone());
+    }
     let mesh = assets.meshes.get(batch.mesh);
     if mesh.is_none() {
         log::warn!("Skipping batch with invalid mesh handle");
     }
-    mesh
+    mesh.cloned()
 }
 
 pub(crate) fn material_run_length(instances: &[InstanceData], start: usize) -> usize {

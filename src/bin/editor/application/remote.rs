@@ -66,6 +66,82 @@ fn content_folder(extension: &str) -> Option<&'static str> {
 
 /// Copy an image, sound, font, script or shader into the project's content folder.
 /// A texture the scene already uses is reloaded when its file is replaced.
+/// Whether a glTF should be imported as a clip library (its animations, to play on
+/// characters) rather than as a model: asked for with `kind: "animation"`, or a file
+/// without meshes that has animations.
+fn is_animation_library(path: &std::path::Path, params: &Value) -> Result<bool, String> {
+    match params.get("kind").and_then(Value::as_str) {
+        Some("animation") => return Ok(true),
+        Some("model") | None => {}
+        Some(other) => return Err(format!("unknown kind {other:?}; use model or animation")),
+    }
+    if params.get("kind").is_some() {
+        return Ok(false);
+    }
+    let gltf = gltf::Gltf::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(gltf.meshes().len() == 0 && gltf.animations().len() > 0)
+}
+
+/// Copy a clip library (and a .gltf's external buffers) into content/animations and
+/// report its clips.
+fn import_animation_library(
+    project_dir: &std::path::Path,
+    source: &std::path::Path,
+    params: &Value,
+) -> RemoteResult {
+    let name = source.file_name().ok_or("the path has no file name")?;
+    let relative = PathBuf::from(wgpu_cube::project::CONTENT_DIR)
+        .join("animations")
+        .join(name);
+    let target = project_dir.join(&relative);
+    let overwrite = params
+        .get("overwrite")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if target.exists() && !overwrite {
+        return Err(format!(
+            "{} already exists; pass overwrite: true to replace it",
+            target.display()
+        ));
+    }
+    let parent = target.parent().ok_or("bad target path")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+    std::fs::copy(source, &target)
+        .map_err(|err| format!("cannot copy to {}: {err}", target.display()))?;
+    // A .gltf may keep its buffers in files next to it.
+    let gltf = gltf::Gltf::open(source).map_err(|err| err.to_string())?;
+    for buffer in gltf.buffers() {
+        if let gltf::buffer::Source::Uri(uri) = buffer.source() {
+            if uri.starts_with("data:") || uri.contains("..") || uri.contains("://") {
+                continue;
+            }
+            let from = source
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join(uri);
+            let to = parent.join(uri);
+            if let Some(dir) = to.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            std::fs::copy(&from, &to)
+                .map_err(|err| format!("cannot copy buffer {}: {err}", from.display()))?;
+        }
+    }
+    let library = wgpu_cube::scene::skeletal::ClipLibrary::load(&target)?;
+    Ok(json!({
+        "imported": target.display().to_string(),
+        "project_path": relative.display().to_string(),
+        "clips": library.clips.iter().map(|clip| json!({
+            "name": clip.name,
+            "duration": clip.duration,
+            "tracks": clip.tracks.len(),
+        })).collect::<Vec<_>>(),
+        "note": "Add it to a character with entity_update {entity, animator: {add_clips: project_path}}; \
+                 a file with one clip plays under its file name (e.g. \"walk\" for walk.glb).",
+    }))
+}
+
 fn import_file(
     ctx: &mut RemoteContext<'_, '_>,
     project_dir: &std::path::Path,
@@ -306,6 +382,9 @@ impl EditorApplication {
                     .unwrap_or_default();
                 if !matches!(extension.as_str(), "gltf" | "glb") {
                     return import_file(ctx, &project_dir, &path, &extension, params);
+                }
+                if is_animation_library(&path, params)? {
+                    return import_animation_library(&project_dir, &path, params);
                 }
                 self.enqueue_command(EditorCommand::ImportPath(path.clone()));
                 Ok(json!({

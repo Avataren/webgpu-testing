@@ -152,6 +152,7 @@ fn build_point_light_gizmos(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id,
+            skin: None,
         });
 
         if selected.is_some() {
@@ -172,6 +173,7 @@ fn build_point_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
         }
     }
@@ -227,6 +229,7 @@ fn build_spot_light_gizmos(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id,
+            skin: None,
         });
 
         if selected.is_some() {
@@ -254,6 +257,7 @@ fn build_spot_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
 
             // Inner shell: slightly inset to convey falloff thickness.
@@ -283,6 +287,7 @@ fn build_spot_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
 
             // Outer outline to highlight total spread.
@@ -302,6 +307,7 @@ fn build_spot_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
 
             // Inner outline clarifies the core beam threshold.
@@ -321,6 +327,7 @@ fn build_spot_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
         }
     }
@@ -374,6 +381,7 @@ fn build_directional_light_gizmos(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id,
+            skin: None,
         });
 
         if selected.is_some() {
@@ -399,6 +407,7 @@ fn build_directional_light_gizmos(
                 gpu_index: None,
                 cull_mode: CullMode::None,
                 pick_id,
+                skin: None,
             });
         }
     }
@@ -466,4 +475,59 @@ fn load_icon_texture(
         Some(label),
     );
     assets.textures.insert(texture)
+}
+
+const BONE_COLOR: [u8; 4] = [255, 150, 40, 255];
+const JOINT_COLOR: [u8; 4] = [255, 230, 120, 255];
+
+/// Each skinned mesh's bones as thin cylinders from parent joint to joint, with a
+/// small sphere on every joint, drawn on top of the scene.
+pub(crate) fn build_skeleton_gizmos(
+    world: &World,
+    root_transform: Transform,
+    resources: GizmoResources,
+) -> Vec<RenderObject> {
+    let segments = crate::scene::skeletal::skeleton_segments(world);
+    let mut objects = Vec::with_capacity(segments.len() * 2);
+    let overlay = |mesh, transform, color| RenderObject {
+        mesh,
+        material: resources.default_material,
+        resolved_material: Some(Material::new(color).with_unlit()),
+        transform,
+        depth_state: DepthState::new(false, false),
+        force_overlay: true,
+        render_pass: None,
+        instance_source: InstanceSource::Cpu,
+        gpu_index: None,
+        cull_mode: CullMode::None,
+        pick_id: 0,
+        skin: None,
+    };
+    for (start, end) in segments {
+        let start = root_transform.matrix().transform_point3(start);
+        let end = root_transform.matrix().transform_point3(end);
+        let delta = end - start;
+        let length = delta.length();
+        if length < 1e-5 {
+            continue;
+        }
+        // Thickness follows bone length so tiny finger bones stay readable.
+        let radius = (length * 0.06).clamp(0.002, 0.03);
+        let rotation = Quat::from_rotation_arc(Vec3::Z, delta / length);
+        objects.push(overlay(
+            resources.cylinder,
+            Transform::from_trs(
+                (start + end) * 0.5,
+                rotation,
+                Vec3::new(radius, radius, length),
+            ),
+            BONE_COLOR,
+        ));
+        objects.push(overlay(
+            resources.sphere,
+            Transform::from_trs(end, Quat::IDENTITY, Vec3::splat(radius * 1.6)),
+            JOINT_COLOR,
+        ));
+    }
+    objects
 }

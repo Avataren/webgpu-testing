@@ -104,10 +104,7 @@ pub struct MeshPart {
 }
 
 fn empty() -> MeshData {
-    MeshData {
-        vertices: Vec::new(),
-        indices: Vec::new(),
-    }
+    MeshData::new(Vec::new(), Vec::new())
 }
 
 /// Sweep a circular or simple polygon cross-section along an open 3D polyline.

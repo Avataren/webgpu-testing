@@ -3,6 +3,7 @@ use crate::scene::components::{
     MeshComponent, Name, OrbitAnimation, Parent, RotateAnimation, TransformComponent, Visible,
     WorldTransform,
 };
+use crate::scene::skeletal::{Animator, SkinnedMesh};
 use hecs::World;
 use std::collections::HashMap;
 
@@ -62,9 +63,22 @@ pub(crate) fn merge_world_as_child(
         if let Ok(world_trans) = source_world.get::<&WorldTransform>(old_entity) {
             builder.add(*world_trans);
         }
+        if let Ok(skin) = source_world.get::<&SkinnedMesh>(old_entity) {
+            builder.add((*skin).clone());
+        }
+        if let Ok(animator) = source_world.get::<&Animator>(old_entity) {
+            builder.add((*animator).clone());
+        }
 
         let new_entity = target_world.spawn(builder.build());
         entity_map.insert(old_entity, new_entity);
+    }
+
+    // Skinned meshes point at the merged copies of their joints.
+    for &new_entity in entity_map.values() {
+        if let Ok(mut skin) = target_world.get::<&mut SkinnedMesh>(new_entity) {
+            skin.remap(|joint| entity_map.get(&joint).copied());
+        }
     }
 
     let parent_children_to_fix: Vec<_> = entity_map

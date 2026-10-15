@@ -4,7 +4,6 @@ use std::num::NonZeroU64;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
-use crate::asset::Assets;
 use crate::renderer::internal::{DynamicObjectsBuffer, OrderedBatch, RenderContext};
 use crate::renderer::lights::{
     LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
@@ -277,7 +276,7 @@ impl ShadowResources {
         &mut self,
         context: &RenderContext,
         encoder: &mut wgpu::CommandEncoder,
-        assets: &Assets,
+        geometry: &crate::renderer::renderer_core::passes::BatchGeometry<'_>,
         batches: &[OrderedBatch],
         lights: &LightsData,
         objects: &DynamicObjectsBuffer,
@@ -372,7 +371,7 @@ impl ShadowResources {
             self.render_pass(
                 encoder,
                 self.directional.layer_view(index),
-                assets,
+                geometry,
                 batches,
                 objects,
                 materials,
@@ -413,7 +412,7 @@ impl ShadowResources {
             self.render_pass(
                 encoder,
                 self.spot.layer_view(index),
-                assets,
+                geometry,
                 batches,
                 objects,
                 materials,
@@ -458,7 +457,7 @@ impl ShadowResources {
                 self.render_pass(
                     encoder,
                     self.point.layer_view(layer_index),
-                    assets,
+                    geometry,
                     batches,
                     objects,
                     materials,
@@ -484,7 +483,7 @@ impl ShadowResources {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        assets: &Assets,
+        geometry: &crate::renderer::renderer_core::passes::BatchGeometry<'_>,
         batches: &[OrderedBatch],
         objects: &DynamicObjectsBuffer,
         materials: &[Material],
@@ -522,7 +521,7 @@ impl ShadowResources {
             ) {
                 continue;
             }
-            let Some(mesh) = assets.meshes.get(batch.mesh) else {
+            let Some(mesh) = geometry.mesh(batch) else {
                 continue;
             };
 

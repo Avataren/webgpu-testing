@@ -25,7 +25,7 @@ impl PrimitiveMeshDescriptor {
             PrimitiveMeshDescriptor::Torus => torus_mesh(32, 16, 1.0, 0.35),
         };
 
-        MeshData { vertices, indices }
+        MeshData::new(vertices, indices)
     }
 }
 

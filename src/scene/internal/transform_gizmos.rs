@@ -306,6 +306,7 @@ fn build_translate_gizmo(
             gpu_index: None,
             cull_mode: CullMode::None,
             pick_id: GIZMO_PICK_ID,
+            skin: None,
         });
 
         let cone_translation =
@@ -327,6 +328,7 @@ fn build_translate_gizmo(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id: GIZMO_PICK_ID,
+            skin: None,
         });
     }
 
@@ -361,6 +363,7 @@ fn build_translate_gizmo(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id: GIZMO_PICK_ID,
+            skin: None,
         });
     }
 
@@ -385,6 +388,7 @@ fn build_translate_gizmo(
         gpu_index: None,
         cull_mode: CullMode::Back,
         pick_id: GIZMO_PICK_ID,
+        skin: None,
     });
 
     gizmos
@@ -422,6 +426,7 @@ fn build_scale_gizmo(
             gpu_index: None,
             cull_mode: CullMode::Back,
             pick_id: GIZMO_PICK_ID,
+            skin: None,
         });
     }
 
@@ -445,6 +450,7 @@ fn build_scale_gizmo(
         gpu_index: None,
         cull_mode: CullMode::Back,
         pick_id: GIZMO_PICK_ID,
+        skin: None,
     });
 
     gizmos
@@ -480,6 +486,7 @@ fn build_rotate_gizmo(
             gpu_index: None,
             cull_mode: CullMode::None,
             pick_id: GIZMO_PICK_ID,
+            skin: None,
         });
     }
 
@@ -502,6 +509,7 @@ fn build_rotate_gizmo(
         gpu_index: None,
         cull_mode: CullMode::None,
         pick_id: GIZMO_PICK_ID,
+        skin: None,
     });
 
     gizmos

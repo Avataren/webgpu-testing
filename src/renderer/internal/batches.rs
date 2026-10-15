@@ -1,7 +1,9 @@
 use std::{cmp::Ordering, ops::Range};
 
 use crate::asset::{Handle, MaterialAsset, Mesh};
-use crate::renderer::batch::{CullMode, InstanceData, InstanceSource, RenderBatcher, RenderPass};
+use crate::renderer::batch::{
+    CullMode, InstanceData, InstanceSource, RenderBatcher, RenderPass, SkinKey,
+};
 use crate::renderer::internal::MaterialPipelineKey;
 use crate::renderer::material::Material;
 use crate::renderer::shader_builder::SamplerFilterMode;
@@ -11,6 +13,7 @@ use glam::Vec3;
 #[derive(Debug, Clone)]
 pub(crate) struct OrderedBatch {
     pub mesh: Handle<Mesh>,
+    pub skin: Option<SkinKey>,
     pub pass: RenderPass,
     pub depth_state: DepthState,
     pub instances: Vec<InstanceData>,
@@ -71,6 +74,7 @@ impl PreparedBatches {
 
             let mut ordered = OrderedBatch {
                 mesh: batch.mesh,
+                skin: batch.skin,
                 pass: batch.pass,
                 depth_state,
                 instances,
@@ -379,6 +383,7 @@ mod tests {
                     gpu_index: None,
                     cull_mode: CullMode::Back,
                     pick_id: 0,
+                    skin: None,
                 },
                 &assets,
             )
@@ -420,6 +425,7 @@ mod tests {
                         gpu_index: None,
                         cull_mode: CullMode::Back,
                         pick_id: pick_id as u64,
+                        skin: None,
                     },
                     &assets,
                 )
@@ -442,6 +448,7 @@ mod tests {
                         gpu_index: Some(gpu_index),
                         cull_mode: CullMode::Back,
                         pick_id: 100 + i as u64,
+                        skin: None,
                     },
                     &assets,
                 )
@@ -464,6 +471,7 @@ mod tests {
                         gpu_index: Some(gpu_index),
                         cull_mode: CullMode::Back,
                         pick_id: 200 + i as u64,
+                        skin: None,
                     },
                     &assets,
                 )
@@ -486,6 +494,7 @@ mod tests {
                         gpu_index: None,
                         cull_mode: CullMode::Back,
                         pick_id: pick_id as u64,
+                        skin: None,
                     },
                     &assets,
                 )
@@ -507,6 +516,7 @@ mod tests {
                     gpu_index: None,
                     cull_mode: CullMode::Back,
                     pick_id: 999u64,
+                    skin: None,
                 },
                 &assets,
             )

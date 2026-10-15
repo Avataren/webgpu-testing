@@ -209,10 +209,16 @@ impl ProjectSystem {
     pub(super) fn save_scene_to_library(
         &mut self,
         document_id: String,
-        scene_asset: wgpu_cube::scene::SceneAsset,
+        mut scene_asset: wgpu_cube::scene::SceneAsset,
         project_dir: &std::path::Path,
     ) -> Result<(), String> {
         use std::fs;
+
+        // Inline materials (an import's) are only kept in memory; write them as material
+        // files, as a project save does, so the document reopens with its textures.
+        scene_asset
+            .persist_material_assets(project_dir)
+            .map_err(|e| format!("Failed to write scene materials: {}", e))?;
 
         let scenes_dir = project_dir
             .join(wgpu_cube::project::CONTENT_DIR)
@@ -951,6 +957,31 @@ mod native {
                     .unwrap_or_else(|| "Imported glTF".to_string());
                 bundle.asset.name = format!("{} (glTF)", file_stem);
 
+                // Animators read their clips from the glTF itself, so skinned imports
+                // keep a copy of it next to the package (its buffers are copied above).
+                if bundle.asset.entities.iter().any(|e| e.animator.is_some()) {
+                    if let Some(file_name) = source_path.file_name() {
+                        let copy = paths.asset_folder().join(file_name);
+                        fs::copy(&source_path, &copy).map_err(|error| ImportAssetError::Write {
+                            path: copy.clone(),
+                            error,
+                        })?;
+                        let library = paths.project_relative_package().join(file_name);
+                        for animator in bundle
+                            .asset
+                            .entities
+                            .iter_mut()
+                            .filter_map(|e| e.animator.as_mut())
+                        {
+                            for path in &mut animator.libraries {
+                                if *path == source_path {
+                                    *path = library.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+
                 for entity in &mut bundle.asset.entities {
                     if entity.gltf_source.is_some() {
                         entity.gltf_source = Some(paths.descriptor_relative().to_path_buf());
@@ -1006,70 +1037,11 @@ mod native {
                     &source_path,
                 )?;
 
-                if !texture_entries.is_empty() {
-                    let materials: Vec<_> = document.materials().collect();
-
-                    for entity in &mut stored_asset.entities {
-                        let Some(material_data) = entity.material_data.as_mut() else {
-                            continue;
-                        };
-
-                        let Some(material_index) = entity.gltf_material else {
-                            continue;
-                        };
-
-                        let Some(gltf_material) = materials.get(material_index) else {
-                            continue;
-                        };
-
-                        let pbr = gltf_material.pbr_metallic_roughness();
-
-                        if let Some(info) = pbr.base_color_texture() {
-                            apply_packaged_texture_slot(
-                                material_data,
-                                MaterialTextureSlot::BaseColor,
-                                info.texture().index(),
-                                &texture_entries,
-                            );
-                        }
-
-                        if let Some(info) = pbr.metallic_roughness_texture() {
-                            apply_packaged_texture_slot(
-                                material_data,
-                                MaterialTextureSlot::MetallicRoughness,
-                                info.texture().index(),
-                                &texture_entries,
-                            );
-                        }
-
-                        if let Some(normal) = gltf_material.normal_texture() {
-                            apply_packaged_texture_slot(
-                                material_data,
-                                MaterialTextureSlot::Normal,
-                                normal.texture().index(),
-                                &texture_entries,
-                            );
-                        }
-
-                        if let Some(emissive) = gltf_material.emissive_texture() {
-                            apply_packaged_texture_slot(
-                                material_data,
-                                MaterialTextureSlot::Emissive,
-                                emissive.texture().index(),
-                                &texture_entries,
-                            );
-                        }
-
-                        if let Some(occlusion) = gltf_material.occlusion_texture() {
-                            apply_packaged_texture_slot(
-                                material_data,
-                                MaterialTextureSlot::Occlusion,
-                                occlusion.texture().index(),
-                                &texture_entries,
-                            );
-                        }
-                    }
-                }
+                // Both the package's copy and the asset instanced now (which project
+                // saves write out) reference the extracted texture files; runtime texture
+                // indices would point at other textures after a reload.
+                apply_packaged_textures(&mut stored_asset, &document, &texture_entries);
+                apply_packaged_textures(&mut bundle.asset, &document, &texture_entries);
 
                 let scene_rel = PathBuf::from("scene.asset.json");
                 let scene_abs = paths.asset_folder().join(&scene_rel);
@@ -1357,6 +1329,80 @@ mod native {
         }
 
         candidate
+    }
+
+    /// Point the materials of a glTF import at the texture files extracted into its
+    /// package (see `package_embedded_textures`).
+    fn apply_packaged_textures(
+        asset: &mut wgpu_cube::scene::SceneAsset,
+        document: &gltf::Document,
+        texture_entries: &HashMap<u32, PackagedTextureInfo>,
+    ) {
+        if texture_entries.is_empty() {
+            return;
+        }
+        let materials: Vec<_> = document.materials().collect();
+
+        for entity in &mut asset.entities {
+            let Some(material_data) = entity.material_data.as_mut() else {
+                continue;
+            };
+
+            let Some(material_index) = entity.gltf_material else {
+                continue;
+            };
+
+            let Some(gltf_material) = materials.get(material_index) else {
+                continue;
+            };
+
+            let pbr = gltf_material.pbr_metallic_roughness();
+
+            if let Some(info) = pbr.base_color_texture() {
+                apply_packaged_texture_slot(
+                    material_data,
+                    MaterialTextureSlot::BaseColor,
+                    info.texture().index(),
+                    texture_entries,
+                );
+            }
+
+            if let Some(info) = pbr.metallic_roughness_texture() {
+                apply_packaged_texture_slot(
+                    material_data,
+                    MaterialTextureSlot::MetallicRoughness,
+                    info.texture().index(),
+                    texture_entries,
+                );
+            }
+
+            if let Some(normal) = gltf_material.normal_texture() {
+                apply_packaged_texture_slot(
+                    material_data,
+                    MaterialTextureSlot::Normal,
+                    normal.texture().index(),
+                    texture_entries,
+                );
+            }
+
+            if let Some(emissive) = gltf_material.emissive_texture() {
+                apply_packaged_texture_slot(
+                    material_data,
+                    MaterialTextureSlot::Emissive,
+                    emissive.texture().index(),
+                    texture_entries,
+                );
+            }
+
+            if let Some(occlusion) = gltf_material.occlusion_texture() {
+                apply_packaged_texture_slot(
+                    material_data,
+                    MaterialTextureSlot::Occlusion,
+                    occlusion.texture().index(),
+                    texture_entries,
+                );
+            }
+        }
     }
 
     fn apply_packaged_texture_slot(
