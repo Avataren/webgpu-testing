@@ -114,6 +114,11 @@ pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "blas_builds": rt.blas_builds,
                 "pool_vertices": rt.pool_vertices,
             })),
+            "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
+                "total_ms": round(gpu.total_ms),
+                "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
+                "note": "GPU time per stage from timestamp queries, a frame or two old; post_process excludes reflections, which are their own stage when on",
+            })),
         },
         "assets": {
             "meshes": scene.assets.meshes.len(),

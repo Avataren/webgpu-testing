@@ -374,7 +374,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "engine_stats",
-            description: "Frame time, fps, entity/script counts, draw calls and asset counts.",
+            description: "Frame time, fps, CPU time per frame stage, GPU time per render stage (renderer.gpu, from timestamp queries; native only), entity/script counts, draw calls and asset counts.",
             schema: empty(),
             action: Action::Engine("stats"),
         },

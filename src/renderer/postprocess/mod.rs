@@ -777,13 +777,14 @@ impl PostProcess {
         self.pick_target.extent()
     }
 
-    pub fn execute(
+    pub(crate) fn execute(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         device: &wgpu::Device,
         target: &wgpu::TextureView,
         region: Option<RenderRegion>,
         ray_tracing: Option<RayTracingFrame<'_>>,
+        timer: &mut crate::renderer::gpu_timer::GpuTimer,
     ) {
         self.ensure_cached_bind_groups(device);
 
@@ -839,6 +840,7 @@ impl PostProcess {
                 );
             }
             self.reflection_history = Some(traced);
+            timer.mark(encoder, "reflections");
         } else {
             self.reflection_history = None;
         }

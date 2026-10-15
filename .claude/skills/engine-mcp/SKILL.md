@@ -299,7 +299,11 @@ printed.
   play mode and hot-reloads edited scripts.
 - **Measure performance in the player**, not the editor: the editor's UI and systems cost
   several times more per frame. `engine_stats.frame_breakdown` shows where each frame goes
-  (scripts, transforms, render_collect, render_gpu, ui, present, ...).
+  on the CPU (scripts, transforms, render_collect, render_gpu, ui, present, ...), and
+  `engine_stats.renderer.gpu` the GPU milliseconds per render stage (shadows, main,
+  acceleration_structures, reflections, post_process, ...) from timestamp queries, a frame
+  or two old (native only). Compare GPU costs with those, not fps: other programs (games)
+  may share the GPU and swing the frame rate.
 
 ## When something goes wrong
 

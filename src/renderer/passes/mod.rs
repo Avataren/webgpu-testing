@@ -703,6 +703,7 @@ pub(crate) fn finish_frame(
     frame: wgpu::SurfaceTexture,
 ) -> RenderFrame {
     renderer.context.queue.submit(Some(encoder.finish()));
+    renderer.gpu_timer.after_submit();
 
     if let Some(readback) = renderer.pick_state.pending_readback.as_mut() {
         readback.ensure_mapping_requested();

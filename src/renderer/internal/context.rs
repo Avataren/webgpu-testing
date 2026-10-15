@@ -159,6 +159,11 @@ impl RenderContext {
             required_features |= wgpu::Features::FLOAT32_FILTERABLE;
         }
 
+        // Per-stage GPU timings (engine_stats).
+        if adapter_features.contains(crate::renderer::gpu_timer::GPU_TIMER_FEATURES) {
+            required_features |= crate::renderer::gpu_timer::GPU_TIMER_FEATURES;
+        }
+
         let mut limits = if supports_bindless_textures {
             wgpu::Limits {
                 max_binding_array_elements_per_shader_stage: 256,

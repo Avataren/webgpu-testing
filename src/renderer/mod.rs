@@ -5,6 +5,7 @@ pub mod compute_pass;
 pub mod compute_resources;
 pub mod depth;
 pub mod frame_graph;
+mod gpu_timer;
 pub mod hdr_output;
 pub(crate) mod internal;
 pub mod lights;
@@ -36,6 +37,7 @@ pub use compute_resources::{
     BindGroupBuilder, BindGroupLayoutBuilder, StorageBuffer, UniformBuffer,
 };
 pub use depth::Depth;
+pub use gpu_timer::GpuTimings;
 pub use lights::{
     DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
     MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,

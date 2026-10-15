@@ -213,6 +213,7 @@ pub struct Renderer {
     ray_tracing: Option<crate::renderer::raytracing::RayTracingScene>,
     /// Composes and presents frames in HDR mode; `None` for plain SDR output.
     present_stage: Option<crate::renderer::hdr_output::PresentStage>,
+    gpu_timer: crate::renderer::gpu_timer::GpuTimer,
 
     // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
@@ -280,6 +281,7 @@ impl Renderer {
             post_config.format = crate::renderer::hdr_output::PRESENT_SOURCE_FORMAT;
         }
         let skinning = crate::renderer::skinning::SkinningStage::new(&context.device);
+        let gpu_timer = crate::renderer::gpu_timer::GpuTimer::new(&context.device, &context.queue);
         let mut postprocess =
             PostProcess::new(&context.device, &context.queue, &post_config, sample_count);
         postprocess.set_display_peak(&context.queue, hdr_display.peak_ratio());
@@ -329,6 +331,7 @@ impl Renderer {
             postprocess,
             skinning,
             ray_tracing,
+            gpu_timer,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -367,6 +370,12 @@ impl Renderer {
     }
 
     /// How skinned meshes are deformed on this device.
+    /// GPU time per frame stage, from a frame or two ago; `None` without timestamp
+    /// queries inside command encoders.
+    pub fn gpu_timings(&self) -> Option<&crate::renderer::GpuTimings> {
+        self.gpu_timer.timings()
+    }
+
     pub fn skinning_backend(&self) -> crate::renderer::skinning::SkinningBackend {
         self.skinning.backend()
     }
@@ -743,6 +752,7 @@ impl Renderer {
         };
         let mut frame_state =
             self.prepare_frame_state(batcher, environment, &lights, target_view, ui_view)?;
+        self.gpu_timer.begin_frame(&mut frame_state.encoder);
         if let Some(stage) = self.present_stage.as_ref() {
             stage.clear_ui(&mut frame_state.encoder);
         }
@@ -757,6 +767,7 @@ impl Renderer {
         );
         frame_state.stats.skinned_instances = self.skinning.instance_count;
         frame_state.stats.skinned_vertices = self.skinning.vertex_count;
+        self.gpu_timer.mark(&mut frame_state.encoder, "skinning");
 
         self.run_shadow_pass(
             &mut frame_state,
@@ -766,8 +777,12 @@ impl Renderer {
             custom_render.as_deref_mut(),
             custom_shadow_enabled,
         );
+        self.gpu_timer.mark(&mut frame_state.encoder, "shadows");
         self.run_depth_prepass(&mut frame_state, assets);
+        self.gpu_timer
+            .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_main_color_pass(&mut frame_state, environment, assets);
+        self.gpu_timer.mark(&mut frame_state.encoder, "main");
         self.run_custom_stage(
             &mut frame_state,
             scene,
@@ -777,8 +792,13 @@ impl Renderer {
         // Transparent surfaces are part of the lit HDR scene, so they get exposure,
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
+        self.gpu_timer.mark(&mut frame_state.encoder, "transparent");
         let ray_traced = self.update_ray_tracing(&mut frame_state, assets);
+        self.gpu_timer
+            .mark(&mut frame_state.encoder, "acceleration_structures");
         self.execute_postprocess(&mut frame_state, ray_traced);
+        self.gpu_timer
+            .mark(&mut frame_state.encoder, "post_process");
         self.run_custom_stage(
             &mut frame_state,
             scene,
@@ -787,7 +807,10 @@ impl Renderer {
         );
         self.run_surface_passes(&mut frame_state, assets);
         self.handle_pick_requests(&mut frame_state);
+        self.gpu_timer.mark(&mut frame_state.encoder, "overlays");
         self.run_ui_hook(&mut frame_state);
+        self.gpu_timer.mark(&mut frame_state.encoder, "ui");
+        self.gpu_timer.end_frame(&mut frame_state.encoder);
         self.finalize_stats(&mut frame_state, &lights);
 
         let FrameState { encoder, stats, .. } = frame_state;
@@ -1182,6 +1205,7 @@ impl Renderer {
             &frame.surface_view,
             frame.render_region,
             ray_tracing,
+            &mut self.gpu_timer,
         );
         frame.resolved_depth_view = self.postprocess.after_postprocess_depth_view().cloned();
     }
