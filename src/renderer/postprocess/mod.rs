@@ -618,6 +618,11 @@ impl PostProcess {
     /// Called once per rendered frame with the camera it is seen through; also advances
     /// the clock animated effects and exposure adaptation run on.
     pub fn update_camera(&mut self, queue: &wgpu::Queue, camera: PostProcessCamera) {
+        if is_camera_cut(&self.camera, &camera) {
+            // Reprojected histories would show the old view for a few frames.
+            self.reflection_history = None;
+            self.taa_history_valid = false;
+        }
         self.camera = camera;
         self.clock.tick();
         self.upload_uniform(queue);
@@ -1143,6 +1148,15 @@ impl PostProcess {
     }
 }
 
+/// Whether the camera jumped between two frames (a cut, a teleport, or a turn too fast
+/// for last frame's image to help): more than 2 m or 15 degrees.
+fn is_camera_cut(previous: &PostProcessCamera, next: &PostProcessCamera) -> bool {
+    let forward =
+        |camera: &PostProcessCamera| -camera.view_inv.z_axis.truncate().normalize_or_zero();
+    previous.position.distance(next.position) > 2.0
+        || forward(previous).dot(forward(next)) < 15f32.to_radians().cos()
+}
+
 /// The textures reflections go through, at half or full resolution.
 struct ReflectionTargets {
     /// The trace, then the blurred result.
@@ -1633,6 +1647,33 @@ mod tests {
             assert_eq!(decode(stored), code);
         }
         assert_eq!(decode(0.0), 0);
+    }
+
+    #[test]
+    fn camera_cuts_are_big_jumps_only() {
+        let camera = |position: Vec3, target: Vec3| {
+            let view = Mat4::look_at_rh(position, target, Vec3::Y);
+            PostProcessCamera {
+                view,
+                view_inv: view.inverse(),
+                position,
+                ..PostProcessCamera::default()
+            }
+        };
+        let start = camera(Vec3::ZERO, Vec3::NEG_Z);
+        assert!(!is_camera_cut(
+            &start,
+            &camera(Vec3::new(0.1, 0.0, 0.0), Vec3::NEG_Z)
+        ));
+        assert!(!is_camera_cut(
+            &start,
+            &camera(Vec3::ZERO, Vec3::new(0.1, 0.0, -1.0))
+        ));
+        assert!(is_camera_cut(
+            &start,
+            &camera(Vec3::new(5.0, 0.0, 0.0), Vec3::NEG_Z)
+        ));
+        assert!(is_camera_cut(&start, &camera(Vec3::ZERO, Vec3::X)));
     }
 
     #[test]
