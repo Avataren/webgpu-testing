@@ -30,297 +30,209 @@ struct GridUniform {
 
 @group(0) @binding(0) var<uniform> grid_uniform : GridUniform;
 
+// Spacing (in pixels) at which a grid level starts to appear, and where it
+// reaches full strength. Levels are powers of ten metres, so the coarsest
+// visible level is always at least 100x MIN_SPACING_PX apart and fully faded in.
+const MIN_SPACING_PX : f32 = 8.0;
+const FULL_SPACING_PX : f32 = 400.0;
+// Finest level drawn: 10^-1 = 10 cm.
+const MIN_LEVEL : f32 = -1.0;
+
+const LINE_COLOR : vec3<f32> = vec3<f32>(0.78, 0.80, 0.84);
+const LINE_ALPHA : f32 = 0.42;
+const X_AXIS_COLOR : vec3<f32> = vec3<f32>(0.92, 0.22, 0.24);
+const Z_AXIS_COLOR : vec3<f32> = vec3<f32>(0.22, 0.46, 0.96);
+const AXIS_ALPHA : f32 = 0.85;
+const AXIS_WIDTH_PX : f32 = 1.75;
+
 fn viewport_to_scene_uv(uv : vec2<f32>) -> vec2<f32> {
     return grid_uniform.viewport_offset + uv * grid_uniform.viewport_scale;
 }
 
-fn scene_to_viewport_uv(scene_uv : vec2<f32>) -> vec2<f32> {
-    let safe_scale = max(grid_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
-    return (scene_uv - grid_uniform.viewport_offset) / safe_scale;
+fn viewport_pixel_size() -> vec2<f32> {
+    return 1.0 / max(grid_uniform.resolution, vec2<f32>(1.0, 1.0));
 }
 
 fn scene_pixel_size() -> vec2<f32> {
-    let safe_resolution = max(grid_uniform.resolution, vec2<f32>(1.0, 1.0));
-    let safe_scale = max(grid_uniform.viewport_scale, vec2<f32>(1e-6, 1e-6));
-    return safe_scale / safe_resolution;
+    return viewport_pixel_size() * grid_uniform.viewport_scale;
 }
 
 fn reconstruct_world_position(uv : vec2<f32>, depth : f32) -> vec3<f32> {
     let ndc = vec3<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth);
-    let clip = vec4<f32>(ndc, 1.0);
-    let world = grid_uniform.view_proj_inv * clip;
+    let world = grid_uniform.view_proj_inv * vec4<f32>(ndc, 1.0);
     return world.xyz / world.w;
 }
 
-fn depth_to_view_z(depth : f32) -> f32 {
-    let params = grid_uniform.camera_params;
-    let near = params.x;
-    let far = params.y;
-    let far_minus_near = params.z;
-    let near_mul_far = params.w;
-    let denom = depth * far_minus_near - far;
-    let safe_denom = min(denom, -1e-6);
-    return -near_mul_far / safe_denom;
+struct PlaneHit {
+    origin : vec3<f32>,
+    point : vec3<f32>,
+    dir : vec3<f32>,
+    t : f32,
+    valid : bool,
+};
+
+// Intersects the pixel's view ray (near plane to far plane, so orthographic
+// views work too) with the y = 0 ground plane.
+fn intersect_ground(uv : vec2<f32>) -> PlaneHit {
+    var hit : PlaneHit;
+    hit.origin = reconstruct_world_position(uv, 0.0);
+    let ray = reconstruct_world_position(uv, 1.0) - hit.origin;
+    let ray_len = length(ray);
+    hit.dir = ray / max(ray_len, 1e-6);
+    hit.t = select(-1.0, -hit.origin.y / hit.dir.y, abs(hit.dir.y) > 1e-6);
+    hit.valid = hit.t > 0.0 && hit.t < ray_len;
+    hit.point = hit.origin + hit.dir * hit.t;
+    return hit;
 }
 
-fn scene_occludes_grid(
-    scene_uv : vec2<f32>,
-    depth_center : f32,
-    grid_depth : f32,
-    dir : vec3<f32>,
-    grid_distance : f32,
-    camera_pos : vec3<f32>
-) -> bool {
-    if (depth_center >= 1.0) {
-        return false;
+// World-space footprint of one pixel step on the plane, from the intersection
+// of a neighbouring pixel's ray (falling back to the opposite neighbour).
+fn plane_step(uv : vec2<f32>, center : vec3<f32>, offset : vec2<f32>) -> vec3<f32> {
+    let forward = intersect_ground(uv + offset);
+    if (forward.valid) {
+        return forward.point - center;
     }
-
-    let viewport_uv = clamp(scene_to_viewport_uv(scene_uv), vec2<f32>(0.0), vec2<f32>(1.0));
-    let scene_pos = reconstruct_world_position(viewport_uv, depth_center);
-    let scene_vec = scene_pos - camera_pos;
-    let scene_distance = length(scene_vec);
-
-    let grid_view_depth = depth_to_view_z(grid_depth);
-    let scene_view_depth = depth_to_view_z(depth_center);
-
-    let angular_bias = (1.0 - abs(dir.y)) * grid_view_depth * 1e-3;
-    let depth_bias = max(2e-3, grid_view_depth * 5e-4);
-    let view_bias = max(depth_bias, angular_bias);
-    if (scene_view_depth <= grid_view_depth + view_bias) {
-        return true;
+    let backward = intersect_ground(uv - offset);
+    if (backward.valid) {
+        return center - backward.point;
     }
-
-    let distance_bias = max(2e-3, grid_distance * 1e-4);
-    if (scene_distance <= grid_distance + distance_bias) {
-        return true;
-    }
-
-    let height_bias = max(3e-3, grid_distance * 1.5e-4);
-    if (scene_pos.y >= -height_bias) {
-        return true;
-    }
-
-    return false;
+    return vec3<f32>(1e6);
 }
 
-fn grid_visibility(
-    scene_uv : vec2<f32>,
-    grid_depth : f32,
-    dir : vec3<f32>,
-    grid_distance : f32,
-    camera_pos : vec3<f32>
-) -> f32 {
-    // Sample the center pixel plus neighbors to avoid grid bleeding through thin geometry.
-    let pixel_step = scene_pixel_size();
-    let offsets = array<vec2<f32>, 9>(
+// How visible the grid is through one depth sample: 1 where the scene surface
+// lies behind the plane (or on it), fading to 0 as it rises above the plane on
+// the camera's side. Along a ray crossing the plane, "closer than the grid" is
+// exactly "on the camera's side of y = 0", which is far more robust than
+// comparing depths: floors at y = 0 never z-fight and intersections stay crisp.
+fn sample_visibility(scene_uv : vec2<f32>, viewport_uv : vec2<f32>, side : f32, tolerance : f32) -> f32 {
+    let depth = fetch_depth(scene_uv);
+    if (depth >= 1.0) {
+        return 1.0;
+    }
+    let scene_pos = reconstruct_world_position(viewport_uv, depth);
+    let height = scene_pos.y * side;
+    return 1.0 - smoothstep(tolerance, tolerance * 3.0, height);
+}
+
+// Takes the minimum over a cross of samples so the grid never bleeds onto the
+// anti-aliased edges of geometry standing in front of it.
+fn grid_visibility(scene_uv : vec2<f32>, viewport_uv : vec2<f32>, side : f32, tolerance : f32) -> f32 {
+    let scene_px = scene_pixel_size();
+    let view_px = viewport_pixel_size();
+    let offsets = array<vec2<f32>, 5>(
         vec2<f32>(0.0, 0.0),
         vec2<f32>(1.0, 0.0),
         vec2<f32>(-1.0, 0.0),
         vec2<f32>(0.0, 1.0),
         vec2<f32>(0.0, -1.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(1.0, -1.0),
-        vec2<f32>(-1.0, 1.0),
-        vec2<f32>(-1.0, -1.0),
     );
-
-    var visible_samples = 0.0;
-    var sample_count = 0.0;
-
-    for (var i : i32 = 0; i < 9; i = i + 1) {
+    var visibility = 1.0;
+    for (var i : i32 = 0; i < 5; i = i + 1) {
         let offset = offsets[i];
-        let sample_uv = scene_uv + offset * pixel_step;
-        let depth = fetch_depth(sample_uv);
-        sample_count = sample_count + 1.0;
-
-        if (!scene_occludes_grid(sample_uv, depth, grid_depth, dir, grid_distance, camera_pos)) {
-            visible_samples = visible_samples + 1.0;
-        }
+        visibility = min(
+            visibility,
+            sample_visibility(scene_uv + offset * scene_px, viewport_uv + offset * view_px, side, tolerance),
+        );
     }
-
-    return visible_samples / sample_count;
+    return visibility;
 }
 
-// Enhanced grid line with perspective-aware thickness
-fn grid_line_mask_aa(coord : vec2<f32>, line_width : f32, distance_factor : f32) -> f32 {
-    let derivative = fwidth(coord);
-    
-    // Perspective-aware line width - thinner in distance
-    let adaptive_width = line_width * (1.0 + distance_factor * 0.5);
-    
-    let grid = abs(fract(coord - 0.5) - 0.5) / derivative;
-    let line = min(grid.x, grid.y);
-    
-    // Improved aliasing prevention with smoother cutoff
-    let max_derivative = max(derivative.x, derivative.y);
-    let fade_filter = smoothstep(0.3, 1.2, max_derivative);
-    
-    // Sharper line edges with smooth falloff
-    let line_alpha = 1.0 - smoothstep(0.0, adaptive_width, line);
-    
-    return line_alpha * (1.0 - fade_filter);
+// Anti-aliased lines of constant pixel width at every multiple of `spacing`
+// along one axis. `px_per_unit` is pixels per world unit across the lines.
+fn grid_lines(coord : f32, spacing : f32, px_per_unit : f32, width_px : f32) -> f32 {
+    let dist_px = abs(fract(coord / spacing + 0.5) - 0.5) * spacing * px_per_unit;
+    let half_width = 0.5 * width_px;
+    return 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, dist_px);
 }
 
-// Enhanced axis line with glow effect
-fn axis_line_with_glow(coord : f32, width : f32, glow_width : f32) -> vec2<f32> {
-    let derivative = fwidth(coord);
-    let dist = abs(coord) / derivative;
-    
-    // Core line
-    let core = 1.0 - smoothstep(0.0, width, dist);
-    
-    // Soft glow around the line
-    let glow = exp(-dist * dist / (glow_width * glow_width)) * 0.4;
-    
-    return vec2<f32>(core, glow);
+// Lines of constant `coord` drawn as power-of-ten levels. Only the three levels
+// whose lines are at least MIN_SPACING_PX apart are drawn; coarser ones
+// coincide with the third and are equally strong, so switching levels never
+// pops. Each axis picks its levels on its own, so lines running towards the
+// horizon stay visible while the ones crossing it fade.
+fn grid_axis(coord : f32, px_per_unit : f32) -> f32 {
+    let units_per_px = 1.0 / px_per_unit;
+    let base_level = max(ceil(log2(MIN_SPACING_PX * units_per_px) / log2(10.0)), MIN_LEVEL);
+    var alpha = 0.0;
+    for (var i : i32 = 0; i < 3; i = i + 1) {
+        let spacing = pow(10.0, base_level + f32(i));
+        let strength = level_strength(spacing * px_per_unit);
+        let lines = grid_lines(coord, spacing, px_per_unit, mix(1.0, 1.5, strength));
+        alpha = max(alpha, lines * strength);
+    }
+    return alpha * LINE_ALPHA;
+}
+
+fn axis_line(coord : f32, px_per_unit : f32) -> f32 {
+    let dist_px = abs(coord) * px_per_unit;
+    let half_width = 0.5 * AXIS_WIDTH_PX;
+    return 1.0 - smoothstep(half_width - 0.5, half_width + 0.5, dist_px);
+}
+
+// 0 for a level whose lines are MIN_SPACING_PX apart, 1 at FULL_SPACING_PX,
+// measured on a log scale so each power of ten steps evenly.
+fn level_strength(spacing_px : f32) -> f32 {
+    let t = log2(max(spacing_px, 1e-6) / MIN_SPACING_PX) / log2(FULL_SPACING_PX / MIN_SPACING_PX);
+    return smoothstep(0.0, 1.0, t);
 }
 
 fn grid_overlay(uv : vec2<f32>) -> vec4<f32> {
-    let camera_pos = grid_uniform.camera_position.xyz;
-    let scene_uv = viewport_to_scene_uv(uv);
-    let viewport_uv = clamp(scene_to_viewport_uv(scene_uv), vec2<f32>(0.0), vec2<f32>(1.0));
-    let world_far = reconstruct_world_position(viewport_uv, 1.0);
-    var ray = world_far - camera_pos;
-    let ray_len_sq = dot(ray, ray);
-    if (ray_len_sq < 1e-6) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let hit = intersect_ground(uv);
+    if (!hit.valid) {
+        return vec4<f32>(0.0);
     }
-    let dir = normalize(ray);
-    let denom = dir.y;
-    if (abs(denom) < 1e-5) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+    let px = viewport_pixel_size();
+    let step_x = plane_step(uv, hit.point, vec2<f32>(px.x, 0.0));
+    let step_y = plane_step(uv, hit.point, vec2<f32>(0.0, px.y));
+    // Pixels per world unit along x and z, i.e. how fast each coordinate
+    // changes across the screen.
+    let units_per_px = max(
+        vec2<f32>(length(vec2<f32>(step_x.x, step_y.x)), length(vec2<f32>(step_x.z, step_y.z))),
+        vec2<f32>(1e-7),
+    );
+    let px_per_unit = 1.0 / units_per_px;
+
+    // Fade out where the plane is seen almost edge-on and near the far plane.
+    let grazing_fade = smoothstep(0.004, 0.04, abs(hit.dir.y));
+    let far = grid_uniform.camera_params.y;
+    let far_fade = 1.0 - smoothstep(0.6 * far, 0.95 * far, hit.t);
+    let fade = grazing_fade * far_fade;
+    if (fade <= 0.0) {
+        return vec4<f32>(0.0);
     }
-    
-    let t = -camera_pos.y / denom;
-    if (t <= 0.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    let point = camera_pos + dir * t;
-    let clip = grid_uniform.view_proj * vec4<f32>(point, 1.0);
-    if (clip.w <= 0.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    let grid_depth = clip.z / clip.w;
-    if (grid_depth < 0.0 || grid_depth > 1.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    let grid_distance = length(point - camera_pos);
-    let visibility = grid_visibility(scene_uv, grid_depth, dir, grid_distance, camera_pos);
+
+    // Allow for depth precision and sub-pixel camera jitter when deciding
+    // whether a surface sits on the plane: about a pixel's width across the ray
+    // (not along the plane, which is huge at grazing angles).
+    let lateral = min(
+        length(step_x - hit.dir * dot(step_x, hit.dir)),
+        length(step_y - hit.dir * dot(step_y, hit.dir)),
+    );
+    let side = select(-1.0, 1.0, hit.origin.y >= 0.0);
+    let tolerance = max(lateral * 0.75, 1e-4);
+    let visibility = grid_visibility(viewport_to_scene_uv(uv), uv, side, tolerance);
     if (visibility <= 0.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        return vec4<f32>(0.0);
     }
-    
-    let grid_pos = point.xz;
-    let distance = grid_distance;
-    let camera_height = abs(camera_pos.y);
-    
-    // Enhanced fade with exponential falloff for better depth perception
-    let fade_start = 400.0;
-    let fade_end = 1000.0;
-    let distance_fade = 1.0 - smoothstep(fade_start, fade_end, distance);
-    
-    // Atmospheric perspective - subtle fog effect
-    let fog_density = 0.0008;
-    let fog_fade = exp(-distance * fog_density);
-    
-    // Height-based fade with better near-ground handling
-    let height_fade = smoothstep(0.02, 1.0, camera_height);
-    let combined_fade = distance_fade * height_fade * fog_fade;
-    
-    if (combined_fade <= 0.01) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
-    
-    // Improved scale progression starting from 0.1 units
-    let log_distance = log2(max(distance, 0.1));
-    let scale_power = floor((log_distance / log2(10.0)) - 1.0);
-    let scale1 = pow(10.0, scale_power);
-    let scale2 = scale1 * 10.0;
-    
-    // Smoother transition curve
-    let scale_t = fract((log_distance / log2(10.0)) - 1.0);
-    let blend = smoothstep(0.15, 0.85, scale_t);
-    
-    // Distance factor for perspective-aware rendering
-    let distance_factor = clamp(distance / 100.0, 0.0, 1.0);
-    
-    // Generate grid patterns
-    let grid1 = grid_line_mask_aa(grid_pos / scale1, 0.8, distance_factor);
-    let grid1_major = grid_line_mask_aa(grid_pos / scale2, 1.2, distance_factor);
-    let grid2 = grid_line_mask_aa(grid_pos / scale2, 0.8, distance_factor);
-    let grid2_major = grid_line_mask_aa(grid_pos / (scale2 * 10.0), 1.2, distance_factor);
-    
-    // Improved cross-fade between scale levels
-    let scale1_fade = 1.0 - smoothstep(0.3, 0.95, scale_t);
-    let scale2_fade = smoothstep(0.05, 0.7, scale_t);
-    
-    let minor = grid1 * scale1_fade + grid2 * scale2_fade;
-    let major = grid1_major * scale1_fade + grid2_major * scale2_fade;
-    
-    // Axis lines with glow effect
-    let axis_x_result = axis_line_with_glow(grid_pos.x, 1.5, 3.0);
-    let axis_z_result = axis_line_with_glow(grid_pos.y, 1.5, 3.0);
-    let axis_x = axis_x_result.x;
-    let axis_x_glow = axis_x_result.y;
-    let axis_z = axis_z_result.x;
-    let axis_z_glow = axis_z_result.y;
-    
-    // Modern color palette with better contrast
-    let minor_color = vec3<f32>(0.18, 0.20, 0.22);      // Subtle blue-gray
-    let major_color = vec3<f32>(0.35, 0.38, 0.42);      // Medium blue-gray
-    let axis_x_color = vec3<f32>(1.0, 0.25, 0.20);      // Vibrant red (X-axis)
-    let axis_z_color = vec3<f32>(0.20, 0.55, 1.0);      // Vibrant blue (Z-axis)
-    let axis_x_glow_color = vec3<f32>(1.0, 0.4, 0.3);   // Red glow
-    let axis_z_glow_color = vec3<f32>(0.4, 0.65, 1.0);  // Blue glow
-    
-    // Enhanced distance-based intensity with exponential falloff
-    let minor_distance_fade = 1.0 - smoothstep(80.0, 250.0, distance);
-    let major_distance_fade = 1.0 - smoothstep(100.0, 400.0, distance);
-    let axis_distance_fade = 1.0 - smoothstep(50.0, 300.0, distance);
-    
-    // Calculate layer strengths with improved visibility
-    let minor_strength = minor * minor_distance_fade * 0.7;
-    let major_strength = major * major_distance_fade * 0.9;
-    let axis_x_strength = axis_x * axis_distance_fade;
-    let axis_z_strength = axis_z * axis_distance_fade;
-    let axis_x_glow_strength = axis_x_glow * axis_distance_fade * 0.6;
-    let axis_z_glow_strength = axis_z_glow * axis_distance_fade * 0.6;
-    
-    // Composite layers with proper alpha blending
-    var grid_color = vec3<f32>(0.0);
-    var total_alpha = 0.0;
-    
-    // Minor grid lines (base layer)
-    grid_color = minor_color * minor_strength;
-    total_alpha = minor_strength;
-    
-    // Major grid lines (overlay)
-    grid_color = mix(grid_color, major_color, major_strength);
-    total_alpha = max(total_alpha, major_strength);
-    
-    // Axis glows (subtle background)
-    let glow_contrib = axis_x_glow_color * axis_x_glow_strength + 
-                       axis_z_glow_color * axis_z_glow_strength;
-    grid_color = mix(grid_color, glow_contrib, axis_x_glow_strength + axis_z_glow_strength);
-    
-    // Axis core lines (top layer)
-    grid_color = mix(grid_color, axis_x_color, axis_x_strength);
-    total_alpha = max(total_alpha, axis_x_strength);
-    
-    grid_color = mix(grid_color, axis_z_color, axis_z_strength);
-    total_alpha = max(total_alpha, axis_z_strength);
-    
-    // Apply overall environmental fade
-    let final_alpha = total_alpha * combined_fade * visibility;
-    
-    // Subtle depth darkening for better 3D perception
-    let depth_darken = mix(1.0, 0.85, distance_factor);
-    grid_color *= depth_darken * visibility;
-    
-    return vec4<f32>(grid_color, final_alpha);
+
+    let pos = hit.point.xz;
+    let line_alpha = max(grid_axis(pos.x, px_per_unit.x), grid_axis(pos.y, px_per_unit.y));
+
+    // The X axis runs along z = 0, the Z axis along x = 0.
+    let x_axis = axis_line(pos.y, px_per_unit.y);
+    let z_axis = axis_line(pos.x, px_per_unit.x);
+
+    var color = LINE_COLOR;
+    var alpha = line_alpha;
+    color = mix(color, X_AXIS_COLOR, x_axis);
+    alpha = max(alpha, x_axis * AXIS_ALPHA);
+    color = mix(color, Z_AXIS_COLOR, z_axis);
+    alpha = max(alpha, z_axis * AXIS_ALPHA);
+
+    // Seen from below the plane the grid is only a faint reference.
+    let underside = select(0.4, 1.0, side > 0.0);
+    return vec4<f32>(color, alpha * fade * visibility * underside);
 }
 
 @fragment

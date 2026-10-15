@@ -274,3 +274,20 @@ impl ViewportGrid {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shaders_validate() {
+        for source in [super::SHADER_SINGLE_SOURCE, super::SHADER_MSAA_SOURCE] {
+            let module = naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|err| panic!("{}", err.emit_to_string(source)));
+        }
+    }
+}
